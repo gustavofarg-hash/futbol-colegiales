@@ -12,7 +12,7 @@ import { organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.j
 import { toEpoch } from '../js/dates.js';
 import {
   confirmPageUrl, confirmSummary, confirmationAllowed, confirmationRecord, matchesCrossingReminderWindow,
-  needsReminderBanner, newConfirmToken, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
+  needsReminderBanner, newConfirmToken, playersForOrganizer, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
@@ -269,6 +269,16 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.ok(text.includes(links[0].confirmUrl));
   assert.deepEqual(matchesCrossingReminderWindow([match], start - twoH - 1000, start - twoH + 1000).map((m) => m.id), ['2026-10-19_1500']);
   assert.equal(matchesCrossingReminderWindow([match], start - 1000, start - 500).length, 0);
+  const mixed = [
+    { id: 'g', name: 'Juan', phone: '5491111111111', confirmToken: token, addedBy: 'Gustavo' },
+    { id: 'm', name: 'Nico', phone: '5491122222222', confirmToken: 'b'.repeat(24), addedBy: 'martín' },
+  ];
+  assert.deepEqual(playersForOrganizer(mixed, 'gustavo').map((p) => p.id), ['g']);
+  assert.deepEqual(playersForOrganizer(mixed, 'Martín').map((p) => p.id), ['m']);
+  assert.equal(needsReminderBanner(match, playersForOrganizer(mixed, 'Gustavo'), start - 60_000), true);
+  const gustavoSent = mixed.map((p) => (p.id === 'g' ? { ...p, reminderSentAt: 1 } : p));
+  assert.equal(needsReminderBanner(match, playersForOrganizer(gustavoSent, 'Gustavo'), start - 60_000), false);
+  assert.equal(needsReminderBanner(match, playersForOrganizer(gustavoSent, 'Martín'), start - 60_000), true);
 });
 
 test('búsqueda del plantel: nombre, apellido y teléfono', () => {

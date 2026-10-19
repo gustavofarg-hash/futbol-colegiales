@@ -1,6 +1,7 @@
 // Recordatorios y links de confirmación. Puro: lo usan la app, la página
 // confirmar.html y las pruebas. No abre WhatsApp ni escribe en Firestore.
 import { labelDate, toEpoch } from './dates.js';
+import { sameOrganizer } from './organizers.js';
 
 export const CONFIRM_ORIGIN = 'https://gustavofarg-hash.github.io/futbol-colegiales';
 
@@ -102,6 +103,15 @@ export function reminderDueAt(match) {
   const start = matchStartsAt(match);
   if (!Number.isFinite(start)) return null;
   return start - REMINDER_LEAD_MS;
+}
+
+/**
+ * Jugadores que anotó esta persona. «Gustavo» y «Martín» viejos coinciden
+ * con la cuenta del mismo nombre, sin importar mayúsculas ni acentos.
+ */
+export function playersForOrganizer(players, organizer) {
+  if (!organizer) return [];
+  return (players || []).filter((player) => sameOrganizer(player?.addedBy, organizer));
 }
 
 /** Jugadores a los que se les puede abrir un chat de WhatsApp. */

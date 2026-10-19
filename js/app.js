@@ -10,7 +10,7 @@ import { collectedLine, formatARS, parseAmount, paymentStatusText } from './paym
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
 import {
   confirmStatus, confirmSummary, matchesCrossingReminderWindow,
-  needsReminderBanner, reminderDueAt, reminderLinks, reminderProgress,
+  needsReminderBanner, playersForOrganizer, reminderDueAt, reminderLinks, reminderProgress,
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, noteWhen, playerRecord, playerStats, sortedNotes } from './profile.js';
@@ -256,7 +256,7 @@ function renderMatch(id) {
       </div>
     </section>
     ${reminderBanners([m])}
-    <button type="button" class="btn block remind-open" id="btn-remind">Recordatorio de partido</button>
+    <button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap)}
@@ -378,12 +378,16 @@ function confirmTag(p) {
 
 const REMINDER_BANNER = 'Faltan 2 horas: mandá los recordatorios';
 
+function myReminderPlayers(matchId) {
+  return playersForOrganizer(app.players.filter((p) => p.matchId === matchId), app.who);
+}
+
 function reminderBanners(matches) {
   const now = Date.now();
-  const due = (matches || []).filter((m) => needsReminderBanner(m, app.players.filter((p) => p.matchId === m.id), now));
+  const due = (matches || []).filter((m) => needsReminderBanner(m, myReminderPlayers(m.id), now));
   if (!due.length) return '';
   return `<div class="remind-banners">${due.map((m) => {
-    const prog = reminderProgress(app.players.filter((p) => p.matchId === m.id));
+    const prog = reminderProgress(myReminderPlayers(m.id));
     return `<button type="button" class="remind-banner" data-remind-banner="${esc(m.id)}">
       <strong>${REMINDER_BANNER}</strong>
       <small>${esc(capitalize(labelDate(m.date)))} · ${esc(m.time || '--:--')} hs · ${prog.sent} de ${prog.total} enviados</small>
@@ -401,12 +405,13 @@ function bindReminderBanners() {
 }
 
 async function openReminders(m) {
-  const people = [...playersOf(m.id), ...waitingOf(m.id)];
-  if (!people.length) { toast('No hay jugadores para avisar'); return; }
-  openSheet(`<h3>Recordatorio de partido</h3><p class="hint">Armando los links…</p>`);
+  const everyone = [...playersOf(m.id), ...waitingOf(m.id)];
+  if (!everyone.length) { toast('No hay jugadores para avisar'); return; }
+  let showAll = false;
+  openSheet(`<h3>Enviar recordatorios</h3><p class="hint">Armando los links…</p>`);
   const tokens = new Map();
   try {
-    for (const p of people) {
+    for (const p of everyone) {
       if (!p.phone) continue;
       tokens.set(p.id, p.confirmToken || await app.store.ensureConfirmToken(p.id));
     }
@@ -416,35 +421,61 @@ async function openReminders(m) {
     closeSheet();
     return;
   }
-  const fresh = [...playersOf(m.id), ...waitingOf(m.id)].map((p) => ({ ...p, confirmToken: tokens.get(p.id) || p.confirmToken }));
+  const fresh = everyone.map((p) => ({ ...p, confirmToken: tokens.get(p.id) || p.confirmToken }));
   const linkById = new Map(reminderLinks({ match: m, players: fresh, venue: VENUE }).map((row) => [new URL(row.confirmUrl).searchParams.get('p'), row]));
-  const rows = fresh.map((p) => {
-    const link = linkById.get(p.id);
-    if (!link) {
-      return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div></li>`;
-    }
-    const href = link.waUrl;
-    const sent = !!p.reminderSentAt;
-    return `<li class="remind-row" data-remind="${esc(p.id)}">
-      <div class="who"><div class="name">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
-      <a class="btn primary" href="${esc(href)}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
-    </li>`;
-  }).join('');
-  openSheet(`
-    <h3>Recordatorio de partido</h3>
-    <p class="hint">${esc(capitalize(labelDate(m.date)))} · ${esc(m.time)} hs. Cada Enviar abre WhatsApp con el mensaje y el link de esa persona. Hay que tocar enviar en el chat: no se manda solo.</p>
-    <ul class="remind-list" id="remind-list">${rows}</ul>
-    <div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
-  $('#remind-list').addEventListener('click', (e) => {
-    const link = e.target.closest('[data-send]');
-    if (!link) return;
-    const id = link.dataset.send;
-    const row = link.closest('.remind-row');
-    const sub = row?.querySelector('.sub');
-    if (sub) sub.innerHTML = '<span class="sent">Enviado</span>';
-    link.textContent = 'Enviar de nuevo';
-    run(app.store.markReminderSent(id));
-  });
+  const paint = () => {
+    const visible = showAll ? fresh : playersForOrganizer(fresh, app.who);
+    const prog = reminderProgress(visible);
+    const rows = visible.map((p) => {
+      const link = linkById.get(p.id);
+      if (!link) {
+        return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div></li>`;
+      }
+      const sent = !!p.reminderSentAt;
+      return `<li class="remind-row" data-remind="${esc(p.id)}">
+        <div class="who"><div class="name">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
+        <a class="btn primary" href="${esc(link.waUrl)}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
+      </li>`;
+    }).join('');
+    openSheet(`
+      <h3>Enviar recordatorios</h3>
+      <p class="hint">${esc(capitalize(labelDate(m.date)))} · ${esc(m.time)} hs. Cada Enviar abre WhatsApp con el mensaje y el link de esa persona. Hay que tocar enviar en el chat: no se manda solo.</p>
+      <div class="chips" id="remind-scope">
+        <button type="button" class="btn chip ${showAll ? '' : 'on'}" data-remind-scope="mine">Mis jugadores</button>
+        <button type="button" class="btn chip ${showAll ? 'on' : ''}" data-remind-scope="all">Todos</button>
+      </div>
+      <p class="hint" id="remind-prog">${prog.sent} de ${prog.total} enviados${showAll ? ' · todos' : ' · los que anotaste'}</p>
+      ${rows ? `<ul class="remind-list" id="remind-list">${rows}</ul>` : '<p class="empty-wait" id="remind-list">No anotaste a nadie en este partido.</p>'}
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
+    $('#remind-scope').onclick = (e) => {
+      const btn = e.target.closest('[data-remind-scope]');
+      if (!btn) return;
+      const next = btn.dataset.remindScope === 'all';
+      if (next === showAll) return;
+      showAll = next;
+      paint();
+    };
+    const list = $('#remind-list');
+    if (!list) return;
+    list.addEventListener('click', (e) => {
+      const link = e.target.closest('[data-send]');
+      if (!link) return;
+      const id = link.dataset.send;
+      const person = fresh.find((p) => p.id === id);
+      if (person) person.reminderSentAt = Date.now();
+      const row = link.closest('.remind-row');
+      const sub = row?.querySelector('.sub');
+      if (sub) sub.innerHTML = '<span class="sent">Enviado</span>';
+      link.textContent = 'Enviar de nuevo';
+      const line = $('#remind-prog');
+      if (line) {
+        const nowProg = reminderProgress(showAll ? fresh : playersForOrganizer(fresh, app.who));
+        line.textContent = `${nowProg.sent} de ${nowProg.total} enviados${showAll ? ' · todos' : ' · los que anotaste'}`;
+      }
+      run(app.store.markReminderSent(id));
+    });
+  };
+  paint();
 }
 
 function moveWait(matchId, id, dir, disabled) {
@@ -1326,8 +1357,7 @@ function checkReminderWindow() {
   reminderSeenAt = now;
   const crossed = matchesCrossingReminderWindow(app.matches, prev, now);
   for (const m of crossed) {
-    const people = app.players.filter((p) => p.matchId === m.id);
-    if (needsReminderBanner(m, people, now)) fireReminderNotification(m);
+    if (needsReminderBanner(m, myReminderPlayers(m.id), now)) fireReminderNotification(m);
   }
   if (crossed.length && (!sheet.open || !sheet.querySelector('input, textarea'))) render();
   armReminderTimer();

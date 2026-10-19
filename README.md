@@ -180,11 +180,11 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `confirmedAt` | número (epoch ms) |
 | `reminderSentAt` | número (epoch ms) — cuándo se abrió el WhatsApp del recordatorio |
 
-**Recordatorio:** en el partido, «Recordatorio de partido» arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. La página no pide cuenta. Lee la ficha pública `confirmations/{token}` (sin teléfono) y, si el token coincide, guarda solo `confirmed` y `confirmedAt`.
+**Recordatorio:** en el partido, **Enviar recordatorios** arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. Arranca en **Mis jugadores** (los que anotó quien está logueado; «Gustavo» y «Martín» viejos cuentan para esas cuentas). **Todos** muestra el partido entero. La página de confirmación no pide cuenta. Lee la ficha pública `confirmations/{token}` (sin teléfono) y, si el token coincide, guarda solo `confirmed` y `confirmedAt`.
 
 WhatsApp **no se manda solo**. `wa.me` abre el chat y hay que tocar enviar. No hay API de WhatsApp Business ni Cloud Functions (el plan Spark no las incluye).
 
-Si el partido empieza en **2 horas o menos** y todavía falta avisar a alguien que tenga teléfono, la app muestra el cartel **Faltan 2 horas: mandá los recordatorios** en el inicio y en el partido. Tocarlo abre el mismo envío paso a paso. `reminderSentAt` marca a quién ya se le abrió el chat; cuando están todos, el cartel se va. El aviso del navegador (Notification) solo sale si la app **está abierta** justo cuando se cumplen esas 2 horas y el permiso ya estaba concedido (Ajustes → «Aviso 2 horas antes»). Si el teléfono tiene la app cerrada, no hay aviso.
+Si el partido empieza en **2 horas o menos** y a quien está logueado todavía le falta avisar a alguien **que él anotó** y tiene teléfono, la app muestra el cartel **Faltan 2 horas: mandá los recordatorios** en el inicio y en el partido. Gustavo lo ve por sus jugadores y Martín por los suyos. Tocarlo abre el mismo envío, también en Mis jugadores. `reminderSentAt` es compartido: en **Todos**, los dos ven a quién ya se le abrió el chat. El cartel de cada uno se va cuando sus propios jugadores quedaron enviados. El aviso del navegador (Notification) solo sale si la app **está abierta** justo cuando se cumplen esas 2 horas, el permiso ya estaba concedido (Ajustes → «Aviso 2 horas antes») y a ese organizador le falta avisar a los suyos. Si el teléfono tiene la app cerrada, no hay aviso.
 
 ### Armar los links desde afuera (sin abrir la app)
 

@@ -201,6 +201,17 @@ await page.fill('#player-form [name=phone]', '1234-5678');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('.slot .name:text-is("Nico Ruiz")');
 check('Jugador agregado por Martín muestra "Agregó: Martín"', (await page.textContent('.slot:has-text("Nico Ruiz") .tag')).includes('Martín'));
+await page.click('#btn-remind');
+await page.waitForSelector('#remind-list .name');
+let remindNames = await page.$$eval('#remind-list .name', (els) => els.map((e) => e.textContent));
+check('Enviar recordatorios arranca en mis jugadores',
+  remindNames.includes('Nico Ruiz') && !remindNames.includes('Juan Pérez') && (await page.locator('[data-remind-scope="mine"].on').count()) === 1,
+  remindNames.join(', '));
+await page.click('[data-remind-scope="all"]');
+await page.waitForFunction(() => [...document.querySelectorAll('#remind-list .name')].some((e) => e.textContent === 'Juan Pérez'));
+const allReminders = await page.textContent('#remind-list');
+check('Todos muestra quién ya fue recordado', allReminders.includes('Juan Pérez') && allReminders.includes('Enviado') && allReminders.includes('Nico Ruiz'));
+await page.click('dialog.sheet [data-close]');
 
 // Editar y quitar
 await page.click('.slot:has-text("Pedro Gómez") .more-btn');
