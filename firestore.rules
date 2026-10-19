@@ -1,10 +1,50 @@
 rules_version = '2';
 
-// Reglas v1: ABIERTAS. Cualquiera que tenga la configuración de la app (que es
-// pública en la página) puede leer y escribir estas dos colecciones.
-// Sirve para empezar entre dos organizadores; ver README para endurecerlas.
+// Acceso por cuenta. El mail de abajo es el mismo que ADMIN_EMAIL en
+// config.js, en minúsculas. La regla lo compara sin distinguir mayúsculas.
+// Si volviera a decir TU_EMAIL_ADMIN, nadie podría crear al admin.
+//
+// Orden seguro: activar Email/Password, poner el mail, crear la cuenta de
+// admin (con las reglas viejas todavía publicadas, o con estas: el alta del
+// admin sigue permitida) y recién ahí publicar. Publicar esto no borra datos.
+//
+// La única diferencia entre admin y organizador es la colección users:
+// el admin crea, desactiva (active) y borra organizadores. Nadie cambia el rol.
+// Partidos, jugadores, plantel, perfiles y confirmaciones: los dos igual.
+// Sin sesión no hay escrituras, salvo confirmed/confirmedAt con el token.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function adminEmail() {
+      return 'gustavof.arg@gmail.com';
+    }
+    function signedIn() {
+      return request.auth != null;
+    }
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+    function isAdminEmail() {
+      return signedIn()
+          && adminEmail() != 'TU_EMAIL_ADMIN'
+          && adminEmail().size() > 3
+          && request.auth.token.email is string
+          && request.auth.token.email.lower() == adminEmail().lower();
+    }
+    function hasUser() {
+      return signedIn() && exists(userPath(request.auth.uid));
+    }
+    function userData() {
+      return get(userPath(request.auth.uid)).data;
+    }
+    function isActiveStaff() {
+      return hasUser()
+          && userData().active == true
+          && (userData().role == 'admin' || userData().role == 'organizer');
+    }
+    function isAdmin() {
+      return isActiveStaff() && userData().role == 'admin';
+    }
 
     function validMatch(d) {
       return d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
@@ -12,23 +52,185 @@ service cloud.firestore {
           && (!('note' in d) || (d.note is string && d.note.size() <= 300));
     }
 
+    function validPayment(d) {
+      return (!('paid' in d) || d.paid is bool)
+          && (!('amount' in d) || d.amount == null || (d.amount is number && d.amount >= 0 && d.amount <= 1000000000))
+          && (!('method' in d) || d.method == null || d.method == 'efectivo' || d.method == 'transferencia')
+          && (!('paidUpdatedBy' in d) || (d.paidUpdatedBy is string && d.paidUpdatedBy.size() <= 40))
+          && (!('paidUpdatedAt' in d) || d.paidUpdatedAt is number)
+          && (!('receivedBy' in d) || d.receivedBy == null || (d.receivedBy is string && d.receivedBy.size() > 0 && d.receivedBy.size() <= 40))
+          && (!('waiting' in d) || d.waiting is bool)
+          && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is number && d.waitOrder >= 0 && d.waitOrder <= 1000000))
+          && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
+          && (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
+          && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
+          && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number)
+          && (!('reminderSentAt' in d) || d.reminderSentAt == null || d.reminderSentAt is number);
+    }
+
+    // Un organizador puede actualizar al jugador. Si toca la respuesta,
+    // solo puede cambiar esos campos y el token queda igual.
+    function confirmationWriteOk() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(['confirmed', 'confirmedAt'])
+          || (changed.hasOnly(['confirmed', 'confirmedAt', 'updatedAt'])
+              && request.resource.data.confirmToken == resource.data.confirmToken
+              && request.resource.data.confirmToken is string
+              && request.resource.data.confirmToken.size() >= 16
+              && (request.resource.data.confirmed == 'si' || request.resource.data.confirmed == 'no')
+              && request.resource.data.confirmedAt is number);
+    }
+
     function validPlayer(d) {
       return d.matchId is string && d.name is string
           && d.name.size() > 0 && d.name.size() <= 60
-          && d.phone is string && d.phone.size() <= 20;
+          && d.phone is string && d.phone.size() <= 20
+          && validPayment(d);
+    }
+
+    function posOk(x) {
+      return x == 'Arquero' || x == 'Defensa' || x == 'Mediocampo' || x == 'Ataque';
+    }
+    function positionsOk(p) {
+      return p is list && p.size() <= 4
+          && (p.size() < 1 || posOk(p[0]))
+          && (p.size() < 2 || posOk(p[1]))
+          && (p.size() < 3 || posOk(p[2]))
+          && (p.size() < 4 || posOk(p[3]));
+    }
+    function noteOk(n) {
+      return n is map
+          && n.id is string && n.id.size() > 0 && n.id.size() <= 40
+          && n.matchId is string && n.matchId.size() > 0 && n.matchId.size() <= 80
+          && n.text is string && n.text.size() > 0 && n.text.size() <= 400
+          && n.createdAt is number
+          && (!('matchDate' in n) || (n.matchDate is string && n.matchDate.size() <= 10))
+          && (!('matchTime' in n) || (n.matchTime is string && n.matchTime.size() <= 5))
+          && (!('updatedAt' in n) || n.updatedAt is number);
+    }
+    function notesOk(n) {
+      return n is list && n.size() <= 20
+          && (n.size() < 1 || noteOk(n[0])) && (n.size() < 2 || noteOk(n[1]))
+          && (n.size() < 3 || noteOk(n[2])) && (n.size() < 4 || noteOk(n[3]))
+          && (n.size() < 5 || noteOk(n[4])) && (n.size() < 6 || noteOk(n[5]))
+          && (n.size() < 7 || noteOk(n[6])) && (n.size() < 8 || noteOk(n[7]))
+          && (n.size() < 9 || noteOk(n[8])) && (n.size() < 10 || noteOk(n[9]))
+          && (n.size() < 11 || noteOk(n[10])) && (n.size() < 12 || noteOk(n[11]))
+          && (n.size() < 13 || noteOk(n[12])) && (n.size() < 14 || noteOk(n[13]))
+          && (n.size() < 15 || noteOk(n[14])) && (n.size() < 16 || noteOk(n[15]))
+          && (n.size() < 17 || noteOk(n[16])) && (n.size() < 18 || noteOk(n[17]))
+          && (n.size() < 19 || noteOk(n[18])) && (n.size() < 20 || noteOk(n[19]));
+    }
+    function validRoster(d) {
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 60
+          && d.phone is string && d.phone.size() <= 20
+          && (!('createdBy' in d) || (d.createdBy is string && d.createdBy.size() <= 40))
+          && (!('createdAt' in d) || d.createdAt is number)
+          && (!('updatedAt' in d) || d.updatedAt is number)
+          && (!('level' in d) || (d.level is int && d.level >= 1 && d.level <= 10))
+          && (!('positions' in d) || positionsOk(d.positions))
+          && (!('notes' in d) || notesOk(d.notes));
+    }
+    function validOrganizer(d) {
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 40
+          && (!('createdAt' in d) || d.createdAt is number);
+    }
+    function validUser(d) {
+      return (d.role == 'admin' || d.role == 'organizer')
+          && d.name is string && d.name.size() > 0 && d.name.size() <= 40
+          && d.email is string && d.email.size() > 3 && d.email.size() <= 80
+          && d.active is bool
+          && (!('createdAt' in d) || d.createdAt is number);
+    }
+    // Lo que ve alguien sin cuenta. Sin teléfono.
+    function validConfirmation(d) {
+      return d.playerId is string && d.playerId.size() > 0 && d.playerId.size() <= 80
+          && d.matchId is string && d.matchId.size() > 0 && d.matchId.size() <= 80
+          && d.name is string && d.name.size() > 0 && d.name.size() <= 60
+          && d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+          && d.time is string && d.time.matches('^\\d{2}:\\d{2}$')
+          && (!('note' in d) || (d.note is string && d.note.size() <= 300))
+          && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
+          && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number);
+    }
+    function anonymousConfirm() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly(['confirmed', 'confirmedAt'])
+          && request.resource.data.playerId == resource.data.playerId
+          && request.resource.data.matchId == resource.data.matchId
+          && request.resource.data.name == resource.data.name
+          && request.resource.data.date == resource.data.date
+          && request.resource.data.time == resource.data.time
+          && (request.resource.data.confirmed == 'si' || request.resource.data.confirmed == 'no')
+          && request.resource.data.confirmedAt is number;
+    }
+
+    match /users/{userId} {
+      allow get: if signedIn() && (request.auth.uid == userId || isActiveStaff());
+      allow list: if isActiveStaff();
+      // Alta del primer admin. Solo su propio uid y solo ese mail.
+      allow create: if signedIn()
+          && request.auth.uid == userId
+          && isAdminEmail()
+          && validUser(request.resource.data)
+          && request.resource.data.role == 'admin'
+          && request.resource.data.active == true
+          && request.resource.data.email.lower() == request.auth.token.email.lower()
+          && !exists(userPath(userId));
+      // El admin crea organizadores (el uid es el de la cuenta nueva).
+      allow create: if isAdmin()
+          && request.auth.uid != userId
+          && validUser(request.resource.data)
+          && request.resource.data.role == 'organizer'
+          && request.resource.data.active == true;
+      // Desactivar o volver a activar. El rol, el mail y el nombre quedan iguales.
+      allow update: if isAdmin()
+          && userId != request.auth.uid
+          && resource.data.role == 'organizer'
+          && validUser(request.resource.data)
+          && request.resource.data.role == 'organizer'
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.name == resource.data.name
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active']);
+      allow delete: if isAdmin()
+          && userId != request.auth.uid
+          && resource.data.role == 'organizer';
     }
 
     match /matches/{matchId} {
-      allow read, delete: if true;
-      allow create, update: if validMatch(request.resource.data);
+      allow read, delete: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validMatch(request.resource.data);
     }
 
     match /players/{playerId} {
-      allow read, delete: if true;
-      allow create, update: if validPlayer(request.resource.data);
+      allow read, delete: if isActiveStaff();
+      allow create: if isActiveStaff() && validPlayer(request.resource.data);
+      allow update: if isActiveStaff() && validPlayer(request.resource.data) && confirmationWriteOk();
     }
 
-    // Todo lo demás, cerrado.
+    match /roster/{rosterId} {
+      allow read, delete: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validRoster(request.resource.data);
+    }
+
+    match /organizers/{organizerId} {
+      allow read, delete: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validOrganizer(request.resource.data);
+    }
+
+    // El id es el token del link. Se puede leer UN documento si se conoce el
+    // id; no se puede listar la colección. No tiene teléfonos.
+    match /confirmations/{token} {
+      allow get: if token.size() >= 16 && token.size() <= 80;
+      allow list: if isActiveStaff();
+      allow create: if isActiveStaff() && validConfirmation(request.resource.data);
+      allow update: if isActiveStaff() && validConfirmation(request.resource.data);
+      allow update: if token.size() >= 16 && token.size() <= 80
+          && validConfirmation(request.resource.data)
+          && anonymousConfirm();
+      allow delete: if isActiveStaff();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
