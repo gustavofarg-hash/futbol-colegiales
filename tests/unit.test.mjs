@@ -11,9 +11,10 @@ import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummar
 import { organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { toEpoch } from '../js/dates.js';
 import {
-  confirmPageUrl, confirmSummary, confirmationAllowed, confirmationRecord, matchesCrossingReminderWindow,
-  needsReminderBanner, newConfirmToken, playersForOrganizer, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
+  confirmPageUrl, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
+  needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
+import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -434,6 +435,79 @@ test('la ficha de confirmación no lleva teléfono', () => {
   assert.equal(rec.name, 'Juan Pérez');
   assert.equal(rec.confirmed, 'si');
   assert.equal(rec.date, '2026-10-22');
+});
+
+test('en demo, cobrar no borra el sí de la ficha', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-confirm';
+  await store.init();
+  const mid = await store.addMatch({ date: '2026-10-20', time: '20:00', note: '' }, 'Gustavo');
+  const pid = await store.addPlayer({ id: mid, date: '2026-10-20', capacity: 14 }, { name: 'Juan Pérez', phone: '5491112345678' }, 'Gustavo');
+  const db = JSON.parse(mem.get('f7c-test-confirm'));
+  const token = db.players[pid].confirmToken;
+  db.confirmations[token].confirmed = 'si';
+  db.confirmations[token].confirmedAt = 9;
+  db.players[pid].confirmed = null;
+  mem.set('f7c-test-confirm', JSON.stringify(db));
+  let seen = null;
+  store.subscribe((snap) => { seen = snap; });
+  await store.setPayment(pid, { paid: true, amount: 5000, method: 'efectivo', receivedBy: 'Gustavo' }, 'Gustavo');
+  const after = JSON.parse(mem.get('f7c-test-confirm'));
+  assert.equal(after.confirmations[token].confirmed, 'si');
+  assert.equal(after.confirmations[token].confirmedAt, 9);
+  assert.equal(seen.players.find((p) => p.id === pid).confirmed, 'si');
+});
+
+test('el organizador no reescribe la respuesta al actualizar la ficha', () => {
+  const idn = confirmationIdentity({
+    playerId: 'p1',
+    player: { matchId: '2026-10-20_2000', name: 'Juan Pérez', confirmed: null, confirmedAt: null, phone: '5491112345678' },
+    match: { id: '2026-10-20_2000', date: '2026-10-20', time: '20:00', note: '' },
+  });
+  assert.equal('confirmed' in idn, false);
+  assert.equal('confirmedAt' in idn, false);
+  assert.equal('phone' in idn, false);
+  assert.equal(idn.name, 'Juan Pérez');
+  assert.equal(idn.date, '2026-10-20');
+  assert.equal(idn.note, '');
+});
+
+test('el sí de la ficha gana y un sí viejo no se borra si la ficha no contestó', () => {
+  const players = [
+    { id: 'a', confirmToken: 't-a', confirmed: null },
+    { id: 'b', confirmToken: 't-b', confirmed: 'si' },
+    { id: 'c', confirmToken: 't-c', confirmed: null },
+  ];
+  const cards = [
+    { id: 't-a', playerId: 'a', confirmed: 'si', confirmedAt: 3 },
+    { id: 'stale', playerId: 'b', confirmed: 'no' },
+    { id: 't-b', playerId: 'b', confirmed: null },
+    { id: 't-c', playerId: 'other', confirmed: 'no', confirmedAt: 4 },
+  ];
+  const out = overlayConfirmations(players, cards);
+  assert.equal(out[0].confirmed, 'si');
+  assert.equal(out[0].confirmedAt, 3);
+  assert.equal(out[1].confirmed, 'si');
+  assert.equal(out[2].confirmed, 'no');
+  assert.equal(out[2].confirmedAt, 4);
+});
+
+test('tamaño de texto: Normal es el default y hay cinco pasos', () => {
+  assert.deepEqual(TEXT_SIZES.map((s) => s.label), ['Chica', 'Normal', 'Grande', 'Muy grande', 'Enorme']);
+  assert.equal(TEXT_SIZES[TEXT_SIZE_DEFAULT].label, 'Normal');
+  assert.equal(TEXT_SIZES[TEXT_SIZE_DEFAULT].px, 18);
+  assert.equal(TEXT_SIZES[0].px, 16);
+  assert.equal(TEXT_SIZES[4].px, 24);
+  assert.equal(textSizeIndex(null), TEXT_SIZE_DEFAULT);
+  assert.equal(textSizeIndex('4'), 4);
+  assert.equal(textSizeIndex('9'), TEXT_SIZE_DEFAULT);
+  assert.equal(textSizeIndex('-1'), TEXT_SIZE_DEFAULT);
 });
 
 test('el placeholder no habilita al admin y el mail se compara sin mayúsculas', () => {

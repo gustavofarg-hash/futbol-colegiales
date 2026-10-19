@@ -17,6 +17,7 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, noteWhen, playerRecord, playerStat
 import { UNSPECIFIED, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
+import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -413,7 +414,7 @@ async function openReminders(m) {
   try {
     for (const p of everyone) {
       if (!p.phone) continue;
-      tokens.set(p.id, p.confirmToken || await app.store.ensureConfirmToken(p.id));
+      tokens.set(p.id, await app.store.ensureConfirmToken(p.id));
     }
   } catch (e) {
     console.error(e);
@@ -532,6 +533,10 @@ function openSettings() {
     <h3>Ajustes</h3>
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
     <p class="hint">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
+    <p class="hint">Tamaño del texto</p>
+    <div class="text-size-choice" role="group" aria-label="Tamaño del texto">
+      ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
+    </div>
     <div class="menu">
       ${app.role === 'admin' ? '<a class="btn" id="set-users" href="#/usuarios">Usuarios</a>' : ''}
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
@@ -541,6 +546,9 @@ function openSettings() {
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
     <p class="footer-note">Fútbol 7 · ${esc(VENUE)} · v1</p>`);
+  sheet.querySelectorAll('[data-text-size]').forEach((btn) => {
+    btn.onclick = () => { saveTextSize(Number(btn.dataset.textSize)); syncTextSize(); };
+  });
   const users = $('#set-users');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
@@ -1261,9 +1269,25 @@ function gate() {
 }
 
 /* ───────── arranque ───────── */
+function syncTextSize() {
+  const i = applyTextSize(readTextSize());
+  const minus = $('#btn-text-smaller');
+  const plus = $('#btn-text-bigger');
+  if (minus) minus.disabled = i === 0;
+  if (plus) plus.disabled = i === TEXT_SIZES.length - 1;
+  document.querySelectorAll('[data-text-size]').forEach((btn) => {
+    const on = Number(btn.dataset.textSize) === i;
+    btn.classList.toggle('primary', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
 async function boot() {
   $('#venue-name').textContent = VENUE;
   $('#btn-back').onclick = () => { location.hash = '#/'; };
+  $('#btn-text-smaller').onclick = () => { stepTextSize(-1); syncTextSize(); };
+  $('#btn-text-bigger').onclick = () => { stepTextSize(1); syncTextSize(); };
+  syncTextSize();
   $('#btn-settings').onclick = openSettings;
   $('#btn-who').onclick = openSettings;
   $('#btn-mine').onclick = () => { app.mine = !app.mine; render(); };

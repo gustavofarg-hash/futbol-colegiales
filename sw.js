@@ -1,9 +1,9 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v13';
+const VERSION = 'f7c-v14';
 const SHELL = [
   './', 'index.html', 'confirmar.html', 'styles.css', 'config.js', 'manifest.webmanifest',
-  'js/app.js', 'js/store.js', 'js/parser.js', 'js/phone.js', 'js/dates.js', 'js/payments.js', 'js/waiting.js', 'js/reminders.js', 'js/confirm.js', 'js/roster.js', 'js/profile.js', 'js/organizers.js', 'js/ledger.js', 'js/auth.js',
+  'js/app.js', 'js/store.js', 'js/parser.js', 'js/phone.js', 'js/dates.js', 'js/payments.js', 'js/waiting.js', 'js/reminders.js', 'js/confirm.js', 'js/roster.js', 'js/profile.js', 'js/organizers.js', 'js/ledger.js', 'js/auth.js', 'js/text-size.js',
   'icons/favicon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
