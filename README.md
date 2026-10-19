@@ -8,7 +8,7 @@ App web (PWA, se instala en el celular) para organizar los partidos de **fútbol
 - **Agregar partido:** fecha, hora y nota opcional.
 - **Importar desde texto:** pegás un mensaje del grupo de WhatsApp y la app detecta expresiones como `jueves 22/10 21hs`, `miércoles 20:00`, `mañana 19 hs`, `sábado 24 de octubre a las 18`, `hoy a las 21 y media`, `jueves 20 y 21hs`. Muestra una **vista previa** para corregir y confirmar. Si pegás el mensaje con encabezado de WhatsApp (`[19/10/26, 12:40] Martín: …`), usa esa fecha como referencia para “mañana”, “jueves”, etc.
 - **Detalle del partido:** 14 lugares. Agregás jugador con nombre y WhatsApp (el número se normaliza: `11 1234-5678` → `5491112345678`; acepta `011 15…`, `15…`, `+54 9…`, otras características como `0351 15…`). Botón de **WhatsApp** por jugador que abre `https://wa.me/<número>?text=…` con un mensaje con día, fecha y hora. Editar y quitar jugadores. **Copiar / compartir** la lista como texto.
-- **Pagos:** en cada jugador, el botón 💵 abre un formulario para marcar si pagó, el monto en pesos, si fue Efectivo o Transferencia, y **quién cobró** (por defecto, el organizador que está usando el teléfono). En la fila se ve en verde (`Pagó $5.000 · Transferencia · cobró Martín`) o atenuado (`No pagó`). Arriba del partido aparece el total (`Recaudado: $45.000 · 9/14 pagaron`). Eso también entra en el texto de copiar/compartir. Se guarda en el mismo jugador y se sincroniza en tiempo real. Un pago viejo, sin cobrador, cuenta como **Sin especificar**.
+- **Pagos:** en cada jugador, el botón 💵 abre un formulario para marcar si pagó, cuánto en **efectivo**, cuánto por **transferencia** (cualquiera puede ser 0) y si **transfiere después**. Lo cobrado es la suma de efectivo y transferencia. Transfiere después es una promesa: no entra en Recaudado, ni en el perfil, ni en el total por organizador, hasta que se toca **Marcar transferencia como cobrada** (pasa a transferencia, con quién y la fecha). En la fila se ve en verde lo cobrado y un cartel `Transfiere después $X`. Arriba del partido: `Recaudado: $45.000 · 9/14 pagaron · Transfiere después: $1.500`. Eso también entra en el texto de copiar/compartir. Un pago viejo, de un solo monto y un medio, se lee entero como efectivo o como transferencia. Quién cobró arranca en el organizador que está usando el teléfono. Un pago viejo sin cobrador cuenta como **Sin especificar**. En **Pagos** hay una lista de quienes todavía deben transferir, también por organizador.
 - Cada jugador muestra **quién lo anotó** y, si pagó, **quién cobró**. Eso sale del nombre de la cuenta con la que entraste. El perfil y la pantalla **Pagos** muestran el total, el monto por mes (`Oct 2026: $10.000`), cuánto cobró cada organizador y cuántas veces anotó a alguien. El botón **Mis** (al lado del nombre) deja solo lo que anotaste y lo que cobraste; el cupo del partido sigue siendo el de todos.
 - **Tiempo real** con Firebase Firestore: lo que carga uno lo ve el otro al instante. Funciona también sin conexión (se sincroniza al volver).
 - **Modo demo:** si `config.js` no tiene la configuración de Firebase, la app guarda todo solo en el teléfono y muestra el aviso *“Modo demo: los datos no se comparten todavía”*.
@@ -166,9 +166,14 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `phone` | solo dígitos, formato wa.me (ej. `5491112345678`) o vacío |
 | `addedBy` | quién lo anotó (Gustavo, Martín u otro de la lista) |
 | `createdAt`, `updatedAt` | número (epoch ms) |
-| `paid` | bool, opcional — si pagó |
-| `amount` | número o null — pesos (ARS) |
-| `method` | `"efectivo"` \| `"transferencia"` \| null |
+| `paid` | bool, opcional — si ya se cobró algo (efectivo + transferencia). Solo pendiente queda en false |
+| `amount` | número o null — pesos cobrados (efectivo + transferencia). No incluye lo pendiente |
+| `method` | `"efectivo"` si solo hay efectivo, `"transferencia"` si solo hay transferencia, null si hay de los dos o solo pendiente |
+| `cash` | número o null — efectivo cobrado. En un pago nuevo, 0 si no hubo efectivo |
+| `transfer` | número o null — transferencia cobrada |
+| `pendingTransfer` | número o null — prometió transferir y todavía no llegó. No suma en los totales |
+| `transferReceivedAt` | número o null — cuándo se marcó la transferencia pendiente como cobrada |
+| `transferReceivedBy` | string o null — quién la marcó |
 | `paidUpdatedBy` | quién cargó el pago |
 | `paidUpdatedAt` | número (epoch ms) |
 | `receivedBy` | quién cobró, o null / ausente = `Sin especificar`. Al marcar «pagó» arranca en el organizador actual; si el pago ya estaba y no tenía cobrador, queda sin especificar hasta que se elija uno |
@@ -179,6 +184,8 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `confirmed` | `"si"` \| `"no"` — respuesta del jugador |
 | `confirmedAt` | número (epoch ms) |
 | `reminderSentAt` | número (epoch ms) — cuándo se abrió el WhatsApp del recordatorio |
+
+Hay que **volver a publicar** `firestore.rules` para que esos campos de pago queden validados (número ≥ 0, o null). Las reglas que ya están publicadas dejan pasar campos de más, así que guardar puede funcionar igual antes de republicar. Si una regla más estricta los rechaza, la app avisa en castellano que hay que republicar.
 
 **Recordatorio:** en el partido, **Enviar recordatorios** arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. Arranca en **Mis jugadores** (los que anotó quien está logueado; «Gustavo» y «Martín» viejos cuentan para esas cuentas). **Todos** muestra el partido entero. La página de confirmación no pide cuenta. Lee la ficha pública `confirmations/{token}` (sin teléfono) y, si el token coincide, guarda solo `confirmed` y `confirmedAt`.
 
@@ -257,6 +264,8 @@ El pago va en el documento del jugador (no en una colección nueva). Hasta que s
 Misma persona = mismo `phone`. Al anotar en un partido (o en la espera) con WhatsApp, si ese número no está, se guarda solo. En el formulario de alta, «Buscar guardados» encuentra por las primeras letras del nombre o del apellido (sin importar mayúsculas ni acentos: `ERN` → Ernesto Pereira, `perez` → José Pérez) o por cualquier tramo del teléfono (solo dígitos, se ignoran espacios, guiones y `+54 9`). Tocar un resultado lo anota en ese partido; si ya hay 14, va a la espera. También se puede escribir uno nuevo.
 
 Tocá un jugador en un partido o en Jugadores para abrir el perfil (el mismo teléfono). Ahí se editan el nivel, las posiciones y las notas de un partido. «Jugó N veces» y «Mayormente jueves · 21:00» salen solos de los partidos ya pasados en la lista principal (la espera y los que todavía no se jugaron no cuentan).
+
+**Partidos**, en el perfil: lista los próximos (fecha, día, hora y lugares libres). Cada uno tiene un casillero y un botón **Anotar en N partidos**. Si ya está, el casillero queda marcado y dice **Anotado** o **En espera**; no se duplica el teléfono en ese partido. Si está completo, antes de confirmar se ve **Completo · va a la espera** y entra a la lista de espera con las mismas reglas que anotar desde el partido (`addedBy` del organizador actual, ficha de confirmación y link). Tocá el partido para abrirlo, o **Quitar** para sacarlo de ese solo.
 
 **Colección `users`** — una cuenta por documento. El id es el `uid` de Authentication.
 

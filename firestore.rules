@@ -65,7 +65,12 @@ service cloud.firestore {
           && (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
           && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
           && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number)
-          && (!('reminderSentAt' in d) || d.reminderSentAt == null || d.reminderSentAt is number);
+          && (!('reminderSentAt' in d) || d.reminderSentAt == null || d.reminderSentAt is number)
+          && (!('cash' in d) || d.cash == null || (d.cash is number && d.cash >= 0 && d.cash <= 1000000000))
+          && (!('transfer' in d) || d.transfer == null || (d.transfer is number && d.transfer >= 0 && d.transfer <= 1000000000))
+          && (!('pendingTransfer' in d) || d.pendingTransfer == null || (d.pendingTransfer is number && d.pendingTransfer >= 0 && d.pendingTransfer <= 1000000000))
+          && (!('transferReceivedAt' in d) || d.transferReceivedAt == null || d.transferReceivedAt is number)
+          && (!('transferReceivedBy' in d) || d.transferReceivedBy == null || (d.transferReceivedBy is string && d.transferReceivedBy.size() > 0 && d.transferReceivedBy.size() <= 40));
     }
 
     // Un organizador puede actualizar al jugador. Si toca la respuesta,

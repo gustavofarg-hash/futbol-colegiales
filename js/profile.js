@@ -1,6 +1,6 @@
 // Perfil del jugador. Puro: las pruebas calculan las estadísticas sin Firebase.
 // El perfil se guarda en el documento de roster con el mismo teléfono.
-import { DIAS, capitalize, labelDate, toEpoch, weekdayOf } from './dates.js';
+import { DIAS, capitalize, labelDate, todayISO, toEpoch, weekdayOf } from './dates.js';
 import { formatARS } from './payments.js';
 
 export const POSITIONS = ['Arquero', 'Defensa', 'Mediocampo', 'Ataque'];
@@ -91,6 +91,48 @@ export function playerRecord({ phone, players, matches }) {
 
 export function sortedNotes(notes) {
   return [...(notes || [])].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0) || String(b.id).localeCompare(String(a.id)));
+}
+
+/**
+ * Partidos que todavía se pueden anotar: misma ventana que el inicio
+ * (fecha de hoy en adelante, y que no hayan empezado hace más de 2 horas).
+ */
+export function upcomingMatches(matches, now = Date.now()) {
+  const today = todayISO(new Date(now));
+  return [...(matches || [])]
+    .filter((match) => match?.date >= today && startsAtOf(match) > now - 2 * 3600e3)
+    .sort((a, b) => startsAtOf(a) - startsAtOf(b) || String(a.id).localeCompare(String(b.id)));
+}
+
+/**
+ * Estado de anotar a este teléfono en un partido.
+ * state: anotado | espera | lleno | libre.
+ * Si el teléfono ya está, no se vuelve a anotar.
+ * Si no quedan lugares en la lista principal, va a la espera.
+ */
+export function matchSignupState({ phone, match, players }) {
+  const cap = match?.capacity || 14;
+  const mates = (players || []).filter((player) => player.matchId === match?.id);
+  const same = phone ? mates.filter((player) => player.phone === phone) : [];
+  const mainCount = mates.filter((player) => player.waiting !== true).length;
+  const spots = Math.max(0, cap - mainCount);
+  if (same.length) {
+    const onMain = same.some((player) => player.waiting !== true);
+    const found = onMain ? same.find((player) => player.waiting !== true) : same[0];
+    return {
+      state: onMain ? 'anotado' : 'espera',
+      label: onMain ? 'Anotado' : 'En espera',
+      willWait: !onMain,
+      spots,
+      existing: true,
+      playerId: found?.id || null,
+    };
+  }
+  if (spots === 0) {
+    return { state: 'lleno', label: 'Completo · va a la espera', willWait: true, spots: 0, existing: false, playerId: null };
+  }
+  const label = spots === 1 ? 'Queda 1' : `Quedan ${spots}`;
+  return { state: 'libre', label, willWait: false, spots, existing: false, playerId: null };
 }
 
 export function noteWhen(note, matches) {

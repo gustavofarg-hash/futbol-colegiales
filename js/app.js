@@ -6,16 +6,16 @@ import {
   todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { collectedLine, formatARS, parseAmount, paymentStatusText } from './payments.js';
+import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentStatusText, pendingStatusText } from './payments.js';
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
 import {
   confirmStatus, confirmSummary, matchesCrossingReminderWindow,
   needsReminderBanner, playersForOrganizer, reminderDueAt, reminderLinks, reminderProgress,
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, noteWhen, playerRecord, playerStats, sortedNotes } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerTagClass, sameOrganizer } from './organizers.js';
-import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, signupLedger } from './ledger.js';
+import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 
@@ -64,9 +64,18 @@ function showError(msg) {
 }
 // Las escrituras a Firestore resuelven cuando el servidor confirma; con caché
 // offline la UI no espera: se cierra el formulario y se avisa si falla.
-function run(p, okMsg) {
+const PAY_RULES_MSG = 'No se pudo guardar el pago. Hay que volver a publicar firestore.rules para efectivo, transferencia y Transfiere después.';
+function isPermissionDenied(error) {
+  const code = error?.code || '';
+  return code === 'permission-denied' || code === 'permission_denied';
+}
+function run(p, okMsg, deniedMsg) {
   if (okMsg) toast(okMsg);
-  return Promise.resolve(p).catch((e) => { console.error(e); toast('No se pudo guardar: ' + (e.code || e.message || e)); });
+  return Promise.resolve(p).catch((e) => {
+    console.error(e);
+    if (deniedMsg && isPermissionDenied(e)) toast(deniedMsg);
+    else toast('No se pudo guardar: ' + (e.code || e.message || e));
+  });
 }
 
 /* ───────── datos derivados ───────── */
@@ -96,6 +105,14 @@ function receiverOptions(current) {
 }
 function addedTag(player) {
   return `<span class="tag ${organizerTagClass(player.addedBy)}">Agregó: ${esc(player.addedBy || '?')}</span>`;
+}
+function payMarkup(player) {
+  const pending = pendingStatusText(player);
+  const headline = paymentHeadline(player);
+  const cls = player.paid === true ? 'ok' : 'no';
+  const line = headline ? `<div class="pay-line ${cls}">${esc(headline)}</div>` : '';
+  const badge = pending ? `<div class="pay-pending">${esc(pending)}</div>` : '';
+  return line + badge;
 }
 function payFilterChips(phone) {
   const names = whoOptions();
@@ -223,7 +240,6 @@ function renderMatch(id) {
       continue;
     }
     const payText = paymentStatusText(p);
-    const payCls = p.paid === true ? 'ok' : 'no';
     slots.push(`
       <li class="slot ${i >= cap ? 'extra' : ''}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
@@ -231,7 +247,7 @@ function renderMatch(id) {
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
             ${addedTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
-          ${payText ? `<div class="pay-line ${payCls}">${esc(payText)}</div>` : ''}
+          ${payMarkup(p)}
         </button>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>
         ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
@@ -340,7 +356,6 @@ function waitingSection(m, full) {
   const wait = app.mine ? allWait.filter(minePlayer) : allWait;
   const top = allWait[0];
   const rows = wait.map((p, i) => {
-    const payText = paymentStatusText(p);
     const idx = allWait.findIndex((item) => item.id === p.id);
     const first = idx <= 0;
     const last = idx === allWait.length - 1;
@@ -355,7 +370,7 @@ function waitingSection(m, full) {
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
             ${addedTag(p)}${confirmTag(p)}</div>
-          ${payText ? `<div class="pay-line ${p.paid === true ? 'ok' : 'no'}">${esc(payText)}</div>` : ''}
+          ${payMarkup(p)}
         </button>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}">💵</button>
         ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
@@ -791,6 +806,25 @@ function ledgerSection(phone) {
   const organizer = app.payFilter || null;
   const money = paymentLedger({ phone, players: app.players, matches: app.matches, organizer });
   const signups = signupLedger({ phone, players: app.players, organizer });
+  const parts = { cash: 0, transfer: 0, pending: 0 };
+  for (const player of app.players) {
+    if (player.phone !== phone) continue;
+    const piece = paymentParts(player);
+    const receiverOk = !organizer || (organizer === UNSPECIFIED ? !String(player.receivedBy || '').trim() : sameOrganizer(player.receivedBy, organizer));
+    const pendingOk = !organizer || (organizer === UNSPECIFIED ? !String(player.paidUpdatedBy || '').trim() : sameOrganizer(player.paidUpdatedBy, organizer));
+    if (player.paid === true && receiverOk) {
+      parts.cash += piece.cash;
+      parts.transfer += piece.transfer;
+    }
+    if (pendingOk) parts.pending += piece.pending;
+  }
+  const partBits = [];
+  if (parts.cash > 0) partBits.push(`Efectivo ${formatARS(parts.cash)}`);
+  if (parts.transfer > 0) partBits.push(`Transferencia ${formatARS(parts.transfer)}`);
+  const partsLine = partBits.length ? `<p class="hint" id="ledger-parts">${esc(partBits.join(' · '))}</p>` : '';
+  const pendingLine = parts.pending > 0
+    ? `<p class="pay-pending" id="ledger-pending">Transfiere después ${esc(formatARS(parts.pending))}</p>`
+    : '';
   const months = money.months.length
     ? `<ul class="ledger-list" id="ledger-months">${money.months.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>`
     : '<p class="hint" id="ledger-months">Sin pagos en este filtro.</p>';
@@ -805,6 +839,8 @@ function ledgerSection(phone) {
       <h2>Pagos</h2>
       ${payFilterChips(phone)}
       <p class="stat-summary" id="ledger-total">${esc(money.totalText)}</p>
+      ${partsLine}
+      ${pendingLine}
       ${months}
       <h2>Por organizador</h2>
       ${by}
@@ -866,6 +902,7 @@ function renderPagos() {
   const organizer = app.mine ? app.who : (app.payFilter || null);
   const rows = paymentsSummary({ players: app.players, roster: app.roster, organizer });
   const totals = organizerTotals(app.players);
+  const pending = pendingTransfers({ players: app.players, roster: app.roster, organizer });
   const body = rows.length ? `<ul class="slots" id="pay-summary">${rows.map((row) => {
     const person = row.key.startsWith('n:') ? null : rosterByPhone(app.roster, row.key);
     const paid = row.paid.length
@@ -874,16 +911,27 @@ function renderPagos() {
     const signed = row.signups.length
       ? row.signups.map((item) => `<div class="sub">Anotó ${esc(item.name)}: ${timesLabel(item.count)}</div>`).join('')
       : '<div class="sub">Sin anotaciones</div>';
+    const later = row.pending > 0 ? `<div class="pay-pending">Transfiere después ${esc(formatARS(row.pending))}</div>` : '';
     const open = person ? ` data-pay-open="${esc(person.id)}"` : '';
-    return `<li class="slot pay-row"><button type="button" class="who"${open}><div class="name">${esc(row.name)}</div>${paid}${signed}</button></li>`;
+    return `<li class="slot pay-row"><button type="button" class="who"${open}><div class="name">${esc(row.name)}</div>${paid}${signed}${later}</button></li>`;
   }).join('')}</ul>` : '<p class="empty-wait" id="pay-summary">Nadie en este filtro.</p>';
+  const pendingBody = pending.rows.length
+    ? `<ul class="slots" id="pending-list">${pending.rows.map((row) => `<li class="slot"><div class="who"><div class="name">${esc(row.name)}</div><div class="pay-pending">Transfiere después ${esc(formatARS(row.amount))}</div><div class="sub">${row.by.map((item) => `${esc(item.name)}: ${esc(formatARS(item.amount))}`).join(' · ')}</div></div></li>`).join('')}</ul>`
+    : '<p class="empty-wait" id="pending-list">Nadie tiene una transferencia pendiente.</p>';
+  const orgLine = totals.map((item) => {
+    const later = item.pending > 0 ? ` · por transferir ${formatARS(item.pending)}` : '';
+    return `${esc(item.name)}: ${esc(formatARS(item.collected))} · anotó ${item.added}${later}`;
+  }).join(' · ');
   $('#view').innerHTML = `
     <h2 class="section">Pagos</h2>
-    <p class="hint roster-lead">Cuánto le pagó cada jugador a cada organizador, y quién lo anotó.</p>
+    <p class="hint roster-lead">Cuánto le pagó cada jugador a cada organizador, y quién lo anotó. Transfiere después no entra en lo cobrado hasta marcarlo.</p>
     <p class="mine-line" id="mine-stats">${esc(mineSummary(app.players, app.who).text)}</p>
-    <p class="hint" id="org-totals">${totals.map((item) => `${esc(item.name)}: ${esc(formatARS(item.collected))} · anotó ${item.added}`).join(' · ')}</p>
+    <p class="hint" id="org-totals">${orgLine}</p>
+    <p class="hint" id="pending-total">Transfiere después: ${esc(formatARS(pending.total))}</p>
     ${app.mine ? '<p class="hint">Filtro Mis: solo lo que anotaste y lo que cobraste.</p>' : payFilterChips(null)}
-    ${body}`;
+    ${body}
+    <h2 class="section">Transfiere después</h2>
+    ${pendingBody}`;
   bindPayFilter();
   const list = $('#pay-summary');
   if (list) list.onclick = (e) => {
@@ -910,6 +958,7 @@ function renderProfile(id) {
       <h2 class="section">${esc(person.name)}</h2>
       <p class="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</p>
       ${person.phone ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waLink(person.phone))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
+      ${partidosSection(person)}
       <section class="profile-block">
         <h2>Nivel de juego</h2>
         <div class="stepper">
@@ -956,6 +1005,7 @@ function renderProfile(id) {
     saveProfile(person.id, { positions: POSITIONS.filter((item) => next.has(item)) });
   };
   bindPayFilter($('#profile'));
+  bindPartidos(person);
   $('#btn-add-note').onclick = () => openNoteForm(person);
   $('#notes').onclick = (e) => {
     const edit = e.target.closest('[data-note-edit]');
@@ -966,6 +1016,102 @@ function renderProfile(id) {
     if (!note || !confirm('¿Borrar esta nota?')) return;
     saveProfile(person.id, { notes: (person.notes || []).filter((n) => n.id !== note.id) });
   };
+}
+
+function partidosSection(person) {
+  const upcoming = upcomingMatches(app.matches);
+  if (!person.phone) {
+    return `<section class="profile-block" id="partidos"><h2>Partidos</h2><p class="hint">Sin número no se puede anotar en varios partidos.</p></section>`;
+  }
+  const rows = upcoming.map((match) => {
+    const state = matchSignupState({ phone: person.phone, match, players: app.players });
+    const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
+    const locked = state.existing ? 'checked disabled' : '';
+    const remove = state.existing && state.playerId
+      ? `<button type="button" class="btn" data-signup-remove="${esc(state.playerId)}">Quitar</button>`
+      : '';
+    return `<li class="slot signup-row" data-match="${esc(match.id)}">
+      <label class="signup-check"><input type="checkbox" data-signup="${esc(match.id)}" ${locked} aria-label="${esc(when)}"></label>
+      <button type="button" class="who" data-open-match="${esc(match.id)}">
+        <div class="name">${esc(capitalize(labelDate(match.date)))}</div>
+        <div class="sub"><span>${esc(match.time || '--:--')} hs</span><span class="tag">${esc(state.label)}</span></div>
+      </button>
+      ${remove}
+    </li>`;
+  });
+  const empty = rows.length ? '' : '<p class="empty-wait" id="signup-empty">No hay partidos próximos.</p>';
+  return `<section class="profile-block" id="partidos">
+    <h2>Partidos</h2>
+    <p class="hint">Elegí los próximos y anotalo de una. Si el partido está completo, va a la lista de espera.</p>
+    <ul class="slots" id="signup-list">${rows.join('')}</ul>
+    ${empty}
+    <button type="button" class="btn primary block" id="btn-signup" disabled>Anotar en 0 partidos</button>
+  </section>`;
+}
+
+function signupButtonLabel(count) {
+  if (count === 1) return 'Anotar en 1 partido';
+  return `Anotar en ${count} partidos`;
+}
+
+function bindPartidos(person) {
+  const list = $('#signup-list');
+  const button = $('#btn-signup');
+  if (!list || !button || !person.phone) return;
+  const fresh = () => [...list.querySelectorAll('input[data-signup]:not(:disabled):checked')];
+  const paint = () => {
+    const n = fresh().length;
+    button.disabled = n === 0;
+    button.textContent = signupButtonLabel(n);
+  };
+  list.addEventListener('change', paint);
+  list.addEventListener('click', (event) => {
+    const open = event.target.closest('[data-open-match]');
+    if (open) {
+      location.hash = `#/partido/${encodeURIComponent(open.dataset.openMatch)}`;
+      return;
+    }
+    const remove = event.target.closest('[data-signup-remove]');
+    if (!remove) return;
+    const player = app.players.find((item) => item.id === remove.dataset.signupRemove);
+    const match = player ? matchById(player.matchId) : null;
+    if (!player || !match) return;
+    const fromMain = player.waiting !== true;
+    const top = waitingOf(match.id).find((item) => item.id !== player.id);
+    if (!confirm(`¿Quitar a ${person.name} de ${labelDate(match.date)} ${match.time || ''} hs?`)) return;
+    const promote = fromMain && top && playersOf(match.id).length - 1 < (match.capacity || CAPACITY)
+      && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
+    const job = Promise.resolve(app.store.deletePlayer(player.id)).then(() => (promote ? app.store.promoteFromWaiting(top.id) : null));
+    run(job, promote ? `${top.name} pasó al partido` : `${person.name} quitado`);
+  });
+  button.onclick = () => {
+    const chosen = fresh().map((input) => {
+      const match = matchById(input.dataset.signup);
+      const state = matchSignupState({ phone: person.phone, match, players: app.players });
+      return { match, state };
+    }).filter((row) => row.match && !row.state.existing);
+    if (!chosen.length) return;
+    const waits = chosen.filter((row) => row.state.willWait);
+    if (waits.length) {
+      const which = waits.map((row) => `${labelDate(row.match.date)} ${row.match.time || ''} hs`).join(', ');
+      if (!confirm(`En ${which} no hay lugar: va a quedar en la lista de espera. ¿Seguís?`)) return;
+    }
+    button.disabled = true;
+    const msg = waits.length === chosen.length
+      ? (chosen.length === 1 ? `${person.name} quedó en la lista de espera` : `${person.name} quedó en la espera de ${chosen.length} partidos`)
+      : waits.length
+        ? `${person.name} anotado · ${waits.length} en espera`
+        : (chosen.length === 1 ? `${person.name} anotado` : `${person.name} anotado en ${chosen.length} partidos`);
+    run((async () => {
+      for (const row of chosen) {
+        const again = matchSignupState({ phone: person.phone, match: row.match, players: app.players });
+        if (again.existing) continue;
+        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone }, app.who, { waiting: again.willWait });
+      }
+      await rememberInRoster(person.name, person.phone);
+    })(), msg);
+  };
+  paint();
 }
 
 function openNoteForm(person, note) {
@@ -1084,15 +1230,30 @@ function openPlayerForm(m, p, opts = {}) {
   };
 }
 /* Pago del jugador */
+function moneyBox(amount, known) {
+  if (!known) return '';
+  const text = String(amount);
+  return text.replace('.', ',');
+}
+function readMoney(raw) {
+  if (String(raw ?? '').trim() === '') return { ok: true, amount: 0 };
+  return parseAmount(raw);
+}
 function openPaymentForm(m, p) {
   if (!p) return;
   let paid = p.paid === true ? true : p.paid === false ? false : null;
-  let method = p.method === 'efectivo' || p.method === 'transferencia' ? p.method : null;
-  const amountValue = p.paid === true && p.amount != null ? String(p.amount).replace('.', ',') : '';
+  const parts = paymentParts(p);
+  const known = p.paid === true || p.paid === false || parts.pending > 0 || parts.split;
+  const receivedNote = p.transferReceivedAt
+    ? `<p class="hint">La transferencia se marcó como cobrada${p.transferReceivedBy ? ` · ${esc(p.transferReceivedBy)}` : ''}.</p>`
+    : '';
   openSheet(`
     <form id="pay-form" novalidate>
       <h3>Pago</h3>
       <p class="hint">${esc(p.name)} · ${esc(fmtWhen(m))}</p>
+      ${parts.pending > 0 ? `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(parts.pending))}</p>
+      <button type="button" class="btn block" id="btn-receive-pending">Marcar transferencia como cobrada</button>` : ''}
+      ${receivedNote}
       <div class="field">
         <span>¿Pagó?</span>
         <div class="seg">
@@ -1101,17 +1262,16 @@ function openPaymentForm(m, p) {
         </div>
       </div>
       <div id="pay-details">
-        <label class="field"><span>Monto (pesos)</span>
-          <input name="amount" inputmode="decimal" autocomplete="off" placeholder="Ej: 5000" value="${esc(amountValue)}">
-          <div class="small muted">Podés escribir 5000 o 5.000.</div>
+        <label class="field"><span>Efectivo</span>
+          <input name="cash" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(moneyBox(parts.cash, known))}">
         </label>
-        <div class="field">
-          <span>Medio</span>
-          <div class="seg">
-            <button type="button" class="btn" data-method="efectivo">Efectivo</button>
-            <button type="button" class="btn" data-method="transferencia">Transferencia</button>
-          </div>
-        </div>
+        <label class="field"><span>Transferencia</span>
+          <input name="transfer" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(moneyBox(parts.transfer, known))}">
+        </label>
+        <label class="field"><span>Transfiere después</span>
+          <input name="pending" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(moneyBox(parts.pending, known))}">
+          <div class="small muted">Lo cobrado es efectivo + transferencia. Transfiere después no entra en Recaudado hasta que lo marques como cobrado. Podés escribir 5000 o 5.000. Vacío es 0.</div>
+        </label>
         <div class="field" id="pay-receiver">
           <span>¿Quién cobró?</span>
           <div class="chips" id="pay-who"></div>
@@ -1139,8 +1299,6 @@ function openPaymentForm(m, p) {
   const sync = () => {
     sheet.querySelector('[data-paid="si"]').classList.toggle('primary', paid === true);
     sheet.querySelector('[data-paid="no"]').classList.toggle('primary', paid === false);
-    sheet.querySelector('[data-method="efectivo"]').classList.toggle('primary', method === 'efectivo');
-    sheet.querySelector('[data-method="transferencia"]').classList.toggle('primary', method === 'transferencia');
     details.hidden = paid !== true;
     if (paid === true) paintReceiver();
   };
@@ -1148,28 +1306,32 @@ function openPaymentForm(m, p) {
     paid = b.dataset.paid === 'si';
     $('#pay-err').textContent = '';
     sync();
-    if (paid) setTimeout(() => form.amount.focus(), 30);
+    if (paid) setTimeout(() => form.cash.focus(), 30);
   }));
-  sheet.querySelectorAll('[data-method]').forEach((b) => (b.onclick = () => {
-    method = b.dataset.method;
-    $('#pay-err').textContent = '';
-    sync();
-  }));
+  const receive = $('#btn-receive-pending');
+  if (receive) receive.onclick = () => {
+    closeSheet();
+    run(app.store.markTransferReceived(p.id, app.who), 'Transferencia marcada como cobrada', PAY_RULES_MSG);
+  };
   sync();
   form.onsubmit = (e) => {
     e.preventDefault();
     if (paid !== true && paid !== false) { $('#pay-err').textContent = 'Indicá si pagó.'; return; }
-    let amount = null;
-    let methodVal = null;
-    if (paid) {
-      const parsed = parseAmount(form.amount.value);
-      if (!parsed.ok) { $('#pay-err').textContent = parsed.error; return; }
-      if (method !== 'efectivo' && method !== 'transferencia') { $('#pay-err').textContent = 'Elegí Efectivo o Transferencia.'; return; }
-      amount = parsed.amount;
-      methodVal = method;
+    if (!paid) {
+      closeSheet();
+      run(app.store.setPayment(p.id, { paid: false, split: true }, app.who), 'Marcado como no pagó', PAY_RULES_MSG);
+      return;
     }
+    const cash = readMoney(form.cash.value);
+    if (!cash.ok) { $('#pay-err').textContent = cash.error; return; }
+    const transfer = readMoney(form.transfer.value);
+    if (!transfer.ok) { $('#pay-err').textContent = transfer.error; return; }
+    const pending = readMoney(form.pending.value);
+    if (!pending.ok) { $('#pay-err').textContent = pending.error; return; }
+    if (cash.amount + transfer.amount + pending.amount <= 0) { $('#pay-err').textContent = 'Poné un monto.'; return; }
+    const rec = { paid: true, split: true, cash: cash.amount, transfer: transfer.amount, pendingTransfer: pending.amount, receivedBy: receiver || null };
     closeSheet();
-    run(app.store.setPayment(p.id, { paid, amount, method: methodVal, receivedBy: paid ? (receiver || null) : null }, app.who), paid ? 'Pago guardado' : 'Marcado como no pagó');
+    run(app.store.setPayment(p.id, rec, app.who), 'Pago guardado', PAY_RULES_MSG);
   };
 }
 
