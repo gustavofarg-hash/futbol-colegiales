@@ -546,6 +546,13 @@ check('El filtro del perfil deja el cobro y las anotaciones de Martín', (await 
 await page.click('#btn-back');
 await page.waitForSelector('#btn-roster');
 
+await page.evaluate(() => { location.hash = '#/usuarios'; });
+await page.waitForFunction(() => (document.body.innerText || '').includes('Solo el administrador puede crear o desactivar organizadores'));
+check('Martín no crea ni borra organizadores', (await page.locator('#user-form').count()) === 0 && (await page.locator('[data-user-del]').count()) === 0);
+await page.click('#btn-back');
+await page.waitForSelector('#btn-add-match');
+check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-match'));
+
 await page.click('#btn-settings');
 check('Un organizador no administra usuarios', (await page.locator('#set-users').count()) === 0);
 await page.click('#set-logout');

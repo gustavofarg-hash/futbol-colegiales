@@ -776,7 +776,7 @@ function ledgerSection(phone) {
 
 function renderUsers() {
   if (app.role !== 'admin') {
-    $('#view').innerHTML = `<div class="empty"><div class="big">🔒</div><p><b>Solo el administrador puede gestionar usuarios.</b></p></div>`;
+    $('#view').innerHTML = `<div class="empty"><div class="big">🔒</div><p><b>Solo el administrador puede crear o desactivar organizadores.</b></p><p class="small">Los partidos, los jugadores, los pagos y el plantel los pueden editar los dos.</p></div>`;
     return;
   }
   const rows = (app.users || []).map((user) => `
@@ -790,7 +790,7 @@ function renderUsers() {
     </li>`).join('');
   $('#view').innerHTML = `
     <h2 class="section">Usuarios</h2>
-    <p class="hint roster-lead">El administrador crea las cuentas. Después, cada uno cambia su contraseña con «Olvidé mi contraseña».</p>
+    <p class="hint roster-lead">Esta es la única diferencia con los organizadores: crear, desactivar o borrar sus cuentas. El rol no se cambia. En los partidos pueden lo mismo.</p>
     <ul class="slots" id="user-list">${rows || '<li class="empty-wait">No hay usuarios.</li>'}</ul>
     <form id="user-form" class="user-form" novalidate>
       <h2 class="section">Nuevo organizador</h2>

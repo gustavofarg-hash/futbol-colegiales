@@ -7,6 +7,11 @@ rules_version = '2';
 // Orden seguro: activar Email/Password, poner el mail, crear la cuenta de
 // admin (con las reglas viejas todavía publicadas, o con estas: el alta del
 // admin sigue permitida) y recién ahí publicar. Publicar esto no borra datos.
+//
+// La única diferencia entre admin y organizador es la colección users:
+// el admin crea, desactiva (active) y borra organizadores. Nadie cambia el rol.
+// Partidos, jugadores, plantel, perfiles y confirmaciones: los dos igual.
+// Sin sesión no hay escrituras, salvo confirmed/confirmedAt con el token.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -178,12 +183,15 @@ service cloud.firestore {
           && validUser(request.resource.data)
           && request.resource.data.role == 'organizer'
           && request.resource.data.active == true;
+      // Desactivar o volver a activar. El rol, el mail y el nombre quedan iguales.
       allow update: if isAdmin()
           && userId != request.auth.uid
           && resource.data.role == 'organizer'
           && validUser(request.resource.data)
           && request.resource.data.role == 'organizer'
-          && request.resource.data.email == resource.data.email;
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.name == resource.data.name
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active']);
       allow delete: if isAdmin()
           && userId != request.auth.uid
           && resource.data.role == 'organizer';

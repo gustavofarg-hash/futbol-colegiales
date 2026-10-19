@@ -135,9 +135,9 @@ Después de publicar, abrí la app una vez con la sesión iniciada. Así los jug
 
 ### Qué puede hacer cada uno
 
-- **Admin y organizadores activos:** partidos, jugadores, pagos, espera, plantel, perfiles, organizadores. Los dos ven todo. **Mis** es solo un filtro.
-- **Admin, además:** crear, desactivar y borrar organizadores.
-- **Sin cuenta:** nada, salvo `confirmar.html`. Con el token del link puede leer solo la ficha `confirmations/{token}` (nombre, fecha, hora, nota, su respuesta; sin teléfonos) y escribir únicamente `confirmed` y `confirmedAt` de esa ficha.
+- **La única diferencia** es la colección `users`. El admin crea organizadores, los desactiva (`active: false`) y borra el documento. Un organizador no puede crear ni borrar cuentas, ni cambiar roles. El alta deja el rol en `organizer`; la regla de update solo deja tocar `active`.
+- **En todo lo demás son iguales:** partidos, altas y bajas de jugadores, pagos, lista de espera, plantel, perfiles y las fichas de confirmación. Los dos ven todos los datos. **Mis** es solo un filtro de la pantalla.
+- **Sin cuenta:** no se modifica nada, salvo `confirmar.html`. Con el token del link puede leer solo la ficha `confirmations/{token}` (nombre, fecha, hora, nota, su respuesta; sin teléfonos) y escribir únicamente `confirmed` y `confirmedAt` de esa ficha.
 
 ## Modelo de datos (Firestore)
 

@@ -442,8 +442,9 @@ test('demo: login, alta de organizador, desactivar y borrar', () => {
   assert.equal(admin.session.role, 'admin');
   assert.equal(admin.session.name, 'Gustavo');
   assert.equal(admin.session.password, undefined);
-  const created = createOrganizerDemo(db, admin.session, { name: 'Lucía', email: 'Lucia@demo.local', password: 'secreto' });
+  const created = createOrganizerDemo(db, admin.session, { name: 'Lucía', email: 'Lucia@demo.local', password: 'secreto', role: 'admin' });
   assert.equal(created.ok, true);
+  assert.equal(db.users[created.uid].role, 'organizer');
   assert.equal(createOrganizerDemo(db, admin.session, { name: 'Otra', email: 'lucia@demo.local', password: 'secreto2' }).ok, false);
   const martin = loginDemo(db, 'martin@demo.local', 'demo-martin').session;
   assert.match(createOrganizerDemo(db, martin, { name: 'X', email: 'x@demo.local', password: 'secreto' }).error, /administrador/);
