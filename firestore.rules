@@ -1,8 +1,8 @@
 rules_version = '2';
 
-// Acceso por cuenta. El mail de abajo tiene que ser EL MISMO que ADMIN_EMAIL
-// en config.js. Mientras diga TU_EMAIL_ADMIN, nadie puede crear al admin:
-// poné el mail de Gustavo en los dos archivos y volvé a publicar.
+// Acceso por cuenta. El mail de abajo es el mismo que ADMIN_EMAIL en
+// config.js, en minúsculas. La regla lo compara sin distinguir mayúsculas.
+// Si volviera a decir TU_EMAIL_ADMIN, nadie podría crear al admin.
 //
 // Orden seguro: activar Email/Password, poner el mail, crear la cuenta de
 // admin (con las reglas viejas todavía publicadas, o con estas: el alta del
@@ -16,7 +16,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function adminEmail() {
-      return 'TU_EMAIL_ADMIN';
+      return 'gustavo.f.arg@gmail.com';
     }
     function signedIn() {
       return request.auth != null;

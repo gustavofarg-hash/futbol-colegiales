@@ -19,10 +19,9 @@ export const firebaseConfig = {
 // OJO: es solo una barrera de la interfaz, no protege la base de datos.
 export const ACCESS_CODE = "";
 
-// Mail del administrador. Tiene que ser EL MISMO texto que ADMIN_EMAIL en
-// firestore.rules. Mientras diga TU_EMAIL_ADMIN nadie puede crear la cuenta
-// de admin. Reemplazalo por el mail de Gustavo antes de publicar las reglas.
-export const ADMIN_EMAIL = "TU_EMAIL_ADMIN";
+// Mail del administrador. El mismo texto, en minúsculas, que adminEmail() en
+// firestore.rules. La comparación no distingue mayúsculas.
+export const ADMIN_EMAIL = "gustavo.f.arg@gmail.com";
 
 // Nombres viejos. Las cuentas nuevas salen de la colección users.
 export const ORGANIZERS = ["Gustavo", "Martín"];
