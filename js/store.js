@@ -22,6 +22,7 @@
 //    paid: bool                         (opcional)
 //    amount: number|null                (pesos; solo si paid)
 //    method: "efectivo"|"transferencia"|null
+//    receivedBy: string|null           (quién cobró; null o ausente = "Sin especificar")
 //    paidUpdatedBy, paidUpdatedAt
 //    waiting: bool                      (true = lista de espera)
 //    waitOrder: number|null             (menor = más prioridad; null si es titular)
@@ -37,17 +38,26 @@
 //    notes: [{ id, matchId, matchDate, matchTime, text, createdAt, updatedAt }]
 //    Misma persona = mismo phone. La colección es nueva: las reglas publicadas
 //    la niegan hasta que se republican.
+//  organizers/{slug}
+//    name, createdAt
+//    Id determinístico (gustavo, martin, lucia). Si la colección está vacía se
+//    siembran los de config.js. Las reglas publicadas la niegan hasta republicar;
+//    mientras tanto el selector sigue mostrando Gustavo y Martín.
 //  El pago y la espera viven en el mismo documento del jugador. Las reglas
-//  publicadas (validPlayer) permiten campos extra, así que no hace falta republicarlas.
+//  publicadas (validPlayer) permiten campos extra, así que receivedBy se puede
+//  escribir sin republicar. La colección organizers sí hay que republicarla.
 //
 // matchId determinístico: "YYYY-MM-DD_HHMM" (si ya existe se agrega un sufijo),
 // así un importador puede hacer upsert sin duplicar.
-import { firebaseConfig } from '../config.js';
+import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { addDays, todayISO, toEpoch } from './dates.js';
 import { paymentRecord } from './payments.js';
 import { nextWaitOrder } from './waiting.js';
 import { newConfirmToken } from './reminders.js';
 import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
+import {
+  ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
+} from './organizers.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
@@ -88,10 +98,20 @@ class LocalStore {
   constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); }
   _load() {
     try {
-      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {} };
-      db.matches ||= {}; db.players ||= {}; db.roster ||= {};
+      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {} };
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {};
       return db;
-    } catch { return { matches: {}, players: {}, roster: {} }; }
+    } catch { return { matches: {}, players: {}, roster: {}, organizers: {} }; }
+  }
+  _seedOrganizers(db) {
+    if (Object.keys(db.organizers).length) return false;
+    const now = Date.now();
+    for (const raw of ORGANIZERS) {
+      const clean = cleanOrganizerName(raw);
+      if (!clean.ok) continue;
+      db.organizers[organizerSlug(clean.name)] = { name: clean.name, createdAt: now };
+    }
+    return Object.keys(db.organizers).length > 0;
   }
   _save(db) { localStorage.setItem(this.key, JSON.stringify(db)); this._emit(); }
   _emit() {
@@ -99,10 +119,13 @@ class LocalStore {
     const matches = Object.entries(db.matches).map(([id, m]) => ({ id, ...m }));
     const players = Object.entries(db.players).map(([id, p]) => ({ id, ...p }));
     const roster = Object.entries(db.roster).map(([id, r]) => ({ id, ...r }));
-    this.listeners.forEach((fn) => fn({ matches, players, roster, rosterError: null }));
+    const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
+    this.listeners.forEach((fn) => fn({ matches, players, roster, rosterError: null, organizers, organizersError: null }));
   }
   async init() {
-    window.addEventListener('storage', (e) => { if (e.key === this.key) this._emit(); });
+    if (typeof window !== 'undefined') window.addEventListener('storage', (e) => { if (e.key === this.key) this._emit(); });
+    const db = this._load();
+    if (this._seedOrganizers(db)) localStorage.setItem(this.key, JSON.stringify(db));
   }
   subscribe(fn) { this.listeners.add(fn); setTimeout(() => this._emit()); return () => this.listeners.delete(fn); }
   async addMatch(data, who) {
@@ -213,12 +236,32 @@ class LocalStore {
     this._save(db);
   }
   async deleteRoster(id) { const db = this._load(); delete db.roster[id]; this._save(db); }
-  async clearAll() { localStorage.removeItem(this.key); this._emit(); }
+  async addOrganizer(name) {
+    const clean = cleanOrganizerName(name);
+    if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-organizer' });
+    const db = this._load();
+    if (Object.values(db.organizers).some((item) => sameOrganizer(item.name, clean.name))) {
+      throw Object.assign(new Error(`${clean.name} ya está en la lista`), { code: 'organizer-duplicate' });
+    }
+    let id = organizerSlug(clean.name);
+    let n = 2;
+    while (db.organizers[id] && !sameOrganizer(db.organizers[id].name, clean.name)) id = `${organizerSlug(clean.name)}-${n++}`;
+    db.organizers[id] = { name: clean.name, createdAt: Date.now() };
+    this._save(db);
+    return id;
+  }
+  async clearAll() {
+    localStorage.removeItem(this.key);
+    const db = this._load();
+    this._seedOrganizers(db);
+    localStorage.setItem(this.key, JSON.stringify(db));
+    this._emit();
+  }
 }
 
 /* ───────────── Firebase / Firestore ───────────── */
 class FirebaseStore {
-  constructor() { this.mode = 'firebase'; this.listeners = new Set(); this.state = { matches: [], players: [], roster: [], rosterError: null }; }
+  constructor() { this.mode = 'firebase'; this.listeners = new Set(); this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null }; this._organizerSeedTried = false; }
   async init(onError) {
     const [{ initializeApp }, fs] = await Promise.all([
       import(`${FB}/firebase-app.js`),
@@ -260,6 +303,34 @@ class FirebaseStore {
       this.state.rosterError = isRosterDenied(e) ? ROSTER_DENIED_READ : ('No se pudo leer Jugadores: ' + (e?.message || e?.code || e));
       this._emit();
     });
+    onSnapshot(collection(this.db, 'organizers'), (snap) => {
+      this.state.organizers = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this.state.organizersError = null;
+      this._emit();
+      if (snap.empty && !snap.metadata.fromCache && !this._organizerSeedTried) {
+        this._organizerSeedTried = true;
+        this._seedOrganizers().catch((e) => {
+          console.error(e);
+          this.state.organizersError = isOrganizerDenied(e) ? ORGANIZERS_DENIED_WRITE : ('No se pudo guardar la lista de organizadores: ' + (e?.message || e?.code || e));
+          this._emit();
+        });
+      }
+    }, (e) => {
+      console.error(e);
+      this.state.organizersError = isOrganizerDenied(e) ? ORGANIZERS_DENIED_READ : ('No se pudo leer la lista de organizadores: ' + (e?.message || e?.code || e));
+      this._emit();
+    });
+  }
+  async _seedOrganizers() {
+    const { doc, getDoc, setDoc } = this.fs;
+    const now = Date.now();
+    for (const raw of ORGANIZERS) {
+      const clean = cleanOrganizerName(raw);
+      if (!clean.ok) continue;
+      const ref = doc(this.db, 'organizers', organizerSlug(clean.name));
+      const cur = await getDoc(ref);
+      if (!cur.exists()) await setDoc(ref, { name: clean.name, createdAt: now });
+    }
   }
   _emit() { this.listeners.forEach((fn) => fn({ ...this.state })); }
   subscribe(fn) { this.listeners.add(fn); fn({ ...this.state }); return () => this.listeners.delete(fn); }
@@ -373,6 +444,17 @@ class FirebaseStore {
     await updateDoc(doc(this.db, 'roster', id), next);
   }
   async deleteRoster(id) { const { doc, deleteDoc } = this.fs; await deleteDoc(doc(this.db, 'roster', id)); }
+  async addOrganizer(name) {
+    const clean = cleanOrganizerName(name);
+    if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-organizer' });
+    if ((this.state.organizers || []).some((item) => sameOrganizer(item.name, clean.name))) {
+      throw Object.assign(new Error(`${clean.name} ya está en la lista`), { code: 'organizer-duplicate' });
+    }
+    const id = organizerSlug(clean.name);
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'organizers', id), { name: clean.name, createdAt: Date.now() });
+    return id;
+  }
 }
 
 /** Store de localStorage, sin Firebase. Lo usa el modo demo y las pruebas. */

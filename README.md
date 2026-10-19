@@ -8,8 +8,8 @@ App web (PWA, se instala en el celular) para organizar los partidos de **fútbol
 - **Agregar partido:** fecha, hora y nota opcional.
 - **Importar desde texto:** pegás un mensaje del grupo de WhatsApp y la app detecta expresiones como `jueves 22/10 21hs`, `miércoles 20:00`, `mañana 19 hs`, `sábado 24 de octubre a las 18`, `hoy a las 21 y media`, `jueves 20 y 21hs`. Muestra una **vista previa** para corregir y confirmar. Si pegás el mensaje con encabezado de WhatsApp (`[19/10/26, 12:40] Martín: …`), usa esa fecha como referencia para “mañana”, “jueves”, etc.
 - **Detalle del partido:** 14 lugares. Agregás jugador con nombre y WhatsApp (el número se normaliza: `11 1234-5678` → `5491112345678`; acepta `011 15…`, `15…`, `+54 9…`, otras características como `0351 15…`). Botón de **WhatsApp** por jugador que abre `https://wa.me/<número>?text=…` con un mensaje con día, fecha y hora. Editar y quitar jugadores. **Copiar / compartir** la lista como texto.
-- **Pagos:** en cada jugador, el botón 💵 abre un formulario para marcar si pagó, el monto en pesos y si fue Efectivo o Transferencia. En la fila se ve en verde (`Pagó $5.000 · Transferencia`) o atenuado (`No pagó`). Arriba del partido aparece el total (`Recaudado: $45.000 · 9/14 pagaron`). Eso también entra en el texto de copiar/compartir. Se guarda en el mismo jugador y se sincroniza en tiempo real.
-- Cada jugador muestra **quién lo anotó** (Gustavo o Martín). La primera vez la app pregunta **“¿Quién sos?”**; se cambia en ⚙️ Ajustes.
+- **Pagos:** en cada jugador, el botón 💵 abre un formulario para marcar si pagó, el monto en pesos, si fue Efectivo o Transferencia, y **quién cobró** (por defecto, el organizador que está usando el teléfono). En la fila se ve en verde (`Pagó $5.000 · Transferencia · cobró Martín`) o atenuado (`No pagó`). Arriba del partido aparece el total (`Recaudado: $45.000 · 9/14 pagaron`). Eso también entra en el texto de copiar/compartir. Se guarda en el mismo jugador y se sincroniza en tiempo real. Un pago viejo, sin cobrador, cuenta como **Sin especificar**.
+- Cada jugador muestra **quién lo anotó**. La primera vez la app pregunta **“¿Quién sos?”**; se cambia en ⚙️ Ajustes. Los organizadores son una lista (Gustavo, Martín y los que se agreguen ahí) guardada en Firestore. El perfil y la pantalla **Pagos** muestran el total, el monto por mes (`Oct 2026: $10.000`) y cuánto le pagó cada jugador a cada organizador, más cuántas veces lo anotó cada uno.
 - **Tiempo real** con Firebase Firestore: lo que carga uno lo ve el otro al instante. Funciona también sin conexión (se sincroniza al volver).
 - **Modo demo:** si `config.js` no tiene la configuración de Firebase, la app guarda todo solo en el teléfono y muestra el aviso *“Modo demo: los datos no se comparten todavía”*.
 - Interfaz en castellano rioplatense, tema verde, modo oscuro automático según el teléfono. Zona horaria: America/Buenos_Aires.
@@ -27,7 +27,9 @@ js/store.js           Datos: Firestore en tiempo real o localStorage (modo demo)
 js/parser.js          Lector de fechas/horas en español
 js/phone.js           Normalización de números argentinos y links wa.me
 js/dates.js           Fechas en hora de Buenos Aires
-js/payments.js        Pagos: monto, medio y textos
+js/payments.js        Pagos: monto, medio, quién cobró y textos
+js/organizers.js      Lista de organizadores
+js/ledger.js          Totales por mes, por jugador y por organizador
 js/waiting.js         Orden de la lista de espera
 manifest.webmanifest  PWA (nombre, íconos, colores)
 sw.js                 Service worker (funciona offline)
@@ -145,13 +147,14 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `matchDate` | copia de `date` (para consultar por fecha) |
 | `name` | string |
 | `phone` | solo dígitos, formato wa.me (ej. `5491112345678`) o vacío |
-| `addedBy` | `"Gustavo"` \| `"Martín"` |
+| `addedBy` | quién lo anotó (Gustavo, Martín u otro de la lista) |
 | `createdAt`, `updatedAt` | número (epoch ms) |
 | `paid` | bool, opcional — si pagó |
 | `amount` | número o null — pesos (ARS) |
 | `method` | `"efectivo"` \| `"transferencia"` \| null |
 | `paidUpdatedBy` | quién cargó el pago |
 | `paidUpdatedAt` | número (epoch ms) |
+| `receivedBy` | quién cobró, o null / ausente = `Sin especificar`. Al marcar «pagó» arranca en el organizador actual; si el pago ya estaba y no tenía cobrador, queda sin especificar hasta que se elija uno |
 | `waiting` | bool — `true` si está en la lista de espera |
 | `waitOrder` | número o null — menor = más arriba en la espera. Los nuevos van al final |
 | `rosterAt` | número o null — cuándo pasó a la lista principal |
@@ -232,7 +235,21 @@ Misma persona = mismo `phone`. Al anotar en un partido (o en la espera) con What
 
 Tocá un jugador en un partido o en Jugadores para abrir el perfil (el mismo teléfono). Ahí se editan el nivel, las posiciones y las notas de un partido. «Jugó N veces» y «Mayormente jueves · 21:00» salen solos de los partidos ya pasados en la lista principal (la espera y los que todavía no se jugaron no cuentan).
 
-**Hay que republicar las reglas.** La colección `roster` no existe en las reglas que están publicadas hoy (el cierre las niega). Sin republicar `firestore.rules`, Jugadores y el perfil no se pueden leer ni guardar en Firebase. La app lo dice en español y el partido igual se anota. En modo demo no hace falta. Si ya se publicaron unas reglas de `roster` anteriores, hay que publicarlas de nuevo para que cubran `level`, `positions` y `notes`.
+**Colección `organizers`** — la lista de «¿Quién sos?», de «Agregó» y de «¿Quién cobró?». Id estable según el nombre (`gustavo`, `martin`, `lucia`).
+
+| campo | tipo |
+|---|---|
+| `name` | string, 1 a 40 |
+| `createdAt` | número (epoch ms) |
+
+Si la colección está vacía, la app crea Gustavo y Martín. En Ajustes se agregan más (por ejemplo Lucía). No se borran desde la app, para no dejar el selector vacío. Un nombre repetido, aunque cambie mayúscula o acento, no se vuelve a guardar.
+
+**Hay que republicar las reglas.** Las colecciones `roster` y `organizers` no existen en las reglas que están publicadas hoy (el cierre las niega). Sin republicar `firestore.rules`:
+
+- Jugadores y el perfil no se pueden leer ni guardar en Firebase. La app lo dice en español y el partido igual se anota.
+- La lista de organizadores tampoco se guarda. El selector sigue mostrando Gustavo y Martín, y el pago (incluido `receivedBy`) sí se guarda, porque es un campo más del jugador y las reglas publicadas dejan pasar campos extra.
+
+En modo demo no hace falta republicar. Si ya se publicaron unas reglas de `roster` anteriores, hay que publicarlas de nuevo: tienen que cubrir `level`, `positions`, `notes` y, ahora, la colección `organizers` y el tipo de `receivedBy`.
 
 Un importador automático solo tiene que hacer `set` en `matches/<AAAA-MM-DD_HHMM>` con `source: "whatsapp"` y `sourceRef`; la app lo muestra al instante. El parser de texto (`js/parser.js`, función `parseMatchesFromText`) es JavaScript puro y se puede reutilizar desde Node.
 

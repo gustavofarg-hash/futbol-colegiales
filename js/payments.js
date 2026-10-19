@@ -5,6 +5,7 @@
 //   paid: bool
 //   amount: number | null          (pesos)
 //   method: "efectivo" | "transferencia" | null
+//   receivedBy: string | null       (quién cobró; null = sin especificar)
 //   paidUpdatedBy: string
 //   paidUpdatedAt: number           (epoch ms)
 
@@ -59,7 +60,9 @@ export function paymentStatusText(player) {
   const amount = player.amount != null && player.amount !== '' ? formatARS(player.amount) : '';
   const method = methodLabel(player.method);
   const head = ['Pagó', amount].filter(Boolean).join(' ');
-  return method ? `${head} · ${method}` : head;
+  const base = method ? `${head} · ${method}` : head;
+  const receiver = String(player.receivedBy || '').trim();
+  return receiver ? `${base} · cobró ${receiver}` : base;
 }
 
 /** "Recaudado: $45.000 · 9/14 pagaron", o "" si nadie tiene un pago cargado. */
@@ -75,11 +78,18 @@ export function collectedLine(players) {
  * Campos para mergear en el jugador. No toca nombre, teléfono ni partido.
  * { ok:true, patch } o { ok:false, error }.
  */
+function receiverValue(input) {
+  if (input?.receivedBy == null || String(input.receivedBy).trim() === '') return null;
+  const name = String(input.receivedBy).trim().replace(/\s+/g, ' ');
+  if (name.length > 40) return { error: 'El nombre de quien cobró es muy largo.' };
+  return name;
+}
+
 export function paymentRecord(input, who, now = Date.now()) {
   const paid = input?.paid;
   if (paid !== true && paid !== false) return { ok: false, error: 'Indicá si pagó.' };
   const stamp = { paidUpdatedBy: String(who || ''), paidUpdatedAt: now };
-  if (paid === false) return { ok: true, patch: { ...stamp, paid: false, amount: null, method: null } };
+  if (paid === false) return { ok: true, patch: { ...stamp, paid: false, amount: null, method: null, receivedBy: null } };
   const amount = input.amount;
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0 || amount > MAX_AMOUNT) {
     return { ok: false, error: 'Monto inválido.' };
@@ -87,5 +97,7 @@ export function paymentRecord(input, who, now = Date.now()) {
   if (input.method !== 'efectivo' && input.method !== 'transferencia') {
     return { ok: false, error: 'Elegí Efectivo o Transferencia.' };
   }
-  return { ok: true, patch: { ...stamp, paid: true, amount: roundARS(amount), method: input.method } };
+  const receivedBy = receiverValue(input);
+  if (receivedBy && typeof receivedBy === 'object') return { ok: false, error: receivedBy.error };
+  return { ok: true, patch: { ...stamp, paid: true, amount: roundARS(amount), method: input.method, receivedBy } };
 }

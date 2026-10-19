@@ -7,6 +7,8 @@ import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { rosterHit, searchRoster } from '../js/roster.js';
 import { playerRecord, playerStats, sortedNotes } from '../js/profile.js';
+import { monthLabel, paymentLedger, paymentsSummary, signupLedger } from '../js/ledger.js';
+import { organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { toEpoch } from '../js/dates.js';
 import {
   confirmPageUrl, confirmSummary, confirmationAllowed, matchesCrossingReminderWindow,
@@ -90,6 +92,7 @@ test('texto de pago y total del partido', () => {
   const pedro = { name: 'Pedro', paid: false, amount: null, method: null };
   const nico = { name: 'Nico' };
   assert.equal(paymentStatusText(juan), 'Pagó $5.000 · Transferencia');
+  assert.equal(paymentStatusText({ paid: true, amount: 5000, method: 'transferencia', receivedBy: 'Martín' }), 'Pagó $5.000 · Transferencia · cobró Martín');
   assert.equal(paymentStatusText({ paid: true, amount: 5000, method: 'efectivo' }), 'Pagó $5.000 · Efectivo');
   assert.equal(paymentStatusText(pedro), 'No pagó');
   assert.equal(paymentStatusText(nico), '');
@@ -103,12 +106,16 @@ test('paymentRecord arma los campos del jugador', () => {
   const now = 1_700_000_000_000;
   const ok = paymentRecord({ paid: true, amount: 5000, method: 'transferencia' }, 'Martín', now);
   assert.deepEqual(ok.patch, {
-    paid: true, amount: 5000, method: 'transferencia', paidUpdatedBy: 'Martín', paidUpdatedAt: now,
+    paid: true, amount: 5000, method: 'transferencia', receivedBy: null, paidUpdatedBy: 'Martín', paidUpdatedAt: now,
   });
+  const cobro = paymentRecord({ paid: true, amount: 5000, method: 'efectivo', receivedBy: ' Martín ' }, 'Gustavo', now);
+  assert.equal(cobro.patch.receivedBy, 'Martín');
+  assert.equal(paymentRecord({ paid: true, amount: 5000, method: 'efectivo', receivedBy: 'x'.repeat(41) }, 'Gustavo').ok, false);
   const no = paymentRecord({ paid: false }, 'Gustavo', now);
   assert.equal(no.patch.paid, false);
   assert.equal(no.patch.amount, null);
   assert.equal(no.patch.method, null);
+  assert.equal(no.patch.receivedBy, null);
   assert.equal(no.patch.paidUpdatedBy, 'Gustavo');
   assert.equal(paymentRecord({ paid: true, amount: 5000 }, 'Gustavo').ok, false);
   assert.equal(paymentRecord({ paid: true, amount: -1, method: 'efectivo' }, 'Gustavo').ok, false);
@@ -133,6 +140,7 @@ test('modo demo guarda el pago en el jugador y lo emite', async () => {
   assert.equal(row.amount, 5000);
   assert.equal(row.method, 'transferencia');
   assert.equal(row.paidUpdatedBy, 'Martín');
+  assert.equal(row.receivedBy, null);
   assert.equal(typeof row.paidUpdatedAt, 'number');
   assert.equal(row.name, 'Juan Pérez');
   assert.equal(row.matchId, mid);
@@ -143,11 +151,14 @@ test('modo demo guarda el pago en el jugador y lo emite', async () => {
   assert.equal(kept.method, 'transferencia');
   await assert.rejects(() => store.setPayment(pid, { paid: true, amount: 10, method: 'otro' }, 'Gustavo'), /Elegí/);
   assert.equal(JSON.parse(mem.get('f7c-demo-db')).players[pid].method, 'transferencia');
+  await store.setPayment(pid, { paid: true, amount: 5000, method: 'transferencia', receivedBy: 'Martín' }, 'Martín');
+  assert.equal(JSON.parse(mem.get('f7c-demo-db')).players[pid].receivedBy, 'Martín');
   await store.setPayment(pid, { paid: false }, 'Gustavo');
   const unpaid = JSON.parse(mem.get('f7c-demo-db')).players[pid];
   assert.equal(unpaid.paid, false);
   assert.equal(unpaid.amount, null);
   assert.equal(unpaid.method, null);
+  assert.equal(unpaid.receivedBy, null);
   assert.equal(unpaid.paidUpdatedBy, 'Gustavo');
 });
 
@@ -306,6 +317,11 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
   const record = playerRecord({ phone, players, matches });
   assert.equal(record.paidText, 'Pagó $10.000 en 2 partidos');
   assert.equal(record.confirmText, 'Confirmó 2 de 3');
+  const ledger = paymentLedger({ phone, players, matches });
+  assert.equal(ledger.totalText, 'Pagó $19.000');
+  assert.equal(ledger.months[0].text, 'Oct 2026: $19.000');
+  assert.deepEqual(ledger.byOrganizer.map((row) => row.name), ['Sin especificar']);
+  assert.equal(monthLabel('2026-10'), 'Oct 2026');
   const notes = sortedNotes([
     { id: 'a', createdAt: 1, text: 'vieja' },
     { id: 'b', createdAt: 5, text: 'nueva' },
@@ -329,4 +345,65 @@ test('plantel demo: no duplica por teléfono', async () => {
   assert.equal(JSON.parse(mem.get('f7c-test-roster')).roster[id].name, 'Ernesto P.');
   await store.deleteRoster(id);
   assert.equal(Object.keys(JSON.parse(mem.get('f7c-test-roster')).roster).length, 0);
+});
+
+test('pagos por organizador: mes, cobrador y veces anotado', () => {
+  const matches = [
+    { id: 'oct', date: '2026-10-22', time: '21:00' },
+    { id: 'nov', date: '2026-11-05', time: '21:00' },
+  ];
+  const phone = '5491112345678';
+  const players = [
+    { matchId: 'oct', phone, waiting: false, paid: true, amount: 5000, receivedBy: 'Martín', addedBy: 'Gustavo' },
+    { matchId: 'oct', phone, waiting: true, paid: true, amount: 5000, receivedBy: 'Gustavo', addedBy: 'Gustavo' },
+    { matchId: 'nov', phone, waiting: false, paid: true, amount: 4000, addedBy: 'Martín' },
+    { matchId: 'oct', phone: '5491100000000', paid: true, amount: 9000, receivedBy: 'Martín', addedBy: 'Lucía' },
+  ];
+  const all = paymentLedger({ phone, players, matches });
+  assert.equal(all.total, 14000);
+  assert.deepEqual(all.months.map((row) => row.text), ['Nov 2026: $4.000', 'Oct 2026: $10.000']);
+  assert.deepEqual(all.byOrganizer.map((row) => [row.name, row.amount]), [['Gustavo', 5000], ['Martín', 5000], ['Sin especificar', 4000]]);
+  const martin = paymentLedger({ phone, players, matches, organizer: 'martín' });
+  assert.equal(martin.totalText, 'Pagó $5.000');
+  assert.equal(martin.months.length, 1);
+  const blank = paymentLedger({ phone, players, matches, organizer: 'Sin especificar' });
+  assert.equal(blank.total, 4000);
+  const signups = signupLedger({ phone, players });
+  assert.deepEqual(signups.byOrganizer.map((row) => [row.name, row.count]), [['Gustavo', 2], ['Martín', 1]]);
+  assert.equal(signupLedger({ phone, players, organizer: 'Gustavo' }).total, 2);
+  const summary = paymentsSummary({
+    players,
+    roster: [{ name: 'Juan Pérez', phone }],
+    organizer: 'Martín',
+  });
+  const juan = summary.find((row) => row.name === 'Juan Pérez');
+  const otro = summary.find((row) => row.key === '5491100000000');
+  assert.equal(juan.paidTotal, 5000);
+  assert.equal(juan.signupTotal, 1);
+  assert.equal(otro.paid[0].amount, 9000);
+  assert.equal(otro.signups.length, 0);
+  assert.equal(organizerSlug('Lucía'), 'lucia');
+  assert.equal(sameOrganizer('Martín', 'martin'), true);
+  assert.deepEqual(organizerNames([]), ['Gustavo', 'Martín']);
+  assert.deepEqual(organizerNames([{ name: 'Lucía', createdAt: 2 }, { name: 'lucia', createdAt: 1 }]), ['lucia']);
+});
+
+test('organizadores demo: siembra Gustavo y Martín y no duplica', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-org';
+  await store.init();
+  const seeded = JSON.parse(mem.get('f7c-test-org')).organizers;
+  assert.equal(seeded.gustavo.name, 'Gustavo');
+  assert.equal(seeded.martin.name, 'Martín');
+  const id = await store.addOrganizer(' Lucía ');
+  assert.equal(id, 'lucia');
+  await assert.rejects(() => store.addOrganizer('lucia'), /lista/);
+  await assert.rejects(() => store.addOrganizer('LUCÍA'), /lista/);
+  assert.equal(JSON.parse(mem.get('f7c-test-org')).organizers.lucia.name, 'Lucía');
 });

@@ -6,7 +6,7 @@ import {
   todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { collectedLine, parseAmount, paymentStatusText } from './payments.js';
+import { collectedLine, formatARS, parseAmount, paymentStatusText } from './payments.js';
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
 import {
   confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -14,6 +14,10 @@ import {
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, noteWhen, playerRecord, playerStats, sortedNotes } from './profile.js';
+import {
+  ORGANIZERS_DENIED_WRITE, UNSPECIFIED, cleanOrganizerName, isOrganizerDenied, organizerNames, organizerTagClass, sameOrganizer,
+} from './organizers.js';
+import { hasUnspecified, paymentLedger, paymentsSummary, signupLedger } from './ledger.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -37,6 +41,9 @@ const app = {
   players: [],
   roster: [],
   rosterError: null,
+  organizers: [],
+  organizersError: null,
+  payFilter: '',
   who: localStorage.getItem(WHO_KEY),
   loaded: false,
 };
@@ -67,6 +74,39 @@ const playersOf = (matchId) => app.players
 const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
+function whoOptions() {
+  const names = organizerNames(app.organizers, ORGANIZERS);
+  if (app.who && !names.some((name) => sameOrganizer(name, app.who))) return [...names, app.who];
+  return names;
+}
+function receiverOptions(current) {
+  const names = [...whoOptions()];
+  if (current && !names.some((name) => sameOrganizer(name, current))) names.push(current);
+  return names;
+}
+function addedTag(player) {
+  return `<span class="tag ${organizerTagClass(player.addedBy)}">Agregó: ${esc(player.addedBy || '?')}</span>`;
+}
+function payFilterChips(phone) {
+  const names = whoOptions();
+  const showBlank = hasUnspecified({ players: app.players, phone });
+  const items = [{ value: '', label: 'Todos' }, ...names.map((name) => ({ value: name, label: name }))];
+  if (showBlank) items.push({ value: UNSPECIFIED, label: UNSPECIFIED });
+  return `<div class="chips" id="pay-filter">${items.map((item) => `<button type="button" class="btn chip ${app.payFilter === item.value ? 'on' : ''}" data-pay-filter="${esc(item.value)}">${esc(item.label)}</button>`).join('')}</div>`;
+}
+function bindPayFilter(root) {
+  const box = $('#pay-filter', root || document);
+  if (!box) return;
+  box.onclick = (e) => {
+    const btn = e.target.closest('[data-pay-filter]');
+    if (!btn || btn.dataset.payFilter === app.payFilter) return;
+    app.payFilter = btn.dataset.payFilter || '';
+    render();
+  };
+}
+function timesLabel(count) {
+  return `${count} ${count === 1 ? 'vez' : 'veces'}`;
+}
 function sortedMatches() {
   return [...app.matches].sort((a, b) => (a.startsAt ?? toEpoch(a.date, a.time)) - (b.startsAt ?? toEpoch(b.date, b.time)));
 }
@@ -77,6 +117,7 @@ function route() {
   const [name, id] = h.split('/');
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'jugadores') return { name: 'roster' };
+  if (name === 'pagos') return { name: 'pagos' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
 }
@@ -92,6 +133,7 @@ function render() {
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
+  else if (r.name === 'pagos') renderPagos();
   else renderHome();
 }
 
@@ -125,7 +167,10 @@ function renderHome() {
   const later = all.filter((m) => m.date > limit);
   $('#view').innerHTML = `
     ${reminderBanners(next)}
-    <a class="btn block roster-nav" id="btn-roster" href="#/jugadores">Jugadores${app.roster.length ? ` · ${app.roster.length}` : ''}</a>
+    <div class="home-nav">
+      <a class="btn roster-nav" id="btn-roster" href="#/jugadores">Jugadores${app.roster.length ? ` · ${app.roster.length}` : ''}</a>
+      <a class="btn roster-nav" id="btn-pagos" href="#/pagos">Pagos</a>
+    </div>
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
       <div class="empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
@@ -156,7 +201,6 @@ function renderMatch(id) {
       slots.push(`<li><button class="slot free" data-free="${i}"><span class="n">${i + 1}</span><span>Lugar libre · tocá para anotar</span></button></li>`);
       continue;
     }
-    const tagCls = p.addedBy === ORGANIZERS[0] ? 'g' : p.addedBy === ORGANIZERS[1] ? 'm' : '';
     const payText = paymentStatusText(p);
     const payCls = p.paid === true ? 'ok' : 'no';
     slots.push(`
@@ -165,7 +209,7 @@ function renderMatch(id) {
         <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
-            <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
+            ${addedTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payText ? `<div class="pay-line ${payCls}">${esc(payText)}</div>` : ''}
         </button>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>
@@ -272,7 +316,6 @@ function waitingSection(m, full) {
   const wait = waitingOf(m.id);
   const top = wait[0];
   const rows = wait.map((p, i) => {
-    const tagCls = p.addedBy === ORGANIZERS[0] ? 'g' : p.addedBy === ORGANIZERS[1] ? 'm' : '';
     const payText = paymentStatusText(p);
     const first = i === 0;
     const last = i === wait.length - 1;
@@ -286,7 +329,7 @@ function waitingSection(m, full) {
         <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
-            <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${confirmTag(p)}</div>
+            ${addedTag(p)}${confirmTag(p)}</div>
           ${payText ? `<div class="pay-line ${p.paid === true ? 'ok' : 'no'}">${esc(payText)}</div>` : ''}
         </button>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}">💵</button>
@@ -432,7 +475,7 @@ function openWho(first = false) {
   openSheet(`
     <h3>¿Quién sos?</h3>
     <p class="hint">Así sabemos quién anotó a cada jugador. Se guarda en este teléfono y lo podés cambiar en Ajustes.</p>
-    <div class="choice">${ORGANIZERS.map((o) => `<button class="btn ${o === app.who ? 'primary' : ''}" data-who="${esc(o)}">${esc(o)}</button>`).join('')}</div>
+    <div class="choice">${whoOptions().map((o) => `<button class="btn ${o === app.who ? 'primary' : ''}" data-who="${esc(o)}">${esc(o)}</button>`).join('')}</div>
     ${first ? '' : '<div class="sheet-actions"><button class="btn ghost" data-close>Cancelar</button></div>'}`, { locked: first });
   sheet.querySelectorAll('[data-who]').forEach((b) => (b.onclick = () => {
     app.who = b.dataset.who; localStorage.setItem(WHO_KEY, app.who);
@@ -446,6 +489,11 @@ function openSettings() {
   openSheet(`
     <h3>Ajustes</h3>
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
+    ${app.organizersError ? `<div class="banner error roster-error">${esc(app.organizersError)}</div>` : ''}
+    <p class="hint" id="org-current">Organizadores: ${esc(whoOptions().join(', '))}</p>
+    <label class="field"><span>Nuevo organizador</span><input id="org-name" maxlength="40" autocomplete="off" placeholder="Ej: Lucía"></label>
+    <div class="field"><div class="err" id="org-err"></div></div>
+    <button class="btn" id="org-add" type="button">Agregar organizador</button>
     <div class="menu">
       <button class="btn" id="set-who">Organizador <small>${esc(app.who || '—')}</small></button>
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
@@ -455,6 +503,26 @@ function openSettings() {
     </div>
     <p class="footer-note">Fútbol 7 · ${esc(VENUE)} · v1</p>`);
   $('#set-who').onclick = () => openWho(false);
+  $('#org-add').onclick = () => {
+    const clean = cleanOrganizerName($('#org-name').value);
+    if (!clean.ok) { $('#org-err').textContent = clean.error; return; }
+    Promise.resolve(app.store.addOrganizer(clean.name)).then(() => {
+      $('#org-name').value = '';
+      $('#org-err').textContent = '';
+      const names = whoOptions();
+      if (!names.some((name) => sameOrganizer(name, clean.name))) names.push(clean.name);
+      const label = $('#org-current');
+      if (label) label.textContent = `Organizadores: ${names.join(', ')}`;
+      toast(`${clean.name} quedó en la lista`);
+    }).catch((error) => {
+      if (isOrganizerDenied(error)) {
+        $('#org-err').textContent = ORGANIZERS_DENIED_WRITE;
+        showError(ORGANIZERS_DENIED_WRITE);
+        return;
+      }
+      $('#org-err').textContent = error?.message || 'No se pudo guardar';
+    });
+  };
   $('#set-notify').onclick = async () => {
     if (typeof Notification === 'undefined') { toast('Este navegador no muestra avisos'); return; }
     let perm = Notification.permission;
@@ -690,6 +758,61 @@ function saveProfile(id, patch) {
   });
 }
 
+function ledgerSection(phone) {
+  const organizer = app.payFilter || null;
+  const money = paymentLedger({ phone, players: app.players, matches: app.matches, organizer });
+  const signups = signupLedger({ phone, players: app.players, organizer });
+  const months = money.months.length
+    ? `<ul class="ledger-list" id="ledger-months">${money.months.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>`
+    : '<p class="hint" id="ledger-months">Sin pagos en este filtro.</p>';
+  const by = money.byOrganizer.length
+    ? `<ul class="ledger-list" id="ledger-by">${money.byOrganizer.map((row) => `<li>${esc(row.name)}: ${esc(formatARS(row.amount))}</li>`).join('')}</ul>`
+    : '<p class="hint" id="ledger-by">Nadie cobró en este filtro.</p>';
+  const signed = signups.byOrganizer.length
+    ? `<ul class="ledger-list" id="ledger-signups">${signups.byOrganizer.map((row) => `<li>Anotó ${esc(row.name)}: ${timesLabel(row.count)}</li>`).join('')}</ul>`
+    : '<p class="hint" id="ledger-signups">Sin anotaciones en este filtro.</p>';
+  return `
+    <section class="profile-block" id="ledger">
+      <h2>Pagos</h2>
+      ${payFilterChips(phone)}
+      <p class="stat-summary" id="ledger-total">${esc(money.totalText)}</p>
+      ${months}
+      <h2>Por organizador</h2>
+      ${by}
+      <h2>Anotado por</h2>
+      ${signed}
+    </section>`;
+}
+
+function renderPagos() {
+  const organizer = app.payFilter || null;
+  const rows = paymentsSummary({ players: app.players, roster: app.roster, organizer });
+  const body = rows.length ? `<ul class="slots" id="pay-summary">${rows.map((row) => {
+    const person = row.key.startsWith('n:') ? null : rosterByPhone(app.roster, row.key);
+    const paid = row.paid.length
+      ? row.paid.map((item) => `<div class="sub">${esc(item.name)}: ${esc(formatARS(item.amount))}</div>`).join('')
+      : '<div class="sub">Sin pagos</div>';
+    const signed = row.signups.length
+      ? row.signups.map((item) => `<div class="sub">Anotó ${esc(item.name)}: ${timesLabel(item.count)}</div>`).join('')
+      : '<div class="sub">Sin anotaciones</div>';
+    const open = person ? ` data-pay-open="${esc(person.id)}"` : '';
+    return `<li class="slot pay-row"><button type="button" class="who"${open}><div class="name">${esc(row.name)}</div>${paid}${signed}</button></li>`;
+  }).join('')}</ul>` : '<p class="empty-wait" id="pay-summary">Nadie en este filtro.</p>';
+  $('#view').innerHTML = `
+    <h2 class="section">Pagos</h2>
+    <p class="hint roster-lead">Cuánto le pagó cada jugador a cada organizador, y quién lo anotó.</p>
+    ${payFilterChips(null)}
+    ${body}`;
+  bindPayFilter();
+  const list = $('#pay-summary');
+  if (list) list.onclick = (e) => {
+    const open = e.target.closest('[data-pay-open]');
+    if (!open) return;
+    app.profileMatchId = null;
+    location.hash = `#/jugador/${encodeURIComponent(open.dataset.payOpen)}`;
+  };
+}
+
 function renderProfile(id) {
   const person = app.roster.find((r) => r.id === id);
   if (!person) {
@@ -726,6 +849,7 @@ function renderProfile(id) {
         <p class="hint" id="stat-pay">${esc(record.paidText)}</p>
         <p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>
       </section>
+      ${ledgerSection(person.phone)}
       <section class="profile-block">
         <h2>Notas de partido</h2>
         <div id="notes">${notes.length ? notes.map((note) => `
@@ -750,6 +874,7 @@ function renderProfile(id) {
     if (next.has(pos)) next.delete(pos); else next.add(pos);
     saveProfile(person.id, { positions: POSITIONS.filter((item) => next.has(item)) });
   };
+  bindPayFilter($('#profile'));
   $('#btn-add-note').onclick = () => openNoteForm(person);
   $('#notes').onclick = (e) => {
     const edit = e.target.closest('[data-note-edit]');
@@ -906,18 +1031,37 @@ function openPaymentForm(m, p) {
             <button type="button" class="btn" data-method="transferencia">Transferencia</button>
           </div>
         </div>
+        <div class="field" id="pay-receiver">
+          <span>¿Quién cobró?</span>
+          <div class="chips" id="pay-who"></div>
+        </div>
       </div>
       <div class="field"><div class="err" id="pay-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
     </form>`);
   const form = $('#pay-form');
   const details = $('#pay-details');
+  let receiver = p.paid === true ? String(p.receivedBy || '').trim() : (app.who || '');
+  const paintReceiver = () => {
+    const box = $('#pay-who');
+    const options = receiverOptions(receiver);
+    box.innerHTML = [
+      ...options.map((name) => `<button type="button" class="btn chip ${sameOrganizer(name, receiver) ? 'primary' : ''}" data-receiver="${esc(name)}">${esc(name)}</button>`),
+      `<button type="button" class="btn chip ${receiver ? '' : 'primary'}" data-receiver="">${UNSPECIFIED}</button>`,
+    ].join('');
+    box.querySelectorAll('[data-receiver]').forEach((b) => (b.onclick = () => {
+      receiver = b.dataset.receiver || '';
+      $('#pay-err').textContent = '';
+      paintReceiver();
+    }));
+  };
   const sync = () => {
     sheet.querySelector('[data-paid="si"]').classList.toggle('primary', paid === true);
     sheet.querySelector('[data-paid="no"]').classList.toggle('primary', paid === false);
     sheet.querySelector('[data-method="efectivo"]').classList.toggle('primary', method === 'efectivo');
     sheet.querySelector('[data-method="transferencia"]').classList.toggle('primary', method === 'transferencia');
     details.hidden = paid !== true;
+    if (paid === true) paintReceiver();
   };
   sheet.querySelectorAll('[data-paid]').forEach((b) => (b.onclick = () => {
     paid = b.dataset.paid === 'si';
@@ -944,7 +1088,7 @@ function openPaymentForm(m, p) {
       methodVal = method;
     }
     closeSheet();
-    run(app.store.setPayment(p.id, { paid, amount, method: methodVal }, app.who), paid ? 'Pago guardado' : 'Marcado como no pagó');
+    run(app.store.setPayment(p.id, { paid, amount, method: methodVal, receivedBy: paid ? (receiver || null) : null }, app.who), paid ? 'Pago guardado' : 'Marcado como no pagó');
   };
 }
 
@@ -1015,11 +1159,14 @@ async function boot() {
         : 'Problema de conexión con Firebase: ' + (e?.message || e));
   });
   $('#demo-banner').hidden = app.store.mode === 'firebase';
-  app.store.subscribe(({ matches, players, roster, rosterError }) => {
+  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError }) => {
     app.matches = matches || []; app.players = players || [];
     app.roster = roster || [];
+    app.organizers = organizers || [];
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);
     app.rosterError = rosterError || null;
+    if (organizersError && organizersError !== app.organizersError) showError(organizersError);
+    app.organizersError = organizersError || null;
     app.loaded = true;
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe
     if (!sheet.open || !sheet.querySelector('input, textarea')) render(); else pendingRender = true;

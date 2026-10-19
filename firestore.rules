@@ -1,9 +1,11 @@
 rules_version = '2';
 
-// Reglas v1: ABIERTAS para partidos y jugadores. La colección roster es nueva:
-// las reglas YA PUBLICADAS la rechazan (el cierre de abajo). Hay que republicar
-// este archivo para que Jugadores funcione en Firebase. Hasta entonces la app
-// avisa en español y el resto sigue andando.
+// Reglas v1: ABIERTAS para partidos y jugadores. Las colecciones roster y
+// organizers son nuevas: las reglas YA PUBLICADAS las rechazan (el cierre de
+// abajo). Hay que republicar este archivo para que Jugadores, el perfil y la
+// lista de organizadores funcionen en Firebase. Hasta entonces la app avisa en
+// español, el selector sigue con Gustavo y Martín, y el resto sigue andando.
+// receivedBy en el jugador es un campo extra: se puede escribir sin republicar.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -24,6 +26,7 @@ service cloud.firestore {
           && (!('method' in d) || d.method == null || d.method == 'efectivo' || d.method == 'transferencia')
           && (!('paidUpdatedBy' in d) || (d.paidUpdatedBy is string && d.paidUpdatedBy.size() <= 40))
           && (!('paidUpdatedAt' in d) || d.paidUpdatedAt is number)
+          && (!('receivedBy' in d) || d.receivedBy == null || (d.receivedBy is string && d.receivedBy.size() > 0 && d.receivedBy.size() <= 40))
           && (!('waiting' in d) || d.waiting is bool)
           && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is number && d.waitOrder >= 0 && d.waitOrder <= 1000000))
           && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
@@ -118,6 +121,18 @@ service cloud.firestore {
     match /roster/{rosterId} {
       allow read, delete: if true;
       allow create, update: if validRoster(request.resource.data);
+    }
+
+    function validOrganizer(d) {
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 40
+          && (!('createdAt' in d) || d.createdAt is number);
+    }
+
+    // Quién cobra y quién aparece en "¿Quién sos?". Id estable (gustavo, martin).
+    // La app solo agrega. Recién vale cuando se republican las reglas.
+    match /organizers/{organizerId} {
+      allow read, delete: if true;
+      allow create, update: if validOrganizer(request.resource.data);
     }
 
     // Todo lo demás, cerrado.

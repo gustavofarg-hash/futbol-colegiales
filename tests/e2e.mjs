@@ -240,7 +240,10 @@ const stored = await page.evaluate(() => {
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
   return Object.values(db.players).find((p) => p.name === 'Juan Pérez');
 });
-check('El pago queda en el jugador (localStorage)', stored?.paid === true && stored.amount === 5000 && stored.method === 'transferencia' && stored.paidUpdatedBy === 'Martín');
+check('El pago queda en el jugador (localStorage)', stored?.paid === true && stored.amount === 5000 && stored.method === 'transferencia' && stored.paidUpdatedBy === 'Martín' && stored.receivedBy === 'Martín');
+await page.click('.slot:has-text("Juan Pérez") .pay-btn');
+check('Cobró arranca en quien está usando la app', await page.$eval('#pay-form [data-receiver="Martín"]', (el) => el.classList.contains('primary')));
+await page.click('#pay-form [data-close]');
 
 // Otra pestaña del mismo navegador ve el cambio al guardarlo
 const page2 = await ctx.newPage();
@@ -484,6 +487,39 @@ await page.click('#btn-roster');
 await page.locator('#roster-list .who', { hasText: 'Ernesto P.' }).click();
 await page.waitForSelector('#profile');
 check('Desde Jugadores es el mismo perfil', (await page.textContent('#level-val')) === '8' && (await page.textContent('#notes')).includes('Hizo un gol'));
+await page.click('#btn-back');
+await page.waitForSelector('#btn-roster');
+
+// Organizadores y resumen de pagos
+await page.click('#btn-settings');
+await page.fill('#org-name', 'Lucía');
+await page.click('#org-add');
+await page.waitForFunction(() => (document.querySelector('#org-current')?.textContent || '').includes('Lucía'));
+check('Ajustes agrega un organizador', true);
+await page.click('dialog.sheet [data-close]');
+await page.click('#btn-who');
+check('¿Quién sos? incluye al organizador nuevo', await page.isVisible('[data-who="Lucía"]'));
+await page.click('dialog.sheet [data-close]');
+await page.click('#btn-pagos');
+await page.waitForSelector('#pay-summary');
+const juanPayRow = async () => (await page.locator('#pay-summary .pay-row', { hasText: 'Juan Pérez' }).innerText()).replace(/\s+/g, ' ');
+let juanMoney = await juanPayRow();
+check('Pagos: Juan le pagó $4.500 a Martín', juanMoney.includes('Martín: $4.500') && juanMoney.includes('Anotó Gustavo: 1 vez'), juanMoney);
+await page.click('#pay-filter [data-pay-filter="Martín"]');
+juanMoney = await juanPayRow();
+check('El filtro de Pagos deja solo a Martín', juanMoney.includes('Martín: $4.500') && !juanMoney.includes('Gustavo'), juanMoney);
+await page.click('#pay-filter [data-pay-filter=""]');
+await page.locator('#pay-summary .pay-row', { hasText: 'Juan Pérez' }).locator('[data-pay-open]').click();
+await page.waitForSelector('#ledger-total');
+const ledgerText = (await page.locator('#ledger').innerText()).replace(/\s+/g, ' ');
+check('El perfil suma el mes y el cobrador', ledgerText.includes('Pagó $4.500') && ledgerText.includes('Oct 2026: $4.500') && ledgerText.includes('Martín: $4.500') && ledgerText.includes('Anotó Gustavo: 1 vez'), ledgerText);
+await page.click('#pay-filter [data-pay-filter="Martín"]');
+await page.waitForFunction(() => {
+  const signed = document.querySelector('#ledger-signups')?.innerText || '';
+  const by = document.querySelector('#ledger-by')?.innerText || '';
+  return by.includes('Martín: $4.500') && signed.includes('Anotó Martín: 1 vez') && !signed.includes('Gustavo') && !by.includes('Gustavo');
+});
+check('El filtro del perfil deja el cobro y las anotaciones de Martín', (await page.textContent('#ledger-months')).includes('Oct 2026: $4.500'));
 await page.click('#btn-back');
 await page.waitForSelector('#btn-roster');
 
