@@ -21,7 +21,7 @@ export const ACCESS_CODE = "";
 
 // Mail del administrador. El mismo texto, en minúsculas, que adminEmail() en
 // firestore.rules. La comparación no distingue mayúsculas.
-export const ADMIN_EMAIL = "gustavo.f.arg@gmail.com";
+export const ADMIN_EMAIL = "gustavof.arg@gmail.com";
 
 // Nombres viejos. Las cuentas nuevas salen de la colección users.
 export const ORGANIZERS = ["Gustavo", "Martín"];

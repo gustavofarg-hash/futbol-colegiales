@@ -16,7 +16,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function adminEmail() {
-      return 'gustavo.f.arg@gmail.com';
+      return 'gustavof.arg@gmail.com';
     }
     function signedIn() {
       return request.auth != null;

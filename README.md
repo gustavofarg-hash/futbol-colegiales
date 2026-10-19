@@ -52,7 +52,7 @@ Necesitás una cuenta de Google. El plan gratuito (**Spark**) alcanza de sobra; 
    1. En el menú de la izquierda: **Compilación (Build) → Firestore Database → Crear base de datos**.
    2. Edición **Standard**. Ubicación: `southamerica-east1 (São Paulo)` es la más cercana (no se puede cambiar después).
    3. Elegí **“Iniciar en modo de producción”** (después pegamos nuestras reglas). Tocá **Crear**.
-4. **Las reglas se publican al final**, después de crear la cuenta de administrador. El orden está en [Cuentas y reglas](#cuentas-y-reglas-hacer-en-este-orden). El mail del admin ya está en los dos archivos: `gustavo.f.arg@gmail.com`.
+4. **Las reglas se publican al final**, después de crear la cuenta de administrador. El orden está en [Cuentas y reglas](#cuentas-y-reglas-hacer-en-este-orden). El mail del admin ya está en los dos archivos: `gustavof.arg@gmail.com`.
 5. **Registrar la app web:**
    1. Volvé a la página principal del proyecto (ícono de engranaje ⚙️ → **Configuración del proyecto**).
    2. En **“Tus apps”** tocá el ícono **`</>`** (Web).
@@ -115,19 +115,19 @@ La app usa **Firebase Authentication → Correo electrónico y contraseña**. No
 
 Hay un administrador. Su contraseña la elige él en «Crear cuenta de administrador» y no queda guardada en el código. Desde **Usuarios** crea a los otros organizadores (nombre, mail y contraseña inicial). Puede desactivarlos o borrar el documento `users/{uid}`. Borrar no elimina la cuenta de Authentication: eso se hace a mano en la consola, en Authentication → Users. La contraseña de un organizador se cambia con **Olvidé mi contraseña** (`sendPasswordResetEmail`). El admin no la redefine después.
 
-`ADMIN_EMAIL` en `config.js` y `adminEmail()` en `firestore.rules` ya son el mismo mail, en minúsculas: `gustavo.f.arg@gmail.com`. La regla lo compara sin distinguir mayúsculas (`Gustavo.F.Arg@gmail.com` también entra). Si ese texto volviera a ser `TU_EMAIL_ADMIN`, el alta del admin queda rechazada.
+`ADMIN_EMAIL` en `config.js` y `adminEmail()` en `firestore.rules` ya son el mismo mail, en minúsculas: `gustavof.arg@gmail.com`. La regla lo compara sin distinguir mayúsculas (`Gustavof.Arg@gmail.com` también entra). Si ese texto volviera a ser `TU_EMAIL_ADMIN`, el alta del admin queda rechazada.
 
 ### Orden seguro en este proyecto
 
 Hoy las reglas **publicadas** siguen abiertas. Las de este repo las cierran. Publicar no borra partidos ni jugadores.
 
 1. Consola de Firebase → **Compilación → Authentication → Sign-in method** → **Correo electrónico/contraseña** → **Habilitar** → Guardar. No publiques reglas todavía.
-2. El mail ya está cargado, en minúsculas, en los dos archivos: `gustavo.f.arg@gmail.com`. No hace falta reemplazar un placeholder. Tiene que seguir igual en `config.js` (`ADMIN_EMAIL`) y en `firestore.rules` (`adminEmail()`).
-3. Abrí la app con ese `config.js` (el sitio publicado, o `python3 -m http.server` en esta carpeta). Con las reglas **viejas** todavía publicadas, tocá **Crear cuenta de administrador** y usá `gustavo.f.arg@gmail.com` (da igual si lo escribís con mayúsculas), una contraseña que solo vos sepas, y tu nombre. Eso escribe `users/{uid}` con `role: "admin"`.
+2. El mail ya está cargado, en minúsculas, en los dos archivos: `gustavof.arg@gmail.com`. No hace falta reemplazar un placeholder. Tiene que seguir igual en `config.js` (`ADMIN_EMAIL`) y en `firestore.rules` (`adminEmail()`).
+3. Abrí la app con ese `config.js` (el sitio publicado, o `python3 -m http.server` en esta carpeta). Con las reglas **viejas** todavía publicadas, tocá **Crear cuenta de administrador** y usá `gustavof.arg@gmail.com` (da igual si lo escribís con mayúsculas), una contraseña que solo vos sepas, y tu nombre. Eso escribe `users/{uid}` con `role: "admin"`.
 4. Recién ahí: Firestore Database → **Reglas** → pegá [`firestore.rules`](firestore.rules) → **Publicar**.
 5. Entrá con la cuenta de admin → ⚙️ → **Usuarios** → creá al otro organizador. Pasale el mail y la contraseña por otro canal.
 
-Si publicás las reglas nuevas **antes** de crear la cuenta, no quedás afuera: la regla de alta deja que `gustavo.f.arg@gmail.com` cree su propio `users/{uid}` con rol admin. Hasta que ese documento exista (unos segundos) no puede editar partidos. Publicar no borra datos.
+Si publicás las reglas nuevas **antes** de crear la cuenta, no quedás afuera: la regla de alta deja que `gustavof.arg@gmail.com` cree su propio `users/{uid}` con rol admin. Hasta que ese documento exista (unos segundos) no puede editar partidos. Publicar no borra datos.
 
 Después de publicar, abrí la app una vez con la sesión iniciada. Así los jugadores que ya estaban reciben su documento en `confirmations`. Hasta entonces, los links viejos de `confirmar.html` no abren: un visitante ya no puede leer la colección `players`.
 

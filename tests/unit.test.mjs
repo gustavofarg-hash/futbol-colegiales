@@ -432,7 +432,7 @@ test('el placeholder no habilita al admin y el mail se compara sin mayúsculas',
   assert.equal(sameAdminEmail('gustavo@ejemplo.com', 'TU_EMAIL_ADMIN'), false);
   assert.equal(sameAdminEmail('Gustavo@Ejemplo.com', 'gustavo@ejemplo.com'), true);
   assert.equal(sameAdminEmail('otro@ejemplo.com', 'gustavo@ejemplo.com'), false);
-  assert.equal(sameAdminEmail('Gustavo.F.Arg@gmail.com'), true);
+  assert.equal(sameAdminEmail('Gustavof.Arg@gmail.com'), true);
   assert.equal(sameAdminEmail('otro@gmail.com'), false);
 });
 
