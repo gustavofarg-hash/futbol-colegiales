@@ -25,7 +25,27 @@ service cloud.firestore {
           && (!('paidUpdatedAt' in d) || d.paidUpdatedAt is number)
           && (!('waiting' in d) || d.waiting is bool)
           && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is number && d.waitOrder >= 0 && d.waitOrder <= 1000000))
-          && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number);
+          && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
+          && (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
+          && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
+          && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number)
+          && (!('reminderSentAt' in d) || d.reminderSentAt == null || d.reminderSentAt is number);
+    }
+
+    // Si cambian la confirmación, el update solo puede tocar confirmed,
+    // confirmedAt y updatedAt, y el token del documento tiene que seguir igual.
+    // No es un secreto frente a quien puede leer el jugador (las lecturas
+    // siguen abiertas): evita que un update cualquiera pise la respuesta.
+    // La app ya escribe así. Esto recién se exige al republicar las reglas.
+    function confirmationWriteOk() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(['confirmed', 'confirmedAt'])
+          || (changed.hasOnly(['confirmed', 'confirmedAt', 'updatedAt'])
+              && request.resource.data.confirmToken == resource.data.confirmToken
+              && request.resource.data.confirmToken is string
+              && request.resource.data.confirmToken.size() >= 16
+              && (request.resource.data.confirmed == 'si' || request.resource.data.confirmed == 'no')
+              && request.resource.data.confirmedAt is number);
     }
 
     function validPlayer(d) {
@@ -42,7 +62,8 @@ service cloud.firestore {
 
     match /players/{playerId} {
       allow read, delete: if true;
-      allow create, update: if validPlayer(request.resource.data);
+      allow create: if validPlayer(request.resource.data);
+      allow update: if validPlayer(request.resource.data) && confirmationWriteOk();
     }
 
     // Todo lo demás, cerrado.

@@ -155,6 +155,12 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `waiting` | bool — `true` si está en la lista de espera |
 | `waitOrder` | número o null — menor = más arriba en la espera. Los nuevos van al final |
 | `rosterAt` | número o null — cuándo pasó a la lista principal |
+| `confirmToken` | string — token del link de confirmación (se crea al armar el recordatorio) |
+| `confirmed` | `"si"` \| `"no"` — respuesta del jugador |
+| `confirmedAt` | número (epoch ms) |
+| `reminderSentAt` | número (epoch ms) — cuándo se abrió el WhatsApp del recordatorio |
+
+**Recordatorio:** en el partido, «Recordatorio de partido» arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. La página solo muestra ese partido y ese nombre (sin teléfonos de nadie) y guarda `confirmed` si el token coincide.
 
 **Lista de espera:** se puede anotar a alguien aunque el partido no esté lleno. Si ya hay 14, el alta normal también cae en la espera (al final). Las flechas ↑ ↓ cambian `waitOrder` y los dos organizadores ven el mismo orden al toque. «Subir al partido» (o al quitar un titular) pasa al primero de la lista.
 

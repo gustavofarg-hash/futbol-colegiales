@@ -8,6 +8,7 @@ import {
 } from './dates.js';
 import { collectedLine, parseAmount, paymentStatusText } from './payments.js';
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
+import { confirmPageUrl, confirmStatus, confirmSummary, reminderMessage, waReminderUrl } from './reminders.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -149,7 +150,7 @@ function renderMatch(id) {
         <div class="who">
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
-            <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
+            <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payText ? `<div class="pay-line ${payCls}">${esc(payText)}</div>` : ''}
         </div>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>
@@ -166,12 +167,14 @@ function renderMatch(id) {
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       <div class="meta"><strong id="slot-count">${ps.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (ps.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - ps.length}`}</span></div>
       ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
+      ${(ps.length || waitingOf(id).length) ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary([...ps, ...waitingOf(id)]).text)}</div>` : ''}
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
         <button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>
         <button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>
       </div>
     </section>
+    <button type="button" class="btn block remind-open" id="btn-remind">Recordatorio de partido</button>
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, ps.length >= cap)}
@@ -180,6 +183,7 @@ function renderMatch(id) {
       <button class="btn primary" id="btn-add-player">${ICON.plus}${full ? 'A la espera' : 'Agregar jugador'}</button>
     </div></div>`;
 
+  $('#btn-remind').onclick = () => openReminders(m);
   $('#btn-add-player').onclick = () => openPlayerForm(m);
   $('#btn-add-wait').onclick = () => openPlayerForm(m, null, { waiting: true });
   $('#btn-promote').onclick = () => promoteTop(m);
@@ -261,7 +265,7 @@ function waitingSection(m, full) {
         <div class="who">
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
-            <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span></div>
+            <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${confirmTag(p)}</div>
           ${payText ? `<div class="pay-line ${p.paid === true ? 'ok' : 'no'}">${esc(payText)}</div>` : ''}
         </div>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}">💵</button>
@@ -277,6 +281,58 @@ function waitingSection(m, full) {
       <button type="button" class="btn primary" id="btn-promote" ${top && !full ? '' : 'disabled'}>Subir al partido</button>
     </div>
     ${top ? `<p class="footer-note">Sube el primero: ${esc(top.name)}</p>` : ''}`;
+}
+
+function confirmTag(p) {
+  const s = confirmStatus(p);
+  return `<span class="confirm-tag ${s.cls}">${s.text}</span>`;
+}
+
+async function openReminders(m) {
+  const people = [...playersOf(m.id), ...waitingOf(m.id)];
+  if (!people.length) { toast('No hay jugadores para avisar'); return; }
+  openSheet(`<h3>Recordatorio de partido</h3><p class="hint">Armando los links…</p>`);
+  const tokens = new Map();
+  try {
+    for (const p of people) {
+      if (!p.phone) continue;
+      tokens.set(p.id, p.confirmToken || await app.store.ensureConfirmToken(p.id));
+    }
+  } catch (e) {
+    console.error(e);
+    toast('No se pudieron armar los links');
+    closeSheet();
+    return;
+  }
+  const fresh = [...playersOf(m.id), ...waitingOf(m.id)];
+  const rows = fresh.map((p) => {
+    const token = tokens.get(p.id) || p.confirmToken;
+    if (!p.phone || !token) {
+      return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div></li>`;
+    }
+    const url = confirmPageUrl({ matchId: m.id, playerId: p.id, token });
+    const href = waReminderUrl(p.phone, reminderMessage({ player: p, match: m, venue: VENUE, confirmUrl: url }));
+    const sent = !!p.reminderSentAt;
+    return `<li class="remind-row" data-remind="${esc(p.id)}">
+      <div class="who"><div class="name">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
+      <a class="btn primary" href="${esc(href)}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
+    </li>`;
+  }).join('');
+  openSheet(`
+    <h3>Recordatorio de partido</h3>
+    <p class="hint">${esc(capitalize(labelDate(m.date)))} · ${esc(m.time)} hs. Cada Enviar abre WhatsApp con el mensaje y el link de esa persona. Hay que tocar enviar en el chat: no se manda solo.</p>
+    <ul class="remind-list" id="remind-list">${rows}</ul>
+    <div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
+  $('#remind-list').addEventListener('click', (e) => {
+    const link = e.target.closest('[data-send]');
+    if (!link) return;
+    const id = link.dataset.send;
+    const row = link.closest('.remind-row');
+    const sub = row?.querySelector('.sub');
+    if (sub) sub.innerHTML = '<span class="sent">Enviado</span>';
+    link.textContent = 'Enviar de nuevo';
+    run(app.store.markReminderSent(id));
+  });
 }
 
 function moveWait(matchId, id, dir, disabled) {

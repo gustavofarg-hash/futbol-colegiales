@@ -26,6 +26,9 @@
 //    waiting: bool                      (true = lista de espera)
 //    waitOrder: number|null             (menor = más prioridad; null si es titular)
 //    rosterAt: number|null              (cuándo entró a la lista principal)
+//    confirmToken: string               (link de confirmar.html; se crea al armar el recordatorio)
+//    confirmed: "si"|"no"               (respuesta del jugador)
+//    confirmedAt, reminderSentAt: number
 //  El pago y la espera viven en el mismo documento del jugador. Las reglas
 //  publicadas (validPlayer) permiten campos extra, así que no hace falta republicarlas.
 //
@@ -35,6 +38,9 @@ import { firebaseConfig } from '../config.js';
 import { addDays, todayISO, toEpoch } from './dates.js';
 import { paymentRecord } from './payments.js';
 import { nextWaitOrder } from './waiting.js';
+import { newConfirmToken } from './reminders.js';
+
+export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
 const FB_VERSION = '13.0.0';
 const FB = `https://www.gstatic.com/firebasejs/${FB_VERSION}`;
@@ -70,7 +76,7 @@ function matchDoc(data, who) {
 
 /* ───────────── Modo demo (localStorage) ───────────── */
 class LocalStore {
-  constructor() { this.key = 'f7c-demo-db'; this.mode = 'demo'; this.listeners = new Set(); }
+  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); }
   _load() {
     try { return JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {} }; }
     catch { return { matches: {}, players: {} }; }
@@ -144,6 +150,17 @@ class LocalStore {
   }
   async promoteFromWaiting(id) {
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+  }
+  async ensureConfirmToken(id) {
+    const p = this._load().players[id];
+    if (!p) throw new Error('Jugador inexistente');
+    if (p.confirmToken) return p.confirmToken;
+    const token = newConfirmToken();
+    await this.updatePlayer(id, { confirmToken: token });
+    return token;
+  }
+  async markReminderSent(id) {
+    await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
   async deletePlayer(id) { const db = this._load(); delete db.players[id]; this._save(db); }
   async clearAll() { localStorage.removeItem(this.key); this._emit(); }
@@ -248,6 +265,17 @@ class FirebaseStore {
   }
   async promoteFromWaiting(id) {
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+  }
+  async ensureConfirmToken(id) {
+    const p = this.state.players.find((x) => x.id === id);
+    if (!p) throw new Error('Jugador inexistente');
+    if (p.confirmToken) return p.confirmToken;
+    const token = newConfirmToken();
+    await this.updatePlayer(id, { confirmToken: token });
+    return token;
+  }
+  async markReminderSent(id) {
+    await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
   async deletePlayer(id) { const { doc, deleteDoc } = this.fs; await deleteDoc(doc(this.db, 'players', id)); }
 }

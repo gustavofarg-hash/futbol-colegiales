@@ -5,6 +5,9 @@ import { normalizePhone } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentRecord, paymentStatusText } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
+import {
+  confirmPageUrl, confirmSummary, confirmationAllowed, newConfirmToken, reminderMessage, waReminderUrl,
+} from '../js/reminders.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -186,4 +189,30 @@ test('lista de espera: al final, flechas y subir al primero', async () => {
   ], 2);
   assert.deepEqual(overflow, [{ id: 'c', waiting: true, waitOrder: 2, rosterAt: null }]);
   assert.equal(nextWaitOrder([{ waitOrder: 2 }, { waitOrder: 5 }]), 6);
+});
+
+test('recordatorio: token, link y mensaje', () => {
+  const a = newConfirmToken();
+  const b = newConfirmToken();
+  assert.notEqual(a, b);
+  assert.match(a, /^[A-Za-z0-9_-]{24}$/);
+  const url = confirmPageUrl({ matchId: '2026-10-22_2100', playerId: 'abc', token: a });
+  assert.equal(url, `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-22_2100&p=abc&t=${encodeURIComponent(a)}`);
+  const msg = reminderMessage({
+    player: { name: 'Juan Pérez' },
+    match: { date: '2026-10-22', time: '21:00', note: 'Cancha 2' },
+    venue: 'Polideportivo Colegiales',
+    confirmUrl: url,
+  });
+  assert.match(msg, /^¡Hola Juan!/);
+  assert.match(msg, /jueves 22\/10 a las 21:00 hs/);
+  assert.match(msg, /Polideportivo Colegiales/);
+  assert.match(msg, /\(Cancha 2\)/);
+  assert.ok(msg.includes(url));
+  assert.ok(waReminderUrl('5491112345678', msg).startsWith('https://wa.me/5491112345678?text='));
+  const player = { matchId: '2026-10-22_2100', confirmToken: a };
+  assert.equal(confirmationAllowed(player, '2026-10-22_2100', a), true);
+  assert.equal(confirmationAllowed(player, '2026-10-22_2100', 'otro-token-largo-falso'), false);
+  assert.equal(confirmationAllowed(player, 'otro-partido', a), false);
+  assert.equal(confirmSummary([{ confirmed: 'si' }, { confirmed: 'no' }, { name: 'x' }]).text, 'Confirmados: 1 · No juegan: 1 · Sin respuesta: 1');
 });

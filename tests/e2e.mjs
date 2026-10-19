@@ -110,6 +110,53 @@ const msg = encodeURIComponent('¡Hola Juan! Te anoté para el fútbol 7 en Poli
 check('Link wa.me Juan correcto', hrefs[0] === `https://wa.me/5491112345678?text=${msg}`, hrefs[0]);
 players.forEach(([n, , wa], i) => check(`Número normalizado ${n} → ${wa}`, hrefs[i]?.startsWith(`https://wa.me/${wa}?text=`)));
 check('Cada jugador muestra "Agregó: Gustavo"', (await page.$$('.tag.g')).length === 3);
+check('Todos figuran sin respuesta', (await page.textContent('#confirm-sum')).includes('Sin respuesta: 3'));
+
+// Recordatorio y página de confirmación (mismo origen, modo demo)
+await page.click('#btn-remind');
+await page.waitForSelector('#remind-list a[data-send]');
+const remindLink = page.locator('#remind-list .remind-row', { hasText: 'Juan Pérez' }).locator('a');
+const remindHref = await remindLink.getAttribute('href');
+const remindText = decodeURIComponent(remindHref.split('text=')[1]);
+check('Recordatorio abre wa.me de Juan', remindHref.startsWith('https://wa.me/5491112345678?text='), remindHref.slice(0, 80));
+check('El mensaje saluda, da día, hora, lugar, nota y link',
+  remindText.includes('¡Hola Juan!') && remindText.includes('jueves 22/10 a las 21:00 hs')
+  && remindText.includes('Polideportivo Colegiales') && remindText.includes('(Cancha 2)')
+  && remindText.includes('confirmar.html?m='));
+const [popup] = await Promise.all([page.waitForEvent('popup'), remindLink.click()]);
+await popup.close();
+await page.waitForFunction(() => [...document.querySelectorAll('#remind-list .remind-row')].some((r) => r.textContent.includes('Juan') && r.textContent.includes('Enviado')));
+check('Marca recordatorio enviado', true);
+const juan = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez');
+  return { id: found[0], ...found[1] };
+});
+check('Token del link guardado en el jugador', juan.confirmToken && juan.confirmToken.length >= 16 && remindText.includes(`t=${juan.confirmToken}`) && juan.reminderSentAt > 0);
+await page.click('dialog.sheet [data-close]');
+
+const bad = await ctx.newPage();
+await bad.goto(`${BASE}confirmar.html?m=${encodeURIComponent(juan.matchId)}&p=${encodeURIComponent(juan.id)}&t=token-falso-que-no-coincide`);
+await bad.waitForSelector('text=Este link no es válido');
+check('Token incorrecto no confirma', (await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).players[id].confirmed, juan.id)) == null);
+await bad.close();
+
+const confirmPage = await ctx.newPage();
+await confirmPage.goto(`${BASE}confirmar.html?m=${encodeURIComponent(juan.matchId)}&p=${encodeURIComponent(juan.id)}&t=${encodeURIComponent(juan.confirmToken)}`);
+await confirmPage.waitForSelector('#btn-si');
+check('confirmar.html no pide ¿Quién sos?', (await confirmPage.locator('text=¿Quién sos?').count()) === 0);
+const confirmBody = await confirmPage.locator('body').innerText();
+check('La página no muestra teléfonos ni a los otros', !confirmBody.includes('549') && !confirmBody.includes('1234') && !confirmBody.includes('Pedro') && confirmBody.includes('Juan Pérez') && confirmBody.includes('Cancha 2'), confirmBody.replace(/\s+/g, ' ').slice(0, 180));
+await confirmPage.click('#btn-si');
+await confirmPage.waitForSelector('#thanks:not([hidden])');
+check('Agradece el sí', (await confirmPage.textContent('#thanks')).includes('jugás'));
+await page.waitForFunction(() => document.querySelector('#slots .slot')?.innerText.includes('Confirmó'));
+check('El organizador ve ✅ Confirmó al instante', (await page.textContent('#slots .slot:has-text("Juan Pérez")')).includes('Confirmó'));
+await confirmPage.click('#btn-no');
+await confirmPage.waitForFunction(() => (document.querySelector('#thanks')?.textContent || '').includes('no jugás'));
+await page.waitForFunction(() => (document.querySelector('#confirm-sum')?.textContent || '').includes('No juegan: 1'));
+check('Se puede cambiar a No juego', (await page.textContent('#slots .slot:has-text("Juan Pérez")')).includes('No juega'));
+await confirmPage.close();
 
 // Número inválido
 await page.click('#btn-add-player');
