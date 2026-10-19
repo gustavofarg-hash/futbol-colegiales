@@ -6,6 +6,8 @@ import {
   todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
+import { collectedLine, parseAmount, paymentStatusText } from './payments.js';
+import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -50,7 +52,11 @@ function run(p, okMsg) {
 }
 
 /* ───────── datos derivados ───────── */
-const playersOf = (matchId) => app.players.filter((p) => p.matchId === matchId).sort((a, b) => a.createdAt - b.createdAt);
+const isWaiting = (p) => p.waiting === true;
+const playersOf = (matchId) => app.players
+  .filter((p) => p.matchId === matchId && !isWaiting(p))
+  .sort((a, b) => (a.rosterAt ?? a.createdAt) - (b.rosterAt ?? b.createdAt));
+const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
 function sortedMatches() {
@@ -88,6 +94,7 @@ function matchCard(m) {
       <div class="match-title">${esc(capitalize(labelDate(m.date)))}</div>
       <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}<span>${esc(m.time || '--:--')} hs</span></div>
       ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
+      ${waitingOf(m.id).length ? `<div class="match-note">${waitingOf(m.id).length} en espera</div>` : ''}
     </div>
     <div class="count ${n >= cap ? 'full' : ''}" aria-label="${n} de ${cap} anotados">
       <div class="num">${n}<small>/${cap}</small></div>
@@ -134,6 +141,8 @@ function renderMatch(id) {
       continue;
     }
     const tagCls = p.addedBy === ORGANIZERS[0] ? 'g' : p.addedBy === ORGANIZERS[1] ? 'm' : '';
+    const payText = paymentStatusText(p);
+    const payCls = p.paid === true ? 'ok' : 'no';
     slots.push(`
       <li class="slot ${i >= cap ? 'extra' : ''}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
@@ -141,18 +150,22 @@ function renderMatch(id) {
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
             <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
+          ${payText ? `<div class="pay-line ${payCls}">${esc(payText)}</div>` : ''}
         </div>
+        <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>
         ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
         <button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
       </li>`);
   }
   const full = ps.length >= cap;
+  const collected = collectedLine(ps);
   $('#view').innerHTML = `
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
       <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       <div class="meta"><strong id="slot-count">${ps.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (ps.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - ps.length}`}</span></div>
+      ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
         <button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>
@@ -161,13 +174,28 @@ function renderMatch(id) {
     </section>
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
+    ${waitingSection(m, ps.length >= cap)}
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn" id="btn-share">${ICON.share}Compartir lista</button>
-      <button class="btn primary" id="btn-add-player" ${full ? 'disabled' : ''}>${ICON.plus}${full ? 'Completo' : 'Agregar jugador'}</button>
+      <button class="btn primary" id="btn-add-player">${ICON.plus}${full ? 'A la espera' : 'Agregar jugador'}</button>
     </div></div>`;
 
   $('#btn-add-player').onclick = () => openPlayerForm(m);
+  $('#btn-add-wait').onclick = () => openPlayerForm(m, null, { waiting: true });
+  $('#btn-promote').onclick = () => promoteTop(m);
+  $('#wait-list').onclick = (e) => {
+    const up = e.target.closest('[data-wait-up]');
+    if (up) return moveWait(m.id, up.dataset.waitUp, -1, up.disabled);
+    const down = e.target.closest('[data-wait-down]');
+    if (down) return moveWait(m.id, down.dataset.waitDown, 1, down.disabled);
+    const pay = e.target.closest('[data-pay]');
+    if (pay) return openPaymentForm(m, app.players.find((p) => p.id === pay.dataset.pay));
+    const menu = e.target.closest('[data-menu]');
+    if (menu) return openPlayerMenu(m, app.players.find((p) => p.id === menu.dataset.menu));
+  };
   $('#slots').onclick = (e) => {
+    const pay = e.target.closest('[data-pay]');
+    if (pay) return openPaymentForm(m, app.players.find((p) => p.id === pay.dataset.pay));
     const free = e.target.closest('[data-free]');
     if (free) return openPlayerForm(m);
     const menu = e.target.closest('[data-menu]');
@@ -177,7 +205,7 @@ function renderMatch(id) {
   $('#btn-share').onclick = () => shareText(listText(m));
   $('#btn-edit-match').onclick = () => openMatchForm(m);
   $('#btn-del-match').onclick = () => {
-    const n = playersOf(m.id).length;
+    const n = playersOf(m.id).length + waitingOf(m.id).length;
     if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs${n ? ` y sus ${n} jugadores` : ''}?`)) return;
     run(app.store.deleteMatch(m.id), 'Partido borrado');
     location.hash = '#/';
@@ -196,9 +224,73 @@ function listText(m) {
   const lines = [`⚽ Fútbol 7 · ${VENUE}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
   if (m.note) lines.push(`📝 ${m.note}`);
   lines.push('');
-  for (let i = 0; i < Math.max(cap, ps.length); i++) lines.push(`${i + 1}. ${ps[i] ? ps[i].name : ''}`);
+  for (let i = 0; i < Math.max(cap, ps.length); i++) {
+    const p = ps[i];
+    const pay = p ? paymentStatusText(p) : '';
+    lines.push(`${i + 1}. ${p ? p.name : ''}${pay ? ` — ${pay}` : ''}`);
+  }
   lines.push('', ps.length >= cap ? '✅ ¡Completo!' : `Faltan ${cap - ps.length}`);
+  const collected = collectedLine(ps);
+  if (collected) lines.push(collected);
+  const wait = waitingOf(m.id);
+  if (wait.length) {
+    lines.push('', 'Lista de espera:');
+    wait.forEach((p, i) => {
+      const pay = paymentStatusText(p);
+      lines.push(`${i + 1}. ${p.name}${pay ? ` — ${pay}` : ''}`);
+    });
+  }
   return lines.join('\n');
+}
+
+function waitingSection(m, full) {
+  const wait = waitingOf(m.id);
+  const top = wait[0];
+  const rows = wait.map((p, i) => {
+    const tagCls = p.addedBy === ORGANIZERS[0] ? 'g' : p.addedBy === ORGANIZERS[1] ? 'm' : '';
+    const payText = paymentStatusText(p);
+    const first = i === 0;
+    const last = i === wait.length - 1;
+    return `
+      <li class="slot wait" data-player="${esc(p.id)}">
+        <div class="arrows">
+          <button type="button" class="arrow-btn" data-wait-up="${esc(p.id)}" ${first ? 'disabled' : ''} aria-label="Subir prioridad de ${esc(p.name)}">↑</button>
+          <button type="button" class="arrow-btn" data-wait-down="${esc(p.id)}" ${last ? 'disabled' : ''} aria-label="Bajar prioridad de ${esc(p.name)}">↓</button>
+        </div>
+        <span class="n">${i + 1}</span>
+        <div class="who">
+          <div class="name">${esc(p.name)}</div>
+          <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
+            <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span></div>
+          ${payText ? `<div class="pay-line ${p.paid === true ? 'ok' : 'no'}">${esc(payText)}</div>` : ''}
+        </div>
+        <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}">💵</button>
+        ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
+        <button type="button" class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
+      </li>`;
+  }).join('');
+  return `
+    <h2 class="section">Lista de espera</h2>
+    ${wait.length ? `<ul class="slots" id="wait-list">${rows}</ul>` : '<p class="empty-wait" id="wait-list">Nadie en espera. Los que se anotan acá quedan al final, en orden de llegada.</p>'}
+    <div class="wait-tools">
+      <button type="button" class="btn" id="btn-add-wait">Anotar en lista de espera</button>
+      <button type="button" class="btn primary" id="btn-promote" ${top && !full ? '' : 'disabled'}>Subir al partido</button>
+    </div>
+    ${top ? `<p class="footer-note">Sube el primero: ${esc(top.name)}</p>` : ''}`;
+}
+
+function moveWait(matchId, id, dir, disabled) {
+  if (disabled) return;
+  const updates = moveWaiting(waitingOf(matchId), id, dir);
+  if (!updates.length) return;
+  run(app.store.setWaitOrders(updates));
+}
+
+function promoteTop(m) {
+  const top = waitingOf(m.id)[0];
+  const cap = m.capacity || CAPACITY;
+  if (!top || playersOf(m.id).length >= cap) return;
+  run(app.store.promoteFromWaiting(top.id), `${top.name} pasó al partido`);
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch {
@@ -359,11 +451,12 @@ function openImportPreview(text, found) {
 }
 
 /* Agregar / editar jugador */
-function openPlayerForm(m, p) {
+function openPlayerForm(m, p, opts = {}) {
+  const asWait = !p && opts.waiting === true;
   openSheet(`
     <form id="player-form" novalidate>
-      <h3>${p ? 'Editar jugador' : 'Agregar jugador'}</h3>
-      <p class="hint">${esc(fmtWhen(m))}${p ? '' : ` · Lo anota ${esc(app.who)}`}</p>
+      <h3>${p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
+      <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
       <label class="field"><span>Nombre</span><input name="name" autofocus autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
         <div class="small muted" id="pf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>
@@ -390,12 +483,85 @@ function openPlayerForm(m, p) {
       if (!r.ok) { $('#pf-err').textContent = r.error; return; }
       phone = r.wa;
     }
-    if (!p && playersOf(m.id).length >= (m.capacity || CAPACITY)) { $('#pf-err').textContent = 'El partido ya está completo.'; return; }
     closeSheet();
     if (p) run(app.store.updatePlayer(p.id, { name, phone }), 'Jugador actualizado');
-    else run(app.store.addPlayer(m, { name, phone }, app.who), `${name} anotado`);
+    else {
+      const willWait = asWait || playersOf(m.id).length >= (m.capacity || CAPACITY);
+      run(app.store.addPlayer(m, { name, phone }, app.who, { waiting: asWait }), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
+    }
   };
 }
+/* Pago del jugador */
+function openPaymentForm(m, p) {
+  if (!p) return;
+  let paid = p.paid === true ? true : p.paid === false ? false : null;
+  let method = p.method === 'efectivo' || p.method === 'transferencia' ? p.method : null;
+  const amountValue = p.paid === true && p.amount != null ? String(p.amount).replace('.', ',') : '';
+  openSheet(`
+    <form id="pay-form" novalidate>
+      <h3>Pago</h3>
+      <p class="hint">${esc(p.name)} · ${esc(fmtWhen(m))}</p>
+      <div class="field">
+        <span>¿Pagó?</span>
+        <div class="seg">
+          <button type="button" class="btn" data-paid="si">Sí</button>
+          <button type="button" class="btn" data-paid="no">No</button>
+        </div>
+      </div>
+      <div id="pay-details">
+        <label class="field"><span>Monto (pesos)</span>
+          <input name="amount" inputmode="decimal" autocomplete="off" placeholder="Ej: 5000" value="${esc(amountValue)}">
+          <div class="small muted">Podés escribir 5000 o 5.000.</div>
+        </label>
+        <div class="field">
+          <span>Medio</span>
+          <div class="seg">
+            <button type="button" class="btn" data-method="efectivo">Efectivo</button>
+            <button type="button" class="btn" data-method="transferencia">Transferencia</button>
+          </div>
+        </div>
+      </div>
+      <div class="field"><div class="err" id="pay-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#pay-form');
+  const details = $('#pay-details');
+  const sync = () => {
+    sheet.querySelector('[data-paid="si"]').classList.toggle('primary', paid === true);
+    sheet.querySelector('[data-paid="no"]').classList.toggle('primary', paid === false);
+    sheet.querySelector('[data-method="efectivo"]').classList.toggle('primary', method === 'efectivo');
+    sheet.querySelector('[data-method="transferencia"]').classList.toggle('primary', method === 'transferencia');
+    details.hidden = paid !== true;
+  };
+  sheet.querySelectorAll('[data-paid]').forEach((b) => (b.onclick = () => {
+    paid = b.dataset.paid === 'si';
+    $('#pay-err').textContent = '';
+    sync();
+    if (paid) setTimeout(() => form.amount.focus(), 30);
+  }));
+  sheet.querySelectorAll('[data-method]').forEach((b) => (b.onclick = () => {
+    method = b.dataset.method;
+    $('#pay-err').textContent = '';
+    sync();
+  }));
+  sync();
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    if (paid !== true && paid !== false) { $('#pay-err').textContent = 'Indicá si pagó.'; return; }
+    let amount = null;
+    let methodVal = null;
+    if (paid) {
+      const parsed = parseAmount(form.amount.value);
+      if (!parsed.ok) { $('#pay-err').textContent = parsed.error; return; }
+      if (method !== 'efectivo' && method !== 'transferencia') { $('#pay-err').textContent = 'Elegí Efectivo o Transferencia.'; return; }
+      amount = parsed.amount;
+      methodVal = method;
+    }
+    closeSheet();
+    run(app.store.setPayment(p.id, { paid, amount, method: methodVal }, app.who), paid ? 'Pago guardado' : 'Marcado como no pagó');
+  };
+}
+
 function openPlayerMenu(m, p) {
   if (!p) return;
   openSheet(`
@@ -404,13 +570,19 @@ function openPlayerMenu(m, p) {
     <div class="menu">
       ${p.phone ? `<a class="btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : ''}
       <button class="btn" id="pm-edit">${ICON.edit}Editar</button>
-      <button class="btn danger" id="pm-del">${ICON.trash}Quitar del partido</button>
+      <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   $('#pm-edit').onclick = () => openPlayerForm(m, p);
   $('#pm-del').onclick = () => {
-    if (!confirm(`¿Quitar a ${p.name} del partido?`)) return;
-    closeSheet(); run(app.store.deletePlayer(p.id), `${p.name} quitado`);
+    const fromMain = !isWaiting(p);
+    const top = waitingOf(m.id).find((w) => w.id !== p.id);
+    if (!confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
+    const promote = fromMain && top && playersOf(m.id).length - 1 < (m.capacity || CAPACITY)
+      && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
+    closeSheet();
+    const job = Promise.resolve(app.store.deletePlayer(p.id)).then(() => (promote ? app.store.promoteFromWaiting(top.id) : null));
+    run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);
   };
 }
 
@@ -459,6 +631,7 @@ async function boot() {
     app.matches = matches || []; app.players = players || []; app.loaded = true;
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe
     if (!sheet.open || !sheet.querySelector('input, textarea')) render(); else pendingRender = true;
+    fixOverflow();
   });
   if (!app.who) openWho(true);
   render();
@@ -466,6 +639,22 @@ async function boot() {
   setInterval(() => { if (!sheet.open || !sheet.querySelector('input, textarea')) render(); }, 60_000);
 }
 let pendingRender = false;
+let fixingOverflow = false;
+async function fixOverflow() {
+  if (fixingOverflow || !app.store) return;
+  const patches = [];
+  for (const m of app.matches) {
+    const all = app.players.filter((p) => p.matchId === m.id);
+    patches.push(...overflowPatches(all, m.capacity || CAPACITY));
+  }
+  if (!patches.length) return;
+  fixingOverflow = true;
+  try {
+    for (const patch of patches) await app.store.updatePlayer(patch.id, { waiting: true, waitOrder: patch.waitOrder, rosterAt: null });
+  } catch (e) { console.error(e); }
+  finally { fixingOverflow = false; }
+}
+
 sheet.addEventListener('close', () => { pendingRender = false; render(); });
 
 boot().catch((e) => { console.error(e); showError('Error al iniciar la app: ' + e.message); });

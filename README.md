@@ -8,6 +8,7 @@ App web (PWA, se instala en el celular) para organizar los partidos de **fútbol
 - **Agregar partido:** fecha, hora y nota opcional.
 - **Importar desde texto:** pegás un mensaje del grupo de WhatsApp y la app detecta expresiones como `jueves 22/10 21hs`, `miércoles 20:00`, `mañana 19 hs`, `sábado 24 de octubre a las 18`, `hoy a las 21 y media`, `jueves 20 y 21hs`. Muestra una **vista previa** para corregir y confirmar. Si pegás el mensaje con encabezado de WhatsApp (`[19/10/26, 12:40] Martín: …`), usa esa fecha como referencia para “mañana”, “jueves”, etc.
 - **Detalle del partido:** 14 lugares. Agregás jugador con nombre y WhatsApp (el número se normaliza: `11 1234-5678` → `5491112345678`; acepta `011 15…`, `15…`, `+54 9…`, otras características como `0351 15…`). Botón de **WhatsApp** por jugador que abre `https://wa.me/<número>?text=…` con un mensaje con día, fecha y hora. Editar y quitar jugadores. **Copiar / compartir** la lista como texto.
+- **Pagos:** en cada jugador, el botón 💵 abre un formulario para marcar si pagó, el monto en pesos y si fue Efectivo o Transferencia. En la fila se ve en verde (`Pagó $5.000 · Transferencia`) o atenuado (`No pagó`). Arriba del partido aparece el total (`Recaudado: $45.000 · 9/14 pagaron`). Eso también entra en el texto de copiar/compartir. Se guarda en el mismo jugador y se sincroniza en tiempo real.
 - Cada jugador muestra **quién lo anotó** (Gustavo o Martín). La primera vez la app pregunta **“¿Quién sos?”**; se cambia en ⚙️ Ajustes.
 - **Tiempo real** con Firebase Firestore: lo que carga uno lo ve el otro al instante. Funciona también sin conexión (se sincroniza al volver).
 - **Modo demo:** si `config.js` no tiene la configuración de Firebase, la app guarda todo solo en el teléfono y muestra el aviso *“Modo demo: los datos no se comparten todavía”*.
@@ -26,6 +27,8 @@ js/store.js           Datos: Firestore en tiempo real o localStorage (modo demo)
 js/parser.js          Lector de fechas/horas en español
 js/phone.js           Normalización de números argentinos y links wa.me
 js/dates.js           Fechas en hora de Buenos Aires
+js/payments.js        Pagos: monto, medio y textos
+js/waiting.js         Orden de la lista de espera
 manifest.webmanifest  PWA (nombre, íconos, colores)
 sw.js                 Service worker (funciona offline)
 icons/                Íconos de la app
@@ -144,6 +147,18 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `phone` | solo dígitos, formato wa.me (ej. `5491112345678`) o vacío |
 | `addedBy` | `"Gustavo"` \| `"Martín"` |
 | `createdAt`, `updatedAt` | número (epoch ms) |
+| `paid` | bool, opcional — si pagó |
+| `amount` | número o null — pesos (ARS) |
+| `method` | `"efectivo"` \| `"transferencia"` \| null |
+| `paidUpdatedBy` | quién cargó el pago |
+| `paidUpdatedAt` | número (epoch ms) |
+| `waiting` | bool — `true` si está en la lista de espera |
+| `waitOrder` | número o null — menor = más arriba en la espera. Los nuevos van al final |
+| `rosterAt` | número o null — cuándo pasó a la lista principal |
+
+**Lista de espera:** se puede anotar a alguien aunque el partido no esté lleno. Si ya hay 14, el alta normal también cae en la espera (al final). Las flechas ↑ ↓ cambian `waitOrder` y los dos organizadores ven el mismo orden al toque. «Subir al partido» (o al quitar un titular) pasa al primero de la lista.
+
+El pago va en el documento del jugador (no en una colección nueva). Las reglas que ya están publicadas dejan pasar campos extra, así que estos se pueden escribir sin volver a publicar `firestore.rules`. La copia del repo además valida el tipo de esos campos para cuando se publiquen de nuevo.
 
 Un importador automático solo tiene que hacer `set` en `matches/<AAAA-MM-DD_HHMM>` con `source: "whatsapp"` y `sourceRef`; la app lo muestra al instante. El parser de texto (`js/parser.js`, función `parseMatchesFromText`) es JavaScript puro y se puede reutilizar desde Node.
 

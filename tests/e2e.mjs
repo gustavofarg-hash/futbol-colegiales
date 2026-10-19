@@ -14,6 +14,27 @@ const ctx = await browser.newContext({
   viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
   locale: 'es-AR', timezoneId: 'America/Buenos_Aires', permissions: ['clipboard-read', 'clipboard-write'],
 });
+// Fuerza modo demo: config.js del repo tiene la config real de Firebase y estas
+// pruebas no deben leer ni escribir Firestore.
+await ctx.route('**/config.js', async (route) => {
+  const res = await route.fetch();
+  const body = (await res.text()).replace(
+    /export const firebaseConfig = \{[\s\S]*?\n\};/,
+    `export const firebaseConfig = {
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_PROYECTO.firebaseapp.com",
+  projectId: "TU_PROYECTO",
+  storageBucket: "TU_PROYECTO.firebasestorage.app",
+  messagingSenderId: "TU_SENDER_ID",
+  appId: "TU_APP_ID",
+};`,
+  );
+  await route.fulfill({ status: 200, contentType: 'text/javascript', body });
+});
+await ctx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => {
+  console.error('BLOCKED', route.request().url());
+  return route.abort();
+});
 const page = await ctx.newPage();
 await page.clock.install({ time: NOW });
 const errors = [];
@@ -26,6 +47,9 @@ await page.waitForSelector('dialog[open] [data-who]');
 check('Pide "¿Quién sos?" al abrir por primera vez', await page.isVisible('text=¿Quién sos?'));
 await page.click('[data-who="Gustavo"]');
 check('Banner de modo demo visible', await page.isVisible('#demo-banner'));
+const demoMode = await page.evaluate(() => window.__app?.store?.mode);
+check('Modo demo (no escribe en Firestore)', demoMode === 'demo', String(demoMode));
+if (demoMode !== 'demo') { await browser.close(); process.exit(1); }
 check('Arranca sin partidos', await page.isVisible('text=No hay partidos en los próximos 7 días'));
 check('Chip de organizador', (await page.textContent('#btn-who')).includes('Gustavo'));
 
@@ -125,14 +149,128 @@ await page.click('#btn-copy');
 const clip = await page.evaluate(() => navigator.clipboard.readText());
 check('Copiar lista como texto', clip.includes('Jueves 22/10 · 21:00 hs') && clip.includes('1. Juan Pérez') && clip.includes('14. ') && clip.includes('Faltan 11'), JSON.stringify(clip.split('\n').slice(0, 5)));
 
+// Pagos
+await page.click('.slot:has-text("Juan Pérez") .pay-btn');
+await page.waitForSelector('#pay-form');
+check('El formulario de pago arranca sin monto', await page.isHidden('#pay-details'));
+await page.click('#pay-form [data-paid="si"]');
+await page.click('#pay-form button[type=submit]');
+check('Pago exige monto', (await page.textContent('#pay-err')).includes('monto'));
+await page.fill('#pay-form [name=amount]', '5.000');
+await page.click('#pay-form button[type=submit]');
+check('Pago exige medio', (await page.textContent('#pay-err')).includes('Efectivo'));
+await page.click('#pay-form [data-method="transferencia"]');
+await page.click('#pay-form button[type=submit]');
+await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
+const juanPay = (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).replace(/\s+/g, ' ');
+check('Juan: Pagó $5.000 · Transferencia', juanPay.includes('Pagó $5.000') && juanPay.includes('Transferencia'), juanPay);
+
+await page.click('.slot:has-text("Pedro G.") .pay-btn');
+await page.click('#pay-form [data-paid="no"]');
+check('Si no pagó se oculta el monto', await page.isHidden('#pay-details'));
+await page.click('#pay-form button[type=submit]');
+await page.waitForSelector('.slot:has-text("Pedro G.") .pay-line.no');
+check('Pedro: No pagó', (await page.textContent('.slot:has-text("Pedro G.") .pay-line')).includes('No pagó'));
+check('Nico sigue sin estado de pago', (await page.$$('.slot:has-text("Nico Ruiz") .pay-line')).length === 0);
+const rec = (await page.textContent('#collected')).replace(/\s+/g, ' ');
+check('Total recaudado 1/3', rec.includes('Recaudado: $5.000') && rec.includes('1/3 pagaron'), rec);
+
+await page.click('#btn-copy');
+const clipPay = await page.evaluate(() => navigator.clipboard.readText());
+check('La lista copiada incluye los pagos',
+  clipPay.includes('1. Juan Pérez — Pagó $5.000 · Transferencia')
+  && clipPay.includes('Pedro G. — No pagó')
+  && clipPay.includes('3. Nico Ruiz\n')
+  && clipPay.includes('Recaudado: $5.000 · 1/3 pagaron'),
+  clipPay.split('\n').filter((l) => l.includes('Juan') || l.includes('Pedro') || l.includes('Nico') || l.includes('Recaudado')).join(' | '));
+
+const stored = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  return Object.values(db.players).find((p) => p.name === 'Juan Pérez');
+});
+check('El pago queda en el jugador (localStorage)', stored?.paid === true && stored.amount === 5000 && stored.method === 'transferencia' && stored.paidUpdatedBy === 'Martín');
+
+// Otra pestaña del mismo navegador ve el cambio al guardarlo
+const page2 = await ctx.newPage();
+page2.on('dialog', (d) => d.accept());
+await page2.goto(page.url());
+await page2.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
+check('Otra pestaña ve el pago ya cargado', (await page2.textContent('.slot:has-text("Juan Pérez") .pay-line')).includes('Transferencia'));
+await page.click('.slot:has-text("Juan Pérez") .pay-btn');
+await page.fill('#pay-form [name=amount]', '4500');
+await page.click('#pay-form [data-method="efectivo"]');
+await page.click('#pay-form button[type=submit]');
+await page2.waitForFunction(() => document.body.innerText.includes('Efectivo') && document.body.innerText.includes('$4.500'));
+check('La otra pestaña se actualiza sola', (await page2.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500'));
+await page2.close();
+
+// Lista de espera con lugares libres: queda al final, no ocupa un cupo
+await page.click('#btn-add-wait');
+await page.fill('#player-form [name=name]', 'Espera Cero');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#wait-list .name:text-is("Espera Cero")');
+check('Anotar en espera no ocupa un lugar libre', (await page.textContent('#slot-count')) === '3/14');
+check('Con un solo suplente, ↑ y ↓ están deshabilitadas',
+  await page.isDisabled('#wait-list [data-wait-up]') && await page.isDisabled('#wait-list [data-wait-down]'));
+
 // Completar el cupo
 for (let i = 4; i <= 14; i++) {
   await page.click('#btn-add-player');
   await page.fill('#player-form [name=name]', `Jugador ${i}`);
   await page.click('#player-form button[type=submit]');
-  await page.waitForSelector(`.slot .name:text-is("Jugador ${i}")`);
+  await page.waitForSelector(`#slots .name:text-is("Jugador ${i}")`);
 }
-check('14/14 y botón "Completo" deshabilitado', (await page.textContent('#slot-count')) === '14/14' && await page.isDisabled('#btn-add-player'));
+check('14/14 y se puede seguir anotando (van a la espera)', (await page.textContent('#slot-count')) === '14/14' && !(await page.isDisabled('#btn-add-player')));
+check('El total pasa a 1/14', (await page.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500 · 1/14 pagaron'));
+check('Cero sigue en espera al llenarse el partido', (await page.textContent('#wait-list')).includes('Espera Cero') && !(await page.locator('#slots').getByText('Espera Cero', { exact: true }).count()));
+
+await page.click('#btn-add-player');
+await page.fill('#player-form [name=name]', 'Espera Ana');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#wait-list .name:text-is("Espera Ana")');
+await page.click('#btn-add-wait');
+await page.fill('#player-form [name=name]', 'Espera Beto');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#wait-list .name:text-is("Espera Beto")');
+const namesBefore = await page.$$eval('#wait-list .name', (els) => els.map((e) => e.textContent));
+check('Los nuevos quedan al final, en orden de llegada', JSON.stringify(namesBefore) === JSON.stringify(['Espera Cero', 'Espera Ana', 'Espera Beto']), namesBefore.join(', '));
+const arrows = async () => page.$$eval('#wait-list .slot', (rows) => rows.map((row) => ({
+  name: row.querySelector('.name').textContent,
+  up: row.querySelector('[data-wait-up]').disabled,
+  down: row.querySelector('[data-wait-down]').disabled,
+})));
+let arrowState = await arrows();
+check('↑ deshabilitada en el primero y ↓ en el último', arrowState[0].up && !arrowState[0].down && arrowState.at(-1).down && !arrowState.at(-1).up, JSON.stringify(arrowState));
+check('Subir al partido está deshabilitado con el cupo lleno', await page.isDisabled('#btn-promote'));
+
+await page.locator('#wait-list .slot', { hasText: 'Espera Beto' }).locator('[data-wait-up]').click();
+await page.waitForFunction(() => {
+  const names = [...document.querySelectorAll('#wait-list .name')].map((e) => e.textContent);
+  return names[1] === 'Espera Beto';
+});
+await page.locator('#wait-list .slot', { hasText: 'Espera Beto' }).locator('[data-wait-up]').click();
+await page.waitForFunction(() => document.querySelector('#wait-list .name')?.textContent === 'Espera Beto');
+arrowState = await arrows();
+check('Reordenar con ↑ deja a Beto primero y le deshabilita la flecha', arrowState[0].name === 'Espera Beto' && arrowState[0].up && arrowState.at(-1).down, JSON.stringify(arrowState));
+const orders = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  return Object.values(db.players).filter((p) => p.waiting).sort((a, b) => a.waitOrder - b.waitOrder).map((p) => p.name);
+});
+check('waitOrder queda guardado', JSON.stringify(orders) === JSON.stringify(['Espera Beto', 'Espera Cero', 'Espera Ana']), orders.join(', '));
+
+const pageWait = await ctx.newPage();
+pageWait.on('dialog', (d) => d.accept());
+await pageWait.goto(page.url());
+await pageWait.waitForFunction(() => document.querySelector('#wait-list .name')?.textContent === 'Espera Beto');
+check('La otra pestaña ve el mismo orden', (await pageWait.textContent('#wait-list .name')) === 'Espera Beto');
+await pageWait.close();
+
+await page.locator('#slots .slot', { hasText: 'Jugador 14' }).locator('.more-btn').click();
+await page.click('#pm-del');
+await page.waitForSelector('#slots .name:text-is("Espera Beto")');
+check('Subir al partido se lleva al primero de la espera', !(await page.locator('#wait-list').getByText('Espera Beto', { exact: true }).count()) && (await page.textContent('#slot-count')) === '14/14');
+const left = await page.$$eval('#wait-list .name', (els) => els.map((e) => e.textContent));
+check('La espera sigue en el orden que quedó', JSON.stringify(left) === JSON.stringify(['Espera Cero', 'Espera Ana']), left.join(', '));
 
 // Volver al inicio: contador
 await page.click('#btn-back');
@@ -143,6 +281,12 @@ check('Inicio muestra 14/14 en la tarjeta', (await page.textContent('.match-card
 await page.reload();
 await page.waitForSelector('.match-card');
 check('Datos persisten tras recargar (sin volver a preguntar "¿Quién sos?")', (await page.$$('.match-card')).length === 5 && !(await page.isVisible('dialog[open]')));
+check('Sigue en modo demo tras recargar', (await page.evaluate(() => window.__app?.store?.mode)) === 'demo');
+await page.click('.match-card:has-text("Jueves 22/10")');
+await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
+check('El pago persiste tras recargar', (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).includes('Efectivo') && (await page.textContent('#collected')).includes('$4.500'));
+await page.click('#btn-back');
+await page.waitForSelector('.match-card');
 
 // Borrar partido
 await page.click('.match-card:has-text("Lunes 26/10")');

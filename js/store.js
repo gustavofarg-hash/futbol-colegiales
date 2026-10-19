@@ -19,11 +19,22 @@
 //    name, phone (solo dígitos, formato wa.me, ej 5491112345678)
 //    addedBy: "Gustavo" | "Martín"
 //    createdAt, updatedAt
+//    paid: bool                         (opcional)
+//    amount: number|null                (pesos; solo si paid)
+//    method: "efectivo"|"transferencia"|null
+//    paidUpdatedBy, paidUpdatedAt
+//    waiting: bool                      (true = lista de espera)
+//    waitOrder: number|null             (menor = más prioridad; null si es titular)
+//    rosterAt: number|null              (cuándo entró a la lista principal)
+//  El pago y la espera viven en el mismo documento del jugador. Las reglas
+//  publicadas (validPlayer) permiten campos extra, así que no hace falta republicarlas.
 //
 // matchId determinístico: "YYYY-MM-DD_HHMM" (si ya existe se agrega un sufijo),
 // así un importador puede hacer upsert sin duplicar.
 import { firebaseConfig } from '../config.js';
 import { addDays, todayISO, toEpoch } from './dates.js';
+import { paymentRecord } from './payments.js';
+import { nextWaitOrder } from './waiting.js';
 
 const FB_VERSION = '13.0.0';
 const FB = `https://www.gstatic.com/firebasejs/${FB_VERSION}`;
@@ -99,14 +110,40 @@ class LocalStore {
     for (const [pid, p] of Object.entries(db.players)) if (p.matchId === id) delete db.players[pid];
     this._save(db);
   }
-  async addPlayer(match, data, who) {
+  async addPlayer(match, data, who, opts = {}) {
     const db = this._load(); const id = rid(); const now = Date.now();
-    db.players[id] = { matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone, addedBy: who, createdAt: now, updatedAt: now };
+    const mates = Object.values(db.players).filter((p) => p.matchId === match.id);
+    const cap = match.capacity || 14;
+    const mainCount = mates.filter((p) => p.waiting !== true).length;
+    const waiting = opts.waiting === true || mainCount >= cap;
+    db.players[id] = {
+      matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
+      addedBy: who, createdAt: now, updatedAt: now,
+      waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
+      rosterAt: waiting ? null : now,
+    };
     this._save(db); return id;
   }
   async updatePlayer(id, data) {
     const db = this._load(); if (!db.players[id]) return;
     Object.assign(db.players[id], data, { updatedAt: Date.now() }); this._save(db);
+  }
+  async setPayment(id, input, who) {
+    const rec = paymentRecord(input, who);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
+    await this.updatePlayer(id, rec.patch);
+  }
+  async setWaitOrders(updates) {
+    const db = this._load(); const now = Date.now();
+    for (const u of updates || []) {
+      if (!db.players[u.id]) continue;
+      db.players[u.id].waitOrder = u.waitOrder;
+      db.players[u.id].updatedAt = now;
+    }
+    this._save(db);
+  }
+  async promoteFromWaiting(id) {
+    await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
   }
   async deletePlayer(id) { const db = this._load(); delete db.players[id]; this._save(db); }
   async clearAll() { localStorage.removeItem(this.key); this._emit(); }
@@ -183,13 +220,41 @@ class FirebaseStore {
     batch.delete(doc(this.db, 'matches', id));
     await batch.commit();
   }
-  async addPlayer(match, data, who) {
+  async addPlayer(match, data, who, opts = {}) {
     const { collection, addDoc } = this.fs; const now = Date.now();
-    const ref = await addDoc(collection(this.db, 'players'), { matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone, addedBy: who, createdAt: now, updatedAt: now });
+    const mates = this.state.players.filter((p) => p.matchId === match.id);
+    const cap = match.capacity || 14;
+    const mainCount = mates.filter((p) => p.waiting !== true).length;
+    const waiting = opts.waiting === true || mainCount >= cap;
+    const ref = await addDoc(collection(this.db, 'players'), {
+      matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
+      addedBy: who, createdAt: now, updatedAt: now,
+      waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
+      rosterAt: waiting ? null : now,
+    });
     return ref.id;
   }
   async updatePlayer(id, data) { const { doc, updateDoc } = this.fs; await updateDoc(doc(this.db, 'players', id), { ...data, updatedAt: Date.now() }); }
+  async setPayment(id, input, who) {
+    const rec = paymentRecord(input, who);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
+    await this.updatePlayer(id, rec.patch);
+  }
+  async setWaitOrders(updates) {
+    const { doc, writeBatch } = this.fs;
+    const batch = writeBatch(this.db); const now = Date.now();
+    for (const u of updates || []) batch.update(doc(this.db, 'players', u.id), { waitOrder: u.waitOrder, updatedAt: now });
+    await batch.commit();
+  }
+  async promoteFromWaiting(id) {
+    await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+  }
   async deletePlayer(id) { const { doc, deleteDoc } = this.fs; await deleteDoc(doc(this.db, 'players', id)); }
+}
+
+/** Store de localStorage, sin Firebase. Lo usa el modo demo y las pruebas. */
+export function createDemoStore() {
+  return new LocalStore();
 }
 
 export async function createStore(onError) {

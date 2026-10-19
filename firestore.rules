@@ -12,10 +12,27 @@ service cloud.firestore {
           && (!('note' in d) || (d.note is string && d.note.size() <= 300));
     }
 
+    // Pago opcional en el mismo documento del jugador.
+    // Las reglas YA PUBLICADAS no miran estos campos (validPlayer solo exige
+    // matchId, name y phone, y deja pasar campos extra). La app escribe
+    // valores que cumplen esa versión publicada. validPayment entra en
+    // vigencia recién cuando se vuelvan a publicar estas reglas.
+    function validPayment(d) {
+      return (!('paid' in d) || d.paid is bool)
+          && (!('amount' in d) || d.amount == null || (d.amount is number && d.amount >= 0 && d.amount <= 1000000000))
+          && (!('method' in d) || d.method == null || d.method == 'efectivo' || d.method == 'transferencia')
+          && (!('paidUpdatedBy' in d) || (d.paidUpdatedBy is string && d.paidUpdatedBy.size() <= 40))
+          && (!('paidUpdatedAt' in d) || d.paidUpdatedAt is number)
+          && (!('waiting' in d) || d.waiting is bool)
+          && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is number && d.waitOrder >= 0 && d.waitOrder <= 1000000))
+          && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number);
+    }
+
     function validPlayer(d) {
       return d.matchId is string && d.name is string
           && d.name.size() > 0 && d.name.size() <= 60
-          && d.phone is string && d.phone.size() <= 20;
+          && d.phone is string && d.phone.size() <= 20
+          && validPayment(d);
     }
 
     match /matches/{matchId} {
