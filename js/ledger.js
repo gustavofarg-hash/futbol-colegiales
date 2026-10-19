@@ -1,7 +1,7 @@
 // Totales de pagos y de "Agregó", por jugador y por organizador.
 // Puro: las pruebas no necesitan Firebase. Un pago sin receivedBy cuenta como "Sin especificar".
 import { MESES_CORTOS } from './dates.js';
-import { formatARS } from './payments.js';
+import { formatARS, paymentParts } from './payments.js';
 import { UNSPECIFIED, sameOrganizer } from './organizers.js';
 import { foldText } from './roster.js';
 
@@ -94,6 +94,11 @@ export function signupLedger({ phone, players, organizer = null }) {
   return { total: byOrganizer.reduce((sum, row) => sum + row.count, 0), byOrganizer };
 }
 
+function pendingWho(player) {
+  const name = String(player?.paidUpdatedBy || '').trim();
+  return name || UNSPECIFIED;
+}
+
 function bumpName(row, name) {
   if (name && (!row.name || row.name === 'Sin nombre')) row.name = name;
 }
@@ -105,7 +110,7 @@ function bumpName(row, name) {
 export function paymentsSummary({ players, roster, organizer = null }) {
   const people = new Map();
   const touch = (key, name) => {
-    if (!people.has(key)) people.set(key, { key, name: name || 'Sin nombre', fromRoster: false, paid: new Map(), signups: new Map() });
+    if (!people.has(key)) people.set(key, { key, name: name || 'Sin nombre', fromRoster: false, paid: new Map(), signups: new Map(), pending: 0, pendingBy: new Map() });
     const row = people.get(key);
     bumpName(row, name);
     return row;
@@ -130,6 +135,14 @@ export function paymentsSummary({ players, roster, organizer = null }) {
         row.paid.set(who, cur);
       }
     }
+    const pending = paymentParts(player).pending;
+    if (pending > 0) {
+      const who = pendingWho(player);
+      if (wants(who, organizer)) {
+        row.pending = (row.pending || 0) + pending;
+        row.pendingBy.set(who, (row.pendingBy.get(who) || 0) + pending);
+      }
+    }
   }
   const list = [];
   for (const row of people.values()) {
@@ -137,12 +150,17 @@ export function paymentsSummary({ players, roster, organizer = null }) {
     const signups = [...row.signups.entries()]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || foldText(a.name).localeCompare(foldText(b.name), 'es'));
-    if (!paid.length && !signups.length) continue;
+    const pendingBy = [...row.pendingBy.entries()]
+      .map(([name, amount]) => ({ name, amount }))
+      .sort((a, b) => b.amount - a.amount || foldText(a.name).localeCompare(foldText(b.name), 'es'));
+    if (!paid.length && !signups.length && !(row.pending > 0)) continue;
     list.push({
       key: row.key,
       name: row.name,
       paid,
       signups,
+      pending: row.pending || 0,
+      pendingBy,
       paidTotal: paid.reduce((sum, item) => sum + item.amount, 0),
       signupTotal: signups.reduce((sum, item) => sum + item.count, 0),
     });
@@ -156,12 +174,14 @@ export function organizerTotals(players) {
   const map = new Map();
   const bump = (name) => {
     const key = name || UNSPECIFIED;
-    if (!map.has(key)) map.set(key, { name: key, collected: 0, added: 0 });
+    if (!map.has(key)) map.set(key, { name: key, collected: 0, added: 0, pending: 0 });
     return map.get(key);
   };
   for (const player of players || []) {
     bump(addedByLabel(player)).added += 1;
     if (player.paid === true) bump(receiverLabel(player)).collected += Number(player.amount) || 0;
+    const pending = paymentParts(player).pending;
+    if (pending > 0) bump(pendingWho(player)).pending += pending;
   }
   return [...map.values()].sort((a, b) => b.collected - a.collected || b.added - a.added || foldText(a.name).localeCompare(foldText(b.name), 'es'));
 }
@@ -170,11 +190,43 @@ export function organizerTotals(players) {
 export function mineSummary(players, name) {
   let added = 0;
   let amount = 0;
+  let pending = 0;
   for (const player of players || []) {
     if (sameOrganizer(player.addedBy, name)) added += 1;
     if (player.paid === true && sameOrganizer(player.receivedBy, name)) amount += Number(player.amount) || 0;
+    if (paymentParts(player).pending > 0 && sameOrganizer(player.paidUpdatedBy, name)) pending += paymentParts(player).pending;
   }
-  return { added, amount, text: `Anotaste ${added} · Cobraste ${formatARS(amount)}` };
+  const pendingText = pending > 0 ? ` · por transferir ${formatARS(pending)}` : '';
+  return { added, amount, pending, text: `Anotaste ${added} · Cobraste ${formatARS(amount)}${pendingText}` };
+}
+
+/** Jugadores con transferencia prometida y todavía no cobrada. */
+export function pendingTransfers({ players, roster, organizer = null }) {
+  const people = new Map();
+  let total = 0;
+  for (const player of players || []) {
+    const pending = paymentParts(player).pending;
+    if (pending <= 0) continue;
+    const who = pendingWho(player);
+    if (!wants(who, organizer)) continue;
+    const key = player.phone || `n:${foldText(player.name) || player.id || ''}`;
+    if (!people.has(key)) {
+      const saved = (roster || []).find((person) => person.phone && person.phone === player.phone);
+      people.set(key, { key, name: saved?.name || player.name || 'Sin nombre', amount: 0, by: new Map() });
+    }
+    const row = people.get(key);
+    row.amount += pending;
+    row.by.set(who, (row.by.get(who) || 0) + pending);
+    total += pending;
+  }
+  const rows = [...people.values()].map((row) => ({
+    key: row.key,
+    name: row.name,
+    amount: row.amount,
+    by: [...row.by.entries()].map(([name, amount]) => ({ name, amount })),
+  }));
+  rows.sort((a, b) => b.amount - a.amount || foldText(a.name).localeCompare(foldText(b.name), 'es'));
+  return { total, rows };
 }
 
 /** true si hay un pago sin cobrador o un alta sin "Agregó", para mostrar el filtro. */

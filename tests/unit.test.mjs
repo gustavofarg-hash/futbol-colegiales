@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMatchesFromText as p } from '../js/parser.js';
 import { normalizePhone } from '../js/phone.js';
-import { collectedLine, formatARS, parseAmount, paymentRecord, paymentStatusText } from '../js/payments.js';
+import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { rosterHit, searchRoster } from '../js/roster.js';
-import { playerRecord, playerStats, sortedNotes } from '../js/profile.js';
-import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, signupLedger } from '../js/ledger.js';
+import { matchSignupState, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
+import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { toEpoch } from '../js/dates.js';
 import {
@@ -125,6 +125,124 @@ test('paymentRecord arma los campos del jugador', () => {
   assert.equal(paymentRecord({ paid: true, amount: 5000 }, 'Gustavo').ok, false);
   assert.equal(paymentRecord({ paid: true, amount: -1, method: 'efectivo' }, 'Gustavo').ok, false);
   assert.equal(paymentRecord({}, 'Gustavo').ok, false);
+});
+
+test('pago partido y transfiere después no entran en lo cobrado hasta marcarlo', () => {
+  const now = 1_700_000_000_000;
+  const both = paymentRecord({ paid: true, cash: 2000, transfer: 3000, pendingTransfer: 1500, receivedBy: 'Martín' }, 'Gustavo', now);
+  assert.equal(both.ok, true);
+  assert.equal(both.patch.paid, true);
+  assert.equal(both.patch.amount, 5000);
+  assert.equal(both.patch.method, null);
+  assert.equal(both.patch.cash, 2000);
+  assert.equal(both.patch.transfer, 3000);
+  assert.equal(both.patch.pendingTransfer, 1500);
+  assert.equal(both.patch.receivedBy, 'Martín');
+  assert.equal(paymentStatusText(both.patch), 'Pagó $5.000 · Efectivo $2.000 · Transferencia $3.000 · cobró Martín · Transfiere después $1.500');
+  assert.equal(pendingStatusText(both.patch), 'Transfiere después $1.500');
+  const onlyTransfer = paymentRecord({ paid: true, cash: 0, transfer: 5000, pendingTransfer: 0 }, 'Martín', now);
+  assert.equal(onlyTransfer.patch.method, 'transferencia');
+  assert.equal(onlyTransfer.patch.amount, 5000);
+  assert.equal(onlyTransfer.patch.paid, true);
+  assert.equal(onlyTransfer.patch.pendingTransfer, null);
+  assert.equal(paymentStatusText(onlyTransfer.patch), 'Pagó $5.000 · Transferencia');
+  const onlyPending = paymentRecord({ paid: true, cash: 0, transfer: 0, pendingTransfer: 800 }, 'Gustavo', now);
+  assert.equal(onlyPending.patch.paid, false);
+  assert.equal(onlyPending.patch.amount, null);
+  assert.equal(onlyPending.patch.method, null);
+  assert.equal(paymentStatusText(onlyPending.patch), 'Transfiere después $800');
+  assert.equal(paymentStatusText({ paid: false, cash: null, transfer: null, pendingTransfer: null }), 'No pagó');
+  const legacy = { paid: true, amount: 4500, method: 'efectivo' };
+  assert.deepEqual(paymentParts(legacy), { cash: 4500, transfer: 0, pending: 0, received: 4500, split: false });
+  assert.equal(paymentStatusText(legacy), 'Pagó $4.500 · Efectivo');
+  const list = [both.patch, onlyPending.patch, { name: 'Nico' }];
+  assert.equal(collectedLine(list), 'Recaudado: $5.000 · 1/3 pagaron · Transfiere después: $2.300');
+  const received = receivePendingTransfer(onlyPending.patch, 'Martín', now + 5);
+  assert.equal(received.ok, true);
+  assert.equal(received.patch.paid, true);
+  assert.equal(received.patch.amount, 800);
+  assert.equal(received.patch.method, 'transferencia');
+  assert.equal(received.patch.transfer, 800);
+  assert.equal(received.patch.pendingTransfer, null);
+  assert.equal(received.patch.transferReceivedAt, now + 5);
+  assert.equal(received.patch.transferReceivedBy, 'Martín');
+  assert.equal(received.patch.receivedBy, 'Martín');
+  assert.equal(paymentStatusText(received.patch), 'Pagó $800 · Transferencia · cobró Martín');
+  const kept = receivePendingTransfer({ ...both.patch }, 'Lucía', now + 9);
+  assert.equal(kept.patch.cash, 2000);
+  assert.equal(kept.patch.transfer, 4500);
+  assert.equal(kept.patch.amount, 6500);
+  assert.equal(kept.patch.receivedBy, 'Martín');
+  assert.equal(kept.patch.transferReceivedBy, 'Lucía');
+  assert.equal(paymentRecord({ paid: true, cash: -1, transfer: 0, pendingTransfer: 0 }, 'Gustavo').ok, false);
+  assert.equal(paymentRecord({ paid: true, cash: 0, transfer: 0, pendingTransfer: 0 }, 'Gustavo').error, 'Poné un monto.');
+  const cleared = paymentRecord({ paid: false, split: true }, 'Gustavo', now);
+  assert.equal(cleared.patch.cash, null);
+  assert.equal(cleared.patch.pendingTransfer, null);
+  assert.equal(cleared.patch.transferReceivedBy, null);
+});
+
+test('lo pendiente no suma en el perfil ni en el total del organizador', () => {
+  const players = [
+    { phone: '1', name: 'Juan', matchId: 'm', paid: true, amount: 2000, cash: 2000, transfer: 0, pendingTransfer: 1500, method: 'efectivo', receivedBy: 'Martín', paidUpdatedBy: 'Gustavo', addedBy: 'Gustavo' },
+    { phone: '1', name: 'Juan', matchId: 'm2', paid: false, amount: null, cash: 0, transfer: 0, pendingTransfer: 500, method: null, receivedBy: null, paidUpdatedBy: 'Gustavo', addedBy: 'Martín' },
+  ];
+  const matches = [{ id: 'm', date: '2026-10-22' }, { id: 'm2', date: '2026-10-24' }];
+  const ledger = paymentLedger({ phone: '1', players, matches });
+  assert.equal(ledger.total, 2000);
+  assert.equal(ledger.totalText, 'Pagó $2.000');
+  const totals = organizerTotals(players);
+  assert.equal(totals.find((row) => row.name === 'Martín').collected, 2000);
+  assert.equal(totals.find((row) => row.name === 'Gustavo').pending, 2000);
+  assert.equal(totals.find((row) => row.name === 'Martín').pending, 0);
+  const pending = pendingTransfers({ players, organizer: 'Gustavo' });
+  assert.equal(pending.total, 2000);
+  assert.equal(pending.rows[0].name, 'Juan');
+  assert.equal(pendingTransfers({ players, organizer: 'Martín' }).total, 0);
+  const summary = paymentsSummary({ players, roster: [] });
+  assert.equal(summary[0].paidTotal, 2000);
+  assert.equal(summary[0].pending, 2000);
+  const mine = mineSummary(players, 'Gustavo');
+  assert.equal(mine.amount, 0);
+  assert.equal(mine.pending, 2000);
+  assert.match(mine.text, /por transferir \$2\.000/);
+  assert.equal(playerRecord({ phone: '1', players, matches }).paidTotal, 2000);
+});
+
+test('anotar desde el perfil: ya anotado, libre y completo a la espera', () => {
+  const now = Date.parse('2026-10-19T13:00:00-03:00');
+  const matches = [
+    { id: 'past', date: '2026-10-15', time: '21:00' },
+    { id: 'jue', date: '2026-10-22', time: '21:00', capacity: 2 },
+    { id: 'sab', date: '2026-10-24', time: '18:00', capacity: 14 },
+    { id: 'full', date: '2026-10-26', time: '21:00', capacity: 1 },
+  ];
+  const upcoming = upcomingMatches(matches, now).map((match) => match.id);
+  assert.deepEqual(upcoming, ['jue', 'sab', 'full']);
+  const players = [
+    { id: 'j', matchId: 'jue', phone: '5491112345678', waiting: false },
+    { id: 'w', matchId: 'sab', phone: '5491112345678', waiting: true },
+    { id: 'a', matchId: 'full', phone: '5491100000000', waiting: false },
+  ];
+  const jue = matchSignupState({ phone: '5491112345678', match: matches[1], players });
+  assert.equal(jue.state, 'anotado');
+  assert.equal(jue.existing, true);
+  assert.equal(jue.label, 'Anotado');
+  assert.equal(jue.playerId, 'j');
+  const sab = matchSignupState({ phone: '5491112345678', match: matches[2], players });
+  assert.equal(sab.state, 'espera');
+  assert.equal(sab.label, 'En espera');
+  assert.equal(sab.playerId, 'w');
+  const other = matchSignupState({ phone: '5491199999999', match: matches[2], players });
+  assert.equal(other.state, 'libre');
+  assert.equal(other.willWait, false);
+  assert.equal(other.spots, 14);
+  assert.match(other.label, /Quedan 14/);
+  const full = matchSignupState({ phone: '5491199999999', match: matches[3], players });
+  assert.equal(full.state, 'lleno');
+  assert.equal(full.willWait, true);
+  assert.equal(full.label, 'Completo · va a la espera');
+  assert.equal(full.spots, 0);
 });
 
 test('modo demo guarda el pago en el jugador y lo emite', async () => {

@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v14';
+const VERSION = 'f7c-v15';
 const SHELL = [
   './', 'index.html', 'confirmar.html', 'styles.css', 'config.js', 'manifest.webmanifest',
   'js/app.js', 'js/store.js', 'js/parser.js', 'js/phone.js', 'js/dates.js', 'js/payments.js', 'js/waiting.js', 'js/reminders.js', 'js/confirm.js', 'js/roster.js', 'js/profile.js', 'js/organizers.js', 'js/ledger.js', 'js/auth.js', 'js/text-size.js',

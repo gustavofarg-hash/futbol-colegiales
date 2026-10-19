@@ -238,10 +238,7 @@ check('El formulario de pago arranca sin monto', await page.isHidden('#pay-detai
 await page.click('#pay-form [data-paid="si"]');
 await page.click('#pay-form button[type=submit]');
 check('Pago exige monto', (await page.textContent('#pay-err')).includes('monto'));
-await page.fill('#pay-form [name=amount]', '5.000');
-await page.click('#pay-form button[type=submit]');
-check('Pago exige medio', (await page.textContent('#pay-err')).includes('Efectivo'));
-await page.click('#pay-form [data-method="transferencia"]');
+await page.fill('#pay-form [name=transfer]', '5.000');
 await page.click('#pay-form button[type=submit]');
 await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
 const juanPay = (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).replace(/\s+/g, ' ');
@@ -282,8 +279,8 @@ await page2.goto(page.url());
 await page2.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
 check('Otra pestaña ve el pago ya cargado', (await page2.textContent('.slot:has-text("Juan Pérez") .pay-line')).includes('Transferencia'));
 await page.click('.slot:has-text("Juan Pérez") .pay-btn');
-await page.fill('#pay-form [name=amount]', '4500');
-await page.click('#pay-form [data-method="efectivo"]');
+await page.fill('#pay-form [name=cash]', '4500');
+await page.fill('#pay-form [name=transfer]', '');
 await page.click('#pay-form button[type=submit]');
 await page2.waitForFunction(() => document.body.innerText.includes('Efectivo') && document.body.innerText.includes('$4.500'));
 check('La otra pestaña se actualiza sola', (await page2.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500'));
@@ -606,6 +603,76 @@ await page.waitForFunction(() => {
 await page.locator('#user-list .slot', { hasText: 'Lucía' }).locator('[data-user-del]').click();
 await page.waitForFunction(() => !(document.querySelector('#user-list')?.innerText || '').includes('Lucía'));
 check('El admin borra un organizador', true);
+
+// Pago partido y transfiere después, con Gustavo. No toca el $4.500 de Juan.
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card:has-text("Lunes 19/10")');
+await page.click('.match-card:has-text("Lunes 19/10")');
+await page.waitForSelector('.slot:has-text("Ana Hoy") .pay-btn');
+await page.click('.slot:has-text("Ana Hoy") .pay-btn');
+await page.click('#pay-form [data-paid="si"]');
+await page.fill('#pay-form [name=cash]', '2000');
+await page.fill('#pay-form [name=transfer]', '3000');
+await page.fill('#pay-form [name=pending]', '1500');
+await page.click('#pay-form button[type=submit]');
+await page.waitForSelector('.slot:has-text("Ana Hoy") .pay-pending');
+const anaPay = (await page.locator('.slot', { hasText: 'Ana Hoy' }).innerText()).replace(/\s+/g, ' ');
+check('Fila con efectivo, transferencia y transfiere después',
+  anaPay.includes('Pagó $5.000') && anaPay.includes('Efectivo $2.000') && anaPay.includes('Transferencia $3.000') && anaPay.includes('Transfiere después $1.500'), anaPay);
+const recSplit = (await page.textContent('#collected')).replace(/\s+/g, ' ');
+check('Recaudado no suma lo pendiente', recSplit.includes('Recaudado: $5.000') && recSplit.includes('Transfiere después: $1.500'), recSplit);
+await page.click('#btn-copy');
+const clipSplit = await page.evaluate(() => navigator.clipboard.readText());
+check('La lista copiada incluye transfiere después', clipSplit.includes('Transfiere después $1.500') && clipSplit.includes('Transfiere después: $1.500'), clipSplit);
+await page.evaluate(() => { location.hash = '#/pagos'; });
+await page.waitForSelector('#pending-list');
+const pendingScreen = (await page.locator('#pending-list').innerText()).replace(/\s+/g, ' ');
+check('Pagos lista a quien transfiere después', pendingScreen.includes('Ana Hoy') && pendingScreen.includes('Transfiere después $1.500') && (await page.textContent('#pending-total')).includes('$1.500'), pendingScreen);
+await page.click('#btn-back');
+await page.click('.match-card:has-text("Lunes 19/10")');
+await page.click('.slot:has-text("Ana Hoy") .pay-btn');
+await page.click('#btn-receive-pending');
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('.slot')].find((el) => el.innerText.includes('Ana Hoy'));
+  return row && !row.innerText.includes('Transfiere después') && row.innerText.includes('$6.500');
+});
+check('Marcar la transferencia la suma a lo cobrado', (await page.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $6.500'));
+const anaStored = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Ana Hoy'));
+check('Quedó como transferencia cobrada por Gustavo', anaStored.pendingTransfer == null && anaStored.transfer === 4500 && anaStored.cash === 2000 && anaStored.amount === 6500 && anaStored.transferReceivedBy === 'Gustavo' && anaStored.paid === true);
+
+// Anotar a un jugador en otro partido desde su perfil
+await page.evaluate(() => { location.hash = '#/jugadores'; });
+await page.waitForSelector('#roster-list .name:text-is("Juan Pérez")');
+await page.locator('#roster-list .who', { hasText: 'Juan Pérez' }).click();
+await page.waitForSelector('#signup-list');
+const juevesRow = page.locator('#signup-list .signup-row', { hasText: 'Jueves 22/10' });
+check('El jueves figura Anotado', (await juevesRow.innerText()).includes('Anotado'));
+check('El casillero del jueves está marcado y no se puede volver a anotar', await juevesRow.locator('input').isChecked() && await juevesRow.locator('input').isDisabled());
+const sabadoRow = page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' });
+check('El sábado muestra los lugares libres', (await sabadoRow.innerText()).includes('Quedan'));
+await sabadoRow.locator('input[type=checkbox]').check();
+check('El botón dice Anotar en 1 partido', (await page.textContent('#btn-signup')).trim() === 'Anotar en 1 partido');
+await page.click('#btn-signup');
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('#signup-list .signup-row')].find((el) => el.innerText.includes('Sábado'));
+  return row && row.innerText.includes('Anotado');
+});
+const sabadoPlayers = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((p) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24'));
+check('El sábado usa la misma alta: Gustavo, token y sin duplicar el teléfono', sabadoPlayers.length === 1 && sabadoPlayers[0].addedBy === 'Gustavo' && sabadoPlayers[0].phone === '5491112345678' && sabadoPlayers[0].confirmToken.length >= 16 && sabadoPlayers[0].waiting !== true);
+const sabadoCard = await page.evaluate((token) => JSON.parse(localStorage.getItem('f7c-demo-db')).confirmations[token], sabadoPlayers[0].confirmToken);
+check('La ficha del sábado no tiene teléfono', sabadoCard && sabadoCard.name === 'Juan Pérez' && sabadoCard.phone == null && !JSON.stringify(sabadoCard).includes('549'));
+await page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' }).locator('[data-open-match]').click();
+await page.waitForSelector('#slots .name:text-is("Juan Pérez")');
+check('Tocar el sábado abre el partido', (await page.textContent('h1')).includes('Sábado 24/10'));
+await page.evaluate(() => { location.hash = '#/jugadores'; });
+await page.locator('#roster-list .who', { hasText: 'Juan Pérez' }).click();
+await page.waitForSelector('#signup-list .signup-row:has-text("Sábado 24/10") [data-signup-remove]');
+await page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' }).locator('[data-signup-remove]').click();
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('#signup-list .signup-row')].find((el) => el.innerText.includes('Sábado'));
+  return row && !row.innerText.includes('Anotado');
+});
+check('Quitar lo saca solo de ese partido', await page.evaluate(() => !Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((p) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24')));
 
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());

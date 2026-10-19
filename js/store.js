@@ -51,7 +51,7 @@
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { addDays, todayISO, toEpoch } from './dates.js';
-import { paymentRecord } from './payments.js';
+import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { nextWaitOrder } from './waiting.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
@@ -216,6 +216,13 @@ class LocalStore {
   }
   async setPayment(id, input, who) {
     const rec = paymentRecord(input, who);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
+    await this.updatePlayer(id, rec.patch);
+  }
+  async markTransferReceived(id, who) {
+    const player = this._load().players[id];
+    if (!player) throw new Error('Jugador inexistente');
+    const rec = receivePendingTransfer(player, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
     await this.updatePlayer(id, rec.patch);
   }
@@ -497,6 +504,13 @@ class FirebaseStore {
   }
   async setPayment(id, input, who) {
     const rec = paymentRecord(input, who);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
+    await this.updatePlayer(id, rec.patch);
+  }
+  async markTransferReceived(id, who) {
+    const player = this.state.players.find((item) => item.id === id);
+    if (!player) throw new Error('Jugador inexistente');
+    const rec = receivePendingTransfer(player, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
     await this.updatePlayer(id, rec.patch);
   }

@@ -176,9 +176,17 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .slot.free { border-style: dashed; background: transparent; color: var(--muted); width: 100%; text-align: left; font-size: 0.9375rem; }
 .slot.free .n { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
 .slot.extra { border-color: var(--danger); }
-.pay-line { font-size: 0.8125rem; font-weight: 700; margin-top: 1px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pay-line { font-size: 0.8125rem; font-weight: 700; margin-top: 1px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
 .pay-line.ok { color: var(--green); }
 .pay-line.no { color: var(--muted); font-weight: 600; }
+.pay-pending {
+  display: inline-block; margin-top: 3px; font-size: 0.75rem; font-weight: 800;
+  color: var(--warn-text); background: var(--warn-bg); border-radius: 99px; padding: 1px 8px;
+  white-space: normal; overflow-wrap: anywhere;
+}
+.signup-check { flex: none; display: grid; place-items: center; }
+.signup-check input { width: 1.375rem; height: 1.375rem; margin: 0; }
+.signup-row .btn { flex: none; min-height: 40px; padding: 0 10px; }
 .pay-btn {
   width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line);
   background: var(--bg); font-size: 1.125rem; line-height: 1; padding: 0;
