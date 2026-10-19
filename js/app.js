@@ -1,0 +1,471 @@
+import { ACCESS_CODE, ORGANIZERS, CAPACITY, VENUE } from '../config.js';
+import { createStore } from './store.js';
+import { parseMatchesFromText } from './parser.js';
+import { normalizePhone, displayFromWa, waLink } from './phone.js';
+import {
+  todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
+  DIAS_CORTOS, MESES_CORTOS,
+} from './dates.js';
+
+/* ───────── utilidades ───────── */
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const WHO_KEY = 'f7c-who';
+const CODE_KEY = 'f7c-code';
+const ICON = {
+  wa: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2l-.4-.2z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  paste: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/></svg>',
+  share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 6l-4-4-4 4M12 2v14"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
+  more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>',
+};
+
+const app = {
+  store: null,
+  matches: [],
+  players: [],
+  who: localStorage.getItem(WHO_KEY),
+  loaded: false,
+};
+window.__app = app; // útil para depurar / tests
+
+/* ───────── toast ───────── */
+let toastTimer;
+function toast(msg, ms = 2600) {
+  const t = $('#toast');
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
+}
+function showError(msg) {
+  const b = $('#error-banner'); b.textContent = msg; b.hidden = !msg;
+}
+// Las escrituras a Firestore resuelven cuando el servidor confirma; con caché
+// offline la UI no espera: se cierra el formulario y se avisa si falla.
+function run(p, okMsg) {
+  if (okMsg) toast(okMsg);
+  return Promise.resolve(p).catch((e) => { console.error(e); toast('No se pudo guardar: ' + (e.code || e.message || e)); });
+}
+
+/* ───────── datos derivados ───────── */
+const playersOf = (matchId) => app.players.filter((p) => p.matchId === matchId).sort((a, b) => a.createdAt - b.createdAt);
+const matchById = (id) => app.matches.find((m) => m.id === id);
+const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
+function sortedMatches() {
+  return [...app.matches].sort((a, b) => (a.startsAt ?? toEpoch(a.date, a.time)) - (b.startsAt ?? toEpoch(b.date, b.time)));
+}
+
+/* ───────── router ───────── */
+function route() {
+  const h = location.hash.replace(/^#\/?/, '');
+  const [name, id] = h.split('/');
+  if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
+  return { name: 'home' };
+}
+window.addEventListener('hashchange', render);
+
+/* ───────── render ───────── */
+function render() {
+  const r = route();
+  $('#btn-back').hidden = r.name === 'home';
+  const who = $('#btn-who');
+  who.hidden = !app.who; who.textContent = app.who ? `Sos ${app.who}` : '';
+  if (!app.loaded) return;
+  if (r.name === 'match') renderMatch(r.id); else renderHome();
+}
+
+function matchCard(m) {
+  const n = playersOf(m.id).length;
+  const cap = m.capacity || CAPACITY;
+  const [, mo, d] = m.date.split('-').map(Number);
+  const rel = relativeLabel(m.date);
+  return `
+  <li><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}">
+    <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
+    <div class="match-info">
+      <div class="match-title">${esc(capitalize(labelDate(m.date)))}</div>
+      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}<span>${esc(m.time || '--:--')} hs</span></div>
+      ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
+    </div>
+    <div class="count ${n >= cap ? 'full' : ''}" aria-label="${n} de ${cap} anotados">
+      <div class="num">${n}<small>/${cap}</small></div>
+      <div class="bar"><i style="width:${Math.min(100, (n / cap) * 100)}%"></i></div>
+    </div>
+  </a></li>`;
+}
+
+function renderHome() {
+  const today = todayISO();
+  const limit = addDays(today, 6);
+  const now = Date.now();
+  const all = sortedMatches().filter((m) => m.date >= today && (m.startsAt ?? toEpoch(m.date, m.time)) > now - 2 * 3600e3);
+  const next = all.filter((m) => m.date <= limit);
+  const later = all.filter((m) => m.date > limit);
+  $('#view').innerHTML = `
+    <h2 class="section">Próximos 7 días</h2>
+    ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
+      <div class="empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
+      <p class="small">Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.</p></div>`}
+    ${later.length ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
+    <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>
+    <div class="actionbar"><div class="actionbar-inner">
+      <button class="btn" id="btn-import">${ICON.paste}Importar desde texto</button>
+      <button class="btn primary" id="btn-add-match">${ICON.plus}Agregar partido</button>
+    </div></div>`;
+  $('#btn-add-match').onclick = () => openMatchForm();
+  $('#btn-import').onclick = () => openImport();
+}
+
+function renderMatch(id) {
+  const m = matchById(id);
+  if (!m) {
+    $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
+    return;
+  }
+  const ps = playersOf(id);
+  const cap = m.capacity || CAPACITY;
+  const slots = [];
+  for (let i = 0; i < Math.max(cap, ps.length); i++) {
+    const p = ps[i];
+    if (!p) {
+      slots.push(`<li><button class="slot free" data-free="${i}"><span class="n">${i + 1}</span><span>Lugar libre · tocá para anotar</span></button></li>`);
+      continue;
+    }
+    const tagCls = p.addedBy === ORGANIZERS[0] ? 'g' : p.addedBy === ORGANIZERS[1] ? 'm' : '';
+    slots.push(`
+      <li class="slot ${i >= cap ? 'extra' : ''}" data-player="${esc(p.id)}">
+        <span class="n">${i + 1}</span>
+        <div class="who">
+          <div class="name">${esc(p.name)}</div>
+          <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
+            <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
+        </div>
+        ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
+        <button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
+      </li>`);
+  }
+  const full = ps.length >= cap;
+  $('#view').innerHTML = `
+    <section class="detail-head">
+      <h1>${esc(capitalize(labelDate(m.date)))}</h1>
+      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
+      ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
+      <div class="meta"><strong id="slot-count">${ps.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (ps.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - ps.length}`}</span></div>
+      <div class="detail-tools">
+        <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
+        <button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>
+        <button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>
+      </div>
+    </section>
+    <h2 class="section">Jugadores</h2>
+    <ul class="slots" id="slots">${slots.join('')}</ul>
+    <div class="actionbar"><div class="actionbar-inner">
+      <button class="btn" id="btn-share">${ICON.share}Compartir lista</button>
+      <button class="btn primary" id="btn-add-player" ${full ? 'disabled' : ''}>${ICON.plus}${full ? 'Completo' : 'Agregar jugador'}</button>
+    </div></div>`;
+
+  $('#btn-add-player').onclick = () => openPlayerForm(m);
+  $('#slots').onclick = (e) => {
+    const free = e.target.closest('[data-free]');
+    if (free) return openPlayerForm(m);
+    const menu = e.target.closest('[data-menu]');
+    if (menu) return openPlayerMenu(m, app.players.find((p) => p.id === menu.dataset.menu));
+  };
+  $('#btn-copy').onclick = () => copyText(listText(m)).then((ok) => toast(ok ? 'Lista copiada' : 'No se pudo copiar'));
+  $('#btn-share').onclick = () => shareText(listText(m));
+  $('#btn-edit-match').onclick = () => openMatchForm(m);
+  $('#btn-del-match').onclick = () => {
+    const n = playersOf(m.id).length;
+    if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs${n ? ` y sus ${n} jugadores` : ''}?`)) return;
+    run(app.store.deleteMatch(m.id), 'Partido borrado');
+    location.hash = '#/';
+  };
+}
+
+/* ───────── textos ───────── */
+function waMessage(m, p) {
+  const first = (p.name || '').trim().split(/\s+/)[0];
+  return `¡Hola ${first}! Te anoté para el fútbol 7 en ${VENUE} el ${labelDate(m.date)} a las ${m.time} hs.` +
+    (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽`;
+}
+function listText(m) {
+  const ps = playersOf(m.id);
+  const cap = m.capacity || CAPACITY;
+  const lines = [`⚽ Fútbol 7 · ${VENUE}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
+  if (m.note) lines.push(`📝 ${m.note}`);
+  lines.push('');
+  for (let i = 0; i < Math.max(cap, ps.length); i++) lines.push(`${i + 1}. ${ps[i] ? ps[i].name : ''}`);
+  lines.push('', ps.length >= cap ? '✅ ¡Completo!' : `Faltan ${cap - ps.length}`);
+  return lines.join('\n');
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch {} ta.remove(); return ok;
+  }
+}
+async function shareText(text) {
+  if (navigator.share) {
+    try { await navigator.share({ text }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  // Sin Web Share: abrir WhatsApp con la lista lista para mandar
+  const ok = await copyText(text);
+  toast(ok ? 'Lista copiada. Pegala en el grupo.' : 'No se pudo compartir');
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener');
+}
+
+/* ───────── sheet (dialog) ───────── */
+const sheet = $('#sheet');
+let sheetLocked = false;
+function openSheet(html, { locked = false } = {}) {
+  sheetLocked = locked;
+  sheet.innerHTML = `<div class="sheet-body">${html}</div>`;
+  if (!sheet.open) sheet.showModal();
+  const first = sheet.querySelector('[autofocus]');
+  if (first) setTimeout(() => first.focus(), 50);
+  return sheet;
+}
+function closeSheet() { sheetLocked = false; if (sheet.open) sheet.close(); }
+sheet.addEventListener('cancel', (e) => { if (sheetLocked) e.preventDefault(); });
+sheet.addEventListener('click', (e) => {
+  if (e.target === sheet && !sheetLocked) closeSheet();
+  if (e.target.closest('[data-close]')) closeSheet();
+});
+
+/* ¿Quién sos? */
+function openWho(first = false) {
+  openSheet(`
+    <h3>¿Quién sos?</h3>
+    <p class="hint">Así sabemos quién anotó a cada jugador. Se guarda en este teléfono y lo podés cambiar en Ajustes.</p>
+    <div class="choice">${ORGANIZERS.map((o) => `<button class="btn ${o === app.who ? 'primary' : ''}" data-who="${esc(o)}">${esc(o)}</button>`).join('')}</div>
+    ${first ? '' : '<div class="sheet-actions"><button class="btn ghost" data-close>Cancelar</button></div>'}`, { locked: first });
+  sheet.querySelectorAll('[data-who]').forEach((b) => (b.onclick = () => {
+    app.who = b.dataset.who; localStorage.setItem(WHO_KEY, app.who);
+    closeSheet(); render(); toast(`¡Hola ${app.who}!`);
+  }));
+}
+
+/* Ajustes */
+function openSettings() {
+  const demo = app.store?.mode !== 'firebase';
+  openSheet(`
+    <h3>Ajustes</h3>
+    <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
+    <div class="menu">
+      <button class="btn" id="set-who">Organizador <small>${esc(app.who || '—')}</small></button>
+      ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
+      ${ACCESS_CODE ? '<button class="btn" id="set-logout">Olvidar código de acceso</button>' : ''}
+      <button class="btn ghost" data-close>Cerrar</button>
+    </div>
+    <p class="footer-note">Fútbol 7 · ${esc(VENUE)} · v1</p>`);
+  $('#set-who').onclick = () => openWho(false);
+  const clr = $('#set-clear');
+  if (clr) clr.onclick = () => { if (confirm('¿Borrar todos los partidos y jugadores de demo?')) { app.store.clearAll(); closeSheet(); toast('Datos de demo borrados'); } };
+  const lo = $('#set-logout');
+  if (lo) lo.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
+}
+
+/* Agregar / editar partido */
+function openMatchForm(m) {
+  const today = todayISO();
+  openSheet(`
+    <form id="match-form" novalidate>
+      <h3>${m ? 'Editar partido' : 'Agregar partido'}</h3>
+      <p class="hint">${esc(VENUE)} · Fútbol 7 contra 7 (${CAPACITY} jugadores)</p>
+      <div class="row">
+        <label class="field"><span>Fecha</span><input type="date" name="date" required min="${m ? '' : today}" value="${esc(m ? m.date : today)}"></label>
+        <label class="field"><span>Hora</span><input type="time" name="time" required value="${esc(m ? m.time : '21:00')}"></label>
+      </div>
+      <label class="field"><span>Nota (opcional)</span><input type="text" name="note" maxlength="300" placeholder="Ej: cancha 2, traer pechera" value="${esc(m?.note || '')}"></label>
+      <div class="field"><div class="err" id="mf-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${m ? 'Guardar' : 'Agregar'}</button></div>
+    </form>`);
+  $('#match-form').onsubmit = (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const data = { date: f.get('date'), time: f.get('time'), note: String(f.get('note') || '').trim() };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date) || !/^\d{2}:\d{2}$/.test(data.time)) { $('#mf-err').textContent = 'Completá fecha y hora.'; return; }
+    const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
+    if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
+    closeSheet();
+    if (m) run(app.store.updateMatch(m.id, data, app.who), 'Partido actualizado');
+    else run(app.store.addMatch({ ...data, source: 'manual', capacity: CAPACITY }, app.who), 'Partido agregado');
+  };
+}
+
+/* Importar desde texto */
+function openImport(prevText = '') {
+  openSheet(`
+    <h3>Importar desde texto</h3>
+    <p class="hint">Pegá uno o varios mensajes del grupo de WhatsApp. Detectamos expresiones como “jueves 22/10 21hs”, “miércoles 20:00” o “mañana 19 hs”, y te mostramos una vista previa antes de guardar.</p>
+    <label class="field"><span>Mensaje</span><textarea id="imp-text" autofocus placeholder="Ej: Muchachos, se arma el jueves 22/10 21hs ⚽">${esc(prevText)}</textarea></label>
+    <label class="field"><span>Fecha del mensaje <small class="muted">(para “hoy”, “mañana”, “jueves”…)</small></span><input type="date" id="imp-ref" value="${todayISO()}"></label>
+    <div class="sheet-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="imp-parse">Analizar</button></div>`);
+  $('#imp-parse').onclick = () => {
+    const text = $('#imp-text').value;
+    const found = parseMatchesFromText(text, { refDate: $('#imp-ref').value || todayISO() });
+    openImportPreview(text, found);
+  };
+}
+function openImportPreview(text, found) {
+  const today = todayISO();
+  const items = found.map((f) => {
+    const exists = app.matches.some((m) => m.date === f.date && m.time === f.time);
+    const past = f.date < today;
+    return { ...f, exists, past, on: !exists && !past && !!f.time };
+  });
+  openSheet(`
+    <h3>Vista previa</h3>
+    ${items.length ? `<p class="hint">Encontramos ${items.length} partido${items.length > 1 ? 's' : ''}. Revisá fecha y hora, y destildá los que no quieras importar.</p>` :
+      '<p class="hint">No encontramos fechas ni horarios en el texto. Probá con algo como “jueves 22/10 21hs”.</p>'}
+    <ul class="preview" id="imp-list">${items.map((it, i) => `
+      <li class="${it.on ? '' : 'off'}" data-i="${i}">
+        <div class="top"><input type="checkbox" ${it.on ? 'checked' : ''} aria-label="Importar"><b class="lbl">${esc(capitalize(labelDate(it.date)))} · ${esc(it.time || '--:--')} hs</b></div>
+        <div class="row"><input type="date" value="${it.date}" aria-label="Fecha"><input type="time" value="${it.time}" aria-label="Hora"></div>
+        ${it.warning ? `<div class="warn">⚠️ ${esc(it.warning)}</div>` : ''}
+        ${it.exists ? '<div class="warn">Ya existe un partido en ese horario</div>' : ''}
+        ${it.past ? '<div class="warn">La fecha ya pasó</div>' : ''}
+        <div class="src">“${esc(it.source)}”</div>
+      </li>`).join('')}</ul>
+    <div class="sheet-actions"><button class="btn" id="imp-back">Volver</button>${items.length ? '<button class="btn primary" id="imp-save">Importar</button>' : ''}</div>`);
+  $('#imp-back').onclick = () => openImport(text);
+  const list = $('#imp-list');
+  const sync = (li) => {
+    const it = items[li.dataset.i];
+    const [cb, d, t] = li.querySelectorAll('input');
+    it.on = cb.checked; it.date = d.value; it.time = t.value;
+    li.classList.toggle('off', !it.on);
+    if (it.date) li.querySelector('.lbl').textContent = `${capitalize(labelDate(it.date))} · ${it.time || '--:--'} hs`;
+    updateSave();
+  };
+  const updateSave = () => {
+    const btn = $('#imp-save'); if (!btn) return;
+    const n = items.filter((i) => i.on && i.date && i.time).length;
+    btn.disabled = n === 0; btn.textContent = n ? `Importar ${n}` : 'Importar';
+  };
+  list.addEventListener('input', (e) => sync(e.target.closest('li')));
+  list.addEventListener('change', (e) => sync(e.target.closest('li')));
+  updateSave();
+  const save = $('#imp-save');
+  if (save) save.onclick = () => {
+    const sel = items.filter((i) => i.on && i.date && i.time);
+    if (!sel.length) return;
+    closeSheet();
+    run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, capacity: CAPACITY })), app.who),
+      `${sel.length} partido${sel.length > 1 ? 's' : ''} importado${sel.length > 1 ? 's' : ''}`);
+  };
+}
+
+/* Agregar / editar jugador */
+function openPlayerForm(m, p) {
+  openSheet(`
+    <form id="player-form" novalidate>
+      <h3>${p ? 'Editar jugador' : 'Agregar jugador'}</h3>
+      <p class="hint">${esc(fmtWhen(m))}${p ? '' : ` · Lo anota ${esc(app.who)}`}</p>
+      <label class="field"><span>Nombre</span><input name="name" autofocus autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
+      <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
+        <div class="small muted" id="pf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>
+      <div class="field"><div class="err" id="pf-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${p ? 'Guardar' : 'Agregar'}</button></div>
+    </form>`);
+  const form = $('#player-form');
+  const hint = $('#pf-phone');
+  form.phone.addEventListener('input', () => {
+    const v = form.phone.value.trim();
+    if (!v) { hint.className = 'small muted'; hint.textContent = 'Característica + número. Sin 0 ni 15 también sirve.'; return; }
+    const r = normalizePhone(v);
+    hint.className = r.ok ? 'ok' : 'err';
+    hint.textContent = r.ok ? `✓ ${r.display}` : r.error;
+  });
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const name = form.name.value.trim();
+    const phoneRaw = form.phone.value.trim();
+    if (!name) { $('#pf-err').textContent = 'Poné el nombre.'; return; }
+    let phone = '';
+    if (phoneRaw) {
+      const r = normalizePhone(phoneRaw);
+      if (!r.ok) { $('#pf-err').textContent = r.error; return; }
+      phone = r.wa;
+    }
+    if (!p && playersOf(m.id).length >= (m.capacity || CAPACITY)) { $('#pf-err').textContent = 'El partido ya está completo.'; return; }
+    closeSheet();
+    if (p) run(app.store.updatePlayer(p.id, { name, phone }), 'Jugador actualizado');
+    else run(app.store.addPlayer(m, { name, phone }, app.who), `${name} anotado`);
+  };
+}
+function openPlayerMenu(m, p) {
+  if (!p) return;
+  openSheet(`
+    <h3>${esc(p.name)}</h3>
+    <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <div class="menu">
+      ${p.phone ? `<a class="btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : ''}
+      <button class="btn" id="pm-edit">${ICON.edit}Editar</button>
+      <button class="btn danger" id="pm-del">${ICON.trash}Quitar del partido</button>
+      <button class="btn ghost" data-close>Cancelar</button>
+    </div>`);
+  $('#pm-edit').onclick = () => openPlayerForm(m, p);
+  $('#pm-del').onclick = () => {
+    if (!confirm(`¿Quitar a ${p.name} del partido?`)) return;
+    closeSheet(); run(app.store.deletePlayer(p.id), `${p.name} quitado`);
+  };
+}
+
+/* ───────── código de acceso (opcional) ───────── */
+function gate() {
+  return new Promise((resolve) => {
+    if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
+    $('#view').innerHTML = `
+      <form class="gate" id="gate">
+        <div class="ball">⚽</div><h2>Código de acceso</h2>
+        <p class="muted">Pedile el código a Gustavo o Martín.</p>
+        <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
+        <div class="err small" id="gate-err" style="color:var(--danger)"></div>
+        <button class="btn primary block">Entrar</button>
+      </form>`;
+    $('#gate').onsubmit = (e) => {
+      e.preventDefault();
+      if (e.target.code.value.trim() === ACCESS_CODE) { localStorage.setItem(CODE_KEY, ACCESS_CODE); resolve(); }
+      else $('#gate-err').textContent = 'Código incorrecto';
+    };
+  });
+}
+
+/* ───────── arranque ───────── */
+async function boot() {
+  $('#venue-name').textContent = VENUE;
+  $('#btn-back').onclick = () => { location.hash = '#/'; };
+  $('#btn-settings').onclick = openSettings;
+  $('#btn-who').onclick = () => openWho(false);
+  $('#brand').onclick = () => { location.hash = '#/'; };
+
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
+  }
+
+  await gate();
+  app.store = await createStore((e) => {
+    showError(e?.code === 'permission-denied'
+      ? 'Firebase rechazó el acceso. Revisá las reglas de Firestore (ver README).'
+      : e?.code === 'no-server'
+        ? 'No hay conexión con la base de datos de Firebase: los cambios quedan solo en este teléfono. ¿Está creada la base Firestore del proyecto? (ver README)'
+        : 'Problema de conexión con Firebase: ' + (e?.message || e));
+  });
+  $('#demo-banner').hidden = app.store.mode === 'firebase';
+  app.store.subscribe(({ matches, players }) => {
+    app.matches = matches || []; app.players = players || []; app.loaded = true;
+    // no redibujar debajo de un formulario abierto para no perder lo que se escribe
+    if (!sheet.open || !sheet.querySelector('input, textarea')) render(); else pendingRender = true;
+  });
+  if (!app.who) openWho(true);
+  render();
+  // refrescar etiquetas "Hoy/Mañana" y ocultar partidos pasados
+  setInterval(() => { if (!sheet.open || !sheet.querySelector('input, textarea')) render(); }, 60_000);
+}
+let pendingRender = false;
+sheet.addEventListener('close', () => { pendingRender = false; render(); });
+
+boot().catch((e) => { console.error(e); showError('Error al iniciar la app: ' + e.message); });
