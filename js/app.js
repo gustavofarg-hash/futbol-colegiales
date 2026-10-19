@@ -8,7 +8,10 @@ import {
 } from './dates.js';
 import { collectedLine, parseAmount, paymentStatusText } from './payments.js';
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
-import { confirmPageUrl, confirmStatus, confirmSummary, reminderMessage, waReminderUrl } from './reminders.js';
+import {
+  confirmStatus, confirmSummary, matchesCrossingReminderWindow,
+  needsReminderBanner, reminderDueAt, reminderLinks, reminderProgress,
+} from './reminders.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -112,6 +115,7 @@ function renderHome() {
   const next = all.filter((m) => m.date <= limit);
   const later = all.filter((m) => m.date > limit);
   $('#view').innerHTML = `
+    ${reminderBanners(next)}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
       <div class="empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
@@ -124,6 +128,7 @@ function renderHome() {
     </div></div>`;
   $('#btn-add-match').onclick = () => openMatchForm();
   $('#btn-import').onclick = () => openImport();
+  bindReminderBanners();
 }
 
 function renderMatch(id) {
@@ -174,6 +179,7 @@ function renderMatch(id) {
         <button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>
       </div>
     </section>
+    ${reminderBanners([m])}
     <button type="button" class="btn block remind-open" id="btn-remind">Recordatorio de partido</button>
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
@@ -184,6 +190,7 @@ function renderMatch(id) {
     </div></div>`;
 
   $('#btn-remind').onclick = () => openReminders(m);
+  bindReminderBanners();
   $('#btn-add-player').onclick = () => openPlayerForm(m);
   $('#btn-add-wait').onclick = () => openPlayerForm(m, null, { waiting: true });
   $('#btn-promote').onclick = () => promoteTop(m);
@@ -288,6 +295,30 @@ function confirmTag(p) {
   return `<span class="confirm-tag ${s.cls}">${s.text}</span>`;
 }
 
+const REMINDER_BANNER = 'Faltan 2 horas: mandá los recordatorios';
+
+function reminderBanners(matches) {
+  const now = Date.now();
+  const due = (matches || []).filter((m) => needsReminderBanner(m, app.players.filter((p) => p.matchId === m.id), now));
+  if (!due.length) return '';
+  return `<div class="remind-banners">${due.map((m) => {
+    const prog = reminderProgress(app.players.filter((p) => p.matchId === m.id));
+    return `<button type="button" class="remind-banner" data-remind-banner="${esc(m.id)}">
+      <strong>${REMINDER_BANNER}</strong>
+      <small>${esc(capitalize(labelDate(m.date)))} · ${esc(m.time || '--:--')} hs · ${prog.sent} de ${prog.total} enviados</small>
+    </button>`;
+  }).join('')}</div>`;
+}
+
+function bindReminderBanners() {
+  $('#view').querySelectorAll('[data-remind-banner]').forEach((btn) => {
+    btn.onclick = () => {
+      const match = matchById(btn.dataset.remindBanner);
+      if (match) openReminders(match);
+    };
+  });
+}
+
 async function openReminders(m) {
   const people = [...playersOf(m.id), ...waitingOf(m.id)];
   if (!people.length) { toast('No hay jugadores para avisar'); return; }
@@ -304,14 +335,14 @@ async function openReminders(m) {
     closeSheet();
     return;
   }
-  const fresh = [...playersOf(m.id), ...waitingOf(m.id)];
+  const fresh = [...playersOf(m.id), ...waitingOf(m.id)].map((p) => ({ ...p, confirmToken: tokens.get(p.id) || p.confirmToken }));
+  const linkById = new Map(reminderLinks({ match: m, players: fresh, venue: VENUE }).map((row) => [new URL(row.confirmUrl).searchParams.get('p'), row]));
   const rows = fresh.map((p) => {
-    const token = tokens.get(p.id) || p.confirmToken;
-    if (!p.phone || !token) {
+    const link = linkById.get(p.id);
+    if (!link) {
       return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div></li>`;
     }
-    const url = confirmPageUrl({ matchId: m.id, playerId: p.id, token });
-    const href = waReminderUrl(p.phone, reminderMessage({ player: p, match: m, venue: VENUE, confirmUrl: url }));
+    const href = link.waUrl;
     const sent = !!p.reminderSentAt;
     return `<li class="remind-row" data-remind="${esc(p.id)}">
       <div class="who"><div class="name">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
@@ -403,12 +434,21 @@ function openSettings() {
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
     <div class="menu">
       <button class="btn" id="set-who">Organizador <small>${esc(app.who || '—')}</small></button>
+      <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
       ${ACCESS_CODE ? '<button class="btn" id="set-logout">Olvidar código de acceso</button>' : ''}
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
     <p class="footer-note">Fútbol 7 · ${esc(VENUE)} · v1</p>`);
   $('#set-who').onclick = () => openWho(false);
+  $('#set-notify').onclick = async () => {
+    if (typeof Notification === 'undefined') { toast('Este navegador no muestra avisos'); return; }
+    let perm = Notification.permission;
+    if (perm === 'default') perm = await Notification.requestPermission();
+    toast(perm === 'granted'
+      ? 'Listo. Si la app está abierta cuando falten 2 horas, te avisa.'
+      : 'Sin permiso no hay aviso. El cartel en la app sigue igual.');
+  };
   const clr = $('#set-clear');
   if (clr) clr.onclick = () => { if (confirm('¿Borrar todos los partidos y jugadores de demo?')) { app.store.clearAll(); closeSheet(); toast('Datos de demo borrados'); } };
   const lo = $('#set-logout');
@@ -688,11 +728,79 @@ async function boot() {
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe
     if (!sheet.open || !sheet.querySelector('input, textarea')) render(); else pendingRender = true;
     fixOverflow();
+    backfillConfirmTokens();
+    armReminderTimer();
   });
   if (!app.who) openWho(true);
   render();
+  armReminderTimer();
   // refrescar etiquetas "Hoy/Mañana" y ocultar partidos pasados
   setInterval(() => { if (!sheet.open || !sheet.querySelector('input, textarea')) render(); }, 60_000);
+}
+
+// El aviso del navegador solo sale si la página está abierta cuando se cumplen
+// las 2 horas y el permiso ya estaba concedido. No hay envío en segundo plano.
+let reminderSeenAt = Date.now();
+let reminderTimer = 0;
+let reminderTimerAt = Infinity;
+const tokenPending = new Set();
+
+function backfillConfirmTokens() {
+  for (const id of tokenPending) {
+    if (app.players.some((p) => p.id === id && p.confirmToken)) tokenPending.delete(id);
+  }
+  for (const p of app.players) {
+    if (p.confirmToken || tokenPending.has(p.id)) continue;
+    tokenPending.add(p.id);
+    Promise.resolve(app.store.ensureConfirmToken(p.id)).catch((e) => {
+      tokenPending.delete(p.id);
+      console.error(e);
+    });
+  }
+}
+
+function armReminderTimer() {
+  const now = Date.now();
+  let next = now + 60_000;
+  for (const m of app.matches) {
+    const due = reminderDueAt(m);
+    if (due != null && due > now) next = Math.min(next, due + 250);
+  }
+  if (reminderTimer && next >= reminderTimerAt - 50) return;
+  clearTimeout(reminderTimer);
+  reminderTimerAt = next;
+  reminderTimer = setTimeout(checkReminderWindow, Math.max(250, next - now));
+}
+
+function checkReminderWindow() {
+  reminderTimer = 0;
+  reminderTimerAt = Infinity;
+  const now = Date.now();
+  const prev = reminderSeenAt;
+  reminderSeenAt = now;
+  const crossed = matchesCrossingReminderWindow(app.matches, prev, now);
+  for (const m of crossed) {
+    const people = app.players.filter((p) => p.matchId === m.id);
+    if (needsReminderBanner(m, people, now)) fireReminderNotification(m);
+  }
+  if (crossed.length && (!sheet.open || !sheet.querySelector('input, textarea'))) render();
+  armReminderTimer();
+}
+
+function fireReminderNotification(m) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(REMINDER_BANNER, {
+      body: `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs. Este aviso solo aparece si la app está abierta.`,
+      tag: `f7c-remind-${m.id}`,
+    });
+    n.onclick = () => {
+      window.focus();
+      location.hash = `#/partido/${encodeURIComponent(m.id)}`;
+      const fresh = matchById(m.id);
+      if (fresh) openReminders(fresh);
+    };
+  } catch (e) { console.warn(e); }
 }
 let pendingRender = false;
 let fixingOverflow = false;

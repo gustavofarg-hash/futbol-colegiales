@@ -6,7 +6,8 @@ import { collectedLine, formatARS, parseAmount, paymentRecord, paymentStatusText
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import {
-  confirmPageUrl, confirmSummary, confirmationAllowed, newConfirmToken, reminderMessage, waReminderUrl,
+  confirmPageUrl, confirmSummary, confirmationAllowed, matchesCrossingReminderWindow,
+  needsReminderBanner, newConfirmToken, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
@@ -164,6 +165,10 @@ test('lista de espera: al final, flechas y subir al primero', async () => {
   const late = await store.addPlayer(match, { name: 'Dino', phone: '' }, 'Gustavo');
   const db = () => JSON.parse(mem.get('f7c-test-wait'));
   const byName = (n) => Object.values(db().players).find((p) => p.name === n);
+  const tokens = Object.values(db().players).map((p) => p.confirmToken);
+  assert.equal(tokens.length, 4);
+  assert.ok(tokens.every((t) => typeof t === 'string' && /^[A-Za-z0-9_-]{24}$/.test(t)));
+  assert.equal(new Set(tokens).size, 4);
   assert.equal(byName('Ana').waiting, false);
   assert.equal(byName('Beto').waiting, false);
   assert.equal(byName('Cero').waiting, true);
@@ -215,4 +220,35 @@ test('recordatorio: token, link y mensaje', () => {
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', 'otro-token-largo-falso'), false);
   assert.equal(confirmationAllowed(player, 'otro-partido', a), false);
   assert.equal(confirmSummary([{ confirmed: 'si' }, { confirmed: 'no' }, { name: 'x' }]).text, 'Confirmados: 1 · No juegan: 1 · Sin respuesta: 1');
+});
+
+test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
+  const start = Date.parse('2026-10-19T15:00:00-03:00');
+  const match = { id: '2026-10-19_1500', date: '2026-10-19', time: '15:00', startsAt: start, note: 'Cancha 2' };
+  const token = 'a'.repeat(24);
+  const players = [
+    { id: 'p1', name: 'Juan Pérez', phone: '5491112345678', confirmToken: token },
+    { id: 'p2', name: 'Sin teléfono', phone: '', confirmToken: 'b'.repeat(24) },
+    { id: 'p3', name: 'Sin token', phone: '5491100000000' },
+  ];
+  const twoH = 2 * 60 * 60 * 1000;
+  assert.equal(withinReminderWindow(match, start - twoH), true);
+  assert.equal(withinReminderWindow(match, start - twoH - 1), false);
+  assert.equal(withinReminderWindow(match, start), true);
+  assert.equal(withinReminderWindow(match, start + 1), false);
+  assert.equal(needsReminderBanner(match, players, start - 60_000), true);
+  assert.equal(needsReminderBanner(match, players.map((p) => (p.phone ? { ...p, reminderSentAt: 1 } : p)), start - 60_000), false);
+  assert.equal(needsReminderBanner(match, players.map((p) => (p.id === 'p1' ? { ...p, reminderSentAt: 1 } : p)), start - 60_000), true);
+  assert.equal(needsReminderBanner(match, [{ name: 'Nadie', phone: '' }], start - 60_000), false);
+  const links = reminderLinks({ match, players, venue: 'Polideportivo Colegiales' });
+  assert.equal(links.length, 1);
+  assert.equal(links[0].name, 'Juan Pérez');
+  assert.equal(links[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-19_1500&p=p1&t=${token}`);
+  assert.ok(links[0].waUrl.startsWith('https://wa.me/5491112345678?text='));
+  const text = decodeURIComponent(links[0].waUrl.split('text=')[1]);
+  assert.match(text, /^¡Hola Juan!/);
+  assert.match(text, /lunes 19\/10 a las 15:00 hs \(Cancha 2\)/);
+  assert.ok(text.includes(links[0].confirmUrl));
+  assert.deepEqual(matchesCrossingReminderWindow([match], start - twoH - 1000, start - twoH + 1000).map((m) => m.id), ['2026-10-19_1500']);
+  assert.equal(matchesCrossingReminderWindow([match], start - 1000, start - 500).length, 0);
 });

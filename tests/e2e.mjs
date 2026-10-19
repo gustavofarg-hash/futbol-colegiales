@@ -111,6 +111,11 @@ check('Link wa.me Juan correcto', hrefs[0] === `https://wa.me/5491112345678?text
 players.forEach(([n, , wa], i) => check(`Número normalizado ${n} → ${wa}`, hrefs[i]?.startsWith(`https://wa.me/${wa}?text=`)));
 check('Cada jugador muestra "Agregó: Gustavo"', (await page.$$('.tag.g')).length === 3);
 check('Todos figuran sin respuesta', (await page.textContent('#confirm-sum')).includes('Sin respuesta: 3'));
+const juanAtAdd = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  return Object.values(db.players).find((p) => p.name === 'Juan Pérez');
+});
+check('El token se crea al anotar, sin abrir el recordatorio', juanAtAdd?.confirmToken?.length >= 16 && !juanAtAdd.reminderSentAt);
 
 // Recordatorio y página de confirmación (mismo origen, modo demo)
 await page.click('#btn-remind');
@@ -340,6 +345,54 @@ await page.click('.match-card:has-text("Lunes 26/10")');
 await page.click('#btn-del-match');
 await page.waitForFunction(() => document.querySelectorAll('.match-card').length === 4);
 check('Borrar partido', true);
+
+// Cartel de 2 horas. El reloj está fijo en lunes 19/10 13:00.
+check('Un partido a varios días no muestra el cartel', (await page.locator('.remind-banner').count()) === 0);
+await page.click('#btn-add-match');
+await page.fill('#match-form [name=date]', '2026-10-19');
+await page.fill('#match-form [name=time]', '15:05');
+await page.fill('#match-form [name=note]', 'Cancha 1');
+await page.click('#match-form button[type=submit]');
+await page.waitForSelector('.match-card:has-text("Lunes 19/10")');
+check('A más de 2 horas tampoco hay cartel', (await page.locator('.remind-banner').count()) === 0);
+await page.click('.match-card:has-text("Lunes 19/10")');
+await page.click('#btn-add-player');
+await page.fill('#player-form [name=name]', 'Ana Hoy');
+await page.fill('#player-form [name=phone]', '11 5555-0101');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('.slot .name:text-is("Ana Hoy")');
+check('Sigue sin cartel hasta que falten 2 horas', (await page.locator('.remind-banner').count()) === 0);
+await page.evaluate(() => {
+  window.__notes = [];
+  const Real = window.Notification;
+  function Wrapped(title, opts) {
+    window.__notes.push({ title, body: opts && opts.body || '' });
+    try { return new Real(title, opts); } catch { return { onclick: null, close() {} }; }
+  }
+  Wrapped.permission = 'granted';
+  Wrapped.requestPermission = () => Promise.resolve('granted');
+  window.Notification = Wrapped;
+});
+await page.clock.fastForward(6 * 60 * 1000);
+await page.waitForSelector('.remind-banner');
+const bannerText = (await page.textContent('.remind-banner')).replace(/\s+/g, ' ');
+check('Cartel en el partido al cumplirse las 2 horas', bannerText.includes('Faltan 2 horas: mandá los recordatorios') && bannerText.includes('0 de 1 enviados'), bannerText);
+const notes = await page.evaluate(() => window.__notes);
+check('Aviso local solo porque la app estaba abierta y el permiso ya estaba', notes.some((n) => n.title === 'Faltan 2 horas: mandá los recordatorios'), JSON.stringify(notes));
+await page.click('.remind-banner');
+await page.waitForSelector('#remind-list a[data-send]');
+check('El cartel abre el mismo envío', (await page.textContent('#remind-list')).includes('Ana Hoy'));
+await page.click('dialog.sheet [data-close]');
+await page.click('#btn-back');
+await page.waitForSelector('.remind-banner');
+check('El mismo cartel está en el inicio', (await page.textContent('.remind-banner')).includes('Faltan 2 horas: mandá los recordatorios'));
+await page.click('.remind-banner');
+await page.waitForSelector('#remind-list a[data-send]');
+const [soonPopup] = await Promise.all([page.waitForEvent('popup'), page.click('#remind-list a[data-send]')]);
+await soonPopup.close();
+await page.waitForFunction(() => !document.querySelector('.remind-banner'));
+check('El cartel se va cuando el recordatorio quedó enviado', (await page.locator('.remind-banner').count()) === 0);
+await page.click('dialog.sheet [data-close]');
 
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());

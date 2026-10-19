@@ -187,6 +187,14 @@ h2.section:first-child { margin-top: 4px; }
 .confirm-tag.ok { color: var(--green); }
 .confirm-tag.no { color: var(--danger); }
 .confirm-tag.pending { color: var(--muted); }
+.remind-banners { display: grid; gap: 8px; margin: 0 0 12px; }
+.remind-banner {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  padding: 12px 14px; border: 0; border-radius: 14px;
+  background: var(--warn-bg); color: var(--warn-text); font: inherit;
+}
+.remind-banner strong { display: block; font-size: 15.5px; font-weight: 800; line-height: 1.3; }
+.remind-banner small { display: block; margin-top: 3px; font-size: 13px; font-weight: 700; }
 .remind-open { width: 100%; margin: 12px 0 4px; }
 .remind-list { list-style: none; margin: 0; padding: 0; }
 .remind-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }

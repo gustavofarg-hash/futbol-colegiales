@@ -26,7 +26,7 @@
 //    waiting: bool                      (true = lista de espera)
 //    waitOrder: number|null             (menor = más prioridad; null si es titular)
 //    rosterAt: number|null              (cuándo entró a la lista principal)
-//    confirmToken: string               (link de confirmar.html; se crea al armar el recordatorio)
+//    confirmToken: string               (link de confirmar.html; se crea al anotar al jugador)
 //    confirmed: "si"|"no"               (respuesta del jugador)
 //    confirmedAt, reminderSentAt: number
 //  El pago y la espera viven en el mismo documento del jugador. Las reglas
@@ -127,6 +127,7 @@ class LocalStore {
       addedBy: who, createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
+      confirmToken: newConfirmToken(),
     };
     this._save(db); return id;
   }
@@ -248,6 +249,7 @@ class FirebaseStore {
       addedBy: who, createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
+      confirmToken: newConfirmToken(),
     });
     return ref.id;
   }

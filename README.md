@@ -155,12 +155,62 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `waiting` | bool — `true` si está en la lista de espera |
 | `waitOrder` | número o null — menor = más arriba en la espera. Los nuevos van al final |
 | `rosterAt` | número o null — cuándo pasó a la lista principal |
-| `confirmToken` | string — token del link de confirmación (se crea al armar el recordatorio) |
+| `confirmToken` | string — token del link de confirmación. Se crea al anotar al jugador. Si un jugador viejo no lo tiene, la app lo escribe la primera vez que lo ve (sin abrir el flujo de envío) |
 | `confirmed` | `"si"` \| `"no"` — respuesta del jugador |
 | `confirmedAt` | número (epoch ms) |
 | `reminderSentAt` | número (epoch ms) — cuándo se abrió el WhatsApp del recordatorio |
 
 **Recordatorio:** en el partido, «Recordatorio de partido» arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. La página solo muestra ese partido y ese nombre (sin teléfonos de nadie) y guarda `confirmed` si el token coincide.
+
+WhatsApp **no se manda solo**. `wa.me` abre el chat y hay que tocar enviar. No hay API de WhatsApp Business ni Cloud Functions (el plan Spark no las incluye).
+
+Si el partido empieza en **2 horas o menos** y todavía falta avisar a alguien que tenga teléfono, la app muestra el cartel **Faltan 2 horas: mandá los recordatorios** en el inicio y en el partido. Tocarlo abre el mismo envío paso a paso. `reminderSentAt` marca a quién ya se le abrió el chat; cuando están todos, el cartel se va. El aviso del navegador (Notification) solo sale si la app **está abierta** justo cuando se cumplen esas 2 horas y el permiso ya estaba concedido (Ajustes → «Aviso 2 horas antes»). Si el teléfono tiene la app cerrada, no hay aviso.
+
+### Armar los links desde afuera (sin abrir la app)
+
+`js/reminders.js` exporta `reminderLinks({ match, players, venue })`. Devuelve `[{ name, waUrl, confirmUrl }]` para cada jugador que tenga `phone` y `confirmToken`. El lugar por defecto es `Polideportivo Colegiales`. El origen del link es `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html`.
+
+La lectura de `players` y `matches` queda permitida en las reglas (REST con la clave web pública de `config.js`, que no es un secreto). No hace falta republicar las reglas para esto: las que ya están publicadas también dejan leer.
+
+Partido:
+
+```
+GET https://firestore.googleapis.com/v1/projects/futbol-partidos/databases/(default)/documents/matches/AAAA-MM-DD_HHMM?key=LA_API_KEY
+```
+
+Jugadores de ese partido (`runQuery`):
+
+```
+POST https://firestore.googleapis.com/v1/projects/futbol-partidos/databases/(default)/documents:runQuery?key=LA_API_KEY
+{ "structuredQuery": { "from": [{ "collectionId": "players" }], "where": { "fieldFilter": { "field": { "fieldPath": "matchId" }, "op": "EQUAL", "value": { "stringValue": "AAAA-MM-DD_HHMM" } } } } }
+```
+
+En la respuesta REST, el id del jugador es el último segmento de `document.name`. Los campos vienen envueltos: `stringValue` para textos y `integerValue` (a veces `doubleValue`) para los epoch en ms. Campos que usa el link:
+
+| campo | uso |
+|---|---|
+| `name` | saludo, primera palabra |
+| `phone` | solo dígitos, va en `https://wa.me/<phone>` |
+| `confirmToken` | query `t`. Si falta, no armar el link (la app lo completa cuando alguien la abre) |
+| `matchId` | query `m` |
+| id del documento | query `p` |
+| `reminderSentAt` | si está, ese jugador ya tuvo el chat abierto |
+
+Del partido: `date` (`AAAA-MM-DD`), `time` (`HH:MM`), `note` (string, puede faltar).
+
+El mensaje, igual que en la app:
+
+```
+¡Hola {primer nombre}! Te escribo por el fútbol 7 en Polideportivo Colegiales el {día} {dd}/{mm} a las {HH:MM} hs{ (nota)}. ¿Confirmás que jugás? Respondé en este link: {confirmUrl}
+```
+
+`{día}` es el día de la semana en español y minúsculas (domingo … sábado) de esa fecha de calendario. La nota, si hay, se agrega entre paréntesis justo antes del punto, con un espacio: ` hs (Cancha 2).`. El link:
+
+```
+https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m={matchId}&p={playerId}&t={confirmToken}
+```
+
+`waUrl` es `https://wa.me/{phone}?text={mensaje}` con el mensaje en `encodeURIComponent`. Un script puede copiar esa fórmula o importar `reminderLinks`.
 
 **Lista de espera:** se puede anotar a alguien aunque el partido no esté lleno. Si ya hay 14, el alta normal también cae en la espera (al final). Las flechas ↑ ↓ cambian `waitOrder` y los dos organizadores ven el mismo orden al toque. «Subir al partido» (o al quitar un titular) pasa al primero de la lista.
 

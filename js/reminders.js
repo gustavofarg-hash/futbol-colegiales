@@ -1,6 +1,6 @@
 // Recordatorios y links de confirmación. Puro: lo usan la app, la página
 // confirmar.html y las pruebas. No abre WhatsApp ni escribe en Firestore.
-import { labelDate } from './dates.js';
+import { labelDate, toEpoch } from './dates.js';
 
 export const CONFIRM_ORIGIN = 'https://gustavofarg-hash.github.io/futbol-colegiales';
 
@@ -61,4 +61,74 @@ export function confirmSummary(players) {
     si, no, pending,
     text: `Confirmados: ${si} · No juegan: ${no} · Sin respuesta: ${pending}`,
   };
+}
+
+/** El cartel aparece cuando el partido empieza en 2 horas o menos. */
+export const REMINDER_LEAD_MS = 2 * 60 * 60 * 1000;
+
+export function matchStartsAt(match) {
+  if (typeof match?.startsAt === 'number' && Number.isFinite(match.startsAt)) return match.startsAt;
+  if (match?.date) return toEpoch(match.date, match.time);
+  return NaN;
+}
+
+/** Falta el saque y está a 2 horas o menos. */
+export function withinReminderWindow(match, now = Date.now()) {
+  const start = matchStartsAt(match);
+  if (!Number.isFinite(start)) return false;
+  const left = start - now;
+  return left >= 0 && left <= REMINDER_LEAD_MS;
+}
+
+export function reminderDueAt(match) {
+  const start = matchStartsAt(match);
+  if (!Number.isFinite(start)) return null;
+  return start - REMINDER_LEAD_MS;
+}
+
+/** Jugadores a los que se les puede abrir un chat de WhatsApp. */
+export function reminderAudience(players) {
+  return (players || []).filter((p) => String(p?.phone || '').trim());
+}
+
+export function reminderProgress(players) {
+  const audience = reminderAudience(players);
+  const sent = audience.filter((p) => p.reminderSentAt).length;
+  return {
+    total: audience.length,
+    sent,
+    pending: audience.length - sent,
+    done: audience.length > 0 && sent === audience.length,
+  };
+}
+
+/** Cartel solo si el partido entra en la ventana y todavía falta avisar a alguien con WhatsApp. */
+export function needsReminderBanner(match, players, now = Date.now()) {
+  if (!withinReminderWindow(match, now)) return false;
+  const prog = reminderProgress(players);
+  return prog.total > 0 && prog.pending > 0;
+}
+
+/** Partidos que cruzaron la marca de 2 horas entre dos instantes (la app estaba abierta). */
+export function matchesCrossingReminderWindow(matches, previousNow, now) {
+  return (matches || []).filter((m) => !withinReminderWindow(m, previousNow) && withinReminderWindow(m, now));
+}
+
+/**
+ * Lista para mandar o para un script externo. Cada ítem: { name, waUrl, confirmUrl }.
+ * Omite a quien no tenga teléfono o confirmToken: el token tiene que estar ya
+ * guardado en el jugador (se crea al anotarlo).
+ */
+export function reminderLinks({ match, players, venue, origin } = {}) {
+  const out = [];
+  if (!match?.id) return out;
+  for (const p of players || []) {
+    const phone = String(p?.phone || '').trim();
+    const token = p?.confirmToken;
+    if (!phone || !token || !p.id) continue;
+    const confirmUrl = confirmPageUrl({ matchId: match.id, playerId: p.id, token, origin });
+    const text = reminderMessage({ player: p, match, venue: venue || 'Polideportivo Colegiales', confirmUrl });
+    out.push({ name: p.name, waUrl: waReminderUrl(phone, text), confirmUrl });
+  }
+  return out;
 }
