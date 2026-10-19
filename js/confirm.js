@@ -5,9 +5,14 @@ import { VENUE, firebaseConfig } from '../config.js';
 import { isFirebaseConfigured, DEMO_STORAGE_KEY } from './store.js';
 import { capitalize, labelDate } from './dates.js';
 import { confirmationAllowed } from './reminders.js';
+import { applyTextSize, readTextSize, stepTextSize, TEXT_SIZES } from './text-size.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+syncConfirmText();
+$('#btn-text-smaller')?.addEventListener('click', () => { stepTextSize(-1); syncConfirmText(); });
+$('#btn-text-bigger')?.addEventListener('click', () => { stepTextSize(1); syncConfirmText(); });
+
 const params = new URLSearchParams(location.search);
 const matchId = params.get('m') || '';
 const playerId = params.get('p') || '';
@@ -56,11 +61,24 @@ async function loadFirebase() {
 }
 
 async function saveFirebase(fs, db, answer) {
-  const { doc, updateDoc } = fs;
-  await updateDoc(doc(db, 'confirmations', token), {
+  const { doc, getDoc, updateDoc } = fs;
+  const ref = doc(db, 'confirmations', token);
+  await updateDoc(ref, {
     confirmed: answer,
     confirmedAt: Date.now(),
   });
+  const snap = await getDoc(ref);
+  if (!snap.exists() || snap.data().confirmed !== answer) {
+    throw new Error('La respuesta no quedó guardada');
+  }
+}
+
+function syncConfirmText() {
+  const i = applyTextSize(readTextSize());
+  const smaller = $('#btn-text-smaller');
+  const bigger = $('#btn-text-bigger');
+  if (smaller) smaller.disabled = i === 0;
+  if (bigger) bigger.disabled = i === TEXT_SIZES.length - 1;
 }
 
 function saveDemo(answer) {

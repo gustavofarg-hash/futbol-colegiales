@@ -196,12 +196,20 @@ class FirebaseSession {
     this._emit();
   }
   _watch() {
-    if (this._unwatch) return;
+    if (this._unwatch) this._unwatch();
     const { collection, onSnapshot } = this.fb.fs;
     this._unwatch = onSnapshot(collection(this.fb.db, 'users'), (snap) => {
+      this._userRetries = 0;
       this.users = snap.docs.map((item) => publicUser(item.id, item.data()));
       this._emit();
-    }, (error) => console.error(error));
+    }, (error) => {
+      console.error(error);
+      if (error?.code === 'permission-denied' && (this._userRetries || 0) < 2) {
+        this._userRetries = (this._userRetries || 0) + 1;
+        const retry = this.auth?.currentUser?.getIdToken(true);
+        Promise.resolve(retry).catch((e) => console.error(e)).then(() => this._watch());
+      }
+    });
   }
   async login(email, password) {
     const { signInWithEmailAndPassword } = await import(`${FB}/firebase-auth.js`);

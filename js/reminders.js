@@ -41,15 +41,45 @@ export function waReminderUrl(phone, text) {
 export function confirmationRecord({ playerId, player, match }) {
   const confirmed = player?.confirmed === 'si' || player?.confirmed === 'no' ? player.confirmed : null;
   return {
+    ...confirmationIdentity({ playerId, player, match }),
+    confirmed,
+    confirmedAt: typeof player?.confirmedAt === 'number' ? player.confirmedAt : null,
+  };
+}
+
+/**
+ * Lo que escribe un organizador. Sin `confirmed` ni `confirmedAt`: un merge
+ * no puede borrar el «Sí, juego» que guardó la página anónima.
+ */
+export function confirmationIdentity({ playerId, player, match }) {
+  return {
     playerId,
     matchId: player?.matchId || match?.id || '',
     name: player?.name || '',
     date: match?.date || player?.matchDate || '',
     time: match?.time || '',
     note: match?.note || '',
-    confirmed,
-    confirmedAt: typeof player?.confirmedAt === 'number' ? player.confirmedAt : null,
   };
+}
+
+/**
+ * La lista muestra la ficha del token. Si esa ficha ya tiene sí o no, gana.
+ * Si todavía no tiene respuesta, se deja lo que hubiera en el jugador.
+ * Una ficha de otro token, aunque repita el playerId, no cuenta.
+ */
+export function overlayConfirmations(players, cards) {
+  const byToken = new Map();
+  for (const card of cards || []) if (card?.id) byToken.set(card.id, card);
+  return (players || []).map((player) => {
+    const card = player?.confirmToken ? byToken.get(player.confirmToken) : null;
+    if (!card) return player;
+    if (card.confirmed !== 'si' && card.confirmed !== 'no') return player;
+    return {
+      ...player,
+      confirmed: card.confirmed,
+      confirmedAt: typeof card.confirmedAt === 'number' ? card.confirmedAt : (player.confirmedAt ?? null),
+    };
+  });
 }
 
 /** El link solo vale si el token del jugador coincide y es de ese partido. */

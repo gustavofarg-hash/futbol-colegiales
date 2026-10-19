@@ -44,6 +44,7 @@ page.on('dialog', (d) => d.accept());
 
 await page.goto(BASE);
 await page.waitForSelector('#login-form');
+check('El texto arranca en Normal', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize) === '18px');
 check('Pide entrar al abrir por primera vez', await page.isVisible('text=Entrar') && await page.isVisible('#login-forgot'));
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.click('#login-forgot');
@@ -615,6 +616,32 @@ for (const ic of manifest.icons) {
   const st = await page.evaluate(async (u) => (await fetch(u)).status, ic.src);
   check(`Ícono ${ic.src} accesible`, st === 200);
 }
+
+check('A− y A+ están en el encabezado', await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
+await page.click('#btn-text-bigger');
+check('A+ pasa a Grande y se guarda en el teléfono', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '20px' && localStorage.getItem('f7c-text-size') === '2'));
+await page.click('#btn-settings');
+await page.click('[data-text-size="4"]');
+check('En Ajustes, Enorme agranda al instante', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '24px' && localStorage.getItem('f7c-text-size') === '4'));
+check('A+ queda deshabilitado en Enorme', await page.locator('#btn-text-bigger').isDisabled());
+await page.click('dialog.sheet [data-close]');
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card');
+await page.setViewportSize({ width: 360, height: 740 });
+const overflowHome = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+check('Enorme en un teléfono de 360px no desborda el inicio', overflowHome <= 1, String(overflowHome));
+await page.click('.match-card');
+await page.waitForSelector('#btn-add-player');
+const overflowMatch = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+check('Enorme en 360px no desborda el partido', overflowMatch <= 1, String(overflowMatch));
+const confirmSize = await ctx.newPage();
+await confirmSize.setViewportSize({ width: 360, height: 740 });
+await confirmSize.goto(`${BASE}confirmar.html?m=x&p=y&t=token-corto`);
+await confirmSize.waitForSelector('#btn-text-smaller');
+check('confirmar.html usa el tamaño guardado', await confirmSize.evaluate(() => getComputedStyle(document.documentElement).fontSize) === '24px');
+const overflowConfirm = await confirmSize.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+check('confirmar.html en 360px no desborda', overflowConfirm <= 1, String(overflowConfirm));
+await confirmSize.close();
 
 check('Sin errores de JS', errors.length === 0, errors.join(' | '));
 await browser.close();

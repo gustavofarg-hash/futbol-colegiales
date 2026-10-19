@@ -53,7 +53,7 @@ import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { addDays, todayISO, toEpoch } from './dates.js';
 import { paymentRecord } from './payments.js';
 import { nextWaitOrder } from './waiting.js';
-import { confirmationRecord, newConfirmToken } from './reminders.js';
+import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -154,11 +154,11 @@ class LocalStore {
   _emit() {
     const db = this._load();
     const matches = Object.entries(db.matches).map(([id, m]) => ({ id, ...m }));
-    const players = Object.entries(db.players).map(([id, p]) => {
-      const card = p.confirmToken ? db.confirmations[p.confirmToken] : null;
-      if (!card) return { id, ...p };
-      return { id, ...p, confirmed: card.confirmed ?? null, confirmedAt: card.confirmedAt ?? null };
-    });
+    const cards = Object.entries(db.confirmations || {}).map(([id, card]) => ({ id, ...card }));
+    const players = overlayConfirmations(
+      Object.entries(db.players).map(([id, p]) => ({ id, ...p })),
+      cards,
+    );
     const roster = Object.entries(db.roster).map(([id, r]) => ({ id, ...r }));
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
     this.listeners.forEach((fn) => fn({ matches, players, roster, rosterError: null, organizers, organizersError: null }));
@@ -307,42 +307,97 @@ class FirebaseStore {
   constructor() { this.mode = 'firebase'; this.listeners = new Set(); this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [] }; }
   async init(onError) {
     const ready = await initFirebase();
-    const fs = ready.fs;
-    this.fs = fs;
+    this.fs = ready.fs;
     this.db = ready.db;
-    // Escuchar desde ayer en adelante (los listeners se actualizan en tiempo real)
-    const from = addDays(todayISO(), -1);
-    const { collection, query, where, onSnapshot } = fs;
-    const err = (e) => { console.error(e); onError && onError(e); };
+    this.app = ready.app;
+    this._onError = onError;
     this.serverOk = false;
-    onSnapshot(query(collection(this.db, 'matches'), where('date', '>=', from)), { includeMetadataChanges: true }, (snap) => {
+    this._deniedRetries = 0;
+    // El token tiene que estar listo antes del primer snapshot. Si no, la
+    // suscripción a confirmations muere con permission-denied y la lista
+    // nunca se entera del «Sí, juego».
+    await this._refreshIdToken();
+    this._listen();
+    // Si Firestore no existe o la API está deshabilitada, el SDK reintenta en silencio:
+    // avisamos si en 15 s no llegó ninguna respuesta del servidor.
+    setTimeout(() => {
+      if (!this.serverOk && navigator.onLine !== false) this._fail({ code: 'no-server', message: 'sin respuesta del servidor' });
+    }, 15000);
+  }
+  async _refreshIdToken(force = false) {
+    try {
+      const { getAuth } = await import(`${FB}/firebase-auth.js`);
+      const auth = getAuth(this.app);
+      await auth.authStateReady();
+      if (auth.currentUser) await auth.currentUser.getIdToken(force);
+      return !!auth.currentUser;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }
+  _fail(e) {
+    console.error(e);
+    if (this._onError) this._onError(e);
+  }
+  _stop() {
+    for (const un of this._unsubs || []) {
+      try { un(); } catch { /* ya cerrado */ }
+    }
+    this._unsubs = [];
+  }
+  _listen() {
+    this._stop();
+    const from = addDays(todayISO(), -1);
+    const { collection, query, where, onSnapshot } = this.fs;
+    const watch = (ref, opts, onNext, onErr) => {
+      const next = (snap) => { this._deniedRetries = 0; onNext(snap); };
+      const un = opts
+        ? onSnapshot(ref, opts, next, (e) => this._onListenError(e, onErr))
+        : onSnapshot(ref, next, (e) => this._onListenError(e, onErr));
+      this._unsubs.push(un);
+    };
+    watch(query(collection(this.db, 'matches'), where('date', '>=', from)), { includeMetadataChanges: true }, (snap) => {
       if (!snap.metadata.fromCache) this.serverOk = true;
       this.state.matches = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.pending = snap.metadata.hasPendingWrites;
       this._emit();
-    }, err);
-    // Si Firestore no existe o la API está deshabilitada, el SDK reintenta en silencio:
-    // avisamos si en 15 s no llegó ninguna respuesta del servidor.
-    setTimeout(() => {
-      if (!this.serverOk && navigator.onLine !== false) err({ code: 'no-server', message: 'sin respuesta del servidor' });
-    }, 15000);
-    onSnapshot(query(collection(this.db, 'players'), where('matchDate', '>=', from)), (snap) => {
+    });
+    watch(query(collection(this.db, 'players'), where('matchDate', '>=', from)), null, (snap) => {
       this.state.players = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
-    }, err);
-    onSnapshot(collection(this.db, 'roster'), (snap) => {
+    });
+    watch(collection(this.db, 'roster'), null, (snap) => {
       this.state.roster = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.rosterError = null;
       this._emit();
     }, (e) => {
-      console.error(e);
       this.state.rosterError = isRosterDenied(e) ? ROSTER_DENIED_READ : ('No se pudo leer Jugadores: ' + (e?.message || e?.code || e));
       this._emit();
     });
-    onSnapshot(collection(this.db, 'confirmations'), (snap) => {
+    watch(collection(this.db, 'confirmations'), null, (snap) => {
       this.state.confirmations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
-    }, (e) => { console.error(e); });
+    });
+  }
+  _onListenError(e, extra) {
+    if (e?.code === 'permission-denied' && !this._retrying && (this._deniedRetries || 0) < 2) {
+      this._deniedRetries += 1;
+      this._retrying = true;
+      this._stop();
+      this._retryListen();
+      return;
+    }
+    console.error(e);
+    if (extra) extra(e);
+    else this._fail(e);
+  }
+  async _retryListen() {
+    try { await this._refreshIdToken(true); }
+    finally {
+      this._retrying = false;
+      this._listen();
+    }
   }
   async _seedOrganizers() {
     const { doc, getDoc, setDoc } = this.fs;
@@ -355,31 +410,23 @@ class FirebaseStore {
       if (!cur.exists()) await setDoc(ref, { name: clean.name, createdAt: now });
     }
   }
+  _view() {
+    return {
+      ...this.state,
+      players: overlayConfirmations(this.state.players, this.state.confirmations),
+    };
+  }
   _emit() {
-    const cards = this.state.confirmations || [];
-    const players = (this.state.players || []).map((player) => {
-      const card = cards.find((item) => item.id === player.confirmToken || item.playerId === player.id);
-      if (!card) return player;
-      return { ...player, confirmed: card.confirmed ?? null, confirmedAt: card.confirmedAt ?? null };
-    });
-    this.listeners.forEach((fn) => fn({ ...this.state, players }));
+    const view = this._view();
+    this.listeners.forEach((fn) => fn(view));
   }
   async _writeConfirmation(token, playerId, player, match) {
     if (!token) return;
     const { doc, setDoc } = this.fs;
-    const prev = (this.state.confirmations || []).find((item) => item.id === token) || {};
-    const body = confirmationRecord({
-      playerId,
-      player: {
-        ...player,
-        confirmed: prev.confirmed != null ? prev.confirmed : player.confirmed,
-        confirmedAt: prev.confirmedAt != null ? prev.confirmedAt : player.confirmedAt,
-      },
-      match,
-    });
+    const body = confirmationIdentity({ playerId, player, match });
     await setDoc(doc(this.db, 'confirmations', token), body, { merge: true });
   }
-  subscribe(fn) { this.listeners.add(fn); fn({ ...this.state }); return () => this.listeners.delete(fn); }
+  subscribe(fn) { this.listeners.add(fn); fn(this._view()); return () => this.listeners.delete(fn); }
   _ids() { return new Set(this.state.matches.map((m) => m.id)); }
   async addMatch(data, who) {
     const { doc, setDoc } = this.fs;
@@ -467,11 +514,10 @@ class FirebaseStore {
     if (!p) throw new Error('Jugador inexistente');
     const token = p.confirmToken || newConfirmToken();
     if (!p.confirmToken) await this.updatePlayer(id, { confirmToken: token });
-    const card = (this.state.confirmations || []).some((item) => item.id === token);
-    if (!card) {
-      const match = this.state.matches.find((item) => item.id === p.matchId);
-      await this._writeConfirmation(token, id, { ...p, confirmToken: token }, match);
-    }
+    const fresh = this.state.players.find((x) => x.id === id) || p;
+    const match = this.state.matches.find((item) => item.id === fresh.matchId);
+    // Aunque el token ya exista: crea la ficha si falta y no toca la respuesta.
+    await this._writeConfirmation(token, id, { ...fresh, confirmToken: token }, match);
     return token;
   }
   async markReminderSent(id) {
