@@ -6,6 +6,8 @@ import { collectedLine, formatARS, parseAmount, paymentRecord, paymentStatusText
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { rosterHit, searchRoster } from '../js/roster.js';
+import { playerRecord, playerStats, sortedNotes } from '../js/profile.js';
+import { toEpoch } from '../js/dates.js';
 import {
   confirmPageUrl, confirmSummary, confirmationAllowed, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
@@ -273,6 +275,42 @@ test('búsqueda del plantel: nombre, apellido y teléfono', () => {
   assert.deepEqual(names('+54 9 11 4444'), ['José Pérez']);
   assert.deepEqual(names('11 9999 0000'), ['Ana Gómez']);
   assert.deepEqual(names(''), ['Ana Gómez', 'Ernesto Pereira', 'José Pérez']);
+});
+
+test('perfil: partidos pasados, día y horario más frecuentes', () => {
+  const now = Date.parse('2026-10-19T13:00:00-03:00');
+  const match = (id, date, time) => ({ id, date, time, startsAt: toEpoch(date, time) });
+  const matches = [
+    match('j1', '2026-10-15', '21:00'),
+    match('j2', '2026-10-08', '21:00'),
+    match('m1', '2026-10-13', '19:00'),
+    match('fut', '2026-10-22', '21:00'),
+    match('esp', '2026-10-01', '21:00'),
+  ];
+  const phone = '5491122223333';
+  const on = (matchId, extra = {}) => ({ matchId, phone, waiting: false, ...extra });
+  const players = [
+    on('j1', { paid: true, amount: 5000, method: 'transferencia', confirmed: 'si' }),
+    on('j2', { confirmed: 'no' }),
+    on('m1'),
+    on('fut', { paid: true, amount: 5000, confirmed: 'si' }),
+    { matchId: 'esp', phone, waiting: true, paid: true, amount: 9000 },
+    on('j1', { phone: '5491100000000' }),
+  ];
+  const stats = playerStats({ phone, players, matches, now });
+  assert.equal(stats.played, 3);
+  assert.equal(stats.summary, 'Mayormente jueves · 21:00');
+  assert.deepEqual(stats.dates.map((d) => d.date), ['2026-10-15', '2026-10-13', '2026-10-08']);
+  assert.equal(playerStats({ phone, players: [], matches, now }).played, 0);
+  assert.equal(playerStats({ phone, players, matches, now }).summary.includes('22/10'), false);
+  const record = playerRecord({ phone, players, matches });
+  assert.equal(record.paidText, 'Pagó $10.000 en 2 partidos');
+  assert.equal(record.confirmText, 'Confirmó 2 de 3');
+  const notes = sortedNotes([
+    { id: 'a', createdAt: 1, text: 'vieja' },
+    { id: 'b', createdAt: 5, text: 'nueva' },
+  ]);
+  assert.deepEqual(notes.map((n) => n.text), ['nueva', 'vieja']);
 });
 
 test('plantel demo: no duplica por teléfono', async () => {

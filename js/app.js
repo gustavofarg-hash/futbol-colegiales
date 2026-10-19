@@ -13,6 +13,7 @@ import {
   needsReminderBanner, reminderDueAt, reminderLinks, reminderProgress,
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, noteWhen, playerRecord, playerStats, sortedNotes } from './profile.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -76,6 +77,7 @@ function route() {
   const [name, id] = h.split('/');
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'jugadores') return { name: 'roster' };
+  if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
 }
 window.addEventListener('hashchange', render);
@@ -89,6 +91,7 @@ function render() {
   if (!app.loaded) return;
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'roster') renderRoster();
+  else if (r.name === 'profile') renderProfile(r.id);
   else renderHome();
 }
 
@@ -159,12 +162,12 @@ function renderMatch(id) {
     slots.push(`
       <li class="slot ${i >= cap ? 'extra' : ''}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
-        <div class="who">
+        <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
             <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payText ? `<div class="pay-line ${payCls}">${esc(payText)}</div>` : ''}
-        </div>
+        </button>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>
         ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
         <button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
@@ -210,6 +213,8 @@ function renderMatch(id) {
     if (pay) return openPaymentForm(m, app.players.find((p) => p.id === pay.dataset.pay));
     const menu = e.target.closest('[data-menu]');
     if (menu) return openPlayerMenu(m, app.players.find((p) => p.id === menu.dataset.menu));
+    const who = e.target.closest('[data-profile]');
+    if (who) return openPlayerProfile(app.players.find((p) => p.id === who.dataset.profile), m.id);
   };
   $('#slots').onclick = (e) => {
     const pay = e.target.closest('[data-pay]');
@@ -218,6 +223,8 @@ function renderMatch(id) {
     if (free) return openPlayerForm(m);
     const menu = e.target.closest('[data-menu]');
     if (menu) return openPlayerMenu(m, app.players.find((p) => p.id === menu.dataset.menu));
+    const who = e.target.closest('[data-profile]');
+    if (who) return openPlayerProfile(app.players.find((p) => p.id === who.dataset.profile), m.id);
   };
   $('#btn-copy').onclick = () => copyText(listText(m)).then((ok) => toast(ok ? 'Lista copiada' : 'No se pudo copiar'));
   $('#btn-share').onclick = () => shareText(listText(m));
@@ -276,12 +283,12 @@ function waitingSection(m, full) {
           <button type="button" class="arrow-btn" data-wait-down="${esc(p.id)}" ${last ? 'disabled' : ''} aria-label="Bajar prioridad de ${esc(p.name)}">↓</button>
         </div>
         <span class="n">${i + 1}</span>
-        <div class="who">
+        <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
             <span class="tag ${tagCls}">Agregó: ${esc(p.addedBy || '?')}</span>${confirmTag(p)}</div>
           ${payText ? `<div class="pay-line ${p.paid === true ? 'ok' : 'no'}">${esc(payText)}</div>` : ''}
-        </div>
+        </button>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}">💵</button>
         ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
         <button type="button" class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
@@ -559,10 +566,10 @@ function renderRoster() {
   const people = searchRoster(app.roster, q);
   const rows = people.map((person) => `
     <li class="slot" data-roster="${esc(person.id)}">
-      <div class="who">
+      <button type="button" class="who" data-roster-open="${esc(person.id)}">
         <div class="name">${esc(person.name)}</div>
         <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</div>
-      </div>
+      </button>
       ${person.phone ? `<a class="wa-btn" href="${esc(waLink(person.phone))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(person.name)}">${ICON.wa}</a>` : ''}
       <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}">${ICON.edit}</button>
       <button type="button" class="more-btn" data-roster-del="${esc(person.id)}" aria-label="Borrar ${esc(person.name)}">${ICON.trash}</button>
@@ -586,6 +593,11 @@ function renderRoster() {
     if (edit) return openRosterForm(app.roster.find((r) => r.id === edit.dataset.rosterEdit));
     const del = e.target.closest('[data-roster-del]');
     if (del) return deleteRosterPlayer(app.roster.find((r) => r.id === del.dataset.rosterDel));
+    const open = e.target.closest('[data-roster-open]');
+    if (open) {
+      app.profileMatchId = null;
+      location.hash = `#/jugador/${encodeURIComponent(open.dataset.rosterOpen)}`;
+    }
   };
 }
 
@@ -646,6 +658,142 @@ function deleteRosterPlayer(person) {
     if (isRosterDenied(err)) showError(ROSTER_DENIED_WRITE);
     else toast('No se pudo borrar: ' + (err?.code || err?.message || err));
   });
+}
+
+const noteId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+app.profileMatchId = null;
+
+async function openPlayerProfile(player, matchId) {
+  if (!player) return;
+  if (!player.phone) { toast('Para el perfil hace falta un WhatsApp'); return; }
+  app.profileMatchId = matchId || null;
+  let person = rosterByPhone(app.roster, player.phone);
+  if (!person) {
+    try {
+      const id = await app.store.addRoster({ name: player.name, phone: player.phone }, app.who);
+      location.hash = `#/jugador/${encodeURIComponent(id)}`;
+      return;
+    } catch (error) {
+      if (error?.code === 'roster-duplicate') person = rosterByPhone(app.roster, player.phone);
+      else if (isRosterDenied(error)) { showError(`${ROSTER_DENIED_WRITE} El perfil no se pudo abrir.`); return; }
+      else { toast('No se pudo abrir el perfil'); return; }
+    }
+  }
+  if (!person) { toast('No se pudo abrir el perfil'); return; }
+  location.hash = `#/jugador/${encodeURIComponent(person.id)}`;
+}
+
+function saveProfile(id, patch) {
+  Promise.resolve(app.store.patchRoster(id, patch)).catch((error) => {
+    if (isRosterDenied(error)) showError(`${ROSTER_DENIED_WRITE} El perfil no se guardó.`);
+    else toast('No se pudo guardar: ' + (error?.code || error?.message || error));
+  });
+}
+
+function renderProfile(id) {
+  const person = app.roster.find((r) => r.id === id);
+  if (!person) {
+    $('#view').innerHTML = `<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`;
+    return;
+  }
+  const stats = playerStats({ phone: person.phone, players: app.players, matches: app.matches });
+  const record = playerRecord({ phone: person.phone, players: app.players, matches: app.matches });
+  const positions = new Set(person.positions || []);
+  const level = Number.isInteger(person.level) ? person.level : null;
+  const notes = sortedNotes(person.notes);
+  $('#view').innerHTML = `
+    <article id="profile">
+      <h2 class="section">${esc(person.name)}</h2>
+      <p class="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</p>
+      ${person.phone ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waLink(person.phone))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
+      <section class="profile-block">
+        <h2>Nivel de juego</h2>
+        <div class="stepper">
+          <button type="button" class="btn" id="level-down" aria-label="Bajar nivel" ${level == null || level <= 1 ? 'disabled' : ''}>−</button>
+          <span class="val" id="level-val">${level == null ? '—' : level}</span>
+          <button type="button" class="btn" id="level-up" aria-label="Subir nivel" ${level != null && level >= 10 ? 'disabled' : ''}>+</button>
+        </div>
+      </section>
+      <section class="profile-block">
+        <h2>Posiciones</h2>
+        <div class="chips" id="positions">${POSITIONS.map((pos) => `<button type="button" class="btn chip ${positions.has(pos) ? 'on' : ''}" data-pos="${esc(pos)}">${esc(pos)}</button>`).join('')}</div>
+      </section>
+      <section class="profile-block" id="stats">
+        <h2>Partidos jugados</h2>
+        <p class="stat-summary" id="stat-times">${stats.played ? `Jugó ${stats.played} ${stats.played === 1 ? 'vez' : 'veces'}` : 'Todavía no jugó'}</p>
+        ${stats.summary ? `<p class="stat-summary" id="stat-summary">${esc(stats.summary)}</p>` : ''}
+        ${stats.dates.length ? `<ul class="stat-dates">${stats.dates.map((d) => `<li>${esc(d.label)}</li>`).join('')}</ul>` : '<p class="hint">Cuenta solo partidos que ya pasaron, en la lista principal.</p>'}
+        <p class="hint" id="stat-pay">${esc(record.paidText)}</p>
+        <p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>
+      </section>
+      <section class="profile-block">
+        <h2>Notas de partido</h2>
+        <div id="notes">${notes.length ? notes.map((note) => `
+          <article class="pnote" data-note="${esc(note.id)}">
+            <div class="when">${esc(noteWhen(note, app.matches) || 'Partido')}</div>
+            <p>${esc(note.text)}</p>
+            <div class="row">
+              <button type="button" class="btn" data-note-edit="${esc(note.id)}">Editar</button>
+              <button type="button" class="btn danger" data-note-del="${esc(note.id)}">Borrar</button>
+            </div>
+          </article>`).join('') : '<p class="empty-wait">Sin notas.</p>'}</div>
+        <button type="button" class="btn block" id="btn-add-note">Agregar nota</button>
+      </section>
+    </article>`;
+  $('#level-down').onclick = () => { if (level > 1) saveProfile(person.id, { level: level - 1 }); };
+  $('#level-up').onclick = () => saveProfile(person.id, { level: level == null ? 1 : Math.min(10, level + 1) });
+  $('#positions').onclick = (e) => {
+    const btn = e.target.closest('[data-pos]');
+    if (!btn) return;
+    const pos = btn.dataset.pos;
+    const next = new Set(person.positions || []);
+    if (next.has(pos)) next.delete(pos); else next.add(pos);
+    saveProfile(person.id, { positions: POSITIONS.filter((item) => next.has(item)) });
+  };
+  $('#btn-add-note').onclick = () => openNoteForm(person);
+  $('#notes').onclick = (e) => {
+    const edit = e.target.closest('[data-note-edit]');
+    if (edit) return openNoteForm(person, (person.notes || []).find((n) => n.id === edit.dataset.noteEdit));
+    const del = e.target.closest('[data-note-del]');
+    if (!del) return;
+    const note = (person.notes || []).find((n) => n.id === del.dataset.noteDel);
+    if (!note || !confirm('¿Borrar esta nota?')) return;
+    saveProfile(person.id, { notes: (person.notes || []).filter((n) => n.id !== note.id) });
+  };
+}
+
+function openNoteForm(person, note) {
+  const matches = [...app.matches].sort((a, b) => (b.startsAt ?? 0) - (a.startsAt ?? 0));
+  const selected = note?.matchId || app.profileMatchId || matches[0]?.id || '';
+  openSheet(`
+    <form id="note-form" novalidate>
+      <h3>${note ? 'Editar nota' : 'Nota de partido'}</h3>
+      <label class="field"><span>Partido</span>
+        <select name="match" required>${matches.map((m) => `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(capitalize(labelDate(m.date)))} · ${esc(m.time || '--:--')} hs</option>`).join('')}</select>
+      </label>
+      <label class="field"><span>Qué pasó</span><textarea name="text" maxlength="${MAX_NOTE_TEXT}" required placeholder="Ej: hizo un gol, llegó tarde">${esc(note?.text || '')}</textarea></label>
+      <div class="field"><div class="err" id="note-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#note-form');
+  if (!matches.length) { $('#note-err').textContent = 'No hay partidos para asociar la nota.'; form.querySelector('[type=submit]').disabled = true; return; }
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const match = matchById(form.match.value);
+    const text = form.text.value.trim();
+    if (!match) { $('#note-err').textContent = 'Elegí un partido.'; return; }
+    if (!text) { $('#note-err').textContent = 'Escribí la nota.'; return; }
+    const notes = [...(person.notes || [])];
+    if (note) {
+      const i = notes.findIndex((n) => n.id === note.id);
+      if (i >= 0) notes[i] = { ...notes[i], matchId: match.id, matchDate: match.date, matchTime: match.time || '', text, updatedAt: Date.now() };
+    } else {
+      if (notes.length >= MAX_NOTES) { $('#note-err').textContent = `Máximo ${MAX_NOTES} notas.`; return; }
+      notes.push({ id: noteId(), matchId: match.id, matchDate: match.date, matchTime: match.time || '', text, createdAt: Date.now(), updatedAt: Date.now() });
+    }
+    closeSheet();
+    saveProfile(person.id, { notes });
+  };
 }
 
 async function rememberInRoster(name, phone) {
@@ -807,10 +955,12 @@ function openPlayerMenu(m, p) {
     <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu">
       ${p.phone ? `<a class="btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : ''}
+      <button class="btn" id="pm-profile">Ver perfil</button>
       <button class="btn" id="pm-edit">${ICON.edit}Editar</button>
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
+  $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, m.id); };
   $('#pm-edit').onclick = () => openPlayerForm(m, p);
   $('#pm-del').onclick = () => {
     const fromMain = !isWaiting(p);

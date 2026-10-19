@@ -154,6 +154,7 @@ h2.section:first-child { margin-top: 4px; }
 }
 .slot .n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 800; background: var(--green-soft); color: var(--green); flex: none; }
 .slot .who { flex: 1; min-width: 0; }
+button.who { text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
 .slot .name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .slot .sub { font-size: 13px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .tag { font-size: 11.5px; font-weight: 700; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
@@ -200,6 +201,21 @@ h2.section:first-child { margin-top: 4px; }
 }
 .roster-hit b { font-size: 15.5px; }
 .roster-hit small { color: var(--muted); font-size: 13px; }
+.profile-phone { margin: 0 0 12px; color: var(--muted); }
+.profile-wa { width: 100%; margin-bottom: 16px; background: var(--wa); border-color: var(--wa); color: #fff; }
+.profile-block { margin: 0 0 18px; }
+.profile-block h2 { margin: 0 0 8px; font-size: 15px; }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper .val { min-width: 2.2ch; text-align: center; font-size: 28px; font-weight: 800; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border-radius: 999px; padding: 8px 14px; min-height: 40px; }
+.chip.on { background: var(--green); border-color: var(--green); color: #fff; }
+.stat-summary { font-weight: 800; margin: 0 0 6px; }
+.stat-dates { margin: 0; padding-left: 18px; color: var(--muted); }
+.pnote { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; background: var(--card); }
+.pnote .when { font-size: 13px; font-weight: 700; color: var(--muted); }
+.pnote p { margin: 4px 0 8px; }
+.pnote .row { justify-content: flex-end; }
 .remind-banners { display: grid; gap: 8px; margin: 0 0 12px; }
 .remind-banner {
   display: block; width: 100%; text-align: left; cursor: pointer;

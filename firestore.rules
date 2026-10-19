@@ -69,12 +69,48 @@ service cloud.firestore {
       allow update: if validPlayer(request.resource.data) && confirmationWriteOk();
     }
 
+    function posOk(x) {
+      return x == 'Arquero' || x == 'Defensa' || x == 'Mediocampo' || x == 'Ataque';
+    }
+    function positionsOk(p) {
+      return p is list && p.size() <= 4
+          && (p.size() < 1 || posOk(p[0]))
+          && (p.size() < 2 || posOk(p[1]))
+          && (p.size() < 3 || posOk(p[2]))
+          && (p.size() < 4 || posOk(p[3]));
+    }
+    function noteOk(n) {
+      return n is map
+          && n.id is string && n.id.size() > 0 && n.id.size() <= 40
+          && n.matchId is string && n.matchId.size() > 0 && n.matchId.size() <= 80
+          && n.text is string && n.text.size() > 0 && n.text.size() <= 400
+          && n.createdAt is number
+          && (!('matchDate' in n) || (n.matchDate is string && n.matchDate.size() <= 10))
+          && (!('matchTime' in n) || (n.matchTime is string && n.matchTime.size() <= 5))
+          && (!('updatedAt' in n) || n.updatedAt is number);
+    }
+    function notesOk(n) {
+      return n is list && n.size() <= 20
+          && (n.size() < 1 || noteOk(n[0])) && (n.size() < 2 || noteOk(n[1]))
+          && (n.size() < 3 || noteOk(n[2])) && (n.size() < 4 || noteOk(n[3]))
+          && (n.size() < 5 || noteOk(n[4])) && (n.size() < 6 || noteOk(n[5]))
+          && (n.size() < 7 || noteOk(n[6])) && (n.size() < 8 || noteOk(n[7]))
+          && (n.size() < 9 || noteOk(n[8])) && (n.size() < 10 || noteOk(n[9]))
+          && (n.size() < 11 || noteOk(n[10])) && (n.size() < 12 || noteOk(n[11]))
+          && (n.size() < 13 || noteOk(n[12])) && (n.size() < 14 || noteOk(n[13]))
+          && (n.size() < 15 || noteOk(n[14])) && (n.size() < 16 || noteOk(n[15]))
+          && (n.size() < 17 || noteOk(n[16])) && (n.size() < 18 || noteOk(n[17]))
+          && (n.size() < 19 || noteOk(n[18])) && (n.size() < 20 || noteOk(n[19]));
+    }
     function validRoster(d) {
       return d.name is string && d.name.size() > 0 && d.name.size() <= 60
           && d.phone is string && d.phone.size() <= 20
           && (!('createdBy' in d) || (d.createdBy is string && d.createdBy.size() <= 40))
           && (!('createdAt' in d) || d.createdAt is number)
-          && (!('updatedAt' in d) || d.updatedAt is number);
+          && (!('updatedAt' in d) || d.updatedAt is number)
+          && (!('level' in d) || (d.level is int && d.level >= 1 && d.level <= 10))
+          && (!('positions' in d) || positionsOk(d.positions))
+          && (!('notes' in d) || notesOk(d.notes));
     }
 
     // Plantel guardado (pantalla Jugadores). Lectura abierta, igual que el resto.

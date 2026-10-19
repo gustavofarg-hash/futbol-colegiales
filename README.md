@@ -224,10 +224,15 @@ El pago va en el documento del jugador (no en una colección nueva). Las reglas 
 | `phone` | solo dígitos, formato wa.me, o vacío |
 | `createdBy` | quién lo guardó |
 | `createdAt`, `updatedAt` | número (epoch ms) |
+| `level` | número 1 a 10, el nivel de juego |
+| `positions` | lista: `Arquero`, `Defensa`, `Mediocampo`, `Ataque` |
+| `notes` | lista de notas `{ id, matchId, matchDate, matchTime, text, createdAt, updatedAt }`, la más nueva primero |
 
 Misma persona = mismo `phone`. Al anotar en un partido (o en la espera) con WhatsApp, si ese número no está, se guarda solo. En el formulario de alta, «Buscar guardados» encuentra por las primeras letras del nombre o del apellido (sin importar mayúsculas ni acentos: `ERN` → Ernesto Pereira, `perez` → José Pérez) o por cualquier tramo del teléfono (solo dígitos, se ignoran espacios, guiones y `+54 9`). Tocar un resultado lo anota en ese partido; si ya hay 14, va a la espera. También se puede escribir uno nuevo.
 
-**Hay que republicar las reglas.** La colección `roster` no existe en las reglas que están publicadas hoy (el cierre las niega). Sin republicar `firestore.rules`, Jugadores no se puede leer ni guardar en Firebase. La app lo dice en español y el partido igual se anota. En modo demo no hace falta.
+Tocá un jugador en un partido o en Jugadores para abrir el perfil (el mismo teléfono). Ahí se editan el nivel, las posiciones y las notas de un partido. «Jugó N veces» y «Mayormente jueves · 21:00» salen solos de los partidos ya pasados en la lista principal (la espera y los que todavía no se jugaron no cuentan).
+
+**Hay que republicar las reglas.** La colección `roster` no existe en las reglas que están publicadas hoy (el cierre las niega). Sin republicar `firestore.rules`, Jugadores y el perfil no se pueden leer ni guardar en Firebase. La app lo dice en español y el partido igual se anota. En modo demo no hace falta. Si ya se publicaron unas reglas de `roster` anteriores, hay que publicarlas de nuevo para que cubran `level`, `positions` y `notes`.
 
 Un importador automático solo tiene que hacer `set` en `matches/<AAAA-MM-DD_HHMM>` con `source: "whatsapp"` y `sourceRef`; la app lo muestra al instante. El parser de texto (`js/parser.js`, función `parseMatchesFromText`) es JavaScript puro y se puede reutilizar desde Node.
 

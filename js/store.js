@@ -32,6 +32,9 @@
 //  roster/{rosterId}
 //    name, phone (dígitos wa.me, o vacío)
 //    createdBy, createdAt, updatedAt
+//    level: 1..10
+//    positions: ["Arquero"|"Defensa"|"Mediocampo"|"Ataque"]
+//    notes: [{ id, matchId, matchDate, matchTime, text, createdAt, updatedAt }]
 //    Misma persona = mismo phone. La colección es nueva: las reglas publicadas
 //    la niegan hasta que se republican.
 //  El pago y la espera viven en el mismo documento del jugador. Las reglas
@@ -193,6 +196,22 @@ class LocalStore {
     Object.assign(cur, { name: data.name.trim(), phone, updatedAt: Date.now() });
     this._save(db);
   }
+  async patchRoster(id, patch) {
+    const db = this._load(); const cur = db.roster[id]; if (!cur) return;
+    const next = {};
+    if ('name' in patch) next.name = String(patch.name || '').trim();
+    if ('phone' in patch) next.phone = patch.phone || '';
+    if ('level' in patch) next.level = patch.level;
+    if ('positions' in patch) next.positions = patch.positions || [];
+    if ('notes' in patch) next.notes = patch.notes || [];
+    const phone = 'phone' in next ? next.phone : cur.phone;
+    if (phone) {
+      const dup = Object.entries(db.roster).find(([oid, r]) => oid !== id && r.phone === phone);
+      if (dup) throw Object.assign(new Error(`${dup[1].name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    }
+    Object.assign(cur, next, { updatedAt: Date.now() });
+    this._save(db);
+  }
   async deleteRoster(id) { const db = this._load(); delete db.roster[id]; this._save(db); }
   async clearAll() { localStorage.removeItem(this.key); this._emit(); }
 }
@@ -335,6 +354,23 @@ class FirebaseStore {
     if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'roster', id), { name: data.name.trim(), phone, updatedAt: Date.now() });
+  }
+  async patchRoster(id, patch) {
+    const cur = this.state.roster.find((r) => r.id === id);
+    if (!cur) throw new Error('Jugador inexistente');
+    const next = { updatedAt: Date.now() };
+    if ('name' in patch) next.name = String(patch.name || '').trim();
+    if ('phone' in patch) next.phone = patch.phone || '';
+    if ('level' in patch) next.level = patch.level;
+    if ('positions' in patch) next.positions = patch.positions || [];
+    if ('notes' in patch) next.notes = patch.notes || [];
+    const phone = 'phone' in next ? next.phone : cur.phone;
+    if (phone) {
+      const dup = this.state.roster.find((r) => r.id !== id && r.phone === phone);
+      if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    }
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'roster', id), next);
   }
   async deleteRoster(id) { const { doc, deleteDoc } = this.fs; await deleteDoc(doc(this.db, 'roster', id)); }
 }

@@ -456,6 +456,37 @@ await page.click('#roster-form [data-close]');
 await page.click('#btn-back');
 await page.waitForSelector('.match-card');
 
+// Perfil: tocar al jugador, nivel, posiciones, nota y estadística de un partido ya jugado
+await page.click('.match-card:has-text("Martes 20/10")');
+await page.click('#btn-edit-match');
+await page.fill('#match-form [name=date]', '2026-10-15');
+await page.fill('#match-form [name=time]', '21:00');
+await page.click('#match-form button[type=submit]');
+await page.waitForFunction(() => document.querySelector('h1')?.textContent.includes('Jueves 15/10'));
+await page.locator('#slots .who', { hasText: 'Ernesto Pereira' }).click();
+await page.waitForSelector('#profile');
+check('Tocarlo abre el perfil con WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491122223333'));
+check('Cuenta el partido pasado en la lista principal', (await page.textContent('#stat-times')).includes('Jugó 1 vez'));
+check('Mayormente jueves · 21:00', (await page.textContent('#stat-summary')).includes('Mayormente jueves · 21:00'));
+for (let i = 0; i < 8; i++) await page.click('#level-up');
+await page.waitForFunction(() => document.querySelector('#level-val')?.textContent === '8');
+check('Nivel de juego 8', true);
+await page.click('[data-pos="Defensa"]');
+await page.click('[data-pos="Mediocampo"]');
+check('Posiciones Defensa y Mediocampo', (await page.locator('[data-pos="Defensa"].on').count()) === 1 && (await page.locator('[data-pos="Ataque"].on').count()) === 0 && (await page.locator('[data-pos="Mediocampo"].on').count()) === 1);
+await page.click('#btn-add-note');
+await page.fill('#note-form [name=text]', 'Hizo un gol');
+await page.click('#note-form button[type=submit]');
+await page.waitForSelector('.pnote:has-text("Hizo un gol")');
+check('La nota muestra la fecha del partido', (await page.textContent('.pnote')).includes('Jueves 15/10') && (await page.textContent('.pnote')).includes('Hizo un gol'));
+await page.click('#btn-back');
+await page.click('#btn-roster');
+await page.locator('#roster-list .who', { hasText: 'Ernesto P.' }).click();
+await page.waitForSelector('#profile');
+check('Desde Jugadores es el mismo perfil', (await page.textContent('#level-val')) === '8' && (await page.textContent('#notes')).includes('Hizo un gol'));
+await page.click('#btn-back');
+await page.waitForSelector('#btn-roster');
+
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());
 check('Manifest válido con íconos 192/512 + maskable', manifest.icons.length === 3 && manifest.display === 'standalone');
