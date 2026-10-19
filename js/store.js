@@ -29,6 +29,11 @@
 //    confirmToken: string               (link de confirmar.html; se crea al anotar al jugador)
 //    confirmed: "si"|"no"               (respuesta del jugador)
 //    confirmedAt, reminderSentAt: number
+//  roster/{rosterId}
+//    name, phone (dígitos wa.me, o vacío)
+//    createdBy, createdAt, updatedAt
+//    Misma persona = mismo phone. La colección es nueva: las reglas publicadas
+//    la niegan hasta que se republican.
 //  El pago y la espera viven en el mismo documento del jugador. Las reglas
 //  publicadas (validPlayer) permiten campos extra, así que no hace falta republicarlas.
 //
@@ -39,6 +44,7 @@ import { addDays, todayISO, toEpoch } from './dates.js';
 import { paymentRecord } from './payments.js';
 import { nextWaitOrder } from './waiting.js';
 import { newConfirmToken } from './reminders.js';
+import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
@@ -78,15 +84,19 @@ function matchDoc(data, who) {
 class LocalStore {
   constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); }
   _load() {
-    try { return JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {} }; }
-    catch { return { matches: {}, players: {} }; }
+    try {
+      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {} };
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {};
+      return db;
+    } catch { return { matches: {}, players: {}, roster: {} }; }
   }
   _save(db) { localStorage.setItem(this.key, JSON.stringify(db)); this._emit(); }
   _emit() {
     const db = this._load();
     const matches = Object.entries(db.matches).map(([id, m]) => ({ id, ...m }));
     const players = Object.entries(db.players).map(([id, p]) => ({ id, ...p }));
-    this.listeners.forEach((fn) => fn({ matches, players }));
+    const roster = Object.entries(db.roster).map(([id, r]) => ({ id, ...r }));
+    this.listeners.forEach((fn) => fn({ matches, players, roster, rosterError: null }));
   }
   async init() {
     window.addEventListener('storage', (e) => { if (e.key === this.key) this._emit(); });
@@ -164,12 +174,32 @@ class LocalStore {
     await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
   async deletePlayer(id) { const db = this._load(); delete db.players[id]; this._save(db); }
+  async addRoster(data, who) {
+    const db = this._load();
+    const phone = data.phone || '';
+    const existing = phone ? Object.entries(db.roster).find(([, r]) => r.phone === phone) : null;
+    if (existing) throw Object.assign(new Error(`${existing[1].name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    const id = rid(); const now = Date.now();
+    db.roster[id] = { name: data.name.trim(), phone, createdBy: who || '', createdAt: now, updatedAt: now };
+    this._save(db); return id;
+  }
+  async updateRoster(id, data) {
+    const db = this._load(); const cur = db.roster[id]; if (!cur) return;
+    const phone = data.phone ?? cur.phone;
+    if (phone) {
+      const dup = Object.entries(db.roster).find(([oid, r]) => oid !== id && r.phone === phone);
+      if (dup) throw Object.assign(new Error(`${dup[1].name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    }
+    Object.assign(cur, { name: data.name.trim(), phone, updatedAt: Date.now() });
+    this._save(db);
+  }
+  async deleteRoster(id) { const db = this._load(); delete db.roster[id]; this._save(db); }
   async clearAll() { localStorage.removeItem(this.key); this._emit(); }
 }
 
 /* ───────────── Firebase / Firestore ───────────── */
 class FirebaseStore {
-  constructor() { this.mode = 'firebase'; this.listeners = new Set(); this.state = { matches: [], players: [] }; }
+  constructor() { this.mode = 'firebase'; this.listeners = new Set(); this.state = { matches: [], players: [], roster: [], rosterError: null }; }
   async init(onError) {
     const [{ initializeApp }, fs] = await Promise.all([
       import(`${FB}/firebase-app.js`),
@@ -202,6 +232,15 @@ class FirebaseStore {
       this.state.players = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
     }, err);
+    onSnapshot(collection(this.db, 'roster'), (snap) => {
+      this.state.roster = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this.state.rosterError = null;
+      this._emit();
+    }, (e) => {
+      console.error(e);
+      this.state.rosterError = isRosterDenied(e) ? ROSTER_DENIED_READ : ('No se pudo leer Jugadores: ' + (e?.message || e?.code || e));
+      this._emit();
+    });
   }
   _emit() { this.listeners.forEach((fn) => fn({ ...this.state })); }
   subscribe(fn) { this.listeners.add(fn); fn({ ...this.state }); return () => this.listeners.delete(fn); }
@@ -280,6 +319,24 @@ class FirebaseStore {
     await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
   async deletePlayer(id) { const { doc, deleteDoc } = this.fs; await deleteDoc(doc(this.db, 'players', id)); }
+  async addRoster(data, who) {
+    const phone = data.phone || '';
+    const existing = rosterByPhone(this.state.roster, phone);
+    if (existing) throw Object.assign(new Error(`${existing.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    const { collection, addDoc } = this.fs; const now = Date.now();
+    const ref = await addDoc(collection(this.db, 'roster'), {
+      name: data.name.trim(), phone, createdBy: who || '', createdAt: now, updatedAt: now,
+    });
+    return ref.id;
+  }
+  async updateRoster(id, data) {
+    const phone = data.phone || '';
+    const dup = phone && this.state.roster.find((r) => r.id !== id && r.phone === phone);
+    if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'roster', id), { name: data.name.trim(), phone, updatedAt: Date.now() });
+  }
+  async deleteRoster(id) { const { doc, deleteDoc } = this.fs; await deleteDoc(doc(this.db, 'roster', id)); }
 }
 
 /** Store de localStorage, sin Firebase. Lo usa el modo demo y las pruebas. */

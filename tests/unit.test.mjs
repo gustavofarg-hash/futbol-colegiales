@@ -5,6 +5,7 @@ import { normalizePhone } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentRecord, paymentStatusText } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
+import { rosterHit, searchRoster } from '../js/roster.js';
 import {
   confirmPageUrl, confirmSummary, confirmationAllowed, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
@@ -251,4 +252,43 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.ok(text.includes(links[0].confirmUrl));
   assert.deepEqual(matchesCrossingReminderWindow([match], start - twoH - 1000, start - twoH + 1000).map((m) => m.id), ['2026-10-19_1500']);
   assert.equal(matchesCrossingReminderWindow([match], start - 1000, start - 500).length, 0);
+});
+
+test('búsqueda del plantel: nombre, apellido y teléfono', () => {
+  const roster = [
+    { id: '1', name: 'Ernesto Pereira', phone: '5491122223333' },
+    { id: '2', name: 'José Pérez', phone: '5491144445555' },
+    { id: '3', name: 'Ana Gómez', phone: '5491199990000' },
+  ];
+  const names = (q) => searchRoster(roster, q).map((p) => p.name);
+  assert.deepEqual(names('ERN'), ['Ernesto Pereira']);
+  assert.deepEqual(names('ern'), ['Ernesto Pereira']);
+  assert.deepEqual(names('Pereira'), ['Ernesto Pereira']);
+  assert.deepEqual(names('pereir'), ['Ernesto Pereira']);
+  assert.deepEqual(names('perez'), ['José Pérez']);
+  assert.deepEqual(names('JOSE'), ['José Pérez']);
+  assert.deepEqual(names('NES'), []);
+  assert.equal(rosterHit(roster[0], 'eira'), false);
+  assert.deepEqual(names('2222-3333'), ['Ernesto Pereira']);
+  assert.deepEqual(names('+54 9 11 4444'), ['José Pérez']);
+  assert.deepEqual(names('11 9999 0000'), ['Ana Gómez']);
+  assert.deepEqual(names(''), ['Ana Gómez', 'Ernesto Pereira', 'José Pérez']);
+});
+
+test('plantel demo: no duplica por teléfono', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-roster';
+  const id = await store.addRoster({ name: 'Ernesto Pereira', phone: '5491122223333' }, 'Gustavo');
+  await assert.rejects(() => store.addRoster({ name: 'Otro', phone: '5491122223333' }, 'Martín'), /WhatsApp/);
+  assert.equal(Object.keys(JSON.parse(mem.get('f7c-test-roster')).roster).length, 1);
+  await store.updateRoster(id, { name: 'Ernesto P.', phone: '5491122223333' });
+  assert.equal(JSON.parse(mem.get('f7c-test-roster')).roster[id].name, 'Ernesto P.');
+  await store.deleteRoster(id);
+  assert.equal(Object.keys(JSON.parse(mem.get('f7c-test-roster')).roster).length, 0);
 });

@@ -216,6 +216,19 @@ https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m={matchId}&
 
 El pago va en el documento del jugador (no en una colección nueva). Las reglas que ya están publicadas dejan pasar campos extra, así que estos se pueden escribir sin volver a publicar `firestore.rules`. La copia del repo además valida el tipo de esos campos para cuando se publiquen de nuevo.
 
+**Colección `roster`** — jugadores guardados (pantalla Jugadores). Id automático.
+
+| campo | tipo |
+|---|---|
+| `name` | string, 1 a 60 |
+| `phone` | solo dígitos, formato wa.me, o vacío |
+| `createdBy` | quién lo guardó |
+| `createdAt`, `updatedAt` | número (epoch ms) |
+
+Misma persona = mismo `phone`. Al anotar en un partido (o en la espera) con WhatsApp, si ese número no está, se guarda solo. En el formulario de alta, «Buscar guardados» encuentra por las primeras letras del nombre o del apellido (sin importar mayúsculas ni acentos: `ERN` → Ernesto Pereira, `perez` → José Pérez) o por cualquier tramo del teléfono (solo dígitos, se ignoran espacios, guiones y `+54 9`). Tocar un resultado lo anota en ese partido; si ya hay 14, va a la espera. También se puede escribir uno nuevo.
+
+**Hay que republicar las reglas.** La colección `roster` no existe en las reglas que están publicadas hoy (el cierre las niega). Sin republicar `firestore.rules`, Jugadores no se puede leer ni guardar en Firebase. La app lo dice en español y el partido igual se anota. En modo demo no hace falta.
+
 Un importador automático solo tiene que hacer `set` en `matches/<AAAA-MM-DD_HHMM>` con `source: "whatsapp"` y `sourceRef`; la app lo muestra al instante. El parser de texto (`js/parser.js`, función `parseMatchesFromText`) es JavaScript puro y se puede reutilizar desde Node.
 
 ## Probar en la computadora

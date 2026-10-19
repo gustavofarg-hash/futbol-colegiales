@@ -1,8 +1,9 @@
 rules_version = '2';
 
-// Reglas v1: ABIERTAS. Cualquiera que tenga la configuración de la app (que es
-// pública en la página) puede leer y escribir estas dos colecciones.
-// Sirve para empezar entre dos organizadores; ver README para endurecerlas.
+// Reglas v1: ABIERTAS para partidos y jugadores. La colección roster es nueva:
+// las reglas YA PUBLICADAS la rechazan (el cierre de abajo). Hay que republicar
+// este archivo para que Jugadores funcione en Firebase. Hasta entonces la app
+// avisa en español y el resto sigue andando.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -66,6 +67,21 @@ service cloud.firestore {
       allow read, delete: if true;
       allow create: if validPlayer(request.resource.data);
       allow update: if validPlayer(request.resource.data) && confirmationWriteOk();
+    }
+
+    function validRoster(d) {
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 60
+          && d.phone is string && d.phone.size() <= 20
+          && (!('createdBy' in d) || (d.createdBy is string && d.createdBy.size() <= 40))
+          && (!('createdAt' in d) || d.createdAt is number)
+          && (!('updatedAt' in d) || d.updatedAt is number);
+    }
+
+    // Plantel guardado (pantalla Jugadores). Lectura abierta, igual que el resto.
+    // Recién vale cuando se republican las reglas.
+    match /roster/{rosterId} {
+      allow read, delete: if true;
+      allow create, update: if validRoster(request.resource.data);
     }
 
     // Todo lo demás, cerrado.

@@ -187,6 +187,19 @@ h2.section:first-child { margin-top: 4px; }
 .confirm-tag.ok { color: var(--green); }
 .confirm-tag.no { color: var(--danger); }
 .confirm-tag.pending { color: var(--muted); }
+.roster-nav { width: 100%; margin: 0 0 14px; }
+.roster-lead { margin: 0 16px 10px; color: var(--muted); font-size: 14px; }
+.roster-search { margin: 0 0 12px; }
+.roster-error { border-radius: 12px; margin-bottom: 12px; }
+.roster-hits { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.roster-hit {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; text-align: left; min-height: 52px; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
+  color: inherit; font: inherit;
+}
+.roster-hit b { font-size: 15.5px; }
+.roster-hit small { color: var(--muted); font-size: 13px; }
 .remind-banners { display: grid; gap: 8px; margin: 0 0 12px; }
 .remind-banner {
   display: block; width: 100%; text-align: left; cursor: pointer;

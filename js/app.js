@@ -12,6 +12,7 @@ import {
   confirmStatus, confirmSummary, matchesCrossingReminderWindow,
   needsReminderBanner, reminderDueAt, reminderLinks, reminderProgress,
 } from './reminders.js';
+import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -33,6 +34,8 @@ const app = {
   store: null,
   matches: [],
   players: [],
+  roster: [],
+  rosterError: null,
   who: localStorage.getItem(WHO_KEY),
   loaded: false,
 };
@@ -72,6 +75,7 @@ function route() {
   const h = location.hash.replace(/^#\/?/, '');
   const [name, id] = h.split('/');
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
+  if (name === 'jugadores') return { name: 'roster' };
   return { name: 'home' };
 }
 window.addEventListener('hashchange', render);
@@ -83,7 +87,9 @@ function render() {
   const who = $('#btn-who');
   who.hidden = !app.who; who.textContent = app.who ? `Sos ${app.who}` : '';
   if (!app.loaded) return;
-  if (r.name === 'match') renderMatch(r.id); else renderHome();
+  if (r.name === 'match') renderMatch(r.id);
+  else if (r.name === 'roster') renderRoster();
+  else renderHome();
 }
 
 function matchCard(m) {
@@ -116,6 +122,7 @@ function renderHome() {
   const later = all.filter((m) => m.date > limit);
   $('#view').innerHTML = `
     ${reminderBanners(next)}
+    <a class="btn block roster-nav" id="btn-roster" href="#/jugadores">Jugadores${app.roster.length ? ` · ${app.roster.length}` : ''}</a>
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
       <div class="empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
@@ -546,21 +553,70 @@ function openImportPreview(text, found) {
   };
 }
 
-/* Agregar / editar jugador */
-function openPlayerForm(m, p, opts = {}) {
-  const asWait = !p && opts.waiting === true;
+/* ───────── plantel (Jugadores) ───────── */
+function renderRoster() {
+  const q = $('#roster-q')?.value || '';
+  const people = searchRoster(app.roster, q);
+  const rows = people.map((person) => `
+    <li class="slot" data-roster="${esc(person.id)}">
+      <div class="who">
+        <div class="name">${esc(person.name)}</div>
+        <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</div>
+      </div>
+      ${person.phone ? `<a class="wa-btn" href="${esc(waLink(person.phone))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(person.name)}">${ICON.wa}</a>` : ''}
+      <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}">${ICON.edit}</button>
+      <button type="button" class="more-btn" data-roster-del="${esc(person.id)}" aria-label="Borrar ${esc(person.name)}">${ICON.trash}</button>
+    </li>`).join('');
+  $('#view').innerHTML = `
+    <h2 class="section">Jugadores</h2>
+    <p class="hint roster-lead">Lista guardada de nombre y WhatsApp. Se comparte entre los dos.</p>
+    ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
+    <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
+    ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido con WhatsApp, se guarda acá.'}</p>`}
+    <div class="actionbar"><div class="actionbar-inner">
+      <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
+    </div></div>`;
+  const input = $('#roster-q');
+  input.addEventListener('input', () => renderRoster());
+  if (q) { input.focus(); input.setSelectionRange(q.length, q.length); }
+  $('#btn-add-roster').onclick = () => openRosterForm();
+  const list = $('#roster-list');
+  if (list) list.onclick = (e) => {
+    const edit = e.target.closest('[data-roster-edit]');
+    if (edit) return openRosterForm(app.roster.find((r) => r.id === edit.dataset.rosterEdit));
+    const del = e.target.closest('[data-roster-del]');
+    if (del) return deleteRosterPlayer(app.roster.find((r) => r.id === del.dataset.rosterDel));
+  };
+}
+
+function rosterFormError(error, formId) {
+  const el = document.getElementById(formId);
+  if (isRosterDenied(error)) {
+    const msg = ROSTER_DENIED_WRITE;
+    if (el) el.textContent = msg;
+    showError(msg);
+    return;
+  }
+  if (error?.code === 'roster-duplicate') {
+    if (el) el.textContent = error.message;
+    return;
+  }
+  toast('No se pudo guardar: ' + (error?.code || error?.message || error));
+}
+
+function openRosterForm(person) {
   openSheet(`
-    <form id="player-form" novalidate>
-      <h3>${p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
-      <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
-      <label class="field"><span>Nombre</span><input name="name" autofocus autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
-      <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
-        <div class="small muted" id="pf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>
-      <div class="field"><div class="err" id="pf-err"></div></div>
-      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${p ? 'Guardar' : 'Agregar'}</button></div>
+    <form id="roster-form" novalidate>
+      <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
+      <p class="hint">Nombre completo y WhatsApp. Si el número ya está, no se duplica.</p>
+      <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
+      <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person ? displayFromWa(person.phone) : '')}">
+        <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>
+      <div class="field"><div class="err" id="rf-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${person ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
-  const form = $('#player-form');
-  const hint = $('#pf-phone');
+  const form = $('#roster-form');
+  const hint = $('#rf-phone');
   form.phone.addEventListener('input', () => {
     const v = form.phone.value.trim();
     if (!v) { hint.className = 'small muted'; hint.textContent = 'Característica + número. Sin 0 ni 15 también sirve.'; return; }
@@ -572,6 +628,91 @@ function openPlayerForm(m, p, opts = {}) {
     e.preventDefault();
     const name = form.name.value.trim();
     const phoneRaw = form.phone.value.trim();
+    if (!name) { $('#rf-err').textContent = 'Poné el nombre.'; return; }
+    if (!phoneRaw) { $('#rf-err').textContent = 'Poné el WhatsApp.'; return; }
+    const r = normalizePhone(phoneRaw);
+    if (!r.ok) { $('#rf-err').textContent = r.error; return; }
+    const job = person
+      ? app.store.updateRoster(person.id, { name, phone: r.wa })
+      : app.store.addRoster({ name, phone: r.wa }, app.who);
+    Promise.resolve(job).then(() => { closeSheet(); toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores'); }).catch((err) => rosterFormError(err, 'rf-err'));
+  };
+}
+
+function deleteRosterPlayer(person) {
+  if (!person) return;
+  if (!confirm(`¿Borrar a ${person.name} de Jugadores? No lo quita de los partidos.`)) return;
+  Promise.resolve(app.store.deleteRoster(person.id)).then(() => toast(`${person.name} borrado`)).catch((err) => {
+    if (isRosterDenied(err)) showError(ROSTER_DENIED_WRITE);
+    else toast('No se pudo borrar: ' + (err?.code || err?.message || err));
+  });
+}
+
+async function rememberInRoster(name, phone) {
+  if (!phone || rosterByPhone(app.roster, phone)) return;
+  try { await app.store.addRoster({ name, phone }, app.who); }
+  catch (error) {
+    if (error?.code === 'roster-duplicate') return;
+    if (isRosterDenied(error)) showError(`${ROSTER_DENIED_WRITE} El partido igual quedó anotado.`);
+    else console.error(error);
+  }
+}
+
+function addSignedPlayer(m, { name, phone }, asWait) {
+  const willWait = asWait || playersOf(m.id).length >= (m.capacity || CAPACITY);
+  closeSheet();
+  run((async () => {
+    await app.store.addPlayer(m, { name, phone }, app.who, { waiting: asWait });
+    await rememberInRoster(name, phone);
+  })(), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
+}
+
+/* Agregar / editar jugador */
+function openPlayerForm(m, p, opts = {}) {
+  const asWait = !p && opts.waiting === true;
+  openSheet(`
+    <form id="player-form" novalidate>
+      <h3>${p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
+      <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
+      ${p ? '' : `<label class="field"><span>Buscar guardados</span><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"></label>
+      <ul class="roster-hits" id="roster-hits" hidden></ul>`}
+      <label class="field"><span>Nombre</span><input name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
+      <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
+        <div class="small muted" id="pf-phone">Característica + número. Sin 0 ni 15 también sirve. Si no está guardado, se agrega a Jugadores.</div></label>
+      <div class="field"><div class="err" id="pf-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${p ? 'Guardar' : 'Agregar'}</button></div>
+    </form>`);
+  const form = $('#player-form');
+  const hint = $('#pf-phone');
+  form.phone.addEventListener('input', () => {
+    const v = form.phone.value.trim();
+    if (!v) { hint.className = 'small muted'; hint.textContent = 'Característica + número. Sin 0 ni 15 también sirve. Si no está guardado, se agrega a Jugadores.'; return; }
+    const r = normalizePhone(v);
+    hint.className = r.ok ? 'ok' : 'err';
+    hint.textContent = r.ok ? `✓ ${r.display}` : r.error;
+  });
+  const find = $('#roster-find');
+  if (find) {
+    const paint = () => {
+      const hits = $('#roster-hits');
+      const q = find.value.trim();
+      const found = q ? searchRoster(app.roster, q).slice(0, 8) : [];
+      hits.hidden = !found.length;
+      hits.innerHTML = found.map((person) => `<li><button type="button" class="roster-hit" data-pick="${esc(person.id)}"><b>${esc(person.name)}</b><small>${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</small></button></li>`).join('');
+    };
+    find.addEventListener('input', paint);
+    $('#roster-hits').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-pick]');
+      if (!btn) return;
+      const person = app.roster.find((r) => r.id === btn.dataset.pick);
+      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '' }, asWait);
+    });
+    setTimeout(() => find.focus(), 50);
+  }
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const name = form.name.value.trim();
+    const phoneRaw = form.phone.value.trim();
     if (!name) { $('#pf-err').textContent = 'Poné el nombre.'; return; }
     let phone = '';
     if (phoneRaw) {
@@ -579,12 +720,13 @@ function openPlayerForm(m, p, opts = {}) {
       if (!r.ok) { $('#pf-err').textContent = r.error; return; }
       phone = r.wa;
     }
-    closeSheet();
-    if (p) run(app.store.updatePlayer(p.id, { name, phone }), 'Jugador actualizado');
-    else {
-      const willWait = asWait || playersOf(m.id).length >= (m.capacity || CAPACITY);
-      run(app.store.addPlayer(m, { name, phone }, app.who, { waiting: asWait }), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
-    }
+    if (p) {
+      closeSheet();
+      run((async () => {
+        await app.store.updatePlayer(p.id, { name, phone });
+        await rememberInRoster(name, phone);
+      })(), 'Jugador actualizado');
+    } else addSignedPlayer(m, { name, phone }, asWait);
   };
 }
 /* Pago del jugador */
@@ -723,8 +865,12 @@ async function boot() {
         : 'Problema de conexión con Firebase: ' + (e?.message || e));
   });
   $('#demo-banner').hidden = app.store.mode === 'firebase';
-  app.store.subscribe(({ matches, players }) => {
-    app.matches = matches || []; app.players = players || []; app.loaded = true;
+  app.store.subscribe(({ matches, players, roster, rosterError }) => {
+    app.matches = matches || []; app.players = players || [];
+    app.roster = roster || [];
+    if (rosterError && rosterError !== app.rosterError) showError(rosterError);
+    app.rosterError = rosterError || null;
+    app.loaded = true;
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe
     if (!sheet.open || !sheet.querySelector('input, textarea')) render(); else pendingRender = true;
     fixOverflow();
