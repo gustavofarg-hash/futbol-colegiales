@@ -1,0 +1,36 @@
+rules_version = '2';
+
+// Reglas v1: ABIERTAS. Cualquiera que tenga la configuración de la app (que es
+// pública en la página) puede leer y escribir estas dos colecciones.
+// Sirve para empezar entre dos organizadores; ver README para endurecerlas.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function validMatch(d) {
+      return d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+          && d.time is string && d.time.matches('^\\d{2}:\\d{2}$')
+          && (!('note' in d) || (d.note is string && d.note.size() <= 300));
+    }
+
+    function validPlayer(d) {
+      return d.matchId is string && d.name is string
+          && d.name.size() > 0 && d.name.size() <= 60
+          && d.phone is string && d.phone.size() <= 20;
+    }
+
+    match /matches/{matchId} {
+      allow read, delete: if true;
+      allow create, update: if validMatch(request.resource.data);
+    }
+
+    match /players/{playerId} {
+      allow read, delete: if true;
+      allow create, update: if validPlayer(request.resource.data);
+    }
+
+    // Todo lo demás, cerrado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
