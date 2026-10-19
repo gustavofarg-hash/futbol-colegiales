@@ -1,13 +1,45 @@
 rules_version = '2';
 
-// Reglas v1: ABIERTAS para partidos y jugadores. Las colecciones roster y
-// organizers son nuevas: las reglas YA PUBLICADAS las rechazan (el cierre de
-// abajo). Hay que republicar este archivo para que Jugadores, el perfil y la
-// lista de organizadores funcionen en Firebase. Hasta entonces la app avisa en
-// español, el selector sigue con Gustavo y Martín, y el resto sigue andando.
-// receivedBy en el jugador es un campo extra: se puede escribir sin republicar.
+// Acceso por cuenta. El mail de abajo tiene que ser EL MISMO que ADMIN_EMAIL
+// en config.js. Mientras diga TU_EMAIL_ADMIN, nadie puede crear al admin:
+// poné el mail de Gustavo en los dos archivos y volvé a publicar.
+//
+// Orden seguro: activar Email/Password, poner el mail, crear la cuenta de
+// admin (con las reglas viejas todavía publicadas, o con estas: el alta del
+// admin sigue permitida) y recién ahí publicar. Publicar esto no borra datos.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function adminEmail() {
+      return 'TU_EMAIL_ADMIN';
+    }
+    function signedIn() {
+      return request.auth != null;
+    }
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+    function isAdminEmail() {
+      return signedIn()
+          && adminEmail() != 'TU_EMAIL_ADMIN'
+          && adminEmail().size() > 3
+          && request.auth.token.email is string
+          && request.auth.token.email.lower() == adminEmail().lower();
+    }
+    function hasUser() {
+      return signedIn() && exists(userPath(request.auth.uid));
+    }
+    function userData() {
+      return get(userPath(request.auth.uid)).data;
+    }
+    function isActiveStaff() {
+      return hasUser()
+          && userData().active == true
+          && (userData().role == 'admin' || userData().role == 'organizer');
+    }
+    function isAdmin() {
+      return isActiveStaff() && userData().role == 'admin';
+    }
 
     function validMatch(d) {
       return d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
@@ -15,11 +47,6 @@ service cloud.firestore {
           && (!('note' in d) || (d.note is string && d.note.size() <= 300));
     }
 
-    // Pago opcional en el mismo documento del jugador.
-    // Las reglas YA PUBLICADAS no miran estos campos (validPlayer solo exige
-    // matchId, name y phone, y deja pasar campos extra). La app escribe
-    // valores que cumplen esa versión publicada. validPayment entra en
-    // vigencia recién cuando se vuelvan a publicar estas reglas.
     function validPayment(d) {
       return (!('paid' in d) || d.paid is bool)
           && (!('amount' in d) || d.amount == null || (d.amount is number && d.amount >= 0 && d.amount <= 1000000000))
@@ -36,11 +63,8 @@ service cloud.firestore {
           && (!('reminderSentAt' in d) || d.reminderSentAt == null || d.reminderSentAt is number);
     }
 
-    // Si cambian la confirmación, el update solo puede tocar confirmed,
-    // confirmedAt y updatedAt, y el token del documento tiene que seguir igual.
-    // No es un secreto frente a quien puede leer el jugador (las lecturas
-    // siguen abiertas): evita que un update cualquiera pise la respuesta.
-    // La app ya escribe así. Esto recién se exige al republicar las reglas.
+    // Un organizador puede actualizar al jugador. Si toca la respuesta,
+    // solo puede cambiar esos campos y el token queda igual.
     function confirmationWriteOk() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return !changed.hasAny(['confirmed', 'confirmedAt'])
@@ -57,19 +81,6 @@ service cloud.firestore {
           && d.name.size() > 0 && d.name.size() <= 60
           && d.phone is string && d.phone.size() <= 20
           && validPayment(d);
-    }
-
-    match /matches/{matchId} {
-      allow read, delete: if true;
-      allow create, update: if validMatch(request.resource.data);
-    }
-
-    match /players/{playerId} {
-      // La lectura queda abierta a propósito: un aviso externo (REST, con la
-      // clave web pública) tiene que poder leer jugadores y armar los links.
-      allow read, delete: if true;
-      allow create: if validPlayer(request.resource.data);
-      allow update: if validPlayer(request.resource.data) && confirmationWriteOk();
     }
 
     function posOk(x) {
@@ -115,27 +126,103 @@ service cloud.firestore {
           && (!('positions' in d) || positionsOk(d.positions))
           && (!('notes' in d) || notesOk(d.notes));
     }
-
-    // Plantel guardado (pantalla Jugadores). Lectura abierta, igual que el resto.
-    // Recién vale cuando se republican las reglas.
-    match /roster/{rosterId} {
-      allow read, delete: if true;
-      allow create, update: if validRoster(request.resource.data);
-    }
-
     function validOrganizer(d) {
       return d.name is string && d.name.size() > 0 && d.name.size() <= 40
           && (!('createdAt' in d) || d.createdAt is number);
     }
-
-    // Quién cobra y quién aparece en "¿Quién sos?". Id estable (gustavo, martin).
-    // La app solo agrega. Recién vale cuando se republican las reglas.
-    match /organizers/{organizerId} {
-      allow read, delete: if true;
-      allow create, update: if validOrganizer(request.resource.data);
+    function validUser(d) {
+      return (d.role == 'admin' || d.role == 'organizer')
+          && d.name is string && d.name.size() > 0 && d.name.size() <= 40
+          && d.email is string && d.email.size() > 3 && d.email.size() <= 80
+          && d.active is bool
+          && (!('createdAt' in d) || d.createdAt is number);
+    }
+    // Lo que ve alguien sin cuenta. Sin teléfono.
+    function validConfirmation(d) {
+      return d.playerId is string && d.playerId.size() > 0 && d.playerId.size() <= 80
+          && d.matchId is string && d.matchId.size() > 0 && d.matchId.size() <= 80
+          && d.name is string && d.name.size() > 0 && d.name.size() <= 60
+          && d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+          && d.time is string && d.time.matches('^\\d{2}:\\d{2}$')
+          && (!('note' in d) || (d.note is string && d.note.size() <= 300))
+          && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
+          && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number);
+    }
+    function anonymousConfirm() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly(['confirmed', 'confirmedAt'])
+          && request.resource.data.playerId == resource.data.playerId
+          && request.resource.data.matchId == resource.data.matchId
+          && request.resource.data.name == resource.data.name
+          && request.resource.data.date == resource.data.date
+          && request.resource.data.time == resource.data.time
+          && (request.resource.data.confirmed == 'si' || request.resource.data.confirmed == 'no')
+          && request.resource.data.confirmedAt is number;
     }
 
-    // Todo lo demás, cerrado.
+    match /users/{userId} {
+      allow get: if signedIn() && (request.auth.uid == userId || isActiveStaff());
+      allow list: if isActiveStaff();
+      // Alta del primer admin. Solo su propio uid y solo ese mail.
+      allow create: if signedIn()
+          && request.auth.uid == userId
+          && isAdminEmail()
+          && validUser(request.resource.data)
+          && request.resource.data.role == 'admin'
+          && request.resource.data.active == true
+          && request.resource.data.email.lower() == request.auth.token.email.lower()
+          && !exists(userPath(userId));
+      // El admin crea organizadores (el uid es el de la cuenta nueva).
+      allow create: if isAdmin()
+          && request.auth.uid != userId
+          && validUser(request.resource.data)
+          && request.resource.data.role == 'organizer'
+          && request.resource.data.active == true;
+      allow update: if isAdmin()
+          && userId != request.auth.uid
+          && resource.data.role == 'organizer'
+          && validUser(request.resource.data)
+          && request.resource.data.role == 'organizer'
+          && request.resource.data.email == resource.data.email;
+      allow delete: if isAdmin()
+          && userId != request.auth.uid
+          && resource.data.role == 'organizer';
+    }
+
+    match /matches/{matchId} {
+      allow read, delete: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validMatch(request.resource.data);
+    }
+
+    match /players/{playerId} {
+      allow read, delete: if isActiveStaff();
+      allow create: if isActiveStaff() && validPlayer(request.resource.data);
+      allow update: if isActiveStaff() && validPlayer(request.resource.data) && confirmationWriteOk();
+    }
+
+    match /roster/{rosterId} {
+      allow read, delete: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validRoster(request.resource.data);
+    }
+
+    match /organizers/{organizerId} {
+      allow read, delete: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validOrganizer(request.resource.data);
+    }
+
+    // El id es el token del link. Se puede leer UN documento si se conoce el
+    // id; no se puede listar la colección. No tiene teléfonos.
+    match /confirmations/{token} {
+      allow get: if token.size() >= 16 && token.size() <= 80;
+      allow list: if isActiveStaff();
+      allow create: if isActiveStaff() && validConfirmation(request.resource.data);
+      allow update: if isActiveStaff() && validConfirmation(request.resource.data);
+      allow update: if token.size() >= 16 && token.size() <= 80
+          && validConfirmation(request.resource.data)
+          && anonymousConfirm();
+      allow delete: if isActiveStaff();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

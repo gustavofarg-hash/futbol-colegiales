@@ -14,15 +14,13 @@ import {
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, noteWhen, playerRecord, playerStats, sortedNotes } from './profile.js';
-import {
-  ORGANIZERS_DENIED_WRITE, UNSPECIFIED, cleanOrganizerName, isOrganizerDenied, organizerNames, organizerTagClass, sameOrganizer,
-} from './organizers.js';
-import { hasUnspecified, paymentLedger, paymentsSummary, signupLedger } from './ledger.js';
+import { UNSPECIFIED, organizerTagClass, sameOrganizer } from './organizers.js';
+import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, signupLedger } from './ledger.js';
+import { openSession, staffUsers } from './auth.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const WHO_KEY = 'f7c-who';
 const CODE_KEY = 'f7c-code';
 const ICON = {
   wa: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2l-.4-.2z"/></svg>',
@@ -43,8 +41,12 @@ const app = {
   rosterError: null,
   organizers: [],
   organizersError: null,
+  users: [],
+  role: '',
+  mine: false,
+  session: null,
   payFilter: '',
-  who: localStorage.getItem(WHO_KEY),
+  who: '',
   loaded: false,
 };
 window.__app = app; // útil para depurar / tests
@@ -74,9 +76,16 @@ const playersOf = (matchId) => app.players
 const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
+function minePlayer(p) {
+  return sameOrganizer(p.addedBy, app.who) || (p.paid === true && sameOrganizer(p.receivedBy, app.who));
+}
 function whoOptions() {
-  const names = organizerNames(app.organizers, ORGANIZERS);
-  if (app.who && !names.some((name) => sameOrganizer(name, app.who))) return [...names, app.who];
+  const names = [];
+  for (const user of staffUsers(app.users)) {
+    if (user.name && !names.some((name) => sameOrganizer(name, user.name))) names.push(user.name);
+  }
+  if (!names.length) names.push(...ORGANIZERS);
+  if (app.who && !names.some((name) => sameOrganizer(name, app.who))) names.push(app.who);
   return names;
 }
 function receiverOptions(current) {
@@ -118,6 +127,7 @@ function route() {
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'jugadores') return { name: 'roster' };
   if (name === 'pagos') return { name: 'pagos' };
+  if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
 }
@@ -128,12 +138,20 @@ function render() {
   const r = route();
   $('#btn-back').hidden = r.name === 'home';
   const who = $('#btn-who');
-  who.hidden = !app.who; who.textContent = app.who ? `Sos ${app.who}` : '';
+  who.hidden = !app.who; who.textContent = app.who || '';
+  const mine = $('#btn-mine');
+  if (mine) {
+    mine.hidden = !app.who;
+    mine.textContent = app.mine ? 'Todos' : 'Mis';
+    mine.classList.toggle('mine-on', app.mine);
+    mine.setAttribute('aria-pressed', app.mine ? 'true' : 'false');
+  }
   if (!app.loaded) return;
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'pagos') renderPagos();
+  else if (r.name === 'users') renderUsers();
   else renderHome();
 }
 
@@ -162,7 +180,8 @@ function renderHome() {
   const today = todayISO();
   const limit = addDays(today, 6);
   const now = Date.now();
-  const all = sortedMatches().filter((m) => m.date >= today && (m.startsAt ?? toEpoch(m.date, m.time)) > now - 2 * 3600e3);
+  const upcoming = sortedMatches().filter((m) => m.date >= today && (m.startsAt ?? toEpoch(m.date, m.time)) > now - 2 * 3600e3);
+  const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && (sameOrganizer(p.addedBy, app.who) || (p.paid === true && sameOrganizer(p.receivedBy, app.who))))) : upcoming;
   const next = all.filter((m) => m.date <= limit);
   const later = all.filter((m) => m.date > limit);
   $('#view').innerHTML = `
@@ -173,7 +192,7 @@ function renderHome() {
     </div>
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
-      <div class="empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
+      <div class="empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
       <p class="small">Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.</p></div>`}
     ${later.length ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
     <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>
@@ -192,10 +211,11 @@ function renderMatch(id) {
     $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
     return;
   }
-  const ps = playersOf(id);
+  const everyone = playersOf(id);
+  const ps = app.mine ? everyone.filter(minePlayer) : everyone;
   const cap = m.capacity || CAPACITY;
   const slots = [];
-  for (let i = 0; i < Math.max(cap, ps.length); i++) {
+  for (let i = 0; i < (app.mine ? ps.length : Math.max(cap, everyone.length)); i++) {
     const p = ps[i];
     if (!p) {
       slots.push(`<li><button class="slot free" data-free="${i}"><span class="n">${i + 1}</span><span>Lugar libre · tocá para anotar</span></button></li>`);
@@ -217,16 +237,18 @@ function renderMatch(id) {
         <button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
       </li>`);
   }
-  const full = ps.length >= cap;
-  const collected = collectedLine(ps);
+  const full = everyone.length >= cap;
+  const collected = collectedLine(everyone);
+  const mineLine = mineSummary(app.players.filter((p) => p.matchId === id), app.who).text;
   $('#view').innerHTML = `
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
       <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
-      <div class="meta"><strong id="slot-count">${ps.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (ps.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - ps.length}`}</span></div>
+      <div class="meta"><strong id="slot-count">${everyone.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (everyone.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - everyone.length}`}</span></div>
       ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
-      ${(ps.length || waitingOf(id).length) ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary([...ps, ...waitingOf(id)]).text)}</div>` : ''}
+      <div class="mine-line" id="mine-stats">${esc(mineLine)}</div>
+      ${(everyone.length || waitingOf(id).length) ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary([...everyone, ...waitingOf(id)]).text)}</div>` : ''}
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
         <button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>
@@ -237,7 +259,7 @@ function renderMatch(id) {
     <button type="button" class="btn block remind-open" id="btn-remind">Recordatorio de partido</button>
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
-    ${waitingSection(m, ps.length >= cap)}
+    ${waitingSection(m, everyone.length >= cap)}
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn" id="btn-share">${ICON.share}Compartir lista</button>
       <button class="btn primary" id="btn-add-player">${ICON.plus}${full ? 'A la espera' : 'Agregar jugador'}</button>
@@ -313,12 +335,14 @@ function listText(m) {
 }
 
 function waitingSection(m, full) {
-  const wait = waitingOf(m.id);
-  const top = wait[0];
+  const allWait = waitingOf(m.id);
+  const wait = app.mine ? allWait.filter(minePlayer) : allWait;
+  const top = allWait[0];
   const rows = wait.map((p, i) => {
     const payText = paymentStatusText(p);
-    const first = i === 0;
-    const last = i === wait.length - 1;
+    const idx = allWait.findIndex((item) => item.id === p.id);
+    const first = idx <= 0;
+    const last = idx === allWait.length - 1;
     return `
       <li class="slot wait" data-player="${esc(p.id)}">
         <div class="arrows">
@@ -470,59 +494,24 @@ sheet.addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) closeSheet();
 });
 
-/* ¿Quién sos? */
-function openWho(first = false) {
-  openSheet(`
-    <h3>¿Quién sos?</h3>
-    <p class="hint">Así sabemos quién anotó a cada jugador. Se guarda en este teléfono y lo podés cambiar en Ajustes.</p>
-    <div class="choice">${whoOptions().map((o) => `<button class="btn ${o === app.who ? 'primary' : ''}" data-who="${esc(o)}">${esc(o)}</button>`).join('')}</div>
-    ${first ? '' : '<div class="sheet-actions"><button class="btn ghost" data-close>Cancelar</button></div>'}`, { locked: first });
-  sheet.querySelectorAll('[data-who]').forEach((b) => (b.onclick = () => {
-    app.who = b.dataset.who; localStorage.setItem(WHO_KEY, app.who);
-    closeSheet(); render(); toast(`¡Hola ${app.who}!`);
-  }));
-}
-
 /* Ajustes */
 function openSettings() {
-  const demo = app.store?.mode !== 'firebase';
+  const demo = app.session?.mode !== 'firebase';
   openSheet(`
     <h3>Ajustes</h3>
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
-    ${app.organizersError ? `<div class="banner error roster-error">${esc(app.organizersError)}</div>` : ''}
-    <p class="hint" id="org-current">Organizadores: ${esc(whoOptions().join(', '))}</p>
-    <label class="field"><span>Nuevo organizador</span><input id="org-name" maxlength="40" autocomplete="off" placeholder="Ej: Lucía"></label>
-    <div class="field"><div class="err" id="org-err"></div></div>
-    <button class="btn" id="org-add" type="button">Agregar organizador</button>
+    <p class="hint">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
     <div class="menu">
-      <button class="btn" id="set-who">Organizador <small>${esc(app.who || '—')}</small></button>
+      ${app.role === 'admin' ? '<a class="btn" id="set-users" href="#/usuarios">Usuarios</a>' : ''}
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
-      ${ACCESS_CODE ? '<button class="btn" id="set-logout">Olvidar código de acceso</button>' : ''}
+      ${ACCESS_CODE ? '<button class="btn" id="set-forget">Olvidar código de acceso</button>' : ''}
+      <button class="btn" id="set-logout">Cerrar sesión</button>
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
     <p class="footer-note">Fútbol 7 · ${esc(VENUE)} · v1</p>`);
-  $('#set-who').onclick = () => openWho(false);
-  $('#org-add').onclick = () => {
-    const clean = cleanOrganizerName($('#org-name').value);
-    if (!clean.ok) { $('#org-err').textContent = clean.error; return; }
-    Promise.resolve(app.store.addOrganizer(clean.name)).then(() => {
-      $('#org-name').value = '';
-      $('#org-err').textContent = '';
-      const names = whoOptions();
-      if (!names.some((name) => sameOrganizer(name, clean.name))) names.push(clean.name);
-      const label = $('#org-current');
-      if (label) label.textContent = `Organizadores: ${names.join(', ')}`;
-      toast(`${clean.name} quedó en la lista`);
-    }).catch((error) => {
-      if (isOrganizerDenied(error)) {
-        $('#org-err').textContent = ORGANIZERS_DENIED_WRITE;
-        showError(ORGANIZERS_DENIED_WRITE);
-        return;
-      }
-      $('#org-err').textContent = error?.message || 'No se pudo guardar';
-    });
-  };
+  const users = $('#set-users');
+  if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
     if (typeof Notification === 'undefined') { toast('Este navegador no muestra avisos'); return; }
     let perm = Notification.permission;
@@ -533,8 +522,9 @@ function openSettings() {
   };
   const clr = $('#set-clear');
   if (clr) clr.onclick = () => { if (confirm('¿Borrar todos los partidos y jugadores de demo?')) { app.store.clearAll(); closeSheet(); toast('Datos de demo borrados'); } };
-  const lo = $('#set-logout');
-  if (lo) lo.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
+  const forget = $('#set-forget');
+  if (forget) forget.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
+  $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
 }
 
 /* Agregar / editar partido */
@@ -784,9 +774,59 @@ function ledgerSection(phone) {
     </section>`;
 }
 
+function renderUsers() {
+  if (app.role !== 'admin') {
+    $('#view').innerHTML = `<div class="empty"><div class="big">🔒</div><p><b>Solo el administrador puede gestionar usuarios.</b></p></div>`;
+    return;
+  }
+  const rows = (app.users || []).map((user) => `
+    <li class="slot" data-user="${esc(user.uid)}">
+      <div class="who">
+        <div class="name">${esc(user.name)}</div>
+        <div class="sub">${esc(user.email)} · ${user.role === 'admin' ? 'Administrador' : 'Organizador'}${user.active ? '' : ' · desactivado'}</div>
+      </div>
+      ${user.role === 'organizer' ? `<button type="button" class="btn" data-user-active="${esc(user.uid)}">${user.active ? 'Desactivar' : 'Activar'}</button>` : ''}
+      ${user.role === 'organizer' ? `<button type="button" class="btn danger" data-user-del="${esc(user.uid)}">Borrar</button>` : ''}
+    </li>`).join('');
+  $('#view').innerHTML = `
+    <h2 class="section">Usuarios</h2>
+    <p class="hint roster-lead">El administrador crea las cuentas. Después, cada uno cambia su contraseña con «Olvidé mi contraseña».</p>
+    <ul class="slots" id="user-list">${rows || '<li class="empty-wait">No hay usuarios.</li>'}</ul>
+    <form id="user-form" class="user-form" novalidate>
+      <h2 class="section">Nuevo organizador</h2>
+      <label class="field"><span>Nombre</span><input name="name" maxlength="40" autocomplete="off" placeholder="Ej: Lucía"></label>
+      <label class="field"><span>Mail</span><input name="email" type="email" autocomplete="off" placeholder="lucia@correo.com"></label>
+      <label class="field"><span>Contraseña</span><input name="password" type="password" autocomplete="new-password" placeholder="Al menos 6 caracteres"></label>
+      <div class="field"><div class="err" id="user-err"></div></div>
+      <button class="btn primary" type="submit">Crear organizador</button>
+    </form>`;
+  $('#user-form').onsubmit = (e) => {
+    e.preventDefault();
+    const form = e.target;
+    Promise.resolve(app.session.createOrganizer({ name: form.name.value, email: form.email.value, password: form.password.value }))
+      .then(() => { form.reset(); toast('Organizador creado'); renderUsers(); })
+      .catch((error) => { $('#user-err').textContent = error?.message || 'No se pudo crear'; });
+  };
+  $('#user-list').onclick = (e) => {
+    const toggle = e.target.closest('[data-user-active]');
+    if (toggle) {
+      const user = app.users.find((item) => item.uid === toggle.dataset.userActive);
+      if (!user) return;
+      Promise.resolve(app.session.setOrganizerActive(user.uid, !user.active)).then(() => renderUsers()).catch((error) => toast(error?.message || 'No se pudo cambiar'));
+      return;
+    }
+    const del = e.target.closest('[data-user-del]');
+    if (!del) return;
+    const user = app.users.find((item) => item.uid === del.dataset.userDel);
+    if (!user || !confirm(`¿Borrar a ${user.name}? La cuenta de acceso queda en Firebase hasta que la borres en la consola.`)) return;
+    Promise.resolve(app.session.deleteOrganizer(user.uid)).then(() => renderUsers()).catch((error) => toast(error?.message || 'No se pudo borrar'));
+  };
+}
+
 function renderPagos() {
-  const organizer = app.payFilter || null;
+  const organizer = app.mine ? app.who : (app.payFilter || null);
   const rows = paymentsSummary({ players: app.players, roster: app.roster, organizer });
+  const totals = organizerTotals(app.players);
   const body = rows.length ? `<ul class="slots" id="pay-summary">${rows.map((row) => {
     const person = row.key.startsWith('n:') ? null : rosterByPhone(app.roster, row.key);
     const paid = row.paid.length
@@ -801,7 +841,9 @@ function renderPagos() {
   $('#view').innerHTML = `
     <h2 class="section">Pagos</h2>
     <p class="hint roster-lead">Cuánto le pagó cada jugador a cada organizador, y quién lo anotó.</p>
-    ${payFilterChips(null)}
+    <p class="mine-line" id="mine-stats">${esc(mineSummary(app.players, app.who).text)}</p>
+    <p class="hint" id="org-totals">${totals.map((item) => `${esc(item.name)}: ${esc(formatARS(item.collected))} · anotó ${item.added}`).join(' · ')}</p>
+    ${app.mine ? '<p class="hint">Filtro Mis: solo lo que anotaste y lo que cobraste.</p>' : payFilterChips(null)}
     ${body}`;
   bindPayFilter();
   const list = $('#pay-summary');
@@ -1119,6 +1161,55 @@ function openPlayerMenu(m, p) {
 }
 
 /* ───────── código de acceso (opcional) ───────── */
+function promptLogin(session) {
+  return new Promise((resolve) => {
+    if (session.user) return resolve();
+    const draw = (message = session.error || '') => {
+      $('#view').innerHTML = `
+        <form class="gate" id="login-form">
+          <div class="ball">⚽</div>
+          <h2>Entrar</h2>
+          <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
+          <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
+          <label class="field"><span>Contraseña</span><input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
+          <label class="field" id="login-name-wrap" hidden><span>Tu nombre</span><input id="login-name" maxlength="40" autocomplete="name" placeholder="Gustavo"></label>
+          <div class="err" id="login-err">${esc(message)}</div>
+          <button class="btn primary block" type="submit">Entrar</button>
+          <button class="btn block" type="button" id="login-forgot">Olvidé mi contraseña</button>
+          ${session.mode === 'firebase' ? '<button class="btn block" type="button" id="login-register">Crear cuenta de administrador</button>' : '<p class="footer-note">Demo: gustavo@demo.local · martin@demo.local</p>'}
+        </form>`;
+      $('#login-form').onsubmit = async (e) => {
+        e.preventDefault();
+        try {
+          await session.login($('#login-email').value, $('#login-password').value);
+          if (session.user) resolve();
+          else draw(session.error || 'No tenés acceso.');
+        } catch (error) { draw(error.message || 'No se pudo entrar.'); }
+      };
+      $('#login-forgot').onclick = async () => {
+        const email = $('#login-email').value.trim();
+        if (!email) { $('#login-err').textContent = 'Poné el mail.'; return; }
+        try {
+          await session.forgot(email);
+          draw('Te mandamos un mail para elegir una contraseña nueva.');
+        } catch (error) { draw(error.message || 'No se pudo enviar el mail.'); }
+      };
+      const register = $('#login-register');
+      if (register) register.onclick = async () => {
+        $('#login-name-wrap').hidden = false;
+        const name = $('#login-name').value.trim();
+        if (!name) { $('#login-err').textContent = 'Poné tu nombre y tocá de nuevo.'; return; }
+        try {
+          await session.registerAdmin({ email: $('#login-email').value, password: $('#login-password').value, name });
+          if (session.user) resolve();
+          else draw(session.error || 'No se pudo crear la cuenta.');
+        } catch (error) { draw(error.message || 'No se pudo crear la cuenta.'); }
+      };
+    };
+    draw();
+  });
+}
+
 function gate() {
   return new Promise((resolve) => {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
@@ -1143,7 +1234,8 @@ async function boot() {
   $('#venue-name').textContent = VENUE;
   $('#btn-back').onclick = () => { location.hash = '#/'; };
   $('#btn-settings').onclick = openSettings;
-  $('#btn-who').onclick = () => openWho(false);
+  $('#btn-who').onclick = openSettings;
+  $('#btn-mine').onclick = () => { app.mine = !app.mine; render(); };
   $('#brand').onclick = () => { location.hash = '#/'; };
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
@@ -1151,6 +1243,21 @@ async function boot() {
   }
 
   await gate();
+  app.session = openSession();
+  await app.session.init();
+  app.users = app.session.users || [];
+  app.session.subscribe(() => {
+    app.users = app.session.users || [];
+    if (app.session.user) {
+      app.who = app.session.user.name;
+      app.role = app.session.user.role;
+    }
+    if (app.loaded && (!sheet.open || !sheet.querySelector('input, textarea')) && location.hash !== '#/usuarios') render();
+  });
+  if (!app.session.user) await promptLogin(app.session);
+  app.who = app.session.user.name;
+  app.role = app.session.user.role;
+  app.users = app.session.users || [];
   app.store = await createStore((e) => {
     showError(e?.code === 'permission-denied'
       ? 'Firebase rechazó el acceso. Revisá las reglas de Firestore (ver README).'
@@ -1174,7 +1281,6 @@ async function boot() {
     backfillConfirmTokens();
     armReminderTimer();
   });
-  if (!app.who) openWho(true);
   render();
   armReminderTimer();
   // refrescar etiquetas "Hoy/Mañana" y ocultar partidos pasados
@@ -1189,11 +1295,8 @@ let reminderTimerAt = Infinity;
 const tokenPending = new Set();
 
 function backfillConfirmTokens() {
-  for (const id of tokenPending) {
-    if (app.players.some((p) => p.id === id && p.confirmToken)) tokenPending.delete(id);
-  }
   for (const p of app.players) {
-    if (p.confirmToken || tokenPending.has(p.id)) continue;
+    if (tokenPending.has(p.id)) continue;
     tokenPending.add(p.id);
     Promise.resolve(app.store.ensureConfirmToken(p.id)).catch((e) => {
       tokenPending.delete(p.id);

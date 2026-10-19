@@ -9,7 +9,7 @@ App web (PWA, se instala en el celular) para organizar los partidos de **fútbol
 - **Importar desde texto:** pegás un mensaje del grupo de WhatsApp y la app detecta expresiones como `jueves 22/10 21hs`, `miércoles 20:00`, `mañana 19 hs`, `sábado 24 de octubre a las 18`, `hoy a las 21 y media`, `jueves 20 y 21hs`. Muestra una **vista previa** para corregir y confirmar. Si pegás el mensaje con encabezado de WhatsApp (`[19/10/26, 12:40] Martín: …`), usa esa fecha como referencia para “mañana”, “jueves”, etc.
 - **Detalle del partido:** 14 lugares. Agregás jugador con nombre y WhatsApp (el número se normaliza: `11 1234-5678` → `5491112345678`; acepta `011 15…`, `15…`, `+54 9…`, otras características como `0351 15…`). Botón de **WhatsApp** por jugador que abre `https://wa.me/<número>?text=…` con un mensaje con día, fecha y hora. Editar y quitar jugadores. **Copiar / compartir** la lista como texto.
 - **Pagos:** en cada jugador, el botón 💵 abre un formulario para marcar si pagó, el monto en pesos, si fue Efectivo o Transferencia, y **quién cobró** (por defecto, el organizador que está usando el teléfono). En la fila se ve en verde (`Pagó $5.000 · Transferencia · cobró Martín`) o atenuado (`No pagó`). Arriba del partido aparece el total (`Recaudado: $45.000 · 9/14 pagaron`). Eso también entra en el texto de copiar/compartir. Se guarda en el mismo jugador y se sincroniza en tiempo real. Un pago viejo, sin cobrador, cuenta como **Sin especificar**.
-- Cada jugador muestra **quién lo anotó**. La primera vez la app pregunta **“¿Quién sos?”**; se cambia en ⚙️ Ajustes. Los organizadores son una lista (Gustavo, Martín y los que se agreguen ahí) guardada en Firestore. El perfil y la pantalla **Pagos** muestran el total, el monto por mes (`Oct 2026: $10.000`) y cuánto le pagó cada jugador a cada organizador, más cuántas veces lo anotó cada uno.
+- Cada jugador muestra **quién lo anotó** y, si pagó, **quién cobró**. Eso sale del nombre de la cuenta con la que entraste. El perfil y la pantalla **Pagos** muestran el total, el monto por mes (`Oct 2026: $10.000`), cuánto cobró cada organizador y cuántas veces anotó a alguien. El botón **Mis** (al lado del nombre) deja solo lo que anotaste y lo que cobraste; el cupo del partido sigue siendo el de todos.
 - **Tiempo real** con Firebase Firestore: lo que carga uno lo ve el otro al instante. Funciona también sin conexión (se sincroniza al volver).
 - **Modo demo:** si `config.js` no tiene la configuración de Firebase, la app guarda todo solo en el teléfono y muestra el aviso *“Modo demo: los datos no se comparten todavía”*.
 - Interfaz en castellano rioplatense, tema verde, modo oscuro automático según el teléfono. Zona horaria: America/Buenos_Aires.
@@ -23,6 +23,7 @@ index.html            Pantalla principal
 styles.css            Estilos (claro/oscuro)
 config.js             ← ACÁ va la configuración de Firebase (y código de acceso opcional)
 js/app.js             Interfaz
+js/auth.js            Entrada: Email/Password o cuentas de demo
 js/store.js           Datos: Firestore en tiempo real o localStorage (modo demo)
 js/parser.js          Lector de fechas/horas en español
 js/phone.js           Normalización de números argentinos y links wa.me
@@ -51,7 +52,7 @@ Necesitás una cuenta de Google. El plan gratuito (**Spark**) alcanza de sobra; 
    1. En el menú de la izquierda: **Compilación (Build) → Firestore Database → Crear base de datos**.
    2. Edición **Standard**. Ubicación: `southamerica-east1 (São Paulo)` es la más cercana (no se puede cambiar después).
    3. Elegí **“Iniciar en modo de producción”** (después pegamos nuestras reglas). Tocá **Crear**.
-4. **Pegar las reglas:** en Firestore Database → pestaña **Reglas**, borrá lo que hay, pegá el contenido de [`firestore.rules`](firestore.rules) y tocá **Publicar**.
+4. **Las reglas se publican al final**, después de crear la cuenta de administrador. El orden está en [Cuentas y reglas](#cuentas-y-reglas-hacer-en-este-orden). Si las publicás con el mail todavía en `TU_EMAIL_ADMIN`, nadie puede convertirse en admin.
 5. **Registrar la app web:**
    1. Volvé a la página principal del proyecto (ícono de engranaje ⚙️ → **Configuración del proyecto**).
    2. En **“Tus apps”** tocá el ícono **`</>`** (Web).
@@ -76,7 +77,8 @@ Necesitás una cuenta de Google. El plan gratuito (**Spark**) alcanza de sobra; 
 
 > Estos valores **no son secretos** (cualquier web con Firebase los expone). Lo que protege los datos son las **reglas** de Firestore; ver *Seguridad* abajo.
 
-7. (Recomendado, después de publicar) En Firebase → **Authentication** no hace falta nada en v1. Pero en Google Cloud podés restringir la API key a tu dominio: Configuración del proyecto → *General* → link a la consola de Google Cloud → **APIs y servicios → Credenciales** → la clave “Browser key” → *Restricciones de aplicaciones: Sitios web* → agregá `https://TU_USUARIO.github.io/*`.
+7. **Authentication y reglas:** seguí [Cuentas y reglas](#cuentas-y-reglas-hacer-en-este-orden). Recién después de eso la app deja de estar abierta.
+8. (Opcional) En Google Cloud podés restringir la API key a tu dominio: Configuración del proyecto → *General* → link a la consola de Google Cloud → **APIs y servicios → Credenciales** → la clave “Browser key” → *Restricciones de aplicaciones: Sitios web* → agregá `https://TU_USUARIO.github.io/*`.
 
 ## Paso 2 · Publicar en GitHub Pages (gratis)
 
@@ -94,7 +96,7 @@ Necesitás una cuenta de Google. El plan gratuito (**Spark**) alcanza de sobra; 
      ```
 4. En el repositorio: **Settings → Pages**. En *Build and deployment*: Source **“Deploy from a branch”**, Branch **`main`** y carpeta **`/ (root)`** → **Save**.
 5. En uno o dos minutos la app queda en `https://TU_USUARIO.github.io/futbol-colegiales/`.
-6. Mandale ese link a Martín. Cada uno elige “¿Quién sos?” la primera vez.
+6. Mandale el link a Martín **después** de crearle la cuenta desde Usuarios (ver abajo). Entra con su mail y la contraseña. Si la olvida, en la pantalla de entrada toca **Olvidé mi contraseña**.
 
 ### Instalarla en el celular
 
@@ -107,18 +109,35 @@ Cada vez que cambies archivos, subilos de nuevo al repositorio. Para que los tel
 
 ---
 
-## Seguridad (importante)
+## Cuentas y reglas (hacer en este orden)
 
-Las reglas de v1 (`firestore.rules`) son **abiertas**: cualquiera que tenga el link de la app puede leer y modificar los partidos y jugadores (incluidos los números de teléfono). Solo validan el formato de los datos. Es aceptable para empezar entre dos personas, pero conviene endurecerlo:
+La app usa **Firebase Authentication → Correo electrónico y contraseña**. No hay Cloud Functions (el plan Spark no las incluye). Quién puede escribir lo deciden las reglas de Firestore, no solo la pantalla.
 
-1. **Código de acceso compartido (ya incluido, opcional):** en `config.js` poné `ACCESS_CODE = "algo-que-sepan-ustedes"`. La app lo pide la primera vez en cada teléfono. **Ojo:** es solo una barrera visual; como el código queda en la página pública, no protege la base.
-2. **Mejor: PIN validado por las reglas.** Guardar el PIN en un documento que nadie puede leer y exigirlo en cada escritura, o
-3. **Lo más seguro: Firebase Authentication** (por ejemplo “Iniciar sesión con Google”) y reglas que permitan leer/escribir solo a los correos de Gustavo y Martín:
-   ```
-   allow read, write: if request.auth != null
-     && request.auth.token.email in ['gustavo@ejemplo.com', 'martin@ejemplo.com'];
-   ```
-   Requiere agregar el botón de inicio de sesión en la app (siguiente versión).
+Hay un administrador. Su contraseña la elige él en «Crear cuenta de administrador» y no queda guardada en el código. Desde **Usuarios** crea a los otros organizadores (nombre, mail y contraseña inicial). Puede desactivarlos o borrar el documento `users/{uid}`. Borrar no elimina la cuenta de Authentication: eso se hace a mano en la consola, en Authentication → Users. La contraseña de un organizador se cambia con **Olvidé mi contraseña** (`sendPasswordResetEmail`). El admin no la redefine después.
+
+`ADMIN_EMAIL` en `config.js` y `adminEmail()` en `firestore.rules` tienen que ser **el mismo mail**. Mientras digan `TU_EMAIL_ADMIN`, la regla rechaza el alta del admin.
+
+### Orden seguro en este proyecto
+
+Hoy las reglas **publicadas** siguen abiertas. Las de este repo las cierran. Publicar no borra partidos ni jugadores.
+
+1. Consola de Firebase → **Compilación → Authentication → Sign-in method** → **Correo electrónico/contraseña** → **Habilitar** → Guardar. No publiques reglas todavía.
+2. Reemplazá `TU_EMAIL_ADMIN` en los dos archivos por el mail de Gustavo, escrito igual:
+   - `config.js`: `export const ADMIN_EMAIL = "ese-mail";`
+   - `firestore.rules`: `return 'ese-mail';` dentro de `adminEmail()`.
+3. Dejá la app cargando ese `config.js` (el sitio publicado, o `python3 -m http.server` en esta carpeta). Con las reglas **viejas** todavía publicadas, abrí la app → **Crear cuenta de administrador** → ese mail, una contraseña que solo vos sepas, y tu nombre. Eso escribe `users/{uid}` con `role: "admin"`.
+4. Recién ahí: Firestore Database → **Reglas** → pegá [`firestore.rules`](firestore.rules) → **Publicar**.
+5. Entrá con la cuenta de admin → ⚙️ → **Usuarios** → creá al otro organizador. Pasale el mail y la contraseña por otro canal.
+
+Si publicás las reglas nuevas **después** del paso 2 y **antes** de crear la cuenta, no quedás afuera: la regla de alta deja que ese mail cree su propio `users/{uid}` con rol admin. Hasta que ese documento exista (unos segundos) no puede editar partidos. Si publicás con el texto `TU_EMAIL_ADMIN` todavía puesto, nadie puede ser admin. Poné el mail real en `firestore.rules` y publicá de nuevo; publicar no borra datos. Después creá la cuenta.
+
+Después de publicar, abrí la app una vez con la sesión iniciada. Así los jugadores que ya estaban reciben su documento en `confirmations`. Hasta entonces, los links viejos de `confirmar.html` no abren: un visitante ya no puede leer la colección `players`.
+
+### Qué puede hacer cada uno
+
+- **Admin y organizadores activos:** partidos, jugadores, pagos, espera, plantel, perfiles, organizadores. Los dos ven todo. **Mis** es solo un filtro.
+- **Admin, además:** crear, desactivar y borrar organizadores.
+- **Sin cuenta:** nada, salvo `confirmar.html`. Con el token del link puede leer solo la ficha `confirmations/{token}` (nombre, fecha, hora, nota, su respuesta; sin teléfonos) y escribir únicamente `confirmed` y `confirmedAt` de esa ficha.
 
 ## Modelo de datos (Firestore)
 
@@ -163,7 +182,7 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `confirmedAt` | número (epoch ms) |
 | `reminderSentAt` | número (epoch ms) — cuándo se abrió el WhatsApp del recordatorio |
 
-**Recordatorio:** en el partido, «Recordatorio de partido» arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. La página solo muestra ese partido y ese nombre (sin teléfonos de nadie) y guarda `confirmed` si el token coincide.
+**Recordatorio:** en el partido, «Recordatorio de partido» arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. La página no pide cuenta. Lee la ficha pública `confirmations/{token}` (sin teléfono) y, si el token coincide, guarda solo `confirmed` y `confirmedAt`.
 
 WhatsApp **no se manda solo**. `wa.me` abre el chat y hay que tocar enviar. No hay API de WhatsApp Business ni Cloud Functions (el plan Spark no las incluye).
 
@@ -173,7 +192,9 @@ Si el partido empieza en **2 horas o menos** y todavía falta avisar a alguien q
 
 `js/reminders.js` exporta `reminderLinks({ match, players, venue })`. Devuelve `[{ name, waUrl, confirmUrl }]` para cada jugador que tenga `phone` y `confirmToken`. El lugar por defecto es `Polideportivo Colegiales`. El origen del link es `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html`.
 
-La lectura de `players` y `matches` queda permitida en las reglas (REST con la clave web pública de `config.js`, que no es un secreto). No hace falta republicar las reglas para esto: las que ya están publicadas también dejan leer.
+Con las reglas de este repo, `players` y `matches` **no** se leen sin una cuenta de organizador. Un script anónimo ya no puede armar los links por REST: el teléfono vive solo en `players`. La ficha pública es `confirmations/{token}` y no trae teléfonos. La app, con la sesión iniciada, crea esa ficha al anotar y también la primera vez que ve un jugador viejo.
+
+Estas lecturas, después de publicar las reglas, necesitan además el token de un organizador (`Authorization: Bearer`). La API key sola ya no alcanza.
 
 Partido:
 
@@ -217,7 +238,7 @@ https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m={matchId}&
 
 **Lista de espera:** se puede anotar a alguien aunque el partido no esté lleno. Si ya hay 14, el alta normal también cae en la espera (al final). Las flechas ↑ ↓ cambian `waitOrder` y los dos organizadores ven el mismo orden al toque. «Subir al partido» (o al quitar un titular) pasa al primero de la lista.
 
-El pago va en el documento del jugador (no en una colección nueva). Las reglas que ya están publicadas dejan pasar campos extra, así que estos se pueden escribir sin volver a publicar `firestore.rules`. La copia del repo además valida el tipo de esos campos para cuando se publiquen de nuevo.
+El pago va en el documento del jugador (no en una colección nueva). Hasta que se publiquen las reglas nuevas, las que están en la consola dejan pasar campos extra. Después de publicarlas, solo un admin o un organizador activo puede escribir, y el tipo de cada campo queda validado.
 
 **Colección `roster`** — jugadores guardados (pantalla Jugadores). Id automático.
 
@@ -235,21 +256,32 @@ Misma persona = mismo `phone`. Al anotar en un partido (o en la espera) con What
 
 Tocá un jugador en un partido o en Jugadores para abrir el perfil (el mismo teléfono). Ahí se editan el nivel, las posiciones y las notas de un partido. «Jugó N veces» y «Mayormente jueves · 21:00» salen solos de los partidos ya pasados en la lista principal (la espera y los que todavía no se jugaron no cuentan).
 
-**Colección `organizers`** — la lista de «¿Quién sos?», de «Agregó» y de «¿Quién cobró?». Id estable según el nombre (`gustavo`, `martin`, `lucia`).
+**Colección `users`** — una cuenta por documento. El id es el `uid` de Authentication.
 
 | campo | tipo |
 |---|---|
-| `name` | string, 1 a 40 |
+| `role` | `"admin"` o `"organizer"` |
+| `name` | string, 1 a 40. Es el nombre de «Agregó» y de «cobró» |
+| `email` | el mail de la cuenta |
+| `active` | bool. `false` entra a Authentication pero la app lo saca |
 | `createdAt` | número (epoch ms) |
 
-Si la colección está vacía, la app crea Gustavo y Martín. En Ajustes se agregan más (por ejemplo Lucía). No se borran desde la app, para no dejar el selector vacío. Un nombre repetido, aunque cambie mayúscula o acento, no se vuelve a guardar.
+El primer admin se crea solo si el mail de la sesión es `ADMIN_EMAIL`. Los demás los crea el admin. Los nombres viejos Gustavo y Martín siguen valiendo en los partidos que ya están cargados.
 
-**Hay que republicar las reglas.** Las colecciones `roster` y `organizers` no existen en las reglas que están publicadas hoy (el cierre las niega). Sin republicar `firestore.rules`:
+**Colección `confirmations`** — id = token del link. Sin teléfono.
 
-- Jugadores y el perfil no se pueden leer ni guardar en Firebase. La app lo dice en español y el partido igual se anota.
-- La lista de organizadores tampoco se guarda. El selector sigue mostrando Gustavo y Martín, y el pago (incluido `receivedBy`) sí se guarda, porque es un campo más del jugador y las reglas publicadas dejan pasar campos extra.
+| campo | tipo |
+|---|---|
+| `playerId`, `matchId`, `name` | a quién corresponde |
+| `date`, `time`, `note` | lo mínimo para mostrar el partido |
+| `confirmed` | `null`, `"si"` o `"no"` |
+| `confirmedAt` | número (epoch ms) o null |
 
-En modo demo no hace falta republicar. Si ya se publicaron unas reglas de `roster` anteriores, hay que publicarlas de nuevo: tienen que cubrir `level`, `positions`, `notes` y, ahora, la colección `organizers` y el tipo de `receivedBy`.
+Cualquiera puede leer **un** documento si conoce el id. No se puede listar la colección sin ser organizador. Un anónimo solo puede cambiar `confirmed` y `confirmedAt`.
+
+**Colección `organizers`** — queda para los nombres que se cargaron antes (Gustavo, Martín, y los que se hayan agregado). La identidad de ahora sale de `users`, no de un selector.
+
+**Hay que publicar estas reglas una sola vez, en el orden de arriba.** Reemplazan a las abiertas. Cubren `roster` (nivel, posiciones, notas), `organizers`, `users`, `confirmations` y el cierre del resto. En modo demo no hace falta publicarlas.
 
 Un importador automático solo tiene que hacer `set` en `matches/<AAAA-MM-DD_HHMM>` con `source: "whatsapp"` y `sourceRef`; la app lo muestra al instante. El parser de texto (`js/parser.js`, función `parseMatchesFromText`) es JavaScript puro y se puede reutilizar desde Node.
 
@@ -273,3 +305,12 @@ node tests/firebase-realtime.mjs http://localhost:8080/   # prueba contra Fireba
 ```
 
 Los datos del modo demo quedan solo en ese navegador. Para empezar de cero: ⚙️ Ajustes → *Borrar datos de demo*.
+
+En demo las cuentas ya existen (no se manda el mail de «olvidé mi contraseña»):
+
+| mail | contraseña | nombre | rol |
+|---|---|---|---|
+| `gustavo@demo.local` | `demo-gustavo` | Gustavo | admin |
+| `martin@demo.local` | `demo-martin` | Martín | organizador |
+
+Esas contraseñas viven en `localStorage` (`f7c-demo-auth`), no en Firestore.

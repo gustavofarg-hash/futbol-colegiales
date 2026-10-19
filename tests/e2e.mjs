@@ -43,9 +43,20 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + 
 page.on('dialog', (d) => d.accept());
 
 await page.goto(BASE);
-await page.waitForSelector('dialog[open] [data-who]');
-check('Pide "¿Quién sos?" al abrir por primera vez', await page.isVisible('text=¿Quién sos?'));
-await page.click('[data-who="Gustavo"]');
+await page.waitForSelector('#login-form');
+check('Pide entrar al abrir por primera vez', await page.isVisible('text=Entrar') && await page.isVisible('#login-forgot'));
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.click('#login-forgot');
+check('Olvidé mi contraseña', (await page.textContent('#login-err')).includes('no se envían mails'));
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.fill('#login-password', 'mala');
+await page.click('#login-form button[type=submit]');
+await page.waitForFunction(() => (document.querySelector('#login-err')?.textContent || '').includes('incorrectos'));
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.fill('#login-password', 'demo-gustavo');
+await page.click('#login-form button[type=submit]');
+await page.waitForSelector('#btn-who');
+await page.waitForSelector('text=No hay partidos en los próximos 7 días');
 check('Banner de modo demo visible', await page.isVisible('#demo-banner'));
 const demoMode = await page.evaluate(() => window.__app?.store?.mode);
 check('Modo demo (no escribe en Firestore)', demoMode === 'demo', String(demoMode));
@@ -138,6 +149,8 @@ const juan = await page.evaluate(() => {
   return { id: found[0], ...found[1] };
 });
 check('Token del link guardado en el jugador', juan.confirmToken && juan.confirmToken.length >= 16 && remindText.includes(`t=${juan.confirmToken}`) && juan.reminderSentAt > 0);
+const publicCard = await page.evaluate((token) => JSON.parse(localStorage.getItem('f7c-demo-db')).confirmations[token], juan.confirmToken);
+check('La ficha pública no tiene teléfono', publicCard && publicCard.name === 'Juan Pérez' && publicCard.phone == null && !JSON.stringify(publicCard).includes('549'));
 await page.click('dialog.sheet [data-close]');
 
 const bad = await ctx.newPage();
@@ -171,12 +184,17 @@ await page.click('#player-form button[type=submit]');
 check('Valida número inválido', (await page.textContent('#pf-err')).includes('inválido'));
 await page.click('#player-form [data-close]');
 
-// Cambiar organizador a Martín
+// Cambiar de cuenta a Martín
 await page.click('#btn-settings');
-await page.click('#set-who');
-await page.click('[data-who="Martín"]');
-check('Organizador cambiado a Martín', (await page.textContent('#btn-who')).includes('Martín'));
-check('Organizador guardado en localStorage', (await page.evaluate(() => localStorage.getItem('f7c-who'))) === 'Martín');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'martin@demo.local');
+await page.fill('#login-password', 'demo-martin');
+await page.click('#login-form button[type=submit]');
+await page.waitForSelector('#btn-who');
+await page.waitForSelector('#btn-add-player');
+check('Sesión de Martín', (await page.textContent('#btn-who')).includes('Martín'));
+check('La sesión queda en el navegador', (await page.evaluate(() => JSON.parse(localStorage.getItem('f7c-demo-auth')).session.name)) === 'Martín');
 await page.click('#btn-add-player');
 await page.fill('#player-form [name=name]', 'Nico Ruiz');
 await page.fill('#player-form [name=phone]', '1234-5678');
@@ -259,6 +277,18 @@ await page2.waitForFunction(() => document.body.innerText.includes('Efectivo') &
 check('La otra pestaña se actualiza sola', (await page2.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500'));
 await page2.close();
 
+await page.click('#btn-mine');
+await page.waitForFunction(() => document.querySelector('#btn-mine')?.textContent === 'Todos');
+check('Mis oculta a quien no anoté ni cobré', (await page.locator('#slots .name', { hasText: 'Pedro G.' }).count()) === 0);
+check('Mis muestra a quien anoté y a quien le cobré',
+  (await page.locator('#slots .name', { hasText: 'Nico Ruiz' }).count()) === 1
+  && (await page.locator('#slots .name', { hasText: 'Juan Pérez' }).count()) === 1);
+check('El cupo sigue siendo el del partido', (await page.textContent('#slot-count')) === '3/14');
+const mineText = (await page.textContent('#mine-stats')).replace(/\s+/g, ' ');
+check('Estadística propia del partido', mineText.includes('Anotaste 1') && mineText.includes('Cobraste $4.500'), mineText);
+await page.click('#btn-mine');
+await page.waitForSelector('#slots .name:text-is("Pedro G.")');
+
 // Lista de espera con lugares libres: queda al final, no ocupa un cupo
 await page.click('#btn-add-wait');
 await page.fill('#player-form [name=name]', 'Espera Cero');
@@ -335,7 +365,7 @@ check('Inicio muestra 14/14 en la tarjeta', (await page.textContent('.match-card
 // Persistencia tras recargar
 await page.reload();
 await page.waitForSelector('.match-card');
-check('Datos persisten tras recargar (sin volver a preguntar "¿Quién sos?")', (await page.$$('.match-card')).length === 5 && !(await page.isVisible('dialog[open]')));
+check('Datos persisten tras recargar (sin volver a pedir la contraseña)', (await page.$$('.match-card')).length === 5 && (await page.locator('#login-form').count()) === 0);
 check('Sigue en modo demo tras recargar', (await page.evaluate(() => window.__app?.store?.mode)) === 'demo');
 await page.click('.match-card:has-text("Jueves 22/10")');
 await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
@@ -490,18 +520,11 @@ check('Desde Jugadores es el mismo perfil', (await page.textContent('#level-val'
 await page.click('#btn-back');
 await page.waitForSelector('#btn-roster');
 
-// Organizadores y resumen de pagos
-await page.click('#btn-settings');
-await page.fill('#org-name', 'Lucía');
-await page.click('#org-add');
-await page.waitForFunction(() => (document.querySelector('#org-current')?.textContent || '').includes('Lucía'));
-check('Ajustes agrega un organizador', true);
-await page.click('dialog.sheet [data-close]');
-await page.click('#btn-who');
-check('¿Quién sos? incluye al organizador nuevo', await page.isVisible('[data-who="Lucía"]'));
-await page.click('dialog.sheet [data-close]');
+// Resumen de pagos (sigue la sesión de Martín) y alta de usuarios (solo el admin)
 await page.click('#btn-pagos');
 await page.waitForSelector('#pay-summary');
+const orgTotals = (await page.textContent('#org-totals')).replace(/\s+/g, ' ');
+check('Totales por organizador', orgTotals.includes('Martín') && orgTotals.includes('Gustavo') && orgTotals.includes('$4.500'), orgTotals);
 const juanPayRow = async () => (await page.locator('#pay-summary .pay-row', { hasText: 'Juan Pérez' }).innerText()).replace(/\s+/g, ' ');
 let juanMoney = await juanPayRow();
 check('Pagos: Juan le pagó $4.500 a Martín', juanMoney.includes('Martín: $4.500') && juanMoney.includes('Anotó Gustavo: 1 vez'), juanMoney);
@@ -522,6 +545,48 @@ await page.waitForFunction(() => {
 check('El filtro del perfil deja el cobro y las anotaciones de Martín', (await page.textContent('#ledger-months')).includes('Oct 2026: $4.500'));
 await page.click('#btn-back');
 await page.waitForSelector('#btn-roster');
+
+await page.click('#btn-settings');
+check('Un organizador no administra usuarios', (await page.locator('#set-users').count()) === 0);
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.fill('#login-password', 'demo-gustavo');
+await page.click('#login-form button[type=submit]');
+await page.waitForSelector('#btn-who');
+await page.waitForSelector('#btn-add-match');
+await page.click('#btn-settings');
+await page.click('#set-users');
+await page.waitForSelector('#user-form');
+await page.fill('#user-form [name=name]', 'Lucía');
+await page.fill('#user-form [name=email]', 'lucia@demo.local');
+await page.fill('#user-form [name=password]', 'demo-lucia');
+await page.click('#user-form button[type=submit]');
+await page.waitForFunction(() => (document.querySelector('#user-list')?.innerText || '').includes('Lucía'));
+check('El admin crea un organizador', true);
+await page.locator('#user-list .slot', { hasText: 'Lucía' }).locator('[data-user-active]').click();
+await page.waitForFunction(() => (document.querySelector('#user-list')?.innerText || '').includes('desactivado'));
+check('El admin desactiva un organizador', true);
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'lucia@demo.local');
+await page.fill('#login-password', 'demo-lucia');
+await page.click('#login-form button[type=submit]');
+await page.waitForFunction(() => (document.querySelector('#login-err')?.textContent || '').includes('desactivada'));
+check('Una cuenta desactivada no entra', true);
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.fill('#login-password', 'demo-gustavo');
+await page.click('#login-form button[type=submit]');
+await page.waitForSelector('#user-list');
+await page.locator('#user-list .slot', { hasText: 'Lucía' }).locator('[data-user-active]').click();
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('#user-list .slot')].find((el) => el.innerText.includes('Lucía'));
+  return row && !row.innerText.includes('desactivado');
+});
+await page.locator('#user-list .slot', { hasText: 'Lucía' }).locator('[data-user-del]').click();
+await page.waitForFunction(() => !(document.querySelector('#user-list')?.innerText || '').includes('Lucía'));
+check('El admin borra un organizador', true);
 
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());

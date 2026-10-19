@@ -7,13 +7,17 @@ import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { rosterHit, searchRoster } from '../js/roster.js';
 import { playerRecord, playerStats, sortedNotes } from '../js/profile.js';
-import { monthLabel, paymentLedger, paymentsSummary, signupLedger } from '../js/ledger.js';
+import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, signupLedger } from '../js/ledger.js';
 import { organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { toEpoch } from '../js/dates.js';
 import {
-  confirmPageUrl, confirmSummary, confirmationAllowed, matchesCrossingReminderWindow,
+  confirmPageUrl, confirmSummary, confirmationAllowed, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
+import {
+  adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
+  sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
+} from '../js/auth.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -406,4 +410,65 @@ test('organizadores demo: siembra Gustavo y Martín y no duplica', async () => {
   await assert.rejects(() => store.addOrganizer('lucia'), /lista/);
   await assert.rejects(() => store.addOrganizer('LUCÍA'), /lista/);
   assert.equal(JSON.parse(mem.get('f7c-test-org')).organizers.lucia.name, 'Lucía');
+});
+
+test('la ficha de confirmación no lleva teléfono', () => {
+  const rec = confirmationRecord({
+    playerId: 'p1',
+    player: { matchId: '2026-10-22_2100', name: 'Juan Pérez', phone: '5491112345678', confirmed: 'si', confirmedAt: 5 },
+    match: { id: '2026-10-22_2100', date: '2026-10-22', time: '21:00', note: 'Cancha 2' },
+  });
+  assert.equal('phone' in rec, false);
+  assert.equal(JSON.stringify(rec).includes('549'), false);
+  assert.equal(rec.playerId, 'p1');
+  assert.equal(rec.name, 'Juan Pérez');
+  assert.equal(rec.confirmed, 'si');
+  assert.equal(rec.date, '2026-10-22');
+});
+
+test('el placeholder no habilita al admin y el mail se compara sin mayúsculas', () => {
+  assert.equal(adminEmailConfigured('TU_EMAIL_ADMIN'), false);
+  assert.equal(adminEmailConfigured(''), false);
+  assert.equal(sameAdminEmail('gustavo@ejemplo.com', 'TU_EMAIL_ADMIN'), false);
+  assert.equal(sameAdminEmail('Gustavo@Ejemplo.com', 'gustavo@ejemplo.com'), true);
+  assert.equal(sameAdminEmail('otro@ejemplo.com', 'gustavo@ejemplo.com'), false);
+});
+
+test('demo: login, alta de organizador, desactivar y borrar', () => {
+  const db = seedDemoAuth(emptyAuthDb());
+  assert.equal(loginDemo(db, 'gustavo@demo.local', 'no-es').ok, false);
+  const admin = loginDemo(db, 'Gustavo@demo.local', 'demo-gustavo');
+  assert.equal(admin.ok, true);
+  assert.equal(admin.session.role, 'admin');
+  assert.equal(admin.session.name, 'Gustavo');
+  assert.equal(admin.session.password, undefined);
+  const created = createOrganizerDemo(db, admin.session, { name: 'Lucía', email: 'Lucia@demo.local', password: 'secreto' });
+  assert.equal(created.ok, true);
+  assert.equal(createOrganizerDemo(db, admin.session, { name: 'Otra', email: 'lucia@demo.local', password: 'secreto2' }).ok, false);
+  const martin = loginDemo(db, 'martin@demo.local', 'demo-martin').session;
+  assert.match(createOrganizerDemo(db, martin, { name: 'X', email: 'x@demo.local', password: 'secreto' }).error, /administrador/);
+  assert.equal(setOrganizerActiveDemo(db, admin.session, created.uid, false).ok, true);
+  assert.equal(loginDemo(db, 'lucia@demo.local', 'secreto').error, 'Esta cuenta está desactivada.');
+  assert.equal(deleteOrganizerDemo(db, martin, created.uid).ok, false);
+  assert.equal(deleteOrganizerDemo(db, admin.session, 'gustavo').ok, false);
+  assert.equal(deleteOrganizerDemo(db, admin.session, created.uid).ok, true);
+  assert.equal(loginDemo(db, 'lucia@demo.local', 'secreto').ok, false);
+  assert.equal(loginDemo(db, 'martin@demo.local', 'demo-martin').session.role, 'organizer');
+});
+
+test('Mis y totales por organizador', () => {
+  const players = [
+    { addedBy: 'Gustavo', paid: true, amount: 5000, receivedBy: 'Martín' },
+    { addedBy: 'Martín', paid: false, amount: null, receivedBy: null },
+    { addedBy: 'Gustavo', paid: true, amount: 1000, receivedBy: '' },
+  ];
+  const mine = mineSummary(players, 'martín');
+  assert.equal(mine.added, 1);
+  assert.equal(mine.amount, 5000);
+  assert.equal(mine.text, 'Anotaste 1 · Cobraste $5.000');
+  const totals = organizerTotals(players);
+  assert.equal(totals.find((row) => row.name === 'Martín').collected, 5000);
+  assert.equal(totals.find((row) => row.name === 'Martín').added, 1);
+  assert.equal(totals.find((row) => row.name === 'Gustavo').added, 2);
+  assert.equal(totals.find((row) => row.name === 'Sin especificar').collected, 1000);
 });

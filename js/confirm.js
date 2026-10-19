@@ -28,6 +28,21 @@ function viewOf(dbMatch, dbPlayer) {
   };
 }
 
+function cardView(card) {
+  if (!card || card.matchId !== matchId || card.playerId !== playerId) return null;
+  return {
+    match: { date: card.date, time: card.time, note: card.note || '' },
+    player: {
+      id: playerId,
+      name: card.name,
+      matchId: card.matchId,
+      confirmToken: token,
+      confirmed: card.confirmed || null,
+      confirmedAt: card.confirmedAt || null,
+    },
+  };
+}
+
 async function loadFirebase() {
   const [{ initializeApp }, fs] = await Promise.all([
     import(`${FB}/firebase-app.js`),
@@ -35,33 +50,38 @@ async function loadFirebase() {
   ]);
   const app = initializeApp(firebaseConfig, 'confirm');
   const db = fs.getFirestore(app);
-  const [matchSnap, playerSnap] = await Promise.all([
-    fs.getDoc(fs.doc(db, 'matches', matchId)),
-    fs.getDoc(fs.doc(db, 'players', playerId)),
-  ]);
-  return {
-    fs, db,
-    match: matchSnap.exists() ? matchSnap.data() : null,
-    player: playerSnap.exists() ? { id: playerId, ...playerSnap.data() } : null,
-  };
+  const snap = await fs.getDoc(fs.doc(db, 'confirmations', token));
+  const view = snap.exists() ? cardView(snap.data()) : null;
+  return { fs, db, match: view?.match || null, player: view?.player || null };
 }
 
 async function saveFirebase(fs, db, answer) {
   const { doc, updateDoc } = fs;
-  await updateDoc(doc(db, 'players', playerId), {
+  await updateDoc(doc(db, 'confirmations', token), {
     confirmed: answer,
     confirmedAt: Date.now(),
-    updatedAt: Date.now(),
   });
 }
 
 function saveDemo(answer) {
   const db = loadDemo();
+  db.confirmations ||= {};
+  const card = db.confirmations[token];
   const player = db.players?.[playerId];
-  if (!confirmationAllowed(player, matchId, token)) return false;
-  player.confirmed = answer;
-  player.confirmedAt = Date.now();
-  player.updatedAt = Date.now();
+  const allowed = card
+    ? card.matchId === matchId && card.playerId === playerId
+    : confirmationAllowed(player, matchId, token);
+  if (!allowed) return false;
+  const now = Date.now();
+  if (card) {
+    card.confirmed = answer;
+    card.confirmedAt = now;
+  }
+  if (player && player.confirmToken === token) {
+    player.confirmed = answer;
+    player.confirmedAt = now;
+    player.updatedAt = now;
+  }
   localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(db));
   return true;
 }
@@ -122,7 +142,11 @@ async function boot() {
       render({ ...loaded, firebase: true });
     } else {
       const db = loadDemo();
-      render({ ...viewOf(db.matches?.[matchId], db.players?.[playerId]), firebase: false });
+      const card = db.confirmations?.[token];
+      const fromCard = cardView(card);
+      const legacy = viewOf(db.matches?.[matchId], db.players?.[playerId]);
+      if (legacy.player) delete legacy.player.phone;
+      render({ ...(fromCard || legacy), firebase: false });
     }
   } catch (e) {
     console.error(e);

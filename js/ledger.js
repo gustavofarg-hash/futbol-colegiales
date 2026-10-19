@@ -151,6 +151,32 @@ export function paymentsSummary({ players, roster, organizer = null }) {
   return list;
 }
 
+/** Totales de cada organizador: plata cobrada y veces que anotó a alguien. */
+export function organizerTotals(players) {
+  const map = new Map();
+  const bump = (name) => {
+    const key = name || UNSPECIFIED;
+    if (!map.has(key)) map.set(key, { name: key, collected: 0, added: 0 });
+    return map.get(key);
+  };
+  for (const player of players || []) {
+    bump(addedByLabel(player)).added += 1;
+    if (player.paid === true) bump(receiverLabel(player)).collected += Number(player.amount) || 0;
+  }
+  return [...map.values()].sort((a, b) => b.collected - a.collected || b.added - a.added || foldText(a.name).localeCompare(foldText(b.name), 'es'));
+}
+
+/** Lo que anotó y lo que cobró una persona. El nombre se compara sin acentos. */
+export function mineSummary(players, name) {
+  let added = 0;
+  let amount = 0;
+  for (const player of players || []) {
+    if (sameOrganizer(player.addedBy, name)) added += 1;
+    if (player.paid === true && sameOrganizer(player.receivedBy, name)) amount += Number(player.amount) || 0;
+  }
+  return { added, amount, text: `Anotaste ${added} · Cobraste ${formatARS(amount)}` };
+}
+
 /** true si hay un pago sin cobrador o un alta sin "Agregó", para mostrar el filtro. */
 export function hasUnspecified({ players, phone = null }) {
   const list = phone ? ofPhone(phone, players) : (players || []);

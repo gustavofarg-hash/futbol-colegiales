@@ -318,6 +318,9 @@ dialog.sheet[open] { animation: up .2s ease-out; }
 [hidden] { display: none !important; }
 .brand > div { min-width: 0; }
 .who-chip { padding: 5px 10px; font-size: 13px; white-space: nowrap; }
+.who-chip.mine-on { background: var(--green); color: #fff; border-color: transparent; }
+.mine-line { margin-top: 6px; font-size: 13.5px; font-weight: 700; color: var(--muted); }
+.user-form { margin-top: 14px; }
 .actionbar .btn { white-space: nowrap; font-size: 14px; padding: 0 10px; gap: 6px; min-height: 50px; }
 .detail-tools .btn { white-space: nowrap; }
 @media (max-width: 360px) { .actionbar .btn svg { display: none; } }

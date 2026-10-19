@@ -33,6 +33,24 @@ export function waReminderUrl(phone, text) {
   return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 }
 
+/**
+ * Documento público de confirmación. No lleva teléfono: la página anónima
+ * solo puede leer este documento, y el id es el token del link.
+ */
+export function confirmationRecord({ playerId, player, match }) {
+  const confirmed = player?.confirmed === 'si' || player?.confirmed === 'no' ? player.confirmed : null;
+  return {
+    playerId,
+    matchId: player?.matchId || match?.id || '',
+    name: player?.name || '',
+    date: match?.date || player?.matchDate || '',
+    time: match?.time || '',
+    note: match?.note || '',
+    confirmed,
+    confirmedAt: typeof player?.confirmedAt === 'number' ? player.confirmedAt : null,
+  };
+}
+
 /** El link solo vale si el token del jugador coincide y es de ese partido. */
 export function confirmationAllowed(player, matchId, token) {
   return !!player

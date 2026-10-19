@@ -19,7 +19,12 @@ export const firebaseConfig = {
 // OJO: es solo una barrera de la interfaz, no protege la base de datos.
 export const ACCESS_CODE = "";
 
-// Organizadores que pueden anotar jugadores.
+// Mail del administrador. Tiene que ser EL MISMO texto que ADMIN_EMAIL en
+// firestore.rules. Mientras diga TU_EMAIL_ADMIN nadie puede crear la cuenta
+// de admin. Reemplazalo por el mail de Gustavo antes de publicar las reglas.
+export const ADMIN_EMAIL = "TU_EMAIL_ADMIN";
+
+// Nombres viejos. Las cuentas nuevas salen de la colección users.
 export const ORGANIZERS = ["Gustavo", "Martín"];
 
 // Cupo por partido (7 contra 7).
