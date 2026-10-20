@@ -10,6 +10,67 @@ export const POSITIONS = ['Arquero', 'Defensa', 'Mediocampo', 'Ataque'];
 export const MAX_NOTES = 20;
 export const MAX_NOTE_TEXT = 400;
 
+const LEVEL_INPUT = /^\d{1,2}([.,]\d)?$/;
+
+/** Mientras se escribe: un solo decimal. 6,85 queda en 6,8. */
+export function filterLevelTyping(raw) {
+  let whole = '';
+  let sep = '';
+  let frac = '';
+  for (const ch of String(raw ?? '')) {
+    if (ch >= '0' && ch <= '9') {
+      if (!sep) {
+        if (whole.length < 2) whole += ch;
+      } else if (!frac) frac = ch;
+    } else if ((ch === ',' || ch === '.') && !sep && whole) sep = ch;
+  }
+  return whole + sep + frac;
+}
+
+/** Vacío no es un nivel. Un segundo decimal no entra. De 1 a 10. */
+export function parseLevel(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return { ok: true, level: null };
+  if (!LEVEL_INPUT.test(text)) return { ok: false, error: 'Usá un solo decimal, como 6,8.' };
+  const parts = text.split(/[.,]/);
+  const whole = Number(parts[0]);
+  const frac = parts.length > 1 ? Number(parts[1]) : 0;
+  const tenths = whole * 10 + frac;
+  if (tenths < 10 || tenths > 100) return { ok: false, error: 'El nivel va de 1 a 10.' };
+  return { ok: true, level: tenths / 10 };
+}
+
+/** Número guardado: un decimal entre 1 y 10, o null si no sirve. */
+export function storedLevel(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const tenths = Math.round((n + Number.EPSILON) * 10);
+  if (Math.abs(n * 10 - tenths) > 1e-6) return null;
+  if (tenths < 10 || tenths > 100) return null;
+  return tenths / 10;
+}
+
+/** Siempre un decimal y coma: 8 → 8,0 y 6.8 → 6,8. */
+export function formatLevel(value) {
+  const level = storedLevel(value);
+  if (level == null) return '';
+  const tenths = Math.round((level + Number.EPSILON) * 10);
+  const whole = Math.trunc(tenths / 10);
+  const frac = Math.abs(tenths % 10);
+  return `${whole},${frac}`;
+}
+
+/** Los botones mueven un entero. null si se sale de 1..10. */
+export function stepLevel(level, direction) {
+  const dir = direction < 0 ? -1 : 1;
+  if (level == null || level === '') return dir > 0 ? 1 : null;
+  const current = storedLevel(level);
+  if (current == null) return null;
+  const tenths = Math.round((current + Number.EPSILON) * 10) + dir * 10;
+  if (tenths < 10 || tenths > 100) return null;
+  return tenths / 10;
+}
+
 export function startsAtOf(match) {
   if (typeof match?.startsAt === 'number' && Number.isFinite(match.startsAt)) return match.startsAt;
   if (match?.date) return toEpoch(match.date, match.time);
