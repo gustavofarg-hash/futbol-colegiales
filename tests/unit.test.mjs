@@ -6,7 +6,7 @@ import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, pay
 import { createDemoStore, listenDeniedPlan } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
-import { alreadyInMatch, firstDuplicate, groupByInviter, isAutoGuestName, placeGroup, resolveFriendNames, waitWarning } from '../js/guests.js';
+import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
@@ -340,6 +340,28 @@ test('no se anota dos veces y Amigo N es de quien invita', () => {
     { id: 'a1', invitedBy: 'juan', createdAt: 3 },
   ]);
   assert.deepEqual(grouped.map((player) => player.id), ['juan', 'a1', 'despues']);
+  const nested = [
+    { id: 'juan', name: 'Juan' },
+    { id: 'otro', name: 'Otro' },
+    { id: 'b', name: 'Invitado 1', invitedBy: 'juan' },
+    { id: 'c', name: 'Nieto', invitedBy: 'b' },
+  ];
+  assert.deepEqual(groupByInviter(nested).map((player) => player.id), ['juan', 'b', 'c', 'otro']);
+  const byId = new Map(nested.map((player) => [player.id, player]));
+  assert.equal(rootInviterId(byId.get('c'), byId), 'juan');
+  assert.equal(rootInviterId(byId.get('b'), byId), 'juan');
+  assert.equal(inviteBlock(nested, 'b'), GUEST_CANNOT_INVITE);
+  assert.equal(inviteBlock(nested, 'juan'), '');
+  const main = groupByInviter(
+    [{ id: 'juan', name: 'Juan' }, { id: 'c', name: 'Nieto', invitedBy: 'b' }],
+    [{ id: 'juan', name: 'Juan' }, { id: 'b', name: 'Invitado 1', invitedBy: 'juan', waiting: true }, { id: 'c', name: 'Nieto', invitedBy: 'b' }],
+  );
+  assert.deepEqual(main.map((player) => player.id), ['juan', 'c']);
+  const cycle = groupByInviter([
+    { id: 'a', invitedBy: 'b' },
+    { id: 'b', invitedBy: 'a' },
+  ]);
+  assert.deepEqual(cycle.map((player) => player.id), ['a', 'b']);
 });
 
 test('el partido rechaza al mismo jugador y guarda al amigo', async () => {
@@ -364,6 +386,26 @@ test('el partido rechaza al mismo jugador y guarda al amigo', async () => {
   assert.equal(db.players[amigo].paid, true);
   assert.equal(db.players[otro].waiting, true);
   assert.equal(db.players[otro].invitedBy, 'otro');
+  await assert.rejects(
+    () => store.addPlayer(match, { name: 'Nieto', invitedBy: amigo, invitedByName: 'Amigo 1', guestAuto: true }, 'Gustavo'),
+    (error) => error.code === 'guest-cannot-invite' && error.message === GUEST_CANNOT_INVITE,
+  );
+  const raw = JSON.parse(mem.get('f7c-demo-db'));
+  raw.players.nieto = {
+    ...raw.players[amigo],
+    name: 'Nieto',
+    invitedBy: amigo,
+    invitedByName: 'Amigo 1',
+    guestAuto: true,
+    confirmToken: 'tok-nieto',
+  };
+  delete raw.players.nieto.shortCode;
+  mem.set('f7c-demo-db', JSON.stringify(raw));
+  store.setActor({ uid: 'gustavo', name: 'Gustavo' });
+  await store.updatePlayer('nieto', { name: 'Nieto Real', invitedBy: amigo, invitedByName: 'Amigo 1', guestAuto: true });
+  const kept = JSON.parse(mem.get('f7c-demo-db'));
+  assert.equal(kept.players.nieto.name, 'Nieto Real');
+  assert.equal(kept.players.nieto.invitedBy, amigo);
 });
 
 test('editar un amigo guarda nombre y WhatsApp sin soltar a quien invita', async () => {

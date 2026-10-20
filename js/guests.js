@@ -4,6 +4,38 @@
 import { foldText, phoneIdentity } from './roster.js';
 
 export const ALREADY_IN_MATCH = 'Ya está anotado en este partido';
+export const GUEST_CANNOT_INVITE = 'Un invitado no puede agregar invitados.';
+
+export function isGuest(player) {
+  return !!String(player?.invitedBy || '').trim();
+}
+
+/**
+ * El jugador principal al final de la cadena. '' si no es invitado,
+ * si falta alguien en el medio, o si la cadena se da vuelta.
+ */
+export function rootInviterId(player, byId) {
+  if (!isGuest(player)) return '';
+  const seen = new Set();
+  let current = player;
+  while (isGuest(current) && current?.id && !seen.has(current.id)) {
+    seen.add(current.id);
+    const host = byId?.get?.(current.invitedBy);
+    if (!host) return '';
+    if (!isGuest(host)) return String(host.id);
+    current = host;
+  }
+  return '';
+}
+
+/** '' si se puede. Si el anfitrión cargado es invitado, no. */
+export function inviteBlock(mates, hostId) {
+  const id = String(hostId || '').trim();
+  if (!id) return '';
+  const host = (mates || []).find((player) => player?.id === id);
+  if (host && isGuest(host)) return GUEST_CANNOT_INVITE;
+  return '';
+}
 
 export function normName(value) {
   return foldText(value).replace(/\s+/g, ' ').trim();
@@ -103,19 +135,25 @@ export function waitWarning(spots, waiting) {
 }
 
 /**
- * En la lista principal, los amigos quedan justo después de quien los trajo.
- * Si esa persona no está en la misma lista, el amigo sigue en su lugar.
+ * En la lista principal, los invitados quedan justo después del jugador
+ * principal (el que no es invitado). Un invitado de un invitado, ya cargado,
+ * se muestra con ese mismo principal. Si el principal no está en esta lista,
+ * el invitado sigue en su lugar. universe trae el partido entero para
+ * recorrer la cadena aunque el del medio esté en la otra lista.
  */
-export function groupByInviter(players) {
+export function groupByInviter(players, universe) {
   const list = [...(players || [])];
+  const byId = new Map();
+  for (const player of universe || list) if (player?.id) byId.set(player.id, player);
   const ids = new Set(list.map((player) => player?.id).filter(Boolean));
   const friends = new Map();
   const roots = [];
   for (const player of list) {
-    if (player?.invitedBy && ids.has(player.invitedBy)) {
-      const bucket = friends.get(player.invitedBy) || [];
+    const root = rootInviterId(player, byId);
+    if (root && ids.has(root)) {
+      const bucket = friends.get(root) || [];
       bucket.push(player);
-      friends.set(player.invitedBy, bucket);
+      friends.set(root, bucket);
     } else roots.push(player);
   }
   const out = [];

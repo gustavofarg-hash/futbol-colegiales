@@ -1854,6 +1854,19 @@ await amigosCard.click();
 await page.waitForSelector('#slots .name:text-is("zzz nuevo")');
 const amigoDeZzz = page.locator('#slots .slot', { has: page.locator('.name:text-is("Invitado 1")') }).filter({ hasText: 'invitado de zzz nuevo' });
 await amigoDeZzz.locator('[data-menu]').click();
+check('Un invitado no tiene Agregar invitado', await page.locator('#pm-friend').count() === 0);
+const guestInvite = await page.evaluate(async () => {
+  const app = window.__app;
+  const guest = app.players.find((player) => player.name === 'Invitado 1' && player.invitedBy);
+  const match = app.matches.find((item) => item.id === guest.matchId);
+  try {
+    await app.store.addPlayer(match, { name: 'No va', invitedBy: guest.id, invitedByName: guest.name, guestAuto: true }, app.who);
+    return '';
+  } catch (error) {
+    return error?.message || '';
+  }
+});
+check('Si se intenta igual, avisa que un invitado no puede', guestInvite === 'Un invitado no puede agregar invitados.', guestInvite);
 await page.click('#pm-edit');
 await page.waitForSelector('#player-form');
 check('Editar invitado deja el vínculo y el WhatsApp privado', (await page.locator('#player-form h3').innerText()) === 'Editar invitado' && (await page.locator('#friend-stays').innerText()).includes('invitado de zzz nuevo') && !(await page.isChecked('#wa-share')) && !(await page.isChecked('#save-roster')));
@@ -1891,6 +1904,35 @@ check('El próximo vacío sigue en Invitado 3', (await page.textContent('#friend
 await page.click('#friend-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Invitado 3")');
 check('Invitado 2 sigue igual después del nuevo', await page.locator('#slots .name:text-is("Invitado 2")').count() === 1 && await page.locator('#slots .name:text-is("Invitado 3")').count() === 1);
+await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const entries = Object.entries(db.players);
+  const host = entries.find(([, player]) => player.name === 'zzz nuevo');
+  const guest = entries.find(([, player]) => player.invitedBy === host[0]);
+  const copy = { ...guest[1], name: 'Nieto', invitedBy: guest[0], invitedByName: guest[1].name, guestAuto: false, rosterAt: Date.now(), createdAt: Date.now(), confirmToken: 'nieto-demo-token' };
+  delete copy.shortCode;
+  db.players['nieto-demo'] = copy;
+  localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+  window.__app.store._emit();
+});
+await page.waitForSelector('#slots .name:text-is("Nieto")');
+const nietoSlot = page.locator('#slots .slot', { has: page.locator('.name:text-is("Nieto")') });
+check('Un invitado de un invitado se ve con el jugador principal', (await nietoSlot.locator('.friend-tag').innerText()).includes('invitado de zzz nuevo'));
+const inviteColor = await page.evaluate(() => {
+  const slot = (name) => [...document.querySelectorAll('#slots .slot')].find((el) => el.querySelector('.name')?.textContent === name);
+  const host = slot('zzz nuevo')?.className || '';
+  const guest = slot('Nieto')?.className || '';
+  const tone = (value) => (value.match(/invite-\d/) || [])[0] || '';
+  return { host: host.includes('host-row'), guest: guest.includes('guest-row'), same: tone(host) && tone(host) === tone(guest) };
+});
+check('Comparte el color de quien invita de verdad', inviteColor.host && inviteColor.guest && inviteColor.same, JSON.stringify(inviteColor));
+const nietoAt = (await page.$$eval('#slots [data-player] .name', (els) => els.map((el) => el.textContent)));
+check('Queda en el grupo del principal, no al final', nietoAt.indexOf('Nieto') > nietoAt.indexOf('zzz nuevo') && nietoAt.indexOf('Nieto') < nietoAt.indexOf('Segundo'), nietoAt.join(' | '));
+await nietoSlot.locator('[data-menu]').click();
+check('Ese anidado tampoco puede agregar invitados', await page.locator('#pm-friend').count() === 0);
+await page.click('dialog.sheet [data-close]');
+await page.evaluate(async () => { await window.__app.store.deletePlayer('nieto-demo'); });
+await page.waitForFunction(() => !document.body.innerText.includes('Nieto'));
 await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/amigo-con-nombre.png' });
 await page.click('#btn-settings');
 await page.click('#set-logout');
