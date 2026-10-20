@@ -189,8 +189,77 @@ service cloud.firestore {
           && priceOk(d.matchPrice) && priceOk(d.promo2Price) && priceOk(d.promo3Price);
     }
 
-    // Un organizador puede actualizar al jugador. Si toca la respuesta,
-    // solo puede cambiar esos campos y el token queda igual.
+    // El nombre del organizador, en minúsculas. Sin uid de creador, el
+    // jugador viejo se edita solo si ese nombre coincide. No pliega tildes:
+    // las reglas no tienen el mismo plegado que la app.
+    function creatorNameIs(stored) {
+      return stored is string
+          && stored.size() > 0
+          && stored.size() <= 40
+          && userData().name is string
+          && stored.lower() == userData().name.lower();
+    }
+    function isPlayerCreator() {
+      return resource.data.get('addedByUid', '') == request.auth.uid
+          || (
+            resource.data.get('addedByUid', '') == ''
+            && creatorNameIs(resource.data.get('addedBy', ''))
+          );
+    }
+    function isRosterCreator() {
+      return resource.data.get('createdByUid', '') == request.auth.uid
+          || (
+            resource.data.get('createdByUid', '') == ''
+            && creatorNameIs(resource.data.get('createdBy', ''))
+          );
+    }
+    function playerStampSame() {
+      return request.resource.data.get('addedBy', null) == resource.data.get('addedBy', null)
+          && request.resource.data.get('addedByUid', null) == resource.data.get('addedByUid', null);
+    }
+    function playerNameSame() {
+      return request.resource.data.name == resource.data.name;
+    }
+    function playerPhoneMetaSame() {
+      return request.resource.data.get('phoneKey', null) == resource.data.get('phoneKey', null)
+          && request.resource.data.get('hasPhone', null) == resource.data.get('hasPhone', null)
+          && request.resource.data.get('phoneOwnerUid', null) == resource.data.get('phoneOwnerUid', null);
+    }
+    // Un jugador viejo todavía tiene el teléfono en el documento. Sacarlo
+    // (la migración) puede ir junto con un pago o la espera. El nombre no
+    // se toca y el dueño del número queda el que lo agregó.
+    function legacyPhoneMoveOk() {
+      return resource.data.get('phone', '') is string
+          && resource.data.get('phone', '').size() > 0
+          && request.resource.data.get('phone', '') == ''
+          && playerNameSame()
+          && (
+            request.resource.data.get('phoneOwnerUid', '') == resource.data.get('addedByUid', '')
+            || (
+              resource.data.get('addedByUid', '') == ''
+              && request.resource.data.get('phoneOwnerUid', '') == request.auth.uid
+              && creatorNameIs(resource.data.get('addedBy', ''))
+            )
+          );
+    }
+    function rosterStampSame() {
+      return request.resource.data.get('createdBy', null) == resource.data.get('createdBy', null)
+          && request.resource.data.get('createdByUid', null) == resource.data.get('createdByUid', null)
+          && request.resource.data.get('createdAt', null) == resource.data.get('createdAt', null);
+    }
+    function rosterIdentitySame() {
+      return request.resource.data.get('name', null) == resource.data.get('name', null)
+          && request.resource.data.get('phoneKey', null) == resource.data.get('phoneKey', null)
+          && request.resource.data.get('hasPhone', null) == resource.data.get('hasPhone', null)
+          && request.resource.data.get('phoneOwnerUid', null) == resource.data.get('phoneOwnerUid', null)
+          && request.resource.data.get('level', null) == resource.data.get('level', null)
+          && request.resource.data.get('positions', null) == resource.data.get('positions', null)
+          && request.resource.data.get('notes', null) == resource.data.get('notes', null);
+    }
+
+    // Un organizador puede actualizar al jugador. El nombre y el teléfono
+    // los cambia solo quien lo agregó. Si toca la respuesta, solo puede
+    // cambiar esos campos y el token queda igual. El admin no es excepción.
     function confirmationWriteOk() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return !changed.hasAny(['confirmed', 'confirmedAt'])
@@ -361,6 +430,9 @@ service cloud.firestore {
           && isAdder(matchData(request.resource.data.matchId))
           && playerListsOk(request.resource.data.matchId);
       allow update: if isActiveStaff() && validPlayer(request.resource.data) && confirmationWriteOk()
+          && playerStampSame()
+          && (playerNameSame() || isPlayerCreator())
+          && (playerPhoneMetaSame() || isPlayerCreator() || legacyPhoneMoveOk())
           && (
             (
               (!('adders' in resource.data) || resource.data.adders.hasAny([request.auth.uid, '*']))
@@ -373,7 +445,10 @@ service cloud.firestore {
 
     match /roster/{rosterId} {
       allow read, delete: if isActiveStaff();
-      allow create, update: if isActiveStaff() && validRoster(request.resource.data);
+      allow create: if isActiveStaff() && validRoster(request.resource.data);
+      allow update: if isActiveStaff() && validRoster(request.resource.data)
+          && rosterStampSame()
+          && (rosterIdentitySame() || isRosterCreator());
     }
 
     match /organizers/{organizerId} {

@@ -18,6 +18,7 @@ import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
+import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
@@ -1219,16 +1220,19 @@ function openImportPreview(text, found) {
 function renderRoster() {
   const q = $('#roster-q')?.value || '';
   const people = searchRoster(app.roster, q);
-  const rows = people.map((person) => `
+  const rows = people.map((person) => {
+    const locked = !canEditRoster(person, actor());
+    return `
     <li class="slot" data-roster="${esc(person.id)}">
       <button type="button" class="who" data-roster-open="${esc(person.id)}">
         <div class="name">${esc(person.name)}</div>
-        <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}</div>
+        <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
       </button>
       ${waButton(person)}
-      <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}">${ICON.edit}</button>
+      <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}"${locked ? ' disabled' : ''}>${ICON.edit}</button>
       <button type="button" class="more-btn" data-roster-del="${esc(person.id)}" aria-label="Borrar ${esc(person.name)}">${ICON.trash}</button>
-    </li>`).join('');
+    </li>`;
+  }).join('');
   $('#view').innerHTML = `
     <h2 class="section">Jugadores</h2>
     ${rosterSwitch(false)}
@@ -1246,7 +1250,11 @@ function renderRoster() {
   const list = $('#roster-list');
   if (list) list.onclick = (e) => {
     const edit = e.target.closest('[data-roster-edit]');
-    if (edit) return openRosterForm(app.roster.find((r) => r.id === edit.dataset.rosterEdit));
+    if (edit) {
+      const person = app.roster.find((r) => r.id === edit.dataset.rosterEdit);
+      if (!person || !canEditRoster(person, actor())) return;
+      return openRosterForm(person);
+    }
     const del = e.target.closest('[data-roster-del]');
     if (del) return deleteRosterPlayer(app.roster.find((r) => r.id === del.dataset.rosterDel));
     const open = e.target.closest('[data-roster-open]');
@@ -1275,18 +1283,25 @@ function rosterFormError(error, formId) {
 
 function openRosterForm(person) {
   const lockPhone = phoneHidden(person);
+  const locked = person && !canEditRoster(person, actor());
   openSheet(`
     <form id="roster-form" novalidate>
       <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
+      ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">Nombre completo. El WhatsApp es opcional. Si el número ya está, no se duplica.</p>
       <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person ? displayFromWa(person.phone) : '')}">
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
       ${person ? '' : '<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"><span>Mostrar el WhatsApp para todos</span></label>'}
       <div class="field"><div class="err" id="rf-err"></div></div>
-      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${person ? 'Guardar' : 'Agregar'}</button></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit"${locked ? ' disabled' : ''}>${person ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
   const form = $('#roster-form');
+  if (locked) {
+    form.querySelectorAll('input, textarea, select').forEach((el) => { el.disabled = true; });
+    form.onsubmit = (e) => e.preventDefault();
+    return;
+  }
   const hint = $('#rf-phone');
   if (form.phone) form.phone.addEventListener('input', () => {
     const v = form.phone.value.trim();
@@ -1536,15 +1551,18 @@ function renderProfile(id) {
   const positions = new Set(person.positions || []);
   const level = Number.isInteger(person.level) ? person.level : null;
   const notes = sortedNotes(person.notes);
+  const own = canEditRoster(person, actor());
+  const lockNote = own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`;
   $('#view').innerHTML = `
     <article id="profile">
       <h2 class="section">${esc(person.name)}</h2>
       <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</p>
+      ${lockNote}
       ${person.phone
         ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waHref(person.phone))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>`
         : phoneHidden(person)
           ? `<button type="button" class="btn profile-wa" id="profile-wa" disabled>${ICON.wa}${esc(PRIVATE_WA_TEXT)}</button>`
-          : '<button type="button" class="btn profile-add-phone" id="profile-add-phone">Cargar WhatsApp</button>'}
+          : `<button type="button" class="btn profile-add-phone" id="profile-add-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
       ${person.phone && person.hasPhone && person.phoneOwnerUid === actor().uid
         ? `<label class="checkline" id="phone-share-line"><input type="checkbox" id="phone-share"${person.phoneShared ? ' checked' : ''}><span>Mostrar mi WhatsApp a los demás organizadores</span></label>`
         : ''}
@@ -1552,14 +1570,14 @@ function renderProfile(id) {
       <section class="profile-block">
         <h2>Nivel de juego</h2>
         <div class="stepper">
-          <button type="button" class="btn" id="level-down" aria-label="Bajar nivel" ${level == null || level <= 1 ? 'disabled' : ''}>−</button>
+          <button type="button" class="btn" id="level-down" aria-label="Bajar nivel" ${!own || level == null || level <= 1 ? 'disabled' : ''}>−</button>
           <span class="val" id="level-val">${level == null ? '—' : level}</span>
-          <button type="button" class="btn" id="level-up" aria-label="Subir nivel" ${level != null && level >= 10 ? 'disabled' : ''}>+</button>
+          <button type="button" class="btn" id="level-up" aria-label="Subir nivel" ${!own || (level != null && level >= 10) ? 'disabled' : ''}>+</button>
         </div>
       </section>
       <section class="profile-block">
         <h2>Posiciones</h2>
-        <div class="chips" id="positions">${POSITIONS.map((pos) => `<button type="button" class="btn chip ${positions.has(pos) ? 'on' : ''}" data-pos="${esc(pos)}">${esc(pos)}</button>`).join('')}</div>
+        <div class="chips" id="positions">${POSITIONS.map((pos) => `<button type="button" class="btn chip ${positions.has(pos) ? 'on' : ''}" data-pos="${esc(pos)}"${own ? '' : ' disabled'}>${esc(pos)}</button>`).join('')}</div>
       </section>
       <section class="profile-block" id="stats">
         <h2>Partidos jugados</h2>
@@ -1577,24 +1595,25 @@ function renderProfile(id) {
             <div class="when">${esc(noteWhen(note, app.matches) || 'Partido')}</div>
             <p>${esc(note.text)}</p>
             <div class="row">
-              <button type="button" class="btn" data-note-edit="${esc(note.id)}">Editar</button>
-              <button type="button" class="btn danger" data-note-del="${esc(note.id)}">Borrar</button>
+              <button type="button" class="btn" data-note-edit="${esc(note.id)}"${own ? '' : ' disabled'}>Editar</button>
+              <button type="button" class="btn danger" data-note-del="${esc(note.id)}"${own ? '' : ' disabled'}>Borrar</button>
             </div>
           </article>`).join('') : '<p class="empty-wait">Sin notas.</p>'}</div>
-        <button type="button" class="btn block" id="btn-add-note">Agregar nota</button>
+        <button type="button" class="btn block" id="btn-add-note"${own ? '' : ' disabled'}>Agregar nota</button>
       </section>
     </article>`;
   const addPhone = $('#profile-add-phone');
-  if (addPhone) addPhone.onclick = () => openPhoneForm(person);
+  if (addPhone && own) addPhone.onclick = () => openPhoneForm(person);
   const share = $('#phone-share');
   if (share) share.onchange = () => run(app.store.setPhoneShared({ rosterId: person.id }, share.checked));
   if (app.wantPhoneForm) {
     app.wantPhoneForm = false;
     if (!person.phone && !phoneHidden(person)) openPhoneForm(person);
   }
-  $('#level-down').onclick = () => { if (level > 1) saveProfile(person.id, { level: level - 1 }); };
-  $('#level-up').onclick = () => saveProfile(person.id, { level: level == null ? 1 : Math.min(10, level + 1) });
+  $('#level-down').onclick = () => { if (own && level > 1) saveProfile(person.id, { level: level - 1 }); };
+  $('#level-up').onclick = () => { if (own) saveProfile(person.id, { level: level == null ? 1 : Math.min(10, level + 1) }); };
   $('#positions').onclick = (e) => {
+    if (!own) return;
     const btn = e.target.closest('[data-pos]');
     if (!btn) return;
     const pos = btn.dataset.pos;
@@ -1604,8 +1623,9 @@ function renderProfile(id) {
   };
   bindPayFilter($('#profile'));
   bindPartidos(person);
-  $('#btn-add-note').onclick = () => openNoteForm(person);
+  if (own) $('#btn-add-note').onclick = () => openNoteForm(person);
   $('#notes').onclick = (e) => {
+    if (!own) return;
     const edit = e.target.closest('[data-note-edit]');
     if (edit) return openNoteForm(person, (person.notes || []).find((n) => n.id === edit.dataset.noteEdit));
     const del = e.target.closest('[data-note-del]');
@@ -1824,6 +1844,7 @@ function addSignedPlayer(m, { name, phone, rosterId, phoneKey: key, hasPhone, ph
 }
 
 function openPhoneForm(person) {
+  if (!canEditRoster(person, actor())) { toast(EDIT_LOCK_TEXT); return; }
   if (phoneHidden(person)) { toast(PRIVATE_WA_TEXT); return; }
   openSheet(`
     <form id="phone-form" novalidate>
@@ -1856,6 +1877,7 @@ function openPhoneForm(person) {
     run((async () => {
       await app.store.updateRoster(person.id, { name: person.name, phone: parsed.wa });
       for (const player of linked) {
+        if (!canEditPlayer(player, actor())) continue;
         if (phoneIdentity(player) === phoneIdentity({ phone: parsed.wa }) && player.rosterId === person.id) continue;
         await app.store.updatePlayer(player.id, { phone: parsed.wa, rosterId: person.id });
       }
@@ -1871,9 +1893,11 @@ function openPlayerForm(m, p, opts = {}) {
   }
   const asWait = !p && opts.waiting === true;
   const lockPhone = phoneHidden(p);
+  const locked = p && !canEditPlayer(p, actor());
   openSheet(`
     <form id="player-form" novalidate>
       <h3>${p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
+      ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
       ${p ? '' : `<label class="field"><span>Buscar guardados</span><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
@@ -1883,9 +1907,14 @@ function openPlayerForm(m, p, opts = {}) {
       ${p ? '' : '<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"><span>Mostrar el WhatsApp para todos</span></label>'}
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
       <div class="field"><div class="err" id="pf-err"></div></div>
-      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${p ? 'Guardar' : 'Agregar'}</button></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit"${locked ? ' disabled' : ''}>${p ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
   const form = $('#player-form');
+  if (locked) {
+    form.querySelectorAll('input, textarea, select').forEach((el) => { el.disabled = true; });
+    form.onsubmit = (e) => e.preventDefault();
+    return;
+  }
   const hint = $('#pf-phone');
   if (form.phone) form.phone.addEventListener('input', () => {
     const v = form.phone.value.trim();
@@ -2146,24 +2175,26 @@ function roundMoney(n) {
 
 function openPlayerMenu(m, p) {
   if (!p) return;
+  const own = canEditPlayer(p, actor());
   openSheet(`
     <h3>${esc(p.name)}</h3>
     <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu">
-      ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : '<button class="btn" id="pm-phone">Cargar WhatsApp</button>'}
+      ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
-      <button class="btn" id="pm-edit">${ICON.edit}Editar</button>
+      <button class="btn" id="pm-edit"${own ? '' : ' disabled'}>${ICON.edit}Editar</button>
+      ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, m.id); };
   const loadPhone = $('#pm-phone');
-  if (loadPhone) loadPhone.onclick = () => { closeSheet(); app.wantPhoneForm = true; openPlayerProfile(p, m.id); };
+  if (loadPhone && own) loadPhone.onclick = () => { closeSheet(); app.wantPhoneForm = true; openPlayerProfile(p, m.id); };
   const spot = $('#pm-confirm-spot');
   if (spot) spot.onclick = () => { closeSheet(); clearReservedSpot(p); };
-  $('#pm-edit').onclick = () => openPlayerForm(m, p);
+  if (own) $('#pm-edit').onclick = () => openPlayerForm(m, p);
   $('#pm-del').onclick = () => {
     const fromMain = !isWaiting(p);
     const top = waitingOf(m.id).find((w) => w.id !== p.id);

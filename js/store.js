@@ -87,6 +87,7 @@ import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.j
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
 } from './organizers.js';
+import { canEditPlayer, canEditRoster, editLockedError, playerPatchEditsIdentity } from './edit-lock.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
@@ -457,6 +458,7 @@ class LocalStore {
   async updatePlayer(id, data) {
     const db = this._load(); if (!db.players[id]) return;
     const player = db.players[id];
+    if (playerPatchEditsIdentity(data, player) && !canEditPlayer(player, this.actor)) throw editLockedError();
     const { phone, ...rest } = data || {};
     Object.assign(player, rest, { updatedAt: Date.now() });
     delete player.phone;
@@ -526,6 +528,7 @@ class LocalStore {
   }
   async updateRoster(id, data) {
     const db = this._load(); const cur = db.roster[id]; if (!cur) return;
+    if (!canEditRoster(cur, this.actor)) throw editLockedError();
     const phone = 'phone' in (data || {}) ? (data.phone || '') : this._rosterPhone(db, id);
     if (phone) {
       const dup = phoneDup(db, 'roster', id, phone);
@@ -538,6 +541,7 @@ class LocalStore {
   }
   async patchRoster(id, patch) {
     const db = this._load(); const cur = db.roster[id]; if (!cur) return;
+    if (!canEditRoster(cur, this.actor)) throw editLockedError();
     const next = {};
     if ('name' in patch) next.name = String(patch.name || '').trim();
     if ('level' in patch) next.level = patch.level;
@@ -1241,6 +1245,7 @@ class FirebaseStore {
   async updatePlayer(id, data) {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;
     const cur = this.state.players.find((player) => player.id === id) || {};
+    if (cur.id && playerPatchEditsIdentity(data, cur) && !canEditPlayer(cur, this.actor)) throw editLockedError();
     const { phone, ...rest } = data || {};
     const patch = { ...rest, updatedAt: Date.now() };
     if ('phone' in (data || {})) {
@@ -1426,6 +1431,7 @@ class FirebaseStore {
   }
   async updateRoster(id, data) {
     const cur = this.state.roster.find((r) => r.id === id) || {};
+    if (cur.id && !canEditRoster(cur, this.actor)) throw editLockedError();
     const phone = 'phone' in (data || {}) ? (data.phone || '') : (cur.phone || this.state.rosterContacts?.[id]?.phone || '');
     if ('phone' in (data || {}) && canonicalWa(phone)) {
       const dup = this._rosterDup(phone, id);
@@ -1455,6 +1461,7 @@ class FirebaseStore {
   async patchRoster(id, patch) {
     const cur = this.state.roster.find((r) => r.id === id);
     if (!cur) throw new Error('Jugador inexistente');
+    if (!canEditRoster(cur, this.actor)) throw editLockedError();
     const next = { updatedAt: Date.now() };
     if ('name' in patch) next.name = String(patch.name || '').trim();
     if ('level' in patch) next.level = patch.level;

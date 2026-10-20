@@ -10,6 +10,7 @@ import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
+import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, toEpoch } from '../js/dates.js';
 import {
@@ -286,6 +287,7 @@ test('modo demo guarda el pago en el jugador y lo emite', async () => {
   assert.equal(typeof row.paidUpdatedAt, 'number');
   assert.equal(row.name, 'Juan Pérez');
   assert.equal(row.matchId, mid);
+  store.setActor({ uid: 'gustavo', name: 'Gustavo' });
   await store.updatePlayer(pid, { name: 'Juan P.' });
   const kept = JSON.parse(mem.get('f7c-demo-db')).players[pid];
   assert.equal(kept.name, 'Juan P.');
@@ -586,6 +588,7 @@ test('plantel demo: no duplica por teléfono', async () => {
   const id = await store.addRoster({ name: 'Ernesto Pereira', phone: '5491122223333' }, 'Gustavo');
   await assert.rejects(() => store.addRoster({ name: 'Otro', phone: '5491122223333' }, 'Martín'), /WhatsApp/);
   assert.equal(Object.keys(JSON.parse(mem.get('f7c-test-roster')).roster).length, 1);
+  store.setActor({ uid: 'gustavo', name: 'Gustavo' });
   await store.updateRoster(id, { name: 'Ernesto P.', phone: '5491122223333' });
   assert.equal(JSON.parse(mem.get('f7c-test-roster')).roster[id].name, 'Ernesto P.');
   await store.deleteRoster(id);
@@ -1215,4 +1218,63 @@ test('sha256 y privacidad del WhatsApp: el otro organizador no ve el número', a
   assert.equal(seen.players.find((p) => p.id === visibleMatch).phone, '5491188887777');
   assert.equal(seen.roster.find((r) => r.id === hiddenRoster).phone, '');
   assert.equal(seen.players.find((p) => p.id === hiddenMatch).phonePrivate, true);
+});
+
+test('solo edita el jugador quien lo agregó', async () => {
+  const gustavo = { uid: 'gustavo', name: 'Gustavo', role: 'admin' };
+  const martin = { uid: 'martin', name: 'Martín' };
+  const player = { name: 'Juan', addedBy: 'Gustavo', addedByUid: 'gustavo' };
+  assert.equal(canEditPlayer(player, gustavo), true);
+  assert.equal(canEditPlayer(player, martin), false);
+  assert.equal(canEditPlayer(player, { uid: 'admin', name: 'Gustavo', role: 'admin' }), false);
+  const legacy = { name: 'Viejo', addedBy: 'Martín' };
+  assert.equal(canEditPlayer(legacy, martin), true);
+  assert.equal(canEditPlayer(legacy, gustavo), false);
+  assert.equal(canEditPlayer({ name: 'Sin dueño' }, gustavo), false);
+  assert.equal(canEditPlayer({ addedBy: 'Martín', addedByUid: 'martin' }, { uid: 'gustavo', name: 'Martín' }), false);
+  assert.equal(canEditPlayer({ addedBy: 'Martín' }, { uid: '', name: 'martin' }), true);
+  assert.equal(canEditRoster({ createdBy: 'Gustavo', createdByUid: 'gustavo' }, martin), false);
+  assert.equal(EDIT_LOCK_TEXT, 'Solo lo puede editar el organizador que lo agregó');
+
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-edit-lock';
+  store.setActor(gustavo);
+  const mid = await store.addMatch({ date: '2026-10-22', time: '21:00', note: '' }, 'Gustavo');
+  const pid = await store.addPlayer({ id: mid, date: '2026-10-22', capacity: 14 }, { name: 'Juan Pérez', phone: '5491112345678' }, 'Gustavo');
+  const rid = await store.addRoster({ name: 'Juan Pérez', phone: '5491199990000' }, 'Gustavo');
+  const waitId = await store.addPlayer({ id: mid, date: '2026-10-22', capacity: 14 }, { name: 'En Espera', phone: '' }, 'Gustavo', { waiting: true });
+  store.setActor(martin);
+  await assert.rejects(() => store.updatePlayer(pid, { name: 'Juan X' }), /Solo lo puede editar/);
+  await assert.rejects(() => store.updatePlayer(pid, { phone: '5491188880000' }), /Solo lo puede editar/);
+  await assert.rejects(() => store.updateRoster(rid, { name: 'Otro' }), /Solo lo puede editar/);
+  await assert.rejects(() => store.patchRoster(rid, { level: 4 }), /Solo lo puede editar/);
+  await store.updatePlayer(pid, { rosterId: rid });
+  await store.setPayment(pid, { paid: true, amount: 5000, method: 'efectivo', receivedBy: 'Martín' }, 'Martín');
+  await store.promoteFromWaiting(waitId);
+  await store.clearTentative(pid);
+  const db = JSON.parse(mem.get('f7c-test-edit-lock'));
+  assert.equal(db.players[pid].name, 'Juan Pérez');
+  assert.equal(db.players[pid].paid, true);
+  assert.equal(db.players[pid].rosterId, rid);
+  assert.equal(db.players[waitId].waiting, false);
+  assert.equal(db.roster[rid].name, 'Juan Pérez');
+  assert.equal(db.roster[rid].level, undefined);
+  store.setActor(gustavo);
+  await store.updatePlayer(pid, { name: 'Juan P.' });
+  await store.patchRoster(rid, { level: 6, positions: ['Arquero'] });
+  const after = JSON.parse(mem.get('f7c-test-edit-lock'));
+  assert.equal(after.players[pid].name, 'Juan P.');
+  assert.equal(after.roster[rid].level, 6);
+  const orphan = await store.addRoster({ name: 'Sin sello', phone: '' }, 'Gustavo');
+  const raw = JSON.parse(mem.get('f7c-test-edit-lock'));
+  delete raw.roster[orphan].createdByUid;
+  delete raw.roster[orphan].createdBy;
+  mem.set('f7c-test-edit-lock', JSON.stringify(raw));
+  await assert.rejects(() => store.updateRoster(orphan, { name: 'Con sello' }), /Solo lo puede editar/);
 });

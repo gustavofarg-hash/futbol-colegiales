@@ -329,12 +329,26 @@ const juanRemind = (await page.locator('#remind-list .remind-row', { hasText: 'J
 check('Todos no abre el WhatsApp privado de Juan', juanRemind.includes('El WhatsApp de este jugador es privado') && (await page.locator('#remind-list .remind-row', { hasText: 'Juan Pérez' }).locator('a').count()) === 0 && allReminders.includes('Nico Ruiz'), juanRemind);
 await page.click('dialog.sheet [data-close]');
 
-// Editar y quitar
+// Editar y quitar. Pedro lo agregó Gustavo: Martín no cambia el nombre.
 await page.click('.slot:has-text("Pedro Gómez") .more-btn');
+check('Martín no edita al jugador de Gustavo', await page.isDisabled('#pm-edit') && (await page.locator('#edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
+check('Quitar del partido no es editar al jugador', !(await page.isDisabled('#pm-del')));
+check('Ver perfil sigue habilitado', !(await page.isDisabled('#pm-profile')));
+await page.click('dialog.sheet [data-close]');
+const pedroMatch = await page.evaluate(() => location.hash);
+await page.locator('#slots .who', { hasText: 'Juan Pérez' }).click();
+await page.waitForSelector('#profile #edit-lock');
+check('El perfil ajeno explica quién lo edita', (await page.locator('#profile #edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
+check('Nivel, posiciones y notas quedan deshabilitados', await page.isDisabled('#level-up') && await page.isDisabled('#level-down') && await page.locator('#positions button:disabled').count() === 4 && await page.isDisabled('#btn-add-note'));
+check('Anotarlo en otro partido sigue habilitado', await page.locator('#signup-list input:not([disabled])').count() > 0);
+await page.evaluate((hash) => { location.hash = hash; }, pedroMatch);
+await page.waitForSelector('#slots .name:text-is("Pedro Gómez")');
+await page.click('.slot:has-text("Nico Ruiz") .more-btn');
+check('El que lo agregó puede editar', !(await page.isDisabled('#pm-edit')) && await page.locator('#edit-lock').count() === 0);
 await page.click('#pm-edit');
-await page.fill('#player-form [name=name]', 'Pedro G.');
+await page.fill('#player-form [name=name]', 'Nico R.');
 await page.click('#player-form button[type=submit]');
-await page.waitForSelector('.slot .name:text-is("Pedro G.")');
+await page.waitForSelector('.slot .name:text-is("Nico R.")');
 check('Editar jugador', true);
 await page.click('.slot:has-text("Lucas Díaz") .more-btn');
 await page.click('#pm-del');
@@ -363,13 +377,13 @@ await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
 const juanPay = (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).replace(/\s+/g, ' ');
 check('Juan: Pagó $5.000 · Transferencia', juanPay.includes('Pagó $5.000') && juanPay.includes('Transferencia'), juanPay);
 
-await page.click('.slot:has-text("Pedro G.") .pay-btn');
+await page.click('.slot:has-text("Pedro Gómez") .pay-btn');
 await page.click('#pay-form [data-paid="no"]');
 check('Si no pagó se oculta el monto', await page.isHidden('#pay-details'));
 await page.click('#pay-form button[type=submit]');
-await page.waitForSelector('.slot:has-text("Pedro G.") .pay-line.no');
-check('Pedro: No pagó', (await page.textContent('.slot:has-text("Pedro G.") .pay-line')).includes('No pagó'));
-check('Nico sigue sin estado de pago', (await page.$$('.slot:has-text("Nico Ruiz") .pay-line')).length === 0);
+await page.waitForSelector('.slot:has-text("Pedro Gómez") .pay-line.no');
+check('Pedro: No pagó', (await page.textContent('.slot:has-text("Pedro Gómez") .pay-line')).includes('No pagó'));
+check('Nico sigue sin estado de pago', (await page.$$('.slot:has-text("Nico R.") .pay-line')).length === 0);
 const rec = (await page.textContent('#collected')).replace(/\s+/g, ' ');
 check('Total recaudado 1/3', rec.includes('Recaudado: $5.000') && rec.includes('1/3 pagaron'), rec);
 
@@ -377,8 +391,8 @@ await page.click('#btn-copy');
 const clipPay = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada incluye los pagos',
   clipPay.includes('1. Juan Pérez — Pagó $5.000 · Transferencia')
-  && clipPay.includes('Pedro G. — No pagó')
-  && clipPay.includes('3. Nico Ruiz\n')
+  && clipPay.includes('Pedro Gómez — No pagó')
+  && clipPay.includes('3. Nico R.\n')
   && clipPay.includes('Recaudado: $5.000 · 1/3 pagaron'),
   clipPay.split('\n').filter((l) => l.includes('Juan') || l.includes('Pedro') || l.includes('Nico') || l.includes('Recaudado')).join(' | '));
 
@@ -407,16 +421,16 @@ await page2.close();
 
 await page.click('#btn-settings');
 await page.check('#set-mine');
-await page.waitForFunction(() => document.querySelector('#mine-filter') && ![...document.querySelectorAll('#slots .name')].some((el) => el.textContent === 'Pedro G.'));
-check('Mis oculta a quien no anoté ni cobré', (await page.locator('#slots .name', { hasText: 'Pedro G.' }).count()) === 0);
+await page.waitForFunction(() => document.querySelector('#mine-filter') && ![...document.querySelectorAll('#slots .name')].some((el) => el.textContent === 'Pedro Gómez'));
+check('Mis oculta a quien no anoté ni cobré', (await page.locator('#slots .name', { hasText: 'Pedro Gómez' }).count()) === 0);
 check('Mis muestra a quien anoté y a quien le cobré',
-  (await page.locator('#slots .name', { hasText: 'Nico Ruiz' }).count()) === 1
+  (await page.locator('#slots .name', { hasText: 'Nico R.' }).count()) === 1
   && (await page.locator('#slots .name', { hasText: 'Juan Pérez' }).count()) === 1);
 check('El cupo sigue siendo el del partido', (await page.textContent('#slot-count')) === '3/14');
 const mineText = (await page.textContent('#mine-stats')).replace(/\s+/g, ' ');
 check('Estadística propia del partido', mineText.includes('Anotaste 1') && mineText.includes('Cobraste $4.500'), mineText);
 await page.uncheck('#set-mine');
-await page.waitForSelector('#slots .name:text-is("Pedro G.")');
+await page.waitForSelector('#slots .name:text-is("Pedro Gómez")');
 await page.click('dialog.sheet [data-close]');
 
 // Lista de espera con lugares libres: queda al final, no ocupa un cupo
@@ -765,6 +779,9 @@ await page.click('#btn-back');
 await page.click('#btn-roster');
 await page.waitForSelector('#roster-list .name:text-is("Luis Gómez")');
 check('El jugador nuevo del partido quedó en Jugadores', (await page.$$eval('#roster-list .name', (els) => els.map((e) => e.textContent).sort().join(','))).includes('Ernesto Pereira') && (await page.locator('#roster-list .name', { hasText: 'Luis Gómez' }).count()) === 1);
+const juanRoster = page.locator('#roster-list .slot', { hasText: 'Juan Pérez' });
+check('En Jugadores, Martín no edita a quien agregó Gustavo', await juanRoster.locator('[data-roster-edit]').isDisabled() && (await juanRoster.locator('.edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
+check('Borrar de Jugadores no es la edición', !(await juanRoster.locator('[data-roster-del]').isDisabled()));
 await page.locator('#roster-list .slot', { hasText: 'Ernesto Pereira' }).locator('[data-roster-edit]').click();
 await page.fill('#roster-form [name=name]', 'Ernesto P.');
 await page.click('#roster-form button[type=submit]');
@@ -1071,8 +1088,8 @@ await page.click('dialog.sheet [data-close]');
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Jueves 22/10")');
 await page.click('.match-card:has-text("Jueves 22/10")');
-await page.waitForSelector('.slot:has-text("Nico Ruiz") .pay-btn');
-await page.click('.slot:has-text("Nico Ruiz") .pay-btn');
+await page.waitForSelector('.slot:has-text("Nico R.") .pay-btn');
+await page.click('.slot:has-text("Nico R.") .pay-btn');
 await page.click('#pay-form [data-paid="si"]');
 check('El pago usa el precio nuevo', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '6000'));
 check('El botón de un partido muestra el precio nuevo', (await page.textContent('#pay-prices')).includes('$6.000'));
