@@ -3,7 +3,7 @@
 import { MESES_CORTOS } from './dates.js';
 import { formatARS, paymentShares } from './payments.js';
 import { UNSPECIFIED, sameOrganizer } from './organizers.js';
-import { foldText } from './roster.js';
+import { canonicalPhone, foldText, playerMatchesPerson } from './roster.js';
 
 export function receiverLabel(player) {
   const name = String(player?.receivedBy || '').trim();
@@ -47,9 +47,20 @@ function pendingShareList(player) {
   return paymentShares(player).filter((share) => share.kind === 'pending' && share.amount > 0);
 }
 
-function ofPhone(phone, players) {
-  if (!phone) return [];
-  return (players || []).filter((player) => player.phone === phone);
+function ofPerson({ phone, rosterId, name }, players) {
+  const person = { id: rosterId || '', phone: phone || '', name: name || '' };
+  if (!person.phone && !person.id && !person.name) return [];
+  return (players || []).filter((player) => playerMatchesPerson(player, person));
+}
+
+function summaryKey(player, roster) {
+  const phone = canonicalPhone(player?.phone);
+  if (phone) return phone;
+  if (player?.rosterId) return `r:${player.rosterId}`;
+  const named = (roster || []).filter((person) => !canonicalPhone(person.phone) && foldText(person.name) === foldText(player?.name) && person.id);
+  if (named.length === 1) return `r:${named[0].id}`;
+  const name = foldText(player?.name);
+  return name ? `n:${name}` : `id:${player?.id || ''}`;
 }
 
 function matchOf(player, matches) {
@@ -57,15 +68,15 @@ function matchOf(player, matches) {
 }
 
 /**
- * Plata cobrada a este teléfono, titulares y lista de espera, pasados y futuros.
+ * Plata cobrada a esta persona, titulares y lista de espera, pasados y futuros.
  * organizer filtra por quien cobró (o "Sin especificar").
  */
-export function paymentLedger({ phone, players, matches, organizer = null }) {
+export function paymentLedger({ phone, rosterId, name, players, matches, organizer = null }) {
   const months = new Map();
   const by = new Map();
   let total = 0;
   let count = 0;
-  for (const player of ofPhone(phone, players)) {
+  for (const player of ofPerson({ phone, rosterId, name }, players)) {
     if (player.paid !== true) continue;
     const included = receivedShares(player).filter((share) => wants(shareLabel(share.name), organizer));
     if (!included.length) continue;
@@ -98,10 +109,10 @@ export function paymentLedger({ phone, players, matches, organizer = null }) {
   };
 }
 
-/** Veces que anotaron a este teléfono, en la lista principal y en la espera. */
-export function signupLedger({ phone, players, organizer = null }) {
+/** Veces que anotaron a esta persona, en la lista principal y en la espera. */
+export function signupLedger({ phone, rosterId, name, players, organizer = null }) {
   const by = new Map();
-  for (const player of ofPhone(phone, players)) {
+  for (const player of ofPerson({ phone, rosterId, name }, players)) {
     const who = addedByLabel(player);
     if (!wants(who, organizer)) continue;
     by.set(who, (by.get(who) || 0) + 1);
@@ -118,25 +129,30 @@ function bumpName(row, name) {
 
 /**
  * Resumen de todos: cuánto le pagó cada jugador a cada organizador
- * y cuántas veces lo anotó cada uno. El nombre del plantel gana si hay teléfono.
+ * y cuántas veces lo anotó cada uno. El nombre del plantel gana.
+ * Sin teléfono, la fila usa el id del plantel o el nombre.
  */
 export function paymentsSummary({ players, roster, organizer = null }) {
   const people = new Map();
   const touch = (key, name) => {
-    if (!people.has(key)) people.set(key, { key, name: name || 'Sin nombre', fromRoster: false, paid: new Map(), signups: new Map(), pending: 0, pendingBy: new Map() });
+    if (!key) return null;
+    if (!people.has(key)) people.set(key, { key, name: name || 'Sin nombre', rosterId: '', fromRoster: false, paid: new Map(), signups: new Map(), pending: 0, pendingBy: new Map() });
     const row = people.get(key);
     bumpName(row, name);
     return row;
   };
   for (const person of roster || []) {
-    if (!person.phone) continue;
-    const row = touch(person.phone, person.name);
+    const phone = canonicalPhone(person.phone);
+    const key = phone || (person.id ? `r:${person.id}` : '');
+    const row = touch(key, person.name);
+    if (!row) continue;
     row.fromRoster = true;
+    if (person.id) row.rosterId = person.id;
     if (person.name) row.name = person.name;
   }
   for (const player of players || []) {
-    const key = player.phone || `n:${foldText(player.name) || player.id || ''}`;
-    const row = touch(key, player.name);
+    const row = touch(summaryKey(player, roster), player.name);
+    if (!row) continue;
     const added = addedByLabel(player);
     if (wants(added, organizer)) row.signups.set(added, (row.signups.get(added) || 0) + 1);
     if (player.paid === true) {
@@ -170,6 +186,7 @@ export function paymentsSummary({ players, roster, organizer = null }) {
     if (!paid.length && !signups.length && !(row.pending > 0)) continue;
     list.push({
       key: row.key,
+      rosterId: row.rosterId || '',
       name: row.name,
       paid,
       signups,
@@ -224,9 +241,11 @@ export function pendingTransfers({ players, roster, organizer = null }) {
   for (const player of players || []) {
     const shares = pendingShareList(player).filter((share) => wants(shareLabel(share.name), organizer));
     if (!shares.length) continue;
-    const key = player.phone || `n:${foldText(player.name) || player.id || ''}`;
+    const key = summaryKey(player, roster);
     if (!people.has(key)) {
-      const saved = (roster || []).find((person) => person.phone && person.phone === player.phone);
+      const saved = (roster || []).find((person) => canonicalPhone(person.phone) && canonicalPhone(person.phone) === canonicalPhone(player.phone))
+        || (roster || []).find((person) => person.id && person.id === player.rosterId)
+        || (roster || []).find((person) => !canonicalPhone(person.phone) && foldText(person.name) === foldText(player.name));
       people.set(key, { key, name: saved?.name || player.name || 'Sin nombre', amount: 0, by: new Map() });
     }
     const row = people.get(key);
@@ -248,8 +267,9 @@ export function pendingTransfers({ players, roster, organizer = null }) {
 }
 
 /** true si hay un pago sin cobrador o un alta sin "Agregó", para mostrar el filtro. */
-export function hasUnspecified({ players, phone = null }) {
-  const list = phone ? ofPhone(phone, players) : (players || []);
+export function hasUnspecified({ players, phone = null, rosterId = null, name = null }) {
+  const scoped = phone || rosterId || name;
+  const list = scoped ? ofPerson({ phone, rosterId, name }, players) : (players || []);
   return list.some((player) => addedByLabel(player) === UNSPECIFIED
     || (player.paid === true && receivedShares(player).some((share) => shareLabel(share.name) === UNSPECIFIED)));
 }

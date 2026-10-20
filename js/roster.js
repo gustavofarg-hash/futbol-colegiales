@@ -1,5 +1,7 @@
 // Plantel guardado y búsqueda rápida. Puro: no escribe en Firestore.
 // La búsqueda no distingue mayúsculas ni acentos. El teléfono compara solo dígitos.
+// Sin WhatsApp, la misma persona se reconoce por el id del plantel y, si no hay, por el nombre.
+import { normalizePhone } from './phone.js';
 
 export const ROSTER_DENIED_READ = 'No se pueden leer los jugadores guardados. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 export const ROSTER_DENIED_WRITE = 'No se pudo guardar en Jugadores. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
@@ -38,7 +40,33 @@ export function searchRoster(roster, query) {
   return list.filter((person) => rosterHit(person, q));
 }
 
+/** Teléfono listo para wa.me. Si no se puede normalizar, quedan los dígitos. Vacío si no hay número. */
+export function canonicalPhone(phone) {
+  const raw = String(phone || '').trim();
+  if (!raw) return '';
+  const parsed = normalizePhone(raw);
+  return parsed.ok ? parsed.wa : phoneDigits(raw);
+}
+
 export function rosterByPhone(roster, phone) {
-  if (!phone) return null;
-  return (roster || []).find((person) => person.phone === phone) || null;
+  const key = canonicalPhone(phone);
+  if (!key) return null;
+  return (roster || []).find((person) => canonicalPhone(person.phone) === key) || null;
+}
+
+/**
+ * El jugador es esta ficha del plantel.
+ * Manda el teléfono. Si ninguno tiene, manda el id del plantel.
+ * Si el jugador no tiene teléfono ni id, alcanza el mismo nombre.
+ */
+export function playerMatchesPerson(player, person) {
+  if (!player || !person) return false;
+  const phoneP = canonicalPhone(player.phone);
+  const phoneR = canonicalPhone(person.phone);
+  if (phoneP && phoneR && phoneP === phoneR) return true;
+  if (player.rosterId && person.id && player.rosterId === person.id) return true;
+  if (phoneP || player.rosterId || phoneR) return false;
+  const left = foldText(player.name);
+  const right = foldText(person.name);
+  return !!left && left === right;
 }
