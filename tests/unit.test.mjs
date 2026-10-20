@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMatchesFromText as p } from '../js/parser.js';
 import { normalizePhone } from '../js/phone.js';
-import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
+import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { rosterHit, searchRoster } from '../js/roster.js';
 import { matchSignupState, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
-import { organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
+import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
+import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { toEpoch } from '../js/dates.js';
 import {
   confirmPageUrl, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -166,13 +167,16 @@ test('pago partido y transfiere después no entran en lo cobrado hasta marcarlo'
   assert.equal(received.patch.pendingTransfer, null);
   assert.equal(received.patch.transferReceivedAt, now + 5);
   assert.equal(received.patch.transferReceivedBy, 'Martín');
-  assert.equal(received.patch.receivedBy, 'Martín');
-  assert.equal(paymentStatusText(received.patch), 'Pagó $800 · Transferencia · cobró Martín');
+  assert.equal(received.patch.transferTo, 'Gustavo');
+  assert.equal(received.patch.receivedBy, 'Gustavo');
+  assert.equal(paymentStatusText(received.patch), 'Pagó $800 · Transferencia · cobró Gustavo');
   const kept = receivePendingTransfer({ ...both.patch }, 'Lucía', now + 9);
   assert.equal(kept.patch.cash, 2000);
+  assert.equal(kept.patch.cashTo, 'Martín');
   assert.equal(kept.patch.transfer, 4500);
   assert.equal(kept.patch.amount, 6500);
-  assert.equal(kept.patch.receivedBy, 'Martín');
+  assert.equal(kept.patch.receivedBy, null);
+  assert.deepEqual(kept.patch.transferParts, [{ to: 'Martín', amount: 3000 }, { to: 'Gustavo', amount: 1500 }]);
   assert.equal(kept.patch.transferReceivedBy, 'Lucía');
   assert.equal(paymentRecord({ paid: true, cash: -1, transfer: 0, pendingTransfer: 0 }, 'Gustavo').ok, false);
   assert.equal(paymentRecord({ paid: true, cash: 0, transfer: 0, pendingTransfer: 0 }, 'Gustavo').error, 'Poné un monto.');
@@ -676,4 +680,103 @@ test('Mis y totales por organizador', () => {
   assert.equal(totals.find((row) => row.name === 'Martín').added, 1);
   assert.equal(totals.find((row) => row.name === 'Gustavo').added, 2);
   assert.equal(totals.find((row) => row.name === 'Sin especificar').collected, 1000);
+});
+
+test('cada parte del pago va a su organizador', () => {
+  const now = 1_700_000_000_000;
+  const legacy = { paid: true, amount: 5000, method: 'transferencia', receivedBy: 'Martín' };
+  assert.deepEqual(paymentShares(legacy).map((share) => [share.kind, share.name, share.amount]), [['transfer', 'Martín', 5000]]);
+  const directed = paymentRecord({
+    paid: true, cash: 2000, transfer: 3000, pendingTransfer: 800,
+    cashTo: 'Gustavo', transferTo: 'Martín', pendingTo: 'Lucía',
+  }, 'Gustavo', now);
+  assert.equal(directed.ok, true);
+  assert.equal(directed.patch.receivedBy, null);
+  assert.equal(directed.patch.cashTo, 'Gustavo');
+  assert.equal(directed.patch.transferTo, 'Martín');
+  assert.equal(directed.patch.pendingTo, 'Lucía');
+  assert.match(paymentStatusText(directed.patch), /Efectivo \$2\.000 · cobró Gustavo/);
+  assert.match(paymentStatusText(directed.patch), /Transferencia \$3\.000 · cobró Martín/);
+  assert.match(pendingStatusText(directed.patch), /Transfiere después \$800 · a Lucía/);
+  const players = [directed.patch];
+  assert.equal(organizerTotals(players).find((row) => row.name === 'Gustavo').collected, 2000);
+  assert.equal(organizerTotals(players).find((row) => row.name === 'Martín').collected, 3000);
+  assert.equal(organizerTotals(players).find((row) => row.name === 'Lucía').pending, 800);
+  assert.equal(mineSummary(players, 'Martín').amount, 3000);
+  assert.equal(mineSummary(players, 'Lucía').pending, 800);
+  const same = receivePendingTransfer({ ...directed.patch, pendingTo: 'Martín' }, 'Rita', now + 3);
+  assert.equal(same.patch.transfer, 3800);
+  assert.equal(same.patch.transferTo, 'Martín');
+  assert.equal(same.patch.transferParts, null);
+  assert.equal(same.patch.pendingTransfer, null);
+  assert.equal(same.patch.cashTo, 'Gustavo');
+  assert.equal(same.patch.receivedBy, null);
+  assert.equal(same.patch.transferReceivedBy, 'Rita');
+  const split = receivePendingTransfer(directed.patch, 'Rita', now + 4);
+  assert.equal(split.patch.transfer, 3800);
+  assert.equal(split.patch.transferTo, null);
+  assert.deepEqual(split.patch.transferParts, [{ to: 'Martín', amount: 3000 }, { to: 'Lucía', amount: 800 }]);
+  assert.equal(split.patch.cash, 2000);
+  assert.equal(split.patch.receivedBy, null);
+});
+
+test('los desplegables salen de la colección y solo caen al config si está vacía o no se lee', () => {
+  assert.deepEqual(organizerChoices([]), ['Gustavo', 'Martín']);
+  assert.deepEqual(organizerChoices([{ name: 'Lucía', createdAt: 1 }], { unreadable: true }), ['Gustavo', 'Martín']);
+  assert.deepEqual(organizerChoices([{ name: 'Lucía', createdAt: 1 }]), ['Lucía']);
+  assert.deepEqual(organizerChoices([{ name: 'Lucía', createdAt: 1 }], { extra: ['Rita', 'Lucía'] }), ['Lucía', 'Rita']);
+  assert.deepEqual(organizerChoices([], { extra: ['Viejo'] }), ['Gustavo', 'Martín', 'Viejo']);
+});
+
+test('precios: defaults, enteros y promos del mismo día', () => {
+  assert.deepEqual(normalizePrices(null), { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 });
+  assert.deepEqual(normalizePrices({ matchPrice: 1.5, promo2Price: -4, promo3Price: 7000 }), { matchPrice: 5000, promo2Price: 9000, promo3Price: 7000 });
+  assert.equal(parsePriceInput('5.000').amount, 5000);
+  assert.equal(parsePriceInput('5000').amount, 5000);
+  assert.equal(parsePriceInput('5.000,50').ok, false);
+  assert.equal(parsePriceInput('-1').ok, false);
+  assert.deepEqual(splitEven(9000, 2), [4500, 4500]);
+  assert.deepEqual(splitEven(9001, 2), [4501, 4500]);
+  assert.deepEqual(splitPaymentAcross({ cash: 9001, transfer: 100, pending: 0 }, 2), [
+    { cash: 4501, transfer: 50, pending: 0 },
+    { cash: 4500, transfer: 50, pending: 0 },
+  ]);
+  const matches = [
+    { id: 'a', date: '2026-10-22', time: '19:00', startsAt: 1 },
+    { id: 'b', date: '2026-10-22', time: '21:00', startsAt: 2 },
+    { id: 'c', date: '2026-10-22', time: '22:00', startsAt: 3 },
+    { id: 'd', date: '2026-10-23', time: '19:00', startsAt: 4 },
+    { id: 'e', date: '2026-10-22', time: '18:00', startsAt: 0 },
+  ];
+  const phone = '5491111111111';
+  const players = [
+    { id: 'p1', matchId: 'a', phone, waiting: false },
+    { id: 'p2', matchId: 'b', phone, waiting: false },
+    { id: 'wait', matchId: 'c', phone, waiting: true },
+    { id: 'other', matchId: 'e', phone: '5491122222222', waiting: false },
+    { id: 'next', matchId: 'd', phone, waiting: false },
+  ];
+  const two = promoForPlayer({ player: players[0], players, matches, prices: null });
+  assert.equal(two.count, 2);
+  assert.equal(two.total, 9000);
+  assert.equal(two.share, 4500);
+  assert.equal(two.label, 'Promo 2 partidos por $9.000');
+  assert.equal(promoForPlayer({ player: players[2], players, matches, prices: null }), null);
+  assert.equal(promoForPlayer({ player: players[4], players, matches, prices: null }), null);
+  const rosterPlayers = [
+    { id: 'r1', matchId: 'a', phone: '', rosterId: 'ros1', waiting: false },
+    { id: 'r2', matchId: 'b', phone: '', rosterId: 'ros1', waiting: false },
+  ];
+  assert.equal(playerPromoKey(rosterPlayers[0]), 'r:ros1');
+  assert.equal(promoForPlayer({ player: rosterPlayers[0], players: rosterPlayers, matches, prices: null }).label, 'Promo 2 partidos por $9.000');
+  assert.equal(playerPromoKey({ phone: '', name: 'Solo' }), '');
+  assert.equal(promoForPlayer({ player: { id: 'x', matchId: 'a', phone: '' }, players: [{ id: 'x', matchId: 'a', phone: '' }, { id: 'y', matchId: 'b', phone: '' }], matches, prices: null }), null);
+  const fourPlayers = ['e', 'a', 'b', 'c'].map((id, i) => ({ id: `f${i}`, matchId: id, phone, waiting: false }));
+  const four = promoForPlayer({ player: fourPlayers[0], players: fourPlayers, matches, prices: null });
+  assert.equal(four.count, 4);
+  assert.equal(four.total, 17000);
+  assert.equal(four.label, 'Promo 3 partidos por $12.000');
+  assert.equal(four.shares.reduce((sum, n) => sum + n, 0), 17000);
+  assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).label, 'Promo 3 partidos por $10.000');
+  assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).total, 10000);
 });
