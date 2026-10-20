@@ -310,6 +310,13 @@ await page.waitForSelector('#wait-list .name:text-is("Espera Cero")');
 check('Anotar en espera no ocupa un lugar libre', (await page.textContent('#slot-count')) === '3/14');
 check('Con un solo suplente, ↑ y ↓ están deshabilitadas',
   await page.isDisabled('#wait-list [data-wait-up]') && await page.isDisabled('#wait-list [data-wait-down]'));
+const barIds = await page.$$eval('.match-actions > *', (els) => els.map((el) => el.id));
+check('La barra es compartir, espera y agregar', JSON.stringify(barIds) === JSON.stringify(['btn-share', 'btn-add-wait', 'btn-add-player']), barIds.join(','));
+check('Compartir lista es un ícono con nombre', (await page.getAttribute('#btn-share', 'aria-label')) === 'Compartir lista'
+  && await page.evaluate(() => getComputedStyle(document.querySelector('#btn-share svg')).display !== 'none'));
+check('La espera ya no tiene la botonera de la sección', (await page.locator('.wait-tools').count()) === 0);
+check('La fila de espera no tiene botón de pago', (await page.locator('#wait-list .pay-btn').count()) === 0);
+check('Subir al partido de esa fila está habilitado', !(await page.isDisabled('#wait-list [data-promote]')));
 
 // Completar el cupo
 for (let i = 4; i <= 14; i++) {
@@ -319,6 +326,7 @@ for (let i = 4; i <= 14; i++) {
   await page.waitForSelector(`#slots .name:text-is("Jugador ${i}")`);
 }
 check('14/14 y se puede seguir anotando (van a la espera)', (await page.textContent('#slot-count')) === '14/14' && !(await page.isDisabled('#btn-add-player')));
+check('Agregar jugador no cambia de nombre con el cupo lleno', (await page.textContent('#btn-add-player')).includes('Agregar jugador'));
 check('El total pasa a 1/14', (await page.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500 · 1/14 pagaron'));
 check('Cero sigue en espera al llenarse el partido', (await page.textContent('#wait-list')).includes('Espera Cero') && !(await page.locator('#slots').getByText('Espera Cero', { exact: true }).count()));
 
@@ -339,7 +347,8 @@ const arrows = async () => page.$$eval('#wait-list .slot', (rows) => rows.map((r
 })));
 let arrowState = await arrows();
 check('↑ deshabilitada en el primero y ↓ en el último', arrowState[0].up && !arrowState[0].down && arrowState.at(-1).down && !arrowState.at(-1).up, JSON.stringify(arrowState));
-check('Subir al partido está deshabilitado con el cupo lleno', await page.isDisabled('#btn-promote'));
+const promoteOff = await page.$$eval('#wait-list [data-promote]', (els) => els.length === 3 && els.every((el) => el.disabled));
+check('Subir al partido está deshabilitado con el cupo lleno', promoteOff);
 
 await page.locator('#wait-list .slot', { hasText: 'Espera Beto' }).locator('[data-wait-up]').click();
 await page.waitForFunction(() => {
@@ -369,6 +378,15 @@ await page.waitForSelector('#slots .name:text-is("Espera Beto")');
 check('Subir al partido se lleva al primero de la espera', !(await page.locator('#wait-list').getByText('Espera Beto', { exact: true }).count()) && (await page.textContent('#slot-count')) === '14/14');
 const left = await page.$$eval('#wait-list .name', (els) => els.map((e) => e.textContent));
 check('La espera sigue en el orden que quedó', JSON.stringify(left) === JSON.stringify(['Espera Cero', 'Espera Ana']), left.join(', '));
+await page.click('#btn-add-player');
+await page.fill('#player-form [name=name]', 'Reserva Tarde');
+await page.check('#player-tentative');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#toast');
+check('Sin lugar no se reserva ni se anota', (await page.textContent('#toast')).includes('No hay lugar libre para reservar')
+  && (await page.locator('#player-form').count()) === 1
+  && !(await page.locator('#wait-list').getByText('Reserva Tarde', { exact: true }).count()));
+await page.click('#player-form [data-close]');
 
 // Volver al inicio: contador
 await page.click('#btn-back');
@@ -383,6 +401,80 @@ check('Sigue en modo demo tras recargar', (await page.evaluate(() => window.__ap
 await page.click('.match-card:has-text("Jueves 22/10")');
 await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
 check('El pago persiste tras recargar', (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).includes('Efectivo') && (await page.textContent('#collected')).includes('$4.500'));
+await page.click('#btn-back');
+await page.waitForSelector('.match-card');
+
+// Lugar reservado y aviso de WhatsApp al subir. El lunes está vacío.
+await page.click('.match-card:has-text("Lunes 26/10")');
+await page.waitForSelector('#btn-add-player');
+await page.click('#btn-add-wait');
+check('Anotar en espera no ofrece lugar reservado', (await page.locator('#player-tentative').count()) === 0);
+await page.click('#player-form [data-close]');
+await page.click('#btn-add-player');
+check('El alta al partido ofrece lugar reservado', await page.isVisible('#player-tentative'));
+await page.fill('#player-form [name=name]', 'Reserva Luis');
+await page.fill('#player-form [name=phone]', '11 6666-0101');
+await page.check('#player-tentative');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Reserva Luis")');
+const luisRow = (await page.locator('#slots .slot', { hasText: 'Reserva Luis' }).innerText()).replace(/\s+/g, ' ');
+check('Reservado ocupa cupo, no va a la espera y no figura confirmado',
+  (await page.textContent('#slot-count')) === '1/14'
+  && (await page.locator('#wait-list').getByText('Reserva Luis', { exact: true }).count()) === 0
+  && luisRow.includes('Reservado · a confirmar')
+  && !luisRow.includes('Confirmó')
+  && !luisRow.includes('Sin respuesta'), luisRow);
+check('El resumen cuenta A confirmar', (await page.textContent('#confirm-sum')).includes('A confirmar: 1') && (await page.textContent('#confirm-sum')).includes('Sin respuesta: 0'));
+const luisStored = await page.evaluate(() => {
+  const person = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Reserva Luis');
+  return { tentative: person.tentative, at: typeof person.tentativeAt === 'number', waiting: person.waiting, token: person.confirmToken };
+});
+check('Guarda tentative y tentativeAt', luisStored.tentative === true && luisStored.at && luisStored.waiting !== true && luisStored.token.length >= 16);
+const luisIds = await page.evaluate(() => {
+  const found = Object.entries(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find(([, p]) => p.name === 'Reserva Luis');
+  return { id: found[0], matchId: found[1].matchId };
+});
+const luisNo = await ctx.newPage();
+await luisNo.goto(`${BASE}confirmar.html?m=${encodeURIComponent(luisIds.matchId)}&p=${encodeURIComponent(luisIds.id)}&t=${encodeURIComponent(luisStored.token)}`);
+await luisNo.waitForSelector('#btn-no');
+await luisNo.click('#btn-no');
+await page.waitForFunction(() => document.body.innerText.includes('se puede liberar el lugar'));
+check('Si dice que no, el lugar reservado se puede liberar', (await page.locator('#slots .slot', { hasText: 'Reserva Luis' }).innerText()).includes('Reservado · a confirmar'));
+await luisNo.close();
+await page.locator('#slots .slot', { hasText: 'Reserva Luis' }).locator('.confirm-spot').click();
+await page.waitForFunction(() => !document.body.innerText.includes('Reservado · a confirmar'));
+check('Confirmar lugar saca el badge', (await page.locator('.reserved-badge').count()) === 0);
+await page.click('#btn-add-wait');
+await page.fill('#player-form [name=name]', 'Avisa Teo');
+await page.fill('#player-form [name=phone]', '11 6666-2222');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#wait-list .name:text-is("Avisa Teo")');
+const [teoPopup] = await Promise.all([
+  page.waitForEvent('popup'),
+  page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).locator('[data-promote]').click(),
+]);
+await page.waitForSelector('#slots .name:text-is("Avisa Teo")');
+const teoUrl = teoPopup.url();
+check('Avisar por WhatsApp abre el chat sin mandar solo', /(?:wa\.me\/|phone=)5491166662222/.test(teoUrl), teoUrl.slice(0, 100));
+const teoText = decodeURIComponent(new URL(teoUrl).searchParams.get('text') || '');
+check('El mensaje usa el nombre, el día, la hora y el link',
+  teoText.startsWith('¡Hola Avisa Teo!')
+  && teoText.includes('Polideportivo Colegiales')
+  && teoText.includes('lunes 26/10')
+  && teoText.includes('21:00')
+  && teoText.includes('confirmar.html?m=')
+  && teoText.includes(luisStored.token) === false
+  && teoText.includes('t='), teoText.slice(0, 180));
+await teoPopup.close();
+await page.click('#btn-add-wait');
+await page.fill('#player-form [name=name]', 'Sin Fono');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#wait-list .name:text-is("Sin Fono")');
+const noPhonePopup = page.waitForEvent('popup', { timeout: 1000 }).catch(() => null);
+await page.locator('#wait-list .slot', { hasText: 'Sin Fono' }).locator('[data-promote]').click();
+await page.waitForSelector('#slots .name:text-is("Sin Fono")');
+await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('no tiene WhatsApp'));
+check('Sin teléfono muestra un cartel y no abre WhatsApp', (await noPhonePopup) == null);
 await page.click('#btn-back');
 await page.waitForSelector('.match-card');
 
@@ -654,6 +746,8 @@ check('El jueves figura Anotado', (await juevesRow.innerText()).includes('Anotad
 check('El casillero del jueves está marcado y no se puede volver a anotar', await juevesRow.locator('input').isChecked() && await juevesRow.locator('input').isDisabled());
 const sabadoRow = page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' });
 check('El sábado muestra los lugares libres', (await sabadoRow.innerText()).includes('Quedan'));
+check('El perfil ofrece lugar reservado', await page.isVisible('#signup-tentative'));
+await page.check('#signup-tentative');
 await sabadoRow.locator('input[type=checkbox]').check();
 check('El botón dice Anotar en 1 partido', (await page.textContent('#btn-signup')).trim() === 'Anotar en 1 partido');
 await page.click('#btn-signup');
@@ -662,12 +756,13 @@ await page.waitForFunction(() => {
   return row && row.innerText.includes('Anotado');
 });
 const sabadoPlayers = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((p) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24'));
-check('El sábado usa la misma alta: Gustavo, token y sin duplicar el teléfono', sabadoPlayers.length === 1 && sabadoPlayers[0].addedBy === 'Gustavo' && sabadoPlayers[0].phone === '5491112345678' && sabadoPlayers[0].confirmToken.length >= 16 && sabadoPlayers[0].waiting !== true);
+check('El sábado usa la misma alta: Gustavo, token y sin duplicar el teléfono', sabadoPlayers.length === 1 && sabadoPlayers[0].addedBy === 'Gustavo' && sabadoPlayers[0].phone === '5491112345678' && sabadoPlayers[0].confirmToken.length >= 16 && sabadoPlayers[0].waiting !== true && sabadoPlayers[0].tentative === true);
 const sabadoCard = await page.evaluate((token) => JSON.parse(localStorage.getItem('f7c-demo-db')).confirmations[token], sabadoPlayers[0].confirmToken);
 check('La ficha del sábado no tiene teléfono', sabadoCard && sabadoCard.name === 'Juan Pérez' && sabadoCard.phone == null && !JSON.stringify(sabadoCard).includes('549'));
 await page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' }).locator('[data-open-match]').click();
 await page.waitForSelector('#slots .name:text-is("Juan Pérez")');
 check('Tocar el sábado abre el partido', (await page.textContent('h1')).includes('Sábado 24/10'));
+check('En el sábado se ve el lugar reservado', (await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).innerText()).includes('Reservado · a confirmar'));
 await page.evaluate(() => { location.hash = '#/jugadores'; });
 await page.locator('#roster-list .who', { hasText: 'Juan Pérez' }).click();
 await page.waitForSelector('#signup-list .signup-row:has-text("Sábado 24/10") [data-signup-remove]');

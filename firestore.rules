@@ -74,7 +74,9 @@ service cloud.firestore {
           && (!('cashTo' in d) || d.cashTo == null || (d.cashTo is string && d.cashTo.size() > 0 && d.cashTo.size() <= 40))
           && (!('transferTo' in d) || d.transferTo == null || (d.transferTo is string && d.transferTo.size() > 0 && d.transferTo.size() <= 40))
           && (!('pendingTo' in d) || d.pendingTo == null || (d.pendingTo is string && d.pendingTo.size() > 0 && d.pendingTo.size() <= 40))
-          && (!('transferParts' in d) || d.transferParts == null || transferPartsOk(d.transferParts));
+          && (!('transferParts' in d) || d.transferParts == null || transferPartsOk(d.transferParts))
+          && (!('tentative' in d) || d.tentative == null || d.tentative is bool)
+          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number);
     }
 
     function transferPartOk(p) {

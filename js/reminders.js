@@ -92,24 +92,46 @@ export function confirmationAllowed(player, matchId, token) {
 }
 
 export function confirmStatus(player) {
+  if (player?.tentative === true) {
+    if (player.confirmed === 'no') {
+      return { cls: 'reserved', text: 'Reservado · a confirmar', note: 'No juega · se puede liberar el lugar' };
+    }
+    return { cls: 'reserved', text: 'Reservado · a confirmar' };
+  }
   if (player?.confirmed === 'si') return { cls: 'ok', text: '✅ Confirmó' };
   if (player?.confirmed === 'no') return { cls: 'no', text: '❌ No juega' };
   return { cls: 'pending', text: '⏳ Sin respuesta' };
+}
+
+/** El sí del link suelta el lugar reservado. El no lo deja reservado. */
+export function reservationClearedByAnswer(player) {
+  return player?.tentative === true && player?.confirmed === 'si';
 }
 
 export function confirmSummary(players) {
   let si = 0;
   let no = 0;
   let pending = 0;
+  let hold = 0;
   for (const p of players || []) {
-    if (p.confirmed === 'si') si += 1;
-    else if (p.confirmed === 'no') no += 1;
-    else pending += 1;
+    if (p?.tentative === true) hold += 1;
+    if (p?.confirmed === 'si' && p?.tentative !== true) si += 1;
+    else if (p?.confirmed === 'no') no += 1;
+    else if (p?.tentative !== true) pending += 1;
   }
+  const holdText = hold > 0 ? ` · A confirmar: ${hold}` : '';
   return {
-    si, no, pending,
-    text: `Confirmados: ${si} · No juegan: ${no} · Sin respuesta: ${pending}`,
+    si, no, pending, hold,
+    text: `Confirmados: ${si}${holdText} · No juegan: ${no} · Sin respuesta: ${pending}`,
   };
+}
+
+/** Aviso para quien sube de la lista de espera. No manda el mensaje: solo lo arma. */
+export function promotionMessage({ player, match, venue, confirmUrl }) {
+  const name = String(player?.name || '').trim() || 'hola';
+  const when = labelDate(match?.date);
+  const time = match?.time || '--:--';
+  return `¡Hola ${name}! Se hizo un lugar en el fútbol 7 en ${venue} el ${when} a las ${time} hs. ¿Confirmás tu presencia? ¿Querés que te deje anotado? Respondé en este link: ${confirmUrl}`;
 }
 
 /** El cartel aparece cuando el partido empieza en 2 horas o menos. */

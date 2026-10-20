@@ -9,8 +9,9 @@ import {
 import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
 import {
-  confirmStatus, confirmSummary, matchesCrossingReminderWindow,
-  needsReminderBanner, playersForOrganizer, reminderDueAt, reminderLinks, reminderProgress,
+  confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
+  needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress,
+  reservationClearedByAnswer, waReminderUrl,
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
@@ -259,6 +260,7 @@ function renderMatch(id) {
           ${payMarkup(p)}
           ${promoBadge(p)}
         </button>
+        ${confirmSpotButton(p)}
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>
         ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
         <button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
@@ -287,29 +289,39 @@ function renderMatch(id) {
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap)}
-    <div class="actionbar"><div class="actionbar-inner">
-      <button class="btn" id="btn-share">${ICON.share}Compartir lista</button>
-      <button class="btn primary" id="btn-add-player">${ICON.plus}${full ? 'A la espera' : 'Agregar jugador'}</button>
+    <div class="actionbar"><div class="actionbar-inner match-actions">
+      <button class="btn share-btn" id="btn-share" aria-label="Compartir lista">${ICON.share}</button>
+      <button class="btn add-choice" id="btn-add-wait">Anotar en lista de espera</button>
+      <button class="btn primary add-choice" id="btn-add-player">${ICON.plus}Agregar jugador</button>
     </div></div>`;
 
   $('#btn-remind').onclick = () => openReminders(m);
   bindReminderBanners();
   $('#btn-add-player').onclick = () => openPlayerForm(m);
   $('#btn-add-wait').onclick = () => openPlayerForm(m, null, { waiting: true });
-  $('#btn-promote').onclick = () => promoteTop(m);
+  const onRow = (e) => {
+    const spot = e.target.closest('[data-confirm-spot]');
+    if (spot) {
+      const player = app.players.find((p) => p.id === spot.dataset.confirmSpot);
+      if (player) clearReservedSpot(player);
+      return;
+    }
+    const promote = e.target.closest('[data-promote]');
+    if (promote) return promoteToMatch(m, app.players.find((p) => p.id === promote.dataset.promote), promote.disabled);
+  };
   $('#wait-list').onclick = (e) => {
+    onRow(e);
     const up = e.target.closest('[data-wait-up]');
     if (up) return moveWait(m.id, up.dataset.waitUp, -1, up.disabled);
     const down = e.target.closest('[data-wait-down]');
     if (down) return moveWait(m.id, down.dataset.waitDown, 1, down.disabled);
-    const pay = e.target.closest('[data-pay]');
-    if (pay) return openPaymentForm(m, app.players.find((p) => p.id === pay.dataset.pay));
     const menu = e.target.closest('[data-menu]');
     if (menu) return openPlayerMenu(m, app.players.find((p) => p.id === menu.dataset.menu));
     const who = e.target.closest('[data-profile]');
     if (who) return openPlayerProfile(app.players.find((p) => p.id === who.dataset.profile), m.id);
   };
   $('#slots').onclick = (e) => {
+    onRow(e);
     const pay = e.target.closest('[data-pay]');
     if (pay) return openPaymentForm(m, app.players.find((p) => p.id === pay.dataset.pay));
     const free = e.target.closest('[data-free]');
@@ -345,11 +357,15 @@ function listText(m) {
   for (let i = 0; i < Math.max(cap, ps.length); i++) {
     const p = ps[i];
     const pay = p ? paymentStatusText(p) : '';
-    lines.push(`${i + 1}. ${p ? p.name : ''}${pay ? ` — ${pay}` : ''}`);
+    const hold = p?.tentative === true ? 'a confirmar' : '';
+    const bits = [pay, hold].filter(Boolean).join(' · ');
+    lines.push(`${i + 1}. ${p ? p.name : ''}${bits ? ` — ${bits}` : ''}`);
   }
   lines.push('', ps.length >= cap ? '✅ ¡Completo!' : `Faltan ${cap - ps.length}`);
   const collected = collectedLine(ps);
   if (collected) lines.push(collected);
+  const summary = confirmSummary(ps);
+  if (ps.length) lines.push(summary.text);
   const wait = waitingOf(m.id);
   if (wait.length) {
     lines.push('', 'Lista de espera:');
@@ -364,7 +380,6 @@ function listText(m) {
 function waitingSection(m, full) {
   const allWait = waitingOf(m.id);
   const wait = app.mine ? allWait.filter(minePlayer) : allWait;
-  const top = allWait[0];
   const rows = wait.map((p, i) => {
     const idx = allWait.findIndex((item) => item.id === p.id);
     const first = idx <= 0;
@@ -382,24 +397,31 @@ function waitingSection(m, full) {
             ${addedTag(p)}${confirmTag(p)}</div>
           ${payMarkup(p)}
         </button>
-        <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}">💵</button>
+        <button type="button" class="btn promote-btn" data-promote="${esc(p.id)}" ${full ? 'disabled' : ''} aria-label="Subir a ${esc(p.name)} al partido">Subir al partido</button>
         ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
         <button type="button" class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
       </li>`;
   }).join('');
   return `
     <h2 class="section">Lista de espera</h2>
-    ${wait.length ? `<ul class="slots" id="wait-list">${rows}</ul>` : '<p class="empty-wait" id="wait-list">Nadie en espera. Los que se anotan acá quedan al final, en orden de llegada.</p>'}
-    <div class="wait-tools">
-      <button type="button" class="btn" id="btn-add-wait">Anotar en lista de espera</button>
-      <button type="button" class="btn primary" id="btn-promote" ${top && !full ? '' : 'disabled'}>Subir al partido</button>
-    </div>
-    ${top ? `<p class="footer-note">Sube el primero: ${esc(top.name)}</p>` : ''}`;
+    ${wait.length ? `<ul class="slots" id="wait-list">${rows}</ul>` : '<p class="empty-wait" id="wait-list">Nadie en espera. Los que se anotan acá quedan al final, en orden de llegada.</p>'}`;
 }
 
 function confirmTag(p) {
   const s = confirmStatus(p);
+  if (p?.tentative === true) {
+    const note = s.note ? `<span class="reserved-free">${esc(s.note)}</span>` : '';
+    return `<span class="reserved-badge${s.note ? ' declined' : ''}">${esc(s.text)}</span>${note}`;
+  }
   return `<span class="confirm-tag ${s.cls}">${s.text}</span>`;
+}
+function confirmSpotButton(p) {
+  if (p?.tentative !== true) return '';
+  return `<button type="button" class="btn confirm-spot" data-confirm-spot="${esc(p.id)}">Confirmar lugar</button>`;
+}
+function clearReservedSpot(player) {
+  if (!player || player.tentative !== true) return;
+  run(app.store.clearTentative(player.id), 'Lugar confirmado');
 }
 
 const REMINDER_BANNER = 'Faltan 2 horas: mandá los recordatorios';
@@ -511,11 +533,29 @@ function moveWait(matchId, id, dir, disabled) {
   run(app.store.setWaitOrders(updates));
 }
 
-function promoteTop(m) {
-  const top = waitingOf(m.id)[0];
+function promoteToMatch(m, player, disabled) {
+  if (disabled || !player) return;
   const cap = m.capacity || CAPACITY;
-  if (!top || playersOf(m.id).length >= cap) return;
-  run(app.store.promoteFromWaiting(top.id), `${top.name} pasó al partido`);
+  if (playersOf(m.id).length >= cap) return;
+  const job = (async () => {
+    await app.store.promoteFromWaiting(player.id);
+    toast(`${player.name} pasó al partido`);
+    await offerPromotionWhatsApp(player, m);
+  })();
+  run(job);
+}
+
+async function offerPromotionWhatsApp(player, match) {
+  const phone = String(player?.phone || '').trim();
+  if (!phone) {
+    toast(`${player.name} no tiene WhatsApp para avisarle`);
+    return;
+  }
+  const token = await app.store.ensureConfirmToken(player.id);
+  if (!confirm(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`)) return;
+  const confirmUrl = confirmPageUrl({ matchId: match.id, playerId: player.id, token });
+  const text = promotionMessage({ player, match, venue: VENUE, confirmUrl });
+  window.open(waReminderUrl(phone, text), '_blank', 'noopener');
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch {
@@ -1079,6 +1119,7 @@ function partidosSection(person) {
     <p class="hint">Elegí los próximos y anotalo de una. Si el partido está completo, va a la lista de espera.</p>
     <ul class="slots" id="signup-list">${rows.join('')}</ul>
     ${empty}
+    <label class="checkline"><input type="checkbox" id="signup-tentative"> Lugar reservado (a confirmar)</label>
     <button type="button" class="btn primary block" id="btn-signup" disabled>Anotar en 0 partidos</button>
   </section>`;
 }
@@ -1115,7 +1156,11 @@ function bindPartidos(person) {
     if (!confirm(`¿Quitar a ${person.name} de ${labelDate(match.date)} ${match.time || ''} hs?`)) return;
     const promote = fromMain && top && playersOf(match.id).length - 1 < (match.capacity || CAPACITY)
       && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
-    const job = Promise.resolve(app.store.deletePlayer(player.id)).then(() => (promote ? app.store.promoteFromWaiting(top.id) : null));
+    const job = Promise.resolve(app.store.deletePlayer(player.id)).then(async () => {
+      if (!promote) return;
+      await app.store.promoteFromWaiting(top.id);
+      await offerPromotionWhatsApp(top, match);
+    });
     run(job, promote ? `${top.name} pasó al partido` : `${person.name} quitado`);
   });
   button.onclick = () => {
@@ -1131,6 +1176,7 @@ function bindPartidos(person) {
       if (!confirm(`En ${which} no hay lugar: va a quedar en la lista de espera. ¿Seguís?`)) return;
     }
     button.disabled = true;
+    const tentative = !!$('#signup-tentative')?.checked;
     const msg = waits.length === chosen.length
       ? (chosen.length === 1 ? `${person.name} quedó en la lista de espera` : `${person.name} quedó en la espera de ${chosen.length} partidos`)
       : waits.length
@@ -1140,7 +1186,10 @@ function bindPartidos(person) {
       for (const row of chosen) {
         const again = matchSignupState({ phone: person.phone, match: row.match, players: app.players });
         if (again.existing) continue;
-        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone }, app.who, { waiting: again.willWait });
+        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone }, app.who, {
+          waiting: again.willWait,
+          tentative: tentative && !again.willWait,
+        });
       }
       await rememberInRoster(person.name, person.phone);
     })(), msg);
@@ -1192,11 +1241,16 @@ async function rememberInRoster(name, phone) {
   }
 }
 
-function addSignedPlayer(m, { name, phone, rosterId }, asWait) {
-  const willWait = asWait || playersOf(m.id).length >= (m.capacity || CAPACITY);
+function addSignedPlayer(m, { name, phone, rosterId }, asWait, tentative) {
+  const full = playersOf(m.id).length >= (m.capacity || CAPACITY);
+  if (tentative && (asWait || full)) {
+    toast('No hay lugar libre para reservar.');
+    return;
+  }
+  const willWait = asWait || full;
   closeSheet();
   run((async () => {
-    await app.store.addPlayer(m, { name, phone, rosterId }, app.who, { waiting: asWait });
+    await app.store.addPlayer(m, { name, phone, rosterId }, app.who, { waiting: asWait, tentative: tentative === true && !willWait });
     await rememberInRoster(name, phone);
   })(), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
 }
@@ -1213,6 +1267,7 @@ function openPlayerForm(m, p, opts = {}) {
       <label class="field"><span>Nombre</span><input name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
         <div class="small muted" id="pf-phone">Característica + número. Sin 0 ni 15 también sirve. Si no está guardado, se agrega a Jugadores.</div></label>
+      ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
       <div class="field"><div class="err" id="pf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${p ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
@@ -1239,7 +1294,7 @@ function openPlayerForm(m, p, opts = {}) {
       const btn = e.target.closest('[data-pick]');
       if (!btn) return;
       const person = app.roster.find((r) => r.id === btn.dataset.pick);
-      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id }, asWait);
+      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id }, asWait, !!$('#player-tentative')?.checked);
     });
     setTimeout(() => find.focus(), 50);
   }
@@ -1260,7 +1315,7 @@ function openPlayerForm(m, p, opts = {}) {
         await app.store.updatePlayer(p.id, { name, phone });
         await rememberInRoster(name, phone);
       })(), 'Jugador actualizado');
-    } else addSignedPlayer(m, { name, phone }, asWait);
+    } else addSignedPlayer(m, { name, phone }, asWait, !!$('#player-tentative')?.checked);
   };
 }
 /* Pago del jugador */
@@ -1481,11 +1536,15 @@ function openPlayerMenu(m, p) {
     <div class="menu">
       ${p.phone ? `<a class="btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : ''}
       <button class="btn" id="pm-profile">Ver perfil</button>
+      ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
+      ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
       <button class="btn" id="pm-edit">${ICON.edit}Editar</button>
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, m.id); };
+  const spot = $('#pm-confirm-spot');
+  if (spot) spot.onclick = () => { closeSheet(); clearReservedSpot(p); };
   $('#pm-edit').onclick = () => openPlayerForm(m, p);
   $('#pm-del').onclick = () => {
     const fromMain = !isWaiting(p);
@@ -1494,7 +1553,11 @@ function openPlayerMenu(m, p) {
     const promote = fromMain && top && playersOf(m.id).length - 1 < (m.capacity || CAPACITY)
       && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
     closeSheet();
-    const job = Promise.resolve(app.store.deletePlayer(p.id)).then(() => (promote ? app.store.promoteFromWaiting(top.id) : null));
+    const job = Promise.resolve(app.store.deletePlayer(p.id)).then(async () => {
+      if (!promote) return;
+      await app.store.promoteFromWaiting(top.id);
+      await offerPromotionWhatsApp(top, m);
+    });
     run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);
   };
 }
@@ -1622,7 +1685,7 @@ async function boot() {
   });
   $('#demo-banner').hidden = app.store.mode === 'firebase';
   app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError }) => {
-    app.matches = matches || []; app.players = players || [];
+    app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
     app.roster = roster || [];
     app.organizers = organizers || [];
     app.prices = prices || null;
@@ -1652,6 +1715,24 @@ let reminderSeenAt = Date.now();
 let reminderTimer = 0;
 let reminderTimerAt = Infinity;
 const tokenPending = new Set();
+const clearingReservation = new Set();
+
+function releaseAnsweredReservations(players) {
+  return players.map((p) => {
+    if (!reservationClearedByAnswer(p)) {
+      clearingReservation.delete(p.id);
+      return p;
+    }
+    if (!clearingReservation.has(p.id)) {
+      clearingReservation.add(p.id);
+      Promise.resolve(app.store.clearTentative(p.id)).catch((e) => {
+        clearingReservation.delete(p.id);
+        console.error(e);
+      });
+    }
+    return { ...p, tentative: null, tentativeAt: null };
+  });
+}
 
 function backfillConfirmTokens() {
   for (const p of app.players) {

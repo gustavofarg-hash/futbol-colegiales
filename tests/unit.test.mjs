@@ -12,8 +12,9 @@ import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { toEpoch } from '../js/dates.js';
 import {
-  confirmPageUrl, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
-  needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, reminderLinks, reminderMessage, waReminderUrl, withinReminderWindow,
+  confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
+  needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
+  reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import {
@@ -361,6 +362,38 @@ test('recordatorio: token, link y mensaje', () => {
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', 'otro-token-largo-falso'), false);
   assert.equal(confirmationAllowed(player, 'otro-partido', a), false);
   assert.equal(confirmSummary([{ confirmed: 'si' }, { confirmed: 'no' }, { name: 'x' }]).text, 'Confirmados: 1 · No juegan: 1 · Sin respuesta: 1');
+});
+
+test('aviso al subir de la espera y lugar reservado', () => {
+  const url = 'https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-22_2100&p=p1&t=abc';
+  const msg = promotionMessage({
+    player: { name: 'Juan Pérez' },
+    match: { date: '2026-10-22', time: '21:00' },
+    venue: 'Polideportivo Colegiales',
+    confirmUrl: url,
+  });
+  assert.equal(msg, `¡Hola Juan Pérez! Se hizo un lugar en el fútbol 7 en Polideportivo Colegiales el jueves 22/10 a las 21:00 hs. ¿Confirmás tu presencia? ¿Querés que te deje anotado? Respondé en este link: ${url}`);
+  assert.equal(reservationClearedByAnswer({ tentative: true, confirmed: 'si' }), true);
+  assert.equal(reservationClearedByAnswer({ tentative: true, confirmed: 'no' }), false);
+  assert.equal(reservationClearedByAnswer({ confirmed: 'si' }), false);
+  const held = confirmStatus({ tentative: true, confirmed: 'si' });
+  assert.equal(held.text, 'Reservado · a confirmar');
+  assert.equal(held.cls, 'reserved');
+  assert.equal(held.note, undefined);
+  const declined = confirmStatus({ tentative: true, confirmed: 'no' });
+  assert.equal(declined.note, 'No juega · se puede liberar el lugar');
+  assert.equal(confirmStatus({ confirmed: 'si' }).text, '✅ Confirmó');
+  const sum = confirmSummary([
+    { tentative: true },
+    { tentative: true, confirmed: 'no' },
+    { confirmed: 'si' },
+    { name: 'x' },
+  ]);
+  assert.equal(sum.hold, 2);
+  assert.equal(sum.si, 1);
+  assert.equal(sum.no, 1);
+  assert.equal(sum.pending, 1);
+  assert.equal(sum.text, 'Confirmados: 1 · A confirmar: 2 · No juegan: 1 · Sin respuesta: 1');
 });
 
 test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {

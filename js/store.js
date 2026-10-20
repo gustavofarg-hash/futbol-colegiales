@@ -30,6 +30,8 @@
 //    confirmToken: string               (link de confirmar.html; se crea al anotar al jugador)
 //    confirmed: "si"|"no"               (respuesta del jugador)
 //    confirmedAt, reminderSentAt: number
+//    tentative: bool|null               (lugar reservado, a confirmar; ocupa cupo)
+//    tentativeAt: number|null
 //  roster/{rosterId}
 //    name, phone (dígitos wa.me, o vacío)
 //    createdBy, createdAt, updatedAt
@@ -204,6 +206,7 @@ class LocalStore {
     const mainCount = mates.filter((p) => p.waiting !== true).length;
     const waiting = opts.waiting === true || mainCount >= cap;
     const rosterId = String(data.rosterId || '').trim();
+    const hold = opts.tentative === true && !waiting;
     db.players[id] = {
       matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
       addedBy: who, createdAt: now, updatedAt: now,
@@ -211,6 +214,7 @@ class LocalStore {
       rosterAt: waiting ? null : now,
       confirmToken: newConfirmToken(),
       ...(rosterId ? { rosterId } : {}),
+      ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     this._save(db); return id;
   }
@@ -241,6 +245,9 @@ class LocalStore {
   }
   async promoteFromWaiting(id) {
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+  }
+  async clearTentative(id) {
+    await this.updatePlayer(id, { tentative: null, tentativeAt: null });
   }
   async ensureConfirmToken(id) {
     const p = this._load().players[id];
@@ -511,6 +518,7 @@ class FirebaseStore {
     const waiting = opts.waiting === true || mainCount >= cap;
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
+    const hold = opts.tentative === true && !waiting;
     const player = {
       matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
       addedBy: who, createdAt: now, updatedAt: now,
@@ -518,6 +526,7 @@ class FirebaseStore {
       rosterAt: waiting ? null : now,
       confirmToken: token,
       ...(rosterId ? { rosterId } : {}),
+      ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);
     await this._writeConfirmation(token, ref.id, player, match);
@@ -552,6 +561,9 @@ class FirebaseStore {
   }
   async promoteFromWaiting(id) {
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+  }
+  async clearTentative(id) {
+    await this.updatePlayer(id, { tentative: null, tentativeAt: null });
   }
   async ensureConfirmToken(id) {
     const p = this.state.players.find((x) => x.id === id);

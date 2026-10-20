@@ -39,7 +39,7 @@ body {
   background: var(--bg); color: var(--text);
   font-size: 1rem; line-height: 1.4;
   min-height: 100dvh;
-  padding-bottom: calc(96px + var(--safe-b));
+  padding-bottom: calc(180px + var(--safe-b));
 }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -208,6 +208,22 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .confirm-tag.ok { color: var(--green); }
 .confirm-tag.no { color: var(--danger); }
 .confirm-tag.pending { color: var(--muted); }
+.reserved-badge {
+  display: inline-block; margin-top: 4px; font-size: 0.75rem; font-weight: 800;
+  color: #1e3a8a; background: #dbeafe; border-radius: 99px; padding: 1px 8px;
+  white-space: normal;
+}
+.reserved-badge.declined { outline: 2px solid var(--danger); }
+.reserved-free { display: block; color: var(--danger); font-size: 0.75rem; font-weight: 800; }
+@media (prefers-color-scheme: dark) {
+  .reserved-badge { color: #dbeafe; background: #1e3a5f; }
+}
+.confirm-spot, .promote-btn {
+  flex: 0 1 76px; max-width: 92px; min-width: 0; min-height: 44px; padding: 4px 6px;
+  font-size: 0.72rem; line-height: 1.1; white-space: normal; text-align: center;
+}
+.checkline { display: flex; align-items: flex-start; gap: 10px; margin: 4px 0 12px; font-weight: 700; }
+.checkline input { width: 1.25rem; height: 1.25rem; margin-top: 2px; flex: none; }
 .home-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 14px; }
 .roster-nav { width: 100%; margin: 0 0 14px; }
 .home-nav .roster-nav { margin: 0; }
@@ -342,7 +358,7 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 .preview .row input { min-height: 42px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); width: 100%; font-size: 1rem; }
 
 .toast {
-  position: fixed; left: 50%; bottom: calc(92px + var(--safe-b)); transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: calc(168px + var(--safe-b)); transform: translateX(-50%);
   background: #111; color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 0.90625rem; z-index: 50;
   max-width: calc(100% - 32px); box-shadow: 0 6px 20px rgba(0,0,0,.25);
 }
@@ -375,6 +391,16 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
   .text-step { width: 32px; height: 32px; }
 }
 .actionbar-inner > * { flex: 1 1 0; min-width: 0; }
+.actionbar-inner.match-actions { flex-wrap: wrap; align-items: stretch; }
+.actionbar-inner.match-actions > * { flex: 1 1 140px; min-width: 0; }
+.actionbar .match-actions .share-btn {
+  flex: 0 0 44px; width: 44px; min-width: 44px; min-height: 44px; padding: 0;
+  background: transparent; border-color: transparent; color: var(--muted); align-self: center;
+}
+.actionbar .match-actions .share-btn svg { display: block; width: 22px; height: 22px; }
+.actionbar .match-actions .add-choice {
+  min-height: 64px; font-size: 1.0625rem; font-weight: 800; padding: 8px 12px; white-space: normal;
+}
 .detail-tools { flex-wrap: nowrap; }
 .detail-tools .btn { padding: 0 8px; font-size: 0.84375rem; gap: 6px; min-width: 0; }
 .detail-tools .btn svg { width: 18px; height: 18px; }
