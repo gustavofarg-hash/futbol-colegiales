@@ -3,7 +3,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
@@ -74,6 +74,12 @@ const app = {
   signupDraft: null,
   who: '',
   loaded: false,
+  history: [],
+  historyFilter: null,
+  historyMeta: null,
+  historyError: '',
+  matchMiss: {},
+  showLater: false,
 };
 window.__app = app; // útil para depurar / tests
 
@@ -197,28 +203,113 @@ function route() {
   if (name === 'partido' && id && extra === 'equipos') return { name: 'teams', id: decodeURIComponent(id) };
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'historial') return { name: 'history' };
-  if (name === 'jugadores') return { name: 'roster' };
-  if (name === 'pagos') return { name: 'pagos' };
+  if (name === 'jugadores') return { name: 'roster', pay: id === 'pagos' };
+  if (name === 'pagos') return { name: 'roster', pay: true };
   if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
 }
 window.addEventListener('hashchange', render);
 
+/* Al abrir la app (sesión nueva) siempre entra Próximos partidos, con “más adelante” cerrado.
+   Recargar o volver atrás, en la misma sesión, deja la pestaña y el desplegable como estaban. */
+function rememberLater(open) {
+  app.showLater = !!open;
+  try {
+    if (app.showLater) sessionStorage.setItem('f7c-later', '1');
+    else sessionStorage.removeItem('f7c-later');
+  } catch { /* modo privado */ }
+}
+function openOnUpcoming() {
+  try {
+    if (sessionStorage.getItem('f7c-session')) {
+      app.showLater = sessionStorage.getItem('f7c-later') === '1';
+      return;
+    }
+    sessionStorage.setItem('f7c-session', '1');
+    sessionStorage.removeItem('f7c-tab');
+    sessionStorage.removeItem('f7c-later');
+    const name = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || '';
+    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial';
+    if (section && location.hash && location.hash !== '#/' && location.hash !== '#') {
+      history.replaceState(null, '', `${location.pathname}${location.search}#/`);
+    }
+  } catch { /* modo privado */ }
+}
+openOnUpcoming();
+
 /* ───────── render ───────── */
+function savedTab() {
+  try {
+    const value = sessionStorage.getItem('f7c-tab');
+    if (value === 'roster' || value === 'history' || value === 'home') return value;
+  } catch {}
+  return 'home';
+}
+function hashForTab(tab) {
+  if (tab === 'history') return '#/historial';
+  if (tab === 'roster') return '#/jugadores';
+  return '#/';
+}
+function tabFor(r) {
+  if (r.name === 'history') return 'history';
+  if (r.name === 'roster') return 'roster';
+  if (r.name === 'home') return 'home';
+  if (r.name === 'match' || r.name === 'teams') {
+    const match = matchById(r.id);
+    return match?.date && match.date < todayISO() ? 'history' : 'home';
+  }
+  if (r.name === 'profile') {
+    if (app.profileMatchId) {
+      const match = matchById(app.profileMatchId);
+      return match?.date && match.date < todayISO() ? 'history' : 'home';
+    }
+    return 'roster';
+  }
+  return savedTab();
+}
+function paintTabs(r) {
+  const tab = tabFor(r);
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'history') {
+    try { sessionStorage.setItem('f7c-tab', tab); } catch {}
+  }
+  document.querySelectorAll('#tabbar a').forEach((link) => {
+    const on = link.dataset.tab === tab;
+    if (on) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history';
+  $('#btn-back').hidden = root || !app.loaded;
+  requestAnimationFrame(placeBars);
+}
+function placeBars() {
+  const header = document.querySelector('.topbar');
+  const bar = document.getElementById('tabbar');
+  const slot = document.getElementById('tab-slot');
+  const action = document.querySelector('#view .actionbar');
+  if (header) document.documentElement.style.setProperty('--header-h', `${header.offsetHeight}px`);
+  if (bar) {
+    document.documentElement.style.setProperty('--tabbar-h', `${bar.offsetHeight}px`);
+    if (slot && bar.parentElement === document.getElementById('sheet')) slot.style.minHeight = `${bar.offsetHeight}px`;
+  }
+  document.documentElement.style.setProperty('--actionbar-h', `${action ? action.offsetHeight : 0}px`);
+}
 function render() {
   const r = route();
-  $('#btn-back').hidden = r.name === 'home';
+  paintTabs(r);
   if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
-  else if (r.name === 'roster') renderRoster();
+  else if (r.name === 'roster') {
+    if (r.pay) renderPagos();
+    else renderRoster();
+  }
   else if (r.name === 'profile') renderProfile(r.id);
-  else if (r.name === 'pagos') renderPagos();
   else if (r.name === 'users') renderUsers();
   else renderHome();
+  requestAnimationFrame(placeBars);
 }
 
 function matchCard(m) {
@@ -242,33 +333,30 @@ function matchCard(m) {
   </a></li>`;
 }
 
-function homeNav(current) {
-  const n = pastMatches(app.matches).length;
-  const item = (id, href, label, name, wide) =>
-    `<a class="btn roster-nav${wide ? ' nav-wide' : ''}" id="${id}" href="${href}"${current === name ? ' aria-current="page"' : ''}>${label}</a>`;
-  return `<nav class="home-nav" aria-label="Menú">
-    ${item('btn-roster', '#/jugadores', `Jugadores${app.roster.length ? ` · ${app.roster.length}` : ''}`, 'roster')}
-    ${item('btn-pagos', '#/pagos', 'Pagos', 'pagos')}
-    ${item('btn-historial', '#/historial', `Historial${n ? ` · ${n}` : ''}`, 'historial', true)}
-  </nav>`;
+function rosterSwitch(pay) {
+  return `<div class="chips" id="roster-section">
+    <a class="btn chip ${pay ? '' : 'on'}" id="btn-roster-list" href="#/jugadores">Lista</a>
+    <a class="btn chip ${pay ? 'on' : ''}" id="btn-pagos" href="#/jugadores/pagos">Pagos</a>
+  </div>`;
 }
 
 function renderHome() {
-  const today = todayISO();
-  const limit = addDays(today, 6);
   const upcoming = currentMatches(app.matches);
   const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && minePlayer(p))) : upcoming;
-  const next = all.filter((m) => m.date <= limit);
-  const later = all.filter((m) => m.date > limit);
+  const { next, later } = splitNear(all);
+  const open = app.showLater && later.length > 0;
+  const emptyHint = later.length
+    ? 'Los que vienen después están en el botón de abajo.'
+    : 'Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.';
   $('#view').innerHTML = `
     ${reminderBanners(next)}
-    ${homeNav()}
     ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
-      <div class="empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
-      <p class="small">Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.</p></div>`}
-    ${later.length ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
+      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
+      <p class="small">${emptyHint}</p></div>`}
+    ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
+    ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
     <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn" id="btn-import">${ICON.paste}Importar desde texto</button>
@@ -276,6 +364,8 @@ function renderHome() {
     </div></div>`;
   $('#btn-add-match').onclick = () => openMatchForm();
   $('#btn-import').onclick = () => openImport();
+  const laterBtn = $('#btn-later');
+  if (laterBtn) laterBtn.onclick = () => { rememberLater(!app.showLater); renderHome(); };
   bindReminderBanners();
 }
 
@@ -341,20 +431,61 @@ function renderTeams(id) {
 }
 
 function renderHistory() {
-  const past = pastMatches(app.matches);
+  const past = app.history || [];
+  const filter = app.historyFilter || {};
+  const caption = app.historyMeta?.caption || 'Partidos pasados, los más recientes primero.';
+  const active = !!(filter.day || filter.from || filter.to);
   $('#view').innerHTML = `
-    ${homeNav('historial')}
     <h2 class="section">Historial de partidos</h2>
-    <p class="hint roster-lead">Los partidos cuya fecha ya pasó. Se pueden anotar pagos y corregir la lista.</p>
+    <form id="history-filter" class="history-filter">
+      <p class="hint roster-lead">Por defecto, los últimos 30. Una fecha, o un desde y hasta. Si completás la fecha, esa manda.</p>
+      <label class="field"><span>Una fecha</span><input type="date" id="hist-day" value="${esc(filter.day || '')}"></label>
+      <div class="row">
+        <label class="field"><span>Desde</span><input type="date" id="hist-from" value="${esc(filter.from || '')}"></label>
+        <label class="field"><span>Hasta</span><input type="date" id="hist-to" value="${esc(filter.to || '')}"></label>
+      </div>
+      <div class="history-actions">
+        <button type="submit" class="btn primary" id="hist-apply">Ver</button>
+        <button type="button" class="btn" id="hist-clear"${active ? '' : ' hidden'}>Limpiar</button>
+      </div>
+    </form>
+    <p class="hint" id="hist-caption">${esc(caption)}</p>
+    ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
     ${past.length ? `<ul class="match-list" id="list-history">${past.map(matchCard).join('')}</ul>` : `
-      <div class="empty" id="list-history"><div class="big">📅</div><p><b>Todavía no hay partidos pasados.</b></p>
-      <p class="small">Cuando pase el día, el partido sale del inicio y queda acá.</p></div>`}
+      <div class="empty" id="list-history"><div class="big">📅</div><p><b>${active ? 'Nada en ese filtro.' : 'Todavía no hay partidos pasados.'}</b></p>
+      <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}
     <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>`;
+  $('#history-filter').onsubmit = (e) => {
+    e.preventDefault();
+    const day = $('#hist-day').value;
+    const from = $('#hist-from').value;
+    const to = $('#hist-to').value;
+    const next = day ? { day } : ((from || to) ? { from, to } : null);
+    app.historyFilter = next;
+    app.store.setHistoryFilter(next);
+  };
+  const clear = $('#hist-clear');
+  if (clear) clear.onclick = () => {
+    app.historyFilter = null;
+    app.store.setHistoryFilter(null);
+  };
 }
 
 function renderMatch(id) {
   const m = matchById(id);
   if (!m) {
+    if (app.matchMiss[id] !== 'done') {
+      if (app.matchMiss[id] !== 'loading') {
+        app.matchMiss[id] = 'loading';
+        Promise.resolve(app.store.ensureMatch?.(id)).finally(() => {
+          app.matchMiss[id] = 'done';
+          const current = route();
+          if (current.name === 'match' && current.id === id) render();
+        });
+      }
+      $('#view').innerHTML = `<div class="empty" id="match-missing"><div class="big">⚽</div><p><b>Buscando el partido…</b></p></div>`;
+      return;
+    }
     $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
     return;
   }
@@ -820,16 +951,43 @@ async function shareText(text) {
 
 /* ───────── sheet (dialog) ───────── */
 const sheet = $('#sheet');
+const tabbar = $('#tabbar');
+const tabSlot = $('#tab-slot');
 let sheetLocked = false;
+function restoreTabs() {
+  if (!tabbar || !tabSlot || tabbar.parentElement === tabSlot) return;
+  tabSlot.append(tabbar);
+  tabSlot.style.minHeight = '';
+}
+/* Mientras hay una hoja abierta, las pestañas viven dentro del diálogo
+   para seguir tocables. La hoja queda debajo y no las tapa. */
+function liftTabs() {
+  if (!tabbar || !sheet.open) return;
+  placeBars();
+  if (tabbar.parentElement === sheet) return;
+  if (tabSlot) tabSlot.style.minHeight = `${tabbar.offsetHeight}px`;
+  sheet.prepend(tabbar);
+  placeBars();
+}
 function openSheet(html, { locked = false } = {}) {
   sheetLocked = locked;
+  restoreTabs();
   sheet.innerHTML = `<div class="sheet-body">${html}</div>`;
   if (!sheet.open) sheet.showModal();
+  liftTabs();
   const first = sheet.querySelector('[autofocus]');
   if (first) setTimeout(() => first.focus(), 50);
   return sheet;
 }
 function closeSheet() { sheetLocked = false; if (sheet.open) sheet.close(); }
+if (tabbar) tabbar.addEventListener('click', (e) => {
+  const link = e.target.closest('a[href]');
+  if (!link || !sheet.open) return;
+  e.preventDefault();
+  const href = link.getAttribute('href');
+  closeSheet();
+  if (href && location.hash !== href) location.hash = href;
+});
 sheet.addEventListener('cancel', (e) => { if (sheetLocked) e.preventDefault(); });
 sheet.addEventListener('click', (e) => {
   if (e.target === sheet && !sheetLocked) closeSheet();
@@ -848,7 +1006,7 @@ function openSettings() {
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
     <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
     <label class="checkline" id="set-mine-line"><input type="checkbox" id="set-mine"${app.mine ? ' checked' : ''}><span>Solo lo que anoté y lo que cobré</span></label>
-    <p class="hint">Oculta en el inicio, el partido y Pagos lo de los demás organizadores. El cupo del partido no cambia.</p>
+    <p class="hint">Oculta en Próximos partidos, el partido y Pagos lo de los demás organizadores. El cupo del partido no cambia.</p>
     <form id="price-form" novalidate>
       <p class="hint">Precios. Los ven todos al toque.</p>
       ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
@@ -863,7 +1021,6 @@ function openSettings() {
       ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
     </div>
     <div class="menu">
-      <a class="btn" id="set-history" href="#/historial">Historial de partidos</a>
       ${app.role === 'admin' ? '<a class="btn" id="set-users" href="#/usuarios">Usuarios</a>' : ''}
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -886,8 +1043,6 @@ function openSettings() {
   sheet.querySelectorAll('[data-text-size]').forEach((btn) => {
     btn.onclick = () => { saveTextSize(Number(btn.dataset.textSize)); syncTextSize(); };
   });
-  const history = $('#set-history');
-  if (history) history.onclick = () => closeSheet();
   const users = $('#set-users');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
@@ -990,6 +1145,7 @@ function openMatchForm(m) {
     if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
     if (editingAccess) data.access = readAccessForm();
     closeSheet();
+    if (splitNear([{ date: data.date }]).later.length) rememberLater(true);
     if (m) run(app.store.updateMatch(m.id, data, app.who), 'Partido actualizado');
     else run(app.store.addMatch({ ...data, source: 'manual', capacity: CAPACITY }, app.who), 'Partido agregado');
   };
@@ -1052,6 +1208,7 @@ function openImportPreview(text, found) {
   if (save) save.onclick = () => {
     const sel = items.filter((i) => i.on && i.date && i.time);
     if (!sel.length) return;
+    if (sel.some((item) => splitNear([{ date: item.date }]).later.length)) rememberLater(true);
     closeSheet();
     run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, capacity: CAPACITY, access: publicAccess(actor()) })), app.who),
       `${sel.length} partido${sel.length > 1 ? 's' : ''} importado${sel.length > 1 ? 's' : ''}`);
@@ -1074,6 +1231,7 @@ function renderRoster() {
     </li>`).join('');
   $('#view').innerHTML = `
     <h2 class="section">Jugadores</h2>
+    ${rosterSwitch(false)}
     <p class="hint roster-lead">Lista guardada de nombre y WhatsApp. Se comparte entre los dos.</p>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
     <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
@@ -1094,6 +1252,7 @@ function renderRoster() {
     const open = e.target.closest('[data-roster-open]');
     if (open) {
       app.profileMatchId = null;
+      app.profilePay = false;
       location.hash = `#/jugador/${encodeURIComponent(open.dataset.rosterOpen)}`;
     }
   };
@@ -1164,6 +1323,7 @@ function deleteRosterPlayer(person) {
 
 const noteId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 app.profileMatchId = null;
+app.profilePay = false;
 app.wantPhoneForm = false;
 
 async function ensureRoster({ name, phone, rosterId, phoneKey: key }) {
@@ -1189,6 +1349,7 @@ async function ensureRoster({ name, phone, rosterId, phoneKey: key }) {
 
 async function openPlayerProfile(player, matchId) {
   if (!player) return;
+  app.profilePay = false;
   app.profileMatchId = matchId || null;
   try {
     let id = player.rosterId && app.roster.some((person) => person.id === player.rosterId) ? player.rosterId : '';
@@ -1339,6 +1500,8 @@ function renderPagos() {
     return `${esc(item.name)}: ${esc(formatARS(item.collected))} · anotó ${item.added}${later}`;
   }).join(' · ');
   $('#view').innerHTML = `
+    <h2 class="section">Jugadores</h2>
+    ${rosterSwitch(true)}
     <h2 class="section">Pagos</h2>
     <p class="hint roster-lead">Cuánto le pagó cada jugador a cada organizador, y quién lo anotó. Transfiere después no entra en lo cobrado hasta marcarlo.</p>
     <p class="mine-line" id="mine-stats">${esc(mineSummary(app.players, app.who).text)}</p>
@@ -1354,6 +1517,7 @@ function renderPagos() {
     const open = e.target.closest('[data-pay-open]');
     if (!open) return;
     app.profileMatchId = null;
+    app.profilePay = true;
     location.hash = `#/jugador/${encodeURIComponent(open.dataset.payOpen)}`;
   };
 }
@@ -2087,6 +2251,7 @@ function syncTextSize() {
     btn.classList.toggle('primary', on);
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
+  requestAnimationFrame(placeBars);
 }
 
 async function boot() {
@@ -2097,10 +2262,18 @@ async function boot() {
     if (r.name === 'teams') { location.hash = `#/partido/${encodeURIComponent(r.id)}`; return; }
     if (r.name === 'match') {
       const m = matchById(r.id);
-      if (m?.date && m.date < todayISO()) { location.hash = '#/historial'; return; }
+      location.hash = m?.date && m.date < todayISO() ? '#/historial' : '#/';
+      return;
     }
+    if (r.name === 'profile') {
+      if (app.profileMatchId) { location.hash = `#/partido/${encodeURIComponent(app.profileMatchId)}`; return; }
+      location.hash = app.profilePay ? '#/jugadores/pagos' : '#/jugadores';
+      return;
+    }
+    if (r.name === 'users') { location.hash = hashForTab(savedTab()); return; }
     location.hash = '#/';
   };
+  window.addEventListener('resize', placeBars);
   $('#btn-text-smaller').onclick = () => { stepTextSize(-1); syncTextSize(); };
   $('#btn-text-bigger').onclick = () => { stepTextSize(1); syncTextSize(); };
   syncTextSize();
@@ -2139,8 +2312,11 @@ async function boot() {
   });
   $('#demo-banner').hidden = app.store.mode === 'firebase';
   app.store.setActor(app.session.user);
-  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError }) => {
+  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError, history, historyMeta, historyError }) => {
     app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
+    app.history = history || [];
+    app.historyMeta = historyMeta || null;
+    app.historyError = historyError || '';
     app.roster = roster || [];
     app.organizers = organizers || [];
     app.prices = prices || null;
@@ -2161,7 +2337,10 @@ async function boot() {
   render();
   armReminderTimer();
   // refrescar etiquetas "Hoy/Mañana"; al cambiar el día, el partido pasa al historial (no se borra)
-  setInterval(() => { if (!sheet.open || !sheet.querySelector('input, textarea')) render(); }, 60_000);
+  setInterval(() => {
+    app.store?.syncDay?.();
+    if (!sheet.open || !sheet.querySelector('input, textarea')) render();
+  }, 60_000);
 }
 
 // El aviso del navegador solo sale si la página está abierta cuando se cumplen
@@ -2259,6 +2438,12 @@ async function fixOverflow() {
   finally { fixingOverflow = false; }
 }
 
-sheet.addEventListener('close', () => { app.refreshPaySheet = null; pendingRender = false; render(); });
+sheet.addEventListener('close', () => {
+  restoreTabs();
+  placeBars();
+  app.refreshPaySheet = null;
+  pendingRender = false;
+  render();
+});
 
 boot().catch((e) => { console.error(e); showError('Error al iniciar la app: ' + e.message); });

@@ -78,10 +78,30 @@ check('Modo demo (no escribe en Firestore)', demoMode === 'demo', String(demoMod
 if (demoMode !== 'demo') { await browser.close(); process.exit(1); }
 check('Arranca sin partidos', await page.isVisible('text=No hay partidos en los próximos 7 días'));
 check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
+const tabLabels = await page.$$eval('#tabbar a', (els) => els.map((el) => el.textContent.trim()));
+check('Tres pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial']), tabLabels.join(' | '));
+check('Próximos partidos queda activo', await page.getAttribute('#tab-proximos', 'aria-current') === 'page');
 await page.click('#btn-settings');
 check('Ajustes dice quién entró', (await page.textContent('#set-who')).includes('Entraste como Gustavo'));
 check('El filtro de lo propio arranca apagado', !(await page.isChecked('#set-mine')));
-await page.click('dialog.sheet [data-close]');
+const settingsBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const body = document.querySelector('.sheet-body').getBoundingClientRect();
+  const labels = [...document.querySelectorAll('#tabbar a')].map((el) => el.textContent.trim());
+  return {
+    labels,
+    tabsInView: tabs.top >= 0 && tabs.bottom <= window.innerHeight && tabs.height >= 44,
+    sheetBelow: body.top >= tabs.bottom - 1,
+    inDialog: document.querySelector('#tabbar').parentElement?.id === 'sheet',
+  };
+});
+check('En Ajustes las tres pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial']), JSON.stringify(settingsBars));
+check('La hoja de Ajustes no queda debajo de las pestañas', settingsBars.sheetBelow, JSON.stringify(settingsBars));
+await page.click('#btn-historial');
+await page.waitForSelector('#history-filter');
+check('Desde Ajustes, Historial abre esa sección', (await page.evaluate(() => location.hash)) === '#/historial' && await page.locator('dialog.sheet[open]').count() === 0 && await page.getAttribute('#btn-historial', 'aria-current') === 'page');
+await page.click('#tab-proximos');
+await page.waitForSelector('text=No hay partidos en los próximos 7 días');
 
 // Agregar partido
 await page.click('#btn-add-match');
@@ -92,6 +112,30 @@ await page.click('#match-form button[type=submit]');
 await page.waitForSelector('.match-card');
 let cardText = (await page.textContent('.match-card')).replace(/\s+/g, ' ');
 check('Partido agregado aparece en la lista', /Jueves 22\/10/.test(cardText) && /21:00 hs/.test(cardText) && /0\/14/.test(cardText), cardText.trim());
+await page.click('.match-card');
+await page.waitForSelector('#btn-add-player');
+await page.evaluate(() => window.scrollTo(0, 600));
+const matchBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const bar = document.querySelector('.actionbar').getBoundingClientRect();
+  const share = document.querySelector('#btn-share').getBoundingClientRect();
+  const add = document.querySelector('#btn-add-player').getBoundingClientRect();
+  const inside = (el, box) => el.top >= box.top - 1 && el.bottom <= box.bottom + 1 && el.left >= box.left - 1 && el.right <= box.right + 1;
+  return {
+    tabsStuck: tabs.top >= 0 && tabs.bottom < window.innerHeight / 2 && tabs.bottom <= window.innerHeight,
+    apart: bar.top >= tabs.bottom + 8,
+    barInView: bar.top >= 0 && bar.bottom <= window.innerHeight + 1,
+    share: inside(share, bar) && share.width > 20,
+    add: inside(add, bar) && add.bottom <= window.innerHeight + 1,
+  };
+});
+check('Al bajar el partido las pestañas siguen arriba', matchBars.tabsStuck, JSON.stringify(matchBars));
+check('La barra de compartir y agregar no queda tapada', matchBars.apart && matchBars.barInView && matchBars.share && matchBars.add, JSON.stringify(matchBars));
+await page.click('#btn-roster');
+await page.waitForSelector('#roster-section');
+check('Desde el partido, Jugadores abre el listado', (await page.evaluate(() => location.hash)) === '#/jugadores' && await page.getAttribute('#btn-roster', 'aria-current') === 'page');
+await page.click('#tab-proximos');
+await page.waitForSelector('.match-card');
 
 // Importar desde texto
 await page.click('#btn-import');
@@ -114,7 +158,18 @@ await page.click('#imp-save');
 await page.waitForFunction(() => document.querySelectorAll('.match-card').length === 5);
 const order = await page.$$eval('.match-card .match-title', (els) => els.map((e) => e.textContent));
 check('Lista ordenada cronológicamente', JSON.stringify(order) === JSON.stringify(['Martes 20/10', 'Miércoles 21/10', 'Jueves 22/10', 'Sábado 24/10', 'Lunes 26/10']), order.join(', '));
-check('Partido a más de 7 días va a "Más adelante"', (await page.$$('#list-later .match-card')).length === 1 && (await page.$$('#list-next .match-card')).length === 4);
+check('El lunes 26/10 entra en los próximos 7 días', await page.locator('#list-next .match-card:has-text("26/10")').count() === 1 && await page.locator('#btn-later').count() === 0);
+await page.evaluate(async () => {
+  await window.__app.store.addMatch({ date: '2026-10-28', time: '21:00', note: 'Lejos', capacity: 14 }, window.__app.who);
+});
+await page.waitForSelector('#btn-later');
+check('Ver más adelante muestra la cantidad', (await page.textContent('#btn-later')).replace(/\s+/g, ' ').trim() === 'Ver más adelante (1)');
+check('Más adelante arranca cerrado', await page.locator('#list-later').count() === 0 && await page.locator('#list-next .match-card:has-text("28/10")').count() === 0);
+await page.click('#btn-later');
+await page.waitForSelector('#list-later .match-card:has-text("28/10")');
+check('Ver más adelante despliega los que siguen', await page.locator('#list-next .match-card').count() === 5 && await page.locator('#list-later .match-card').count() === 1);
+await page.click('#btn-later');
+await page.waitForFunction(() => !document.querySelector('#list-later') && document.querySelector('#btn-later')?.textContent.includes('Ver más adelante'));
 check('Badge "Mañana" en el partido del martes', (await page.textContent('#list-next .match-card >> nth=0')).includes('Mañana'));
 
 // Detalle y jugadores
@@ -681,7 +736,7 @@ await page.waitForFunction(() => {
   return names.length === 1 && names[0] === 'José Pérez';
 });
 check('Buscar jose encuentra a José Pérez', true);
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('.match-card');
 await page.click('.match-card:has-text("Martes 20/10")');
 await page.click('#btn-add-player');
@@ -720,7 +775,7 @@ await page.fill('#roster-form [name=phone]', '11 4444-5555');
 await page.click('#roster-form button[type=submit]');
 check('No duplica el mismo WhatsApp', (await page.textContent('#rf-err')).includes('ya tiene ese WhatsApp'));
 await page.click('#roster-form [data-close]');
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('.match-card');
 
 // Perfil: tocar al jugador, nivel, posiciones, nota y estadística de un partido ya jugado
@@ -753,7 +808,9 @@ await page.locator('#roster-list .who', { hasText: 'Ernesto P.' }).click();
 await page.waitForSelector('#profile');
 check('Desde Jugadores es el mismo perfil', (await page.textContent('#level-val')) === '8' && (await page.textContent('#notes')).includes('Hizo un gol'));
 await page.click('#btn-back');
-await page.waitForSelector('#btn-roster');
+await page.waitForSelector('#roster-list');
+await page.click('#tab-proximos');
+await page.waitForSelector('.match-card');
 
 await page.click('.match-card:has-text("Miércoles 21/10")');
 await page.click('#btn-add-player');
@@ -771,9 +828,7 @@ await page.click('#phone-form button[type=submit]');
 await page.waitForSelector('#profile-wa');
 check('Desde el perfil se carga el WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491177778888'));
 await page.click('#btn-back');
-await page.waitForSelector('#btn-roster');
-
-// Resumen de pagos (sigue la sesión de Martín) y alta de usuarios (solo el admin)
+await page.click('#btn-roster');
 await page.click('#btn-pagos');
 await page.waitForSelector('#pay-summary');
 const orgTotals = (await page.textContent('#org-totals')).replace(/\s+/g, ' ');
@@ -803,6 +858,7 @@ await page.evaluate(() => { location.hash = '#/usuarios'; });
 await page.waitForFunction(() => (document.body.innerText || '').includes('Solo el administrador puede crear o desactivar organizadores'));
 check('Martín no crea ni borra organizadores', (await page.locator('#user-form').count()) === 0 && (await page.locator('[data-user-del]').count()) === 0);
 await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('#btn-add-match');
 check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-match'));
 
@@ -872,7 +928,7 @@ await page.evaluate(() => { location.hash = '#/pagos'; });
 await page.waitForSelector('#pending-list');
 const pendingScreen = (await page.locator('#pending-list').innerText()).replace(/\s+/g, ' ');
 check('Pagos lista a quien transfiere después', pendingScreen.includes('Ana Hoy') && pendingScreen.includes('Transfiere después $1.500') && (await page.textContent('#pending-total')).includes('$1.500'), pendingScreen);
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.click('.match-card:has-text("Lunes 19/10")');
 await page.click('.slot:has-text("Ana Hoy") .pay-btn');
 await page.click('#btn-receive-pending');
@@ -1155,6 +1211,23 @@ const i18 = historyOrder.indexOf('Domingo 18/10');
 const i15 = historyOrder.indexOf('Jueves 15/10');
 const i12 = historyOrder.indexOf('Lunes 12/10');
 check('El historial lista lo pasado, más reciente primero', i18 !== -1 && i15 !== -1 && i12 !== -1 && i18 < i15 && i15 < i12, historyOrder.join(', '));
+await page.fill('#hist-day', '2026-10-18');
+await page.click('#hist-apply');
+await page.waitForFunction(() => [...document.querySelectorAll('#list-history .match-title')].map((el) => el.textContent).join('|') === 'Domingo 18/10');
+check('Filtrar por una fecha deja ese día', (await page.textContent('#hist-caption')).includes('Domingo 18/10'));
+await page.click('#hist-clear');
+await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+await page.fill('#hist-from', '2026-10-12');
+await page.fill('#hist-to', '2026-10-15');
+await page.click('#hist-apply');
+await page.waitForFunction(() => {
+  const titles = [...document.querySelectorAll('#list-history .match-title')].map((el) => el.textContent);
+  return titles.includes('Jueves 15/10') && titles.includes('Lunes 12/10') && !titles.includes('Domingo 18/10');
+});
+check('Filtrar por rango desde-hasta', true);
+await page.click('#hist-clear');
+await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+check('Limpiar vuelve a los últimos partidos', await page.locator('#hist-clear').isHidden() && (await page.textContent('#hist-caption')).includes('más recientes primero'));
 const ayerCard = (await page.textContent('#list-history .match-card:has-text("Ayer")')).replace(/\s+/g, ' ');
 check('La tarjeta trae hora y cantidad de jugadores', /21:00 hs/.test(ayerCard) && /1\/14/.test(ayerCard) && /1 en espera/.test(ayerCard), ayerCard.trim());
 check('Hoy no entra al historial', await page.locator('#list-history .match-card:has-text("Hoy temprano")').count() === 0);
@@ -1175,6 +1248,7 @@ check('En el historial se puede registrar un pago tardío', true);
 await page.click('#btn-back');
 await page.waitForSelector('#list-history');
 check('Volver desde un partido pasado vuelve al historial', await page.locator('#list-history').count() === 1);
+check('La pestaña Historial sigue activa al volver', await page.getAttribute('#btn-historial', 'aria-current') === 'page' && await page.getAttribute('#tab-proximos', 'aria-current') !== 'page');
 await page.click('#btn-settings');
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');
@@ -1368,6 +1442,17 @@ await page.click('#list-next .match-card:has-text("22/10")');
 await page.waitForSelector('#btn-add-player');
 const overflowMatch = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en 360px no desborda el partido', overflowMatch <= 1, String(overflowMatch));
+const hugeBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const bar = document.querySelector('.actionbar').getBoundingClientRect();
+  const add = document.querySelector('#btn-add-player').getBoundingClientRect();
+  return {
+    apart: bar.top >= tabs.bottom + 4,
+    addVisible: add.top >= bar.top - 1 && add.bottom <= window.innerHeight + 1 && add.height >= 32,
+    tabsVisible: tabs.top >= 0 && tabs.bottom <= window.innerHeight && tabs.width <= window.innerWidth + 1,
+  };
+});
+check('Con letra Enorme las pestañas no tapan agregar jugador', hugeBars.apart && hugeBars.addVisible && hugeBars.tabsVisible, JSON.stringify(hugeBars));
 await page.click('#btn-teams');
 await page.waitForSelector('#team-board');
 const overflowTeams = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -1391,6 +1476,12 @@ const moneyRow = await page.evaluate(() => {
   };
 });
 check('En 360px el monto y el desplegable van en una fila', moneyRow.sameTop && moneyRow.inside && moneyRow.wide, JSON.stringify(moneyRow));
+const paySheet = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const body = document.querySelector('.sheet-body').getBoundingClientRect();
+  return body.top >= tabs.bottom - 1 && tabs.bottom <= window.innerHeight && body.bottom <= window.innerHeight + 1;
+});
+check('Con letra Enorme la hoja de pago queda debajo de las pestañas', paySheet);
 await page.click('#pay-form [data-close]');
 const confirmSize = await ctx.newPage();
 await confirmSize.setViewportSize({ width: 360, height: 740 });
@@ -1400,6 +1491,14 @@ check('confirmar.html usa el tamaño guardado', await confirmSize.evaluate(() =>
 const overflowConfirm = await confirmSize.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('confirmar.html en 360px no desborda', overflowConfirm <= 1, String(overflowConfirm));
 await confirmSize.close();
+
+const fresh = await ctx.newPage();
+fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+await fresh.clock.install({ time: NOW });
+await fresh.goto(`${BASE}#/historial`);
+await fresh.waitForFunction(() => document.querySelector('#tab-proximos')?.getAttribute('aria-current') === 'page' && location.hash !== '#/historial');
+check('Al abrir la app arranca en Próximos partidos', await fresh.evaluate(() => location.hash === '#/' || location.hash === '' || location.hash === '#'));
+await fresh.close();
 
 check('Sin errores de JS', errors.length === 0, errors.join(' | '));
 await browser.close();
