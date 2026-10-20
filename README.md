@@ -5,7 +5,8 @@ App web (PWA, se instala en el celular) para organizar los partidos de **fútbol
 ## Qué hace (v1)
 
 - **Inicio:** partidos de hoy y de los próximos 7 días (hoy se queda en esta lista todo el día), con día, fecha, hora y anotados (ej. `9/14`). Los que están más lejos aparecen en “Más adelante”.
-- **Historial de partidos:** cuando la fecha ya pasó, el partido sale del inicio y queda en Historial (menú del inicio y de Ajustes). El más reciente primero, con fecha, hora y cantidad de jugadores. Abrirlo es la misma pantalla del partido: se pueden anotar pagos tarde, editar jugadores y ver la espera. No se borra solo. Quién lo ve sigue siendo el permiso del partido (Solo yo incluido).
+- **Tres pestañas fijas:** Próximos partidos (hoy y los que vienen), Jugadores y Historial. Quedan abajo, siempre visibles, y la activa se recuerda al volver de un partido o de un perfil. El resumen de **Pagos** (saldos por organizador y transferencias pendientes) está dentro de Jugadores, en el filtro Pagos.
+- **Historial de partidos:** cuando la fecha ya pasó, el partido sale de Próximos partidos y queda en la pestaña Historial. El más reciente primero, con fecha, hora y cantidad de jugadores. Abrirlo es la misma pantalla del partido: se pueden anotar pagos tarde, editar jugadores y ver la espera. No se borra solo. Quién lo ve sigue siendo el permiso del partido (Solo yo incluido).
 - **Equipos:** en cada partido, Equipos reparte a los anotados (no a la lista de espera) entre Con pechera y Sin pechera. Un toque los mueve. Se ve el conteo (por ejemplo 7 y 7) y un aviso si quedó desbalanceado. Mezclar al azar y Limpiar. Se guarda en el partido (`teams.bib` y `teams.plain`) y lo ven al toque los que pueden ver ese partido; lo cambian los que pueden anotar. Si alguien se baja, sale del equipo. Compartir por WhatsApp arma el mensaje con el mismo link de siempre. También se consulta desde el Historial.
 - **Cancelar partido:** si hay jugadores (titulares o lista de espera), no se puede borrar. En ese lugar está **Cancelar partido**: queda `cancelled`, se ve el badge Cancelado en el inicio, en el detalle y en el Historial, y se puede reactivar. Sin jugadores, Borrar sigue igual. Al cancelar se puede escribir el motivo en Notas y la app pregunta si avisar por WhatsApp (un link por jugador, sin el link de confirmación). No salen recordatorios y la página de confirmación no pide sí o no.
 - **Notas:** texto libre del partido (`notes`, hasta 2000 caracteres), distinto de la nota corta de la tarjeta. Se edita al abrir el partido, también desde el Historial, y se guarda al toque. Lo cambian quienes pueden anotar.
@@ -176,7 +177,7 @@ El número no va más en `players` ni en `roster` (ahí cualquiera que puede lee
 
 Orden para publicar, en este orden:
 
-1. Primero esta versión de la app (service worker `f7c-v29`). Mientras sigan las reglas viejas, el intento de escribir el contacto falla y la app vuelve a guardar el teléfono en el jugador. Sigue andando, pero la privacidad todavía no es real.
+1. Primero esta versión de la app (service worker `f7c-v30`). Mientras sigan las reglas viejas, el intento de escribir el contacto falla y la app vuelve a guardar el teléfono en el jugador. Sigue andando, pero la privacidad todavía no es real.
 2. Enseguida, con la app nueva ya publicada, publicar `firestore.rules`. Ahí se abren `playerContacts` y `rosterContacts`, y un teléfono con dígitos en `players` o `roster` queda rechazado.
 3. Abrir la app una vez para que migre. Copia el teléfono al contacto (`visibleToAll: false`, dueño = quien lo agregó) y lo borra del jugador. Hasta que esa copia termina, el campo viejo sigue en el documento y quien puede leerlo lo ve en la red: la regla no puede esconder un campo que ya está.
 

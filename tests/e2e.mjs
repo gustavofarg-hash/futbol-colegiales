@@ -78,6 +78,9 @@ check('Modo demo (no escribe en Firestore)', demoMode === 'demo', String(demoMod
 if (demoMode !== 'demo') { await browser.close(); process.exit(1); }
 check('Arranca sin partidos', await page.isVisible('text=No hay partidos en los próximos 7 días'));
 check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
+const tabLabels = await page.$$eval('#tabbar a', (els) => els.map((el) => el.textContent.trim()));
+check('Tres pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial']), tabLabels.join(' | '));
+check('Próximos partidos queda activo', await page.getAttribute('#tab-proximos', 'aria-current') === 'page');
 await page.click('#btn-settings');
 check('Ajustes dice quién entró', (await page.textContent('#set-who')).includes('Entraste como Gustavo'));
 check('El filtro de lo propio arranca apagado', !(await page.isChecked('#set-mine')));
@@ -681,7 +684,7 @@ await page.waitForFunction(() => {
   return names.length === 1 && names[0] === 'José Pérez';
 });
 check('Buscar jose encuentra a José Pérez', true);
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('.match-card');
 await page.click('.match-card:has-text("Martes 20/10")');
 await page.click('#btn-add-player');
@@ -720,7 +723,7 @@ await page.fill('#roster-form [name=phone]', '11 4444-5555');
 await page.click('#roster-form button[type=submit]');
 check('No duplica el mismo WhatsApp', (await page.textContent('#rf-err')).includes('ya tiene ese WhatsApp'));
 await page.click('#roster-form [data-close]');
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('.match-card');
 
 // Perfil: tocar al jugador, nivel, posiciones, nota y estadística de un partido ya jugado
@@ -753,7 +756,9 @@ await page.locator('#roster-list .who', { hasText: 'Ernesto P.' }).click();
 await page.waitForSelector('#profile');
 check('Desde Jugadores es el mismo perfil', (await page.textContent('#level-val')) === '8' && (await page.textContent('#notes')).includes('Hizo un gol'));
 await page.click('#btn-back');
-await page.waitForSelector('#btn-roster');
+await page.waitForSelector('#roster-list');
+await page.click('#tab-proximos');
+await page.waitForSelector('.match-card');
 
 await page.click('.match-card:has-text("Miércoles 21/10")');
 await page.click('#btn-add-player');
@@ -771,9 +776,7 @@ await page.click('#phone-form button[type=submit]');
 await page.waitForSelector('#profile-wa');
 check('Desde el perfil se carga el WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491177778888'));
 await page.click('#btn-back');
-await page.waitForSelector('#btn-roster');
-
-// Resumen de pagos (sigue la sesión de Martín) y alta de usuarios (solo el admin)
+await page.click('#btn-roster');
 await page.click('#btn-pagos');
 await page.waitForSelector('#pay-summary');
 const orgTotals = (await page.textContent('#org-totals')).replace(/\s+/g, ' ');
@@ -803,6 +806,7 @@ await page.evaluate(() => { location.hash = '#/usuarios'; });
 await page.waitForFunction(() => (document.body.innerText || '').includes('Solo el administrador puede crear o desactivar organizadores'));
 check('Martín no crea ni borra organizadores', (await page.locator('#user-form').count()) === 0 && (await page.locator('[data-user-del]').count()) === 0);
 await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('#btn-add-match');
 check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-match'));
 
@@ -872,7 +876,7 @@ await page.evaluate(() => { location.hash = '#/pagos'; });
 await page.waitForSelector('#pending-list');
 const pendingScreen = (await page.locator('#pending-list').innerText()).replace(/\s+/g, ' ');
 check('Pagos lista a quien transfiere después', pendingScreen.includes('Ana Hoy') && pendingScreen.includes('Transfiere después $1.500') && (await page.textContent('#pending-total')).includes('$1.500'), pendingScreen);
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.click('.match-card:has-text("Lunes 19/10")');
 await page.click('.slot:has-text("Ana Hoy") .pay-btn');
 await page.click('#btn-receive-pending');
@@ -1175,6 +1179,7 @@ check('En el historial se puede registrar un pago tardío', true);
 await page.click('#btn-back');
 await page.waitForSelector('#list-history');
 check('Volver desde un partido pasado vuelve al historial', await page.locator('#list-history').count() === 1);
+check('La pestaña Historial sigue activa al volver', await page.getAttribute('#btn-historial', 'aria-current') === 'page' && await page.getAttribute('#tab-proximos', 'aria-current') !== 'page');
 await page.click('#btn-settings');
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');

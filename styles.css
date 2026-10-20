@@ -39,7 +39,7 @@ body {
   background: var(--bg); color: var(--text);
   font-size: 1rem; line-height: 1.4;
   min-height: 100dvh;
-  padding-bottom: calc(180px + var(--safe-b));
+  padding-bottom: calc(160px + var(--tabbar-h, 76px));
 }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -125,8 +125,8 @@ h2.section:first-child { margin-top: 4px; }
 
 /* Barra inferior de acciones */
 .actionbar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 9;
-  display: flex; gap: 10px; padding: 12px 14px calc(12px + var(--safe-b));
+  position: fixed; left: 0; right: 0; bottom: var(--tabbar-h, 76px); z-index: 9;
+  display: flex; gap: 10px; padding: 12px 14px;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   border-top: 1px solid var(--line);
@@ -232,11 +232,23 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .access-person label { display: flex; align-items: center; gap: 6px; font-weight: 700; min-width: 0; }
 .access-person .limit input { width: 4.2rem; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); padding: 4px 8px; }
 .checkline input { width: 1.25rem; height: 1.25rem; margin-top: 2px; flex: none; }
-.home-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 14px; min-width: 0; }
-.roster-nav { width: 100%; margin: 0 0 14px; }
-.home-nav .roster-nav { margin: 0; min-width: 0; white-space: normal; text-align: center; line-height: 1.15; padding-left: 8px; padding-right: 8px; }
-.home-nav .nav-wide { grid-column: 1 / -1; }
-.home-nav a[aria-current="page"] { border-color: var(--green); background: var(--green-soft); }
+.tabbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 12;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+  padding: 6px 8px calc(6px + var(--safe-b));
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line);
+}
+.tabbar a {
+  display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 48px;
+  padding: 6px 4px; border-radius: 12px; border: 1px solid transparent;
+  text-align: center; text-decoration: none; color: var(--muted);
+  font-weight: 800; font-size: 0.75rem; line-height: 1.15; overflow-wrap: anywhere;
+}
+.tabbar a[aria-current="page"] {
+  border-color: var(--green); background: var(--green-soft); color: var(--green);
+}
 .team-board { display: grid; gap: 8px; min-width: 0; }
 .team-counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-count {
@@ -395,7 +407,7 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 .preview .row input { min-height: 42px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); width: 100%; font-size: 1rem; }
 
 .toast {
-  position: fixed; left: 50%; bottom: calc(168px + var(--safe-b)); transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: calc(var(--tabbar-h, 76px) + 96px); transform: translateX(-50%);
   background: #111; color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 0.90625rem; z-index: 50;
   max-width: calc(100% - 32px); box-shadow: 0 6px 20px rgba(0,0,0,.25);
 }
