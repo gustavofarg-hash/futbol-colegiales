@@ -4,6 +4,7 @@ import { labelDate, toEpoch } from './dates.js';
 import { sameOrganizer } from './organizers.js';
 import { playerAccess } from './access.js';
 import { waSendUrl } from './phone.js';
+import { isShortCode, shortConfirmUrl } from './short.js';
 
 export const CONFIRM_ORIGIN = 'https://gustavofarg-hash.github.io/futbol-colegiales';
 
@@ -238,9 +239,11 @@ export function reminderLinks({ match, players, venue, origin, choice, android }
     const phone = String(p?.phone || '').trim();
     const token = p?.confirmToken;
     if (!phone || !token || !p.id) continue;
-    const confirmUrl = confirmPageUrl({ matchId: match.id, playerId: p.id, token, origin });
+    const confirmUrl = isShortCode(p.shortCode)
+      ? shortConfirmUrl(p.shortCode, origin)
+      : confirmPageUrl({ matchId: match.id, playerId: p.id, token, origin });
     const text = reminderMessage({ player: p, match, venue: venue || 'Polideportivo Colegiales', confirmUrl });
-    out.push({ name: p.name, phone, text, waUrl: waSendUrl({ phone, text, choice, android }), confirmUrl });
+    out.push({ id: p.id, name: p.name, phone, text, waUrl: waSendUrl({ phone, text, choice, android }), confirmUrl });
   }
   return out;
 }

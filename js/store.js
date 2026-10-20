@@ -30,7 +30,11 @@
 //    waiting: bool                      (true = lista de espera)
 //    waitOrder: number|null             (menor = más prioridad; null si es titular)
 //    rosterAt: number|null              (cuándo entró a la lista principal)
-//    confirmToken: string               (link de confirmar.html; se crea al anotar al jugador)
+//    confirmToken: string               (link largo de confirmar.html; se crea al anotar)
+//    shortCode: string                  (8 caracteres; el mensaje usa /c/?k=shortCode)
+//  links/{code}
+//    m: matchId, p: playerId, t: confirmToken
+//    El código es el id. Se lee sin cuenta, igual que confirmations. No se lista.
 //    confirmed: "si"|"no"               (respuesta del jugador)
 //    confirmedAt, reminderSentAt: number
 //    tentative: bool|null               (lugar reservado, a confirmar; ocupa cupo)
@@ -69,12 +73,14 @@
 // matchId determinístico: "YYYY-MM-DD_HHMM" (si ya existe se agrega un sufijo),
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
-import { toEpoch } from './dates.js';
+import { toEpoch, todayISO } from './dates.js';
+import { historyBounds, historyCaption, historyWindow, matchQueryPlan } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
+import { isShortCode, newShortCode } from './short.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
@@ -237,11 +243,17 @@ function countPatch(fs, match, delta, localCount) {
 
 /* ───────────── Modo demo (localStorage) ───────────── */
 class LocalStore {
-  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; }
+  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; this._historyFilter = null; }
   setActor(user) {
     this.actor = { uid: user?.uid || '', name: user?.name || '' };
     if (this.listeners.size) this._emit();
   }
+  setHistoryFilter(filter) {
+    this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
+    this._emit();
+  }
+  syncDay() { this._emit(); }
+  async ensureMatch() {}
   _load() {
     try {
       const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } };
@@ -268,6 +280,31 @@ class LocalStore {
     }
     for (const token of Object.keys(db.confirmations)) if (!live.has(token)) delete db.confirmations[token];
   }
+  _touchLinks(db) {
+    db.links ||= {};
+    const live = new Set();
+    for (const [pid, player] of Object.entries(db.players)) {
+      if (!player?.confirmToken) continue;
+      let code = player.shortCode;
+      const current = code && db.links[code];
+      if (!isShortCode(code) || (current && current.t && current.t !== player.confirmToken)) {
+        code = newShortCode();
+        while (db.links[code]) code = newShortCode();
+        player.shortCode = code;
+      }
+      db.links[code] = { m: player.matchId, p: pid, t: player.confirmToken };
+      live.add(code);
+    }
+    for (const code of Object.keys(db.links)) if (!live.has(code)) delete db.links[code];
+  }
+  async ensureShortLink(id) {
+    const db = this._load();
+    const player = db.players[id];
+    if (!player?.confirmToken) return '';
+    if (isShortCode(player.shortCode) && db.links?.[player.shortCode]?.t === player.confirmToken) return player.shortCode;
+    this._save(db);
+    return this._load().players[id]?.shortCode || '';
+  }
   _seedOrganizers(db) {
     if (Object.keys(db.organizers).length) return false;
     const now = Date.now();
@@ -291,6 +328,7 @@ class LocalStore {
     migratePhones(db);
     this._syncPlayerCounts(db);
     this._touchConfirmations(db);
+    this._touchLinks(db);
     localStorage.setItem(this.key, JSON.stringify(db));
     this._emit();
   }
@@ -318,13 +356,20 @@ class LocalStore {
     const roster = presentRows(Object.entries(db.roster), db.contacts.roster, uid);
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
     const prices = db.settings?.prices || null;
-    this.listeners.forEach((fn) => fn({ matches, players, roster, rosterError: null, organizers, organizersError: null, prices, pricesError: null }));
+    const windowed = historyWindow(matches, this._historyFilter);
+    const history = windowed.matches;
+    const { matches: _rows, ...historyMeta } = windowed;
+    this.listeners.forEach((fn) => fn({
+      matches, history, historyMeta, historyError: '',
+      players, roster, rosterError: null, organizers, organizersError: null, prices, pricesError: null,
+    }));
   }
   async init() {
     if (typeof window !== 'undefined') window.addEventListener('storage', (e) => { if (e.key === this.key) this._emit(); });
     const db = this._load();
     this._seedOrganizers(db);
     this._touchConfirmations(db);
+    this._touchLinks(db);
     localStorage.setItem(this.key, JSON.stringify(db));
   }
   subscribe(fn) { this.listeners.add(fn); setTimeout(() => this._emit()); return () => this.listeners.delete(fn); }
@@ -583,7 +628,43 @@ class FirebaseStore {
     this._migrated = new Set();
     this._migrating = false;
     this._contactsLive = false;
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {} };
+    this._linksLive = false;
+    this._shortCodes = new Map();
+    this._historyFilter = null;
+    this._queryDay = '';
+    this._named = {};
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {}, historyError: '' };
+  }
+  setHistoryFilter(filter) {
+    this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
+    if (this.fs) this._listenHistory();
+    else this._emit();
+  }
+  syncDay(now = Date.now()) {
+    const today = todayISO(new Date(now));
+    if (today === this._queryDay) return;
+    this._queryDay = today;
+    if (this.fs) {
+      this._listenUpcoming();
+      this._listenHistory();
+    }
+  }
+  async ensureMatch(id) {
+    if (!id || !this.fs) return;
+    if (this.state.matches.some((match) => match.id === id)) return;
+    const { doc, getDoc } = this.fs;
+    try {
+      const snap = await getDoc(doc(this.db, 'matches', id));
+      if (!snap.exists()) return;
+      const match = { id: snap.id, ...snap.data() };
+      if (this.actor?.uid && !canView(match, this.actor.uid)) return;
+      const opened = (this._buckets.matches.opened || []).filter((row) => row.id !== match.id);
+      opened.push(match);
+      this._buckets.matches.opened = opened;
+      this._rebuild('matches');
+    } catch (e) {
+      if (e?.code !== 'permission-denied') console.error(e);
+    }
   }
   setActor(user) {
     const next = { uid: user?.uid || '', name: user?.name || '' };
@@ -631,6 +712,79 @@ class FirebaseStore {
       try { un(); } catch { /* ya cerrado */ }
     }
     this._unsubs = [];
+    this._named = {};
+  }
+  _swap(name, un) {
+    const prev = this._named?.[name];
+    if (prev) {
+      try { prev(); } catch { /* ya cerrado */ }
+      this._unsubs = (this._unsubs || []).filter((fn) => fn !== prev);
+    }
+    this._named = this._named || {};
+    this._named[name] = un || null;
+    if (un) this._unsubs.push(un);
+  }
+  _accessIds() {
+    const ids = [EVERYONE];
+    if (this.actor?.uid) ids.unshift(this.actor.uid);
+    return ids;
+  }
+  _applyMatchPlan(plan) {
+    const { collection, query, where, orderBy, limit } = this.fs;
+    if (!plan || plan.empty) return null;
+    const accessIds = this._accessIds();
+    const parts = [];
+    for (const filter of plan.filters) {
+      if (filter.op === 'array-contains-any') parts.push(where(filter.field, filter.op, accessIds));
+      else parts.push(where(filter.field, filter.op, filter.value));
+    }
+    if (plan.orderBy?.length) parts.push(orderBy(plan.orderBy[0], plan.orderBy[1]));
+    if (plan.limit) parts.push(limit(plan.limit));
+    return query(collection(this.db, 'matches'), ...parts);
+  }
+  _takeMatchSnap(snap) {
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+  _listenUpcoming() {
+    const today = this._queryDay || todayISO();
+    const q = this._applyMatchPlan(matchQueryPlan('upcoming', null, today));
+    const { onSnapshot } = this.fs;
+    const un = onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
+      if (!snap.metadata.fromCache) this.serverOk = true;
+      this.state.pending = snap.metadata.hasPendingWrites;
+      this._buckets.matches.upcoming = this._takeMatchSnap(snap);
+      this._rebuild('matches');
+      this._backfillMatches(snap.docs);
+    }, (e) => this._onListenError(e));
+    this._swap('upcoming', un);
+  }
+  _listenHistory() {
+    const bounds = historyBounds(this._historyFilter);
+    this._historyBounds = bounds;
+    if (bounds.empty) {
+      this._buckets.matches.history = [];
+      this.state.historyError = '';
+      this._swap('history', null);
+      this._rebuild('matches');
+      return;
+    }
+    const q = this._applyMatchPlan(matchQueryPlan('history', bounds, bounds.before));
+    const { onSnapshot } = this.fs;
+    const un = onSnapshot(q, (snap) => {
+      this.state.historyError = '';
+      this._buckets.matches.history = this._takeMatchSnap(snap);
+      this._rebuild('matches');
+      this._backfillMatches(snap.docs);
+    }, (e) => {
+      if (e?.code === 'failed-precondition') {
+        this.state.historyError = e.message || 'Falta un índice de Firestore para el historial.';
+        this._buckets.matches.history = [];
+        this._rebuild('matches');
+        return;
+      }
+      this._onListenError(e);
+    });
+    this._swap('history', un);
   }
   _rebuild(kind) {
     const byId = new Map();
@@ -710,9 +864,10 @@ class FirebaseStore {
     this._stop();
     this._buckets = { matches: {}, players: {}, confirmations: {} };
     this._contactBuckets = { playerOwner: [], playerShared: [], rosterOwner: [], rosterShared: [] };
-    // Sin ventana de fechas: un partido viejo, sus jugadores y las confirmaciones
-    // se quedan. Nadie los borra solo. La lista ancha (sin viewers) la rechazan
-    // las reglas y queda vacía; la consulta por viewers trae todas las fechas.
+    // Próximos: date >= hoy, todos. Historial: date < hoy con límite 30, o el
+    // rango del filtro. Las dos consultas filtran viewers. Un partido viejo no
+    // se borra: si no está en la página, se lee por id al abrirlo.
+    this._queryDay = todayISO();
     const { collection, doc, query, where, onSnapshot } = this.fs;
     const watch = (ref, opts, onNext, onErr) => {
       const next = (snap) => { this._deniedRetries = 0; onNext(snap); };
@@ -732,18 +887,8 @@ class FirebaseStore {
       }
       this._fail(e);
     };
-    watch(collection(this.db, 'matches'), { includeMetadataChanges: true }, (snap) => {
-      if (!snap.metadata.fromCache) this.serverOk = true;
-      this.state.pending = snap.metadata.hasPendingWrites;
-      this._buckets.matches.broad = take(snap);
-      this._rebuild('matches');
-      this._backfillMatches(snap.docs);
-    }, legacyDenied('matches'));
-    watch(query(collection(this.db, 'matches'), where('viewers', 'array-contains-any', accessIds)), { includeMetadataChanges: true }, (snap) => {
-      if (!snap.metadata.fromCache) this.serverOk = true;
-      this._buckets.matches.narrow = take(snap);
-      this._rebuild('matches');
-    });
+    this._listenUpcoming();
+    this._listenHistory();
     watch(collection(this.db, 'players'), null, (snap) => {
       this._buckets.players.broad = take(snap);
       this._rebuild('players');
@@ -873,9 +1018,15 @@ class FirebaseStore {
     const shown = players.map((player) => attachPhone(player, this.state.playerContacts?.[player.id], uidView));
     const roster = (this.state.roster || []).map((person) => attachPhone(person, this.state.rosterContacts?.[person.id], uidView));
     const { playerContacts: _playerContacts, rosterContacts: _rosterContacts, ...rest } = this.state;
+    const bounds = this._historyBounds || historyBounds(this._historyFilter);
+    const history = (this._buckets.matches?.history || [])
+      .filter((match) => !uid || canView(match, uid))
+      .sort((a, b) => (b.startsAt ?? toEpoch(b.date, b.time)) - (a.startsAt ?? toEpoch(a.date, a.time)) || String(b.id).localeCompare(String(a.id)));
     return {
       ...rest,
       matches,
+      history,
+      historyMeta: { ...bounds, caption: historyCaption(bounds, history.length) },
       confirmations,
       roster,
       players: overlayConfirmations(shown, confirmations),
@@ -1078,6 +1229,7 @@ class FirebaseStore {
       }
     }
     await this._writeConfirmation(token, ref.id, player, match);
+    await this.ensureShortLink(ref.id, { matchId: match.id, confirmToken: token });
     return ref.id;
   }
   async setTeams(id, teams, who) {
@@ -1164,6 +1316,41 @@ class FirebaseStore {
   async clearTentative(id) {
     await this.updatePlayer(id, { tentative: null, tentativeAt: null });
   }
+  async ensureShortLink(id, hint) {
+    const p = this.state.players.find((x) => x.id === id) || hint || null;
+    const token = p?.confirmToken || hint?.confirmToken || '';
+    if (!token) return '';
+    const known = isShortCode(p?.shortCode) ? p.shortCode : (this._shortCodes.get(id) || '');
+    if (isShortCode(known)) return known;
+    const mint = this._mintShortLink(id, p?.matchId || hint?.matchId || '', token).catch((e) => {
+      if (e?.code === 'permission-denied') this._linksLive = false;
+      else console.error(e);
+      return '';
+    });
+    return await Promise.race([
+      mint,
+      new Promise((resolve) => setTimeout(() => resolve(''), 2000)),
+    ]);
+  }
+  async _mintShortLink(id, matchId, token) {
+    const { doc, getDoc, setDoc, updateDoc } = this.fs;
+    for (let n = 0; n < 4; n++) {
+      const code = newShortCode();
+      const ref = doc(this.db, 'links', code);
+      const cur = await getDoc(ref);
+      if (cur.exists()) continue;
+      await setDoc(ref, { m: matchId, p: id, t: token });
+      try {
+        await updateDoc(doc(this.db, 'players', id), { shortCode: code });
+      } catch (e) {
+        if (e?.code !== 'permission-denied') console.error(e);
+      }
+      this._linksLive = true;
+      this._shortCodes.set(id, code);
+      return code;
+    }
+    return '';
+  }
   async ensureConfirmToken(id) {
     const p = this.state.players.find((x) => x.id === id);
     if (!p) throw new Error('Jugador inexistente');
@@ -1173,6 +1360,7 @@ class FirebaseStore {
     const match = this.state.matches.find((item) => item.id === fresh.matchId);
     // Aunque el token ya exista: crea la ficha si falta y no toca la respuesta.
     await this._writeConfirmation(token, id, { ...fresh, confirmToken: token }, match);
+    await this.ensureShortLink(id, { matchId: fresh.matchId, confirmToken: token, shortCode: fresh.shortCode });
     return token;
   }
   async markReminderSent(id) {
@@ -1184,16 +1372,28 @@ class FirebaseStore {
     const match = this.state.matches.find((item) => item.id === player?.matchId);
     const nextTeams = dropPlayer(match?.teams, id);
     const localCount = this.state.players.filter((item) => item.matchId === player?.matchId).length;
-    const batch = writeBatch(this.db);
-    batch.delete(doc(this.db, 'players', id));
-    if (player?.confirmToken) batch.delete(doc(this.db, 'confirmations', player.confirmToken));
-    if (match) {
-      const patch = { ...countPatch(this.fs, match, -1, localCount), updatedAt: Date.now() };
-      if (nextTeams.changed) patch.teams = nextTeams.teams;
-      batch.update(doc(this.db, 'matches', match.id), patch);
+    const dropLink = isShortCode(player?.shortCode);
+    const commit = async (withLink) => {
+      const batch = writeBatch(this.db);
+      batch.delete(doc(this.db, 'players', id));
+      if (player?.confirmToken) batch.delete(doc(this.db, 'confirmations', player.confirmToken));
+      if (withLink) batch.delete(doc(this.db, 'links', player.shortCode));
+      if (match) {
+        const patch = { ...countPatch(this.fs, match, -1, localCount), updatedAt: Date.now() };
+        if (nextTeams.changed) patch.teams = nextTeams.teams;
+        batch.update(doc(this.db, 'matches', match.id), patch);
+      }
+      if (this._contactsLive) batch.delete(doc(this.db, 'playerContacts', id));
+      await batch.commit();
+    };
+    try {
+      await commit(dropLink);
+      if (dropLink) this._linksLive = true;
+    } catch (e) {
+      if (!dropLink || e?.code !== 'permission-denied') throw e;
+      this._linksLive = false;
+      await commit(false);
     }
-    if (this._contactsLive) batch.delete(doc(this.db, 'playerContacts', id));
-    await batch.commit();
   }
   _rosterDup(phone, id) {
     const key = phoneKey(canonicalWa(phone));

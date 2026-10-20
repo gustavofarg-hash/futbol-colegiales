@@ -7,16 +7,17 @@ import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { currentMatches, keptSignupIds, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
+import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { toEpoch } from '../js/dates.js';
+import { addDays, toEpoch } from '../js/dates.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
+import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
 import { cyclePlayer, dropPlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
@@ -351,6 +352,23 @@ test('lista de espera: al final, flechas y subir al primero', async () => {
   assert.equal(nextWaitOrder([{ waitOrder: 2 }, { waitOrder: 5 }]), 6);
 });
 
+test('link corto: código, url y el mismo destino', () => {
+  const code = newShortCode();
+  assert.equal(code.length, 8);
+  assert.equal(isShortCode(code), true);
+  assert.equal(isShortCode('corto'), false);
+  assert.equal(isShortCode(`${code}x`), false);
+  assert.equal(shortConfirmUrl(code), `https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=${code}`);
+  const token = 't'.repeat(24);
+  const landing = confirmTarget({
+    m: '2026-10-22_2100',
+    p: 'abc',
+    t: token,
+    href: 'http://127.0.0.1:18431/confirmar.html',
+  });
+  assert.equal(landing, `http://127.0.0.1:18431/confirmar.html?m=2026-10-22_2100&p=abc&t=${token}`);
+});
+
 test('recordatorio: token, link y mensaje', () => {
   const a = newConfirmToken();
   const b = newConfirmToken();
@@ -451,7 +469,17 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(links.length, 1);
   assert.equal(links[0].name, 'Juan Pérez');
   assert.equal(links[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-19_1500&p=p1&t=${token}`);
+  assert.equal(links[0].id, 'p1');
   assert.ok(links[0].waUrl.startsWith('https://wa.me/5491112345678?text='));
+  const short = 'Ab3x9Zk2';
+  const shortLinks = reminderLinks({
+    match,
+    players: [{ ...players[0], shortCode: short }],
+    venue: 'Polideportivo Colegiales',
+  });
+  assert.equal(shortLinks[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=${short}`);
+  assert.equal(decodeURIComponent(shortLinks[0].waUrl).includes(token), false);
+  assert.equal(decodeURIComponent(shortLinks[0].waUrl).includes(`/c/?k=${short}`), true);
   const businessLinks = reminderLinks({ match, players, venue: 'Polideportivo Colegiales', choice: 'business', android: true });
   assert.equal(businessLinks[0].waUrl.startsWith('https://wa.me/5491112345678?text='), true);
   assert.equal(businessLinks[0].waUrl.includes('package='), false);
@@ -979,8 +1007,63 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
     { id: 'manana', date: '2026-10-20', time: '19:00' },
   ];
   assert.deepEqual(currentMatches(matches, now).map((match) => match.id), ['hoy-temprano', 'hoy-noche', 'cancelado', 'manana']);
+  const horizon = [
+    { id: 'hoy', date: '2026-10-19', time: '21:00' },
+    { id: 'mas7', date: '2026-10-26', time: '21:00' },
+    { id: 'mas8', date: '2026-10-27', time: '21:00' },
+    { id: 'ayer', date: '2026-10-18', time: '21:00' },
+  ];
+  const split = splitNear(horizon, now);
+  assert.deepEqual(split.next.map((match) => match.id), ['hoy', 'mas7']);
+  assert.deepEqual(split.later.map((match) => match.id), ['mas8']);
+  assert.equal(split.limit, '2026-10-26');
   assert.deepEqual(pastMatches(matches, now).map((match) => match.id), ['ayer', 'viejo']);
   assert.deepEqual(upcomingMatches(matches, now).map((match) => match.id), ['hoy-noche', 'manana']);
+  const many = [];
+  for (let i = 0; i < 40; i++) {
+    const date = addDays('2026-10-18', -i);
+    many.push({ id: date, date, time: '21:00', startsAt: toEpoch(date, '21:00') });
+  }
+  many.push({ id: 'hoy', date: '2026-10-19', time: '10:00', startsAt: toEpoch('2026-10-19', '10:00') });
+  many.push({ id: 'despues', date: '2026-10-22', time: '21:00', startsAt: toEpoch('2026-10-22', '21:00') });
+  const recent = historyWindow(many, null, now);
+  assert.equal(recent.matches.length, HISTORY_PAGE);
+  assert.equal(recent.matches[0].id, '2026-10-18');
+  assert.equal(recent.matches.at(-1).id, addDays('2026-10-18', -(HISTORY_PAGE - 1)));
+  assert.equal(recent.matches.some((match) => match.date >= '2026-10-19'), false);
+  const outside = historyWindow(many, { day: '2026-09-09' }, now);
+  assert.equal(outside.matches.length, 1);
+  assert.equal(outside.matches[0].date, '2026-09-09');
+  assert.equal(historyWindow(many, { day: '2026-10-19' }, now).matches.length, 0);
+  const range = historyWindow(many, { from: '2026-10-15', to: '2026-10-12' }, now);
+  assert.deepEqual(range.matches.map((match) => match.date), ['2026-10-15', '2026-10-14', '2026-10-13', '2026-10-12']);
+  const visible = [
+    { id: 'solo', date: '2026-10-18', time: '21:00', viewers: ['gustavo'], createdByUid: 'gustavo' },
+    { id: 'abierto', date: '2026-10-18', time: '19:00', viewers: ['*'] },
+  ].filter((match) => canView(match, 'martin'));
+  assert.deepEqual(historyWindow(visible, { day: '2026-10-18' }, now).matches.map((match) => match.id), ['abierto']);
+  const bounds = historyBounds(null, now);
+  const plan = matchQueryPlan('history', bounds, '2026-10-19');
+  assert.equal(plan.limit, 30);
+  assert.deepEqual(plan.orderBy, ['date', 'desc']);
+  assert.ok(plan.filters.some((filter) => filter.op === 'array-contains-any' && filter.field === 'viewers'));
+  assert.ok(plan.filters.some((filter) => filter.field === 'date' && filter.op === '<' && filter.value === '2026-10-19'));
+  const ranged = matchQueryPlan('history', historyBounds({ from: '2026-10-01', to: '2026-10-10' }, now), '2026-10-19');
+  assert.equal(ranged.limit, null);
+  assert.ok(ranged.filters.some((filter) => filter.op === '>=' && filter.value === '2026-10-01'));
+  assert.ok(ranged.filters.some((filter) => filter.op === '<=' && filter.value === '2026-10-10'));
+  const upcoming = matchQueryPlan('upcoming', null, '2026-10-19');
+  assert.equal(upcoming.limit, null);
+  assert.deepEqual(upcoming.orderBy, ['date', 'asc']);
+  assert.ok(upcoming.filters.some((filter) => filter.op === '>=' && filter.value === '2026-10-19'));
+  const byDate = playerStats({
+    phone: '5491100002222',
+    players: [{ matchId: 'fuera', matchDate: '2026-10-15', phone: '5491100002222', waiting: false }],
+    matches: [],
+    now,
+  });
+  assert.equal(byDate.played, 1);
+  assert.equal(byDate.summary, 'Mayormente jueves');
 });
 
 test('equipos: toque, azar, baja y mensaje', () => {
