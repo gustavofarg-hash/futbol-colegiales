@@ -384,7 +384,7 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
   border: 1px solid var(--line); background: var(--bg); font-size: 1rem;
 }
 .field textarea { min-height: 140px; resize: vertical; }
-.field input:focus, .field textarea:focus { outline: 2px solid var(--green-2); outline-offset: 1px; border-color: transparent; }
+.field input:focus, .field textarea:focus, .field select:focus { outline: 2px solid var(--green-2); outline-offset: 1px; border-color: transparent; }
 .pay-money { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
 .field .pay-money input, .field .pay-money select { min-width: 0; width: auto; flex: 1 1 0; }
 .price-picks { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }

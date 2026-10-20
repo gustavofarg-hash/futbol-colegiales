@@ -1,4 +1,4 @@
-import { ACCESS_CODE, CAPACITY, VENUE } from '../config.js';
+import { ACCESS_CODE, VENUE } from '../config.js';
 import { createStore } from './store.js';
 import { parseMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
@@ -25,6 +25,9 @@ import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { cyclePlayer, emptyTeams, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import {
+  VENUES_DENIED_WRITE, capacityFor, defaultVenueId, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
+} from './venues.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -65,6 +68,8 @@ const app = {
   rosterError: null,
   organizers: [],
   organizersError: null,
+  venues: [],
+  venuesError: null,
   prices: null,
   pricesError: null,
   users: [],
@@ -307,6 +312,9 @@ function replaceView(html) {
 }
 function render() {
   const r = route();
+  const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : VENUE;
+  const brand = $('#venue-name');
+  if (brand) brand.textContent = shownVenue;
   const key = `${r.name}:${r.id || ''}:${r.pay ? 1 : 0}`;
   const same = key === renderKey;
   renderKey = key;
@@ -333,9 +341,15 @@ function render() {
   }
 }
 
+function placeOf(match) {
+  return venueLabel(match, app.venues);
+}
+function capOf(match) {
+  return matchCapacity(match);
+}
 function matchCard(m) {
   const n = playersOf(m.id).length;
-  const cap = m.capacity || CAPACITY;
+  const cap = capOf(m);
   const [, mo, d] = m.date.split('-').map(Number);
   const rel = relativeLabel(m.date);
   return `
@@ -344,6 +358,7 @@ function matchCard(m) {
     <div class="match-info">
       <div class="match-title">${esc(capitalize(labelDate(m.date)))}</div>
       <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(m.time || '--:--')} hs</span></div>
+      <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
       ${waitingOf(m.id).length ? `<div class="match-note">${waitingOf(m.id).length} en espera</div>` : ''}
     </div>
@@ -416,11 +431,11 @@ function renderTeams(id) {
       ${list.length ? `<ul class="team-list" id="${listId}">${list.map(row).join('')}</ul>` : `<p class="empty-wait" id="${listId}">Nadie</p>`}
     </section>`;
   const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
-  const share = teamsMessage({ when, venue: VENUE, players: main, teams });
+  const share = teamsMessage({ when, venue: placeOf(m), players: main, teams });
   if (!replaceView(`
     <section class="detail-head">
       <h1>Equipos</h1>
-      <div class="when">${esc(when)} · ${esc(VENUE)}</div>
+      <div class="when">${esc(when)} · ${esc(placeOf(m))}</div>
       <p class="hint">Con los anotados. La lista de espera no entra.</p>
       ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : '<p class="hint">Tocá un jugador para moverlo: sin asignar, con pechera, sin pechera.</p>'}
     </section>
@@ -517,7 +532,7 @@ function renderMatch(id) {
   }
   const everyone = playersOf(id);
   const ps = app.mine ? everyone.filter(minePlayer) : everyone;
-  const cap = m.capacity || CAPACITY;
+  const cap = capOf(m);
   const who = actor();
   const readOnly = !canAdd(m, who.uid);
   const block = addBlock(m);
@@ -558,7 +573,8 @@ function renderMatch(id) {
   if (!replaceView(`
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
-      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
+      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(placeOf(m))}</div>
+      <p class="hint" id="match-size">Fútbol ${perTeamOf(m)} contra ${perTeamOf(m)} · ${cap} jugadores</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
       <div class="match-notes" id="match-notes">
@@ -650,13 +666,13 @@ function confirmUrlFor(m, p) {
 function waMessage(m, p) {
   const first = (p.name || '').trim().split(/\s+/)[0];
   const link = confirmUrlFor(m, p);
-  return `¡Hola ${first}! Te anoté para el fútbol 7 en ${VENUE} el ${labelDate(m.date)} a las ${m.time} hs.` +
+  return `¡Hola ${first}! Te anoté para el fútbol 7 en ${placeOf(m)} el ${labelDate(m.date)} a las ${m.time} hs.` +
     (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽` + (link ? ` ${link}` : '');
 }
 function listText(m) {
   const ps = playersOf(m.id);
-  const cap = m.capacity || CAPACITY;
-  const lines = [`⚽ Fútbol 7 · ${VENUE}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
+  const cap = capOf(m);
+  const lines = [`⚽ Fútbol 7 · ${placeOf(m)}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
   if (m.note) lines.push(`📝 ${m.note}`);
   if (m.cancelled) lines.push('Cancelado');
   if (String(m.notes || '').trim()) lines.push(String(m.notes).trim());
@@ -787,7 +803,7 @@ async function openReminders(m) {
     shortCode: codes.get(p.id) || p.shortCode,
   }));
   const linkById = new Map(reminderLinks({
-    match: m, players: fresh, venue: VENUE,
+    match: m, players: fresh, venue: placeOf(m),
   }).map((row) => [row.id, row]));
   const paint = () => {
     const visible = showAll ? fresh : playersForOrganizer(fresh, app.who);
@@ -865,7 +881,7 @@ function moveWait(matchId, id, dir, disabled) {
 
 function promoteToMatch(m, player, disabled) {
   if (disabled || !player || addBlock(m)) return;
-  const cap = m.capacity || CAPACITY;
+  const cap = capOf(m);
   if (playersOf(m.id).length >= cap) return;
   const job = (async () => {
     await app.store.promoteFromWaiting(player.id);
@@ -927,7 +943,7 @@ function reactivateMatch(m) {
 
 async function offerCancelWhatsApp(match) {
   const people = [...playersOf(match.id), ...waitingOf(match.id)];
-  const links = cancelLinks({ match, players: people, venue: VENUE });
+  const links = cancelLinks({ match, players: people, venue: placeOf(match) });
   if (!links.length) {
     toast(people.some(phoneHidden) ? PRIVATE_WA_TEXT : 'Nadie tiene WhatsApp para avisar la cancelación.');
     return;
@@ -958,7 +974,7 @@ async function offerPromotionWhatsApp(player, match) {
   const confirmUrl = isShortCode(code)
     ? shortConfirmUrl(code)
     : confirmPageUrl({ matchId: match.id, playerId: player.id, token });
-  const text = promotionMessage({ player, match, venue: VENUE, confirmUrl });
+  const text = promotionMessage({ player, match, venue: placeOf(match), confirmUrl });
   openWa({ phone, text });
 }
 async function copyText(text) {
@@ -1047,8 +1063,11 @@ function openSettings() {
     <div class="text-size-choice" role="group" aria-label="Tamaño del texto">
       ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
     </div>
+    <div class="menu" id="set-sections">
+      <button type="button" class="btn" id="set-venues">Sedes</button>
+      ${app.role === 'admin' ? '<a class="btn" id="set-organizers" href="#/usuarios">Organizadores</a>' : ''}
+    </div>
     <div class="menu">
-      ${app.role === 'admin' ? '<a class="btn" id="set-users" href="#/usuarios">Usuarios</a>' : ''}
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
       ${ACCESS_CODE ? '<button class="btn" id="set-forget">Olvidar código de acceso</button>' : ''}
@@ -1070,7 +1089,9 @@ function openSettings() {
   sheet.querySelectorAll('[data-text-size]').forEach((btn) => {
     btn.onclick = () => { saveTextSize(Number(btn.dataset.textSize)); syncTextSize(); };
   });
-  const users = $('#set-users');
+  const venuesBtn = $('#set-venues');
+  if (venuesBtn) venuesBtn.onclick = () => openVenues();
+  const users = $('#set-organizers');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
     if (typeof Notification === 'undefined') { toast('Este navegador no muestra avisos'); return; }
@@ -1145,14 +1166,91 @@ function bindAccessForm() {
   sync();
 }
 
+function venueOptions(match) {
+  const choices = venueChoices(app.venues, { unreadable: !!app.venuesError, currentId: match?.venueId || '' });
+  const selected = match?.venueId && choices.some((item) => item.id === match.venueId)
+    ? match.venueId
+    : defaultVenueId(app.venues, { unreadable: !!app.venuesError });
+  return { choices, selected };
+}
+
+function openVenues() {
+  const rows = [...(app.venues || [])].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0) || String(a.name).localeCompare(String(b.name), 'es'));
+  const list = rows.length ? rows : venueChoices([], { unreadable: true });
+  openSheet(`
+    <h3>Sedes</h3>
+    <p class="hint">Aparecen al armar un partido. Desactivar la saca de los partidos nuevos. Los que ya la usan siguen mostrándola. No se borra.</p>
+    ${app.venuesError ? `<p class="hint" id="venues-error">${esc(app.venuesError)}</p>` : ''}
+    <ul class="slots" id="venue-list">${list.map((venue) => `
+      <li class="slot" data-venue="${esc(venue.id)}">
+        <div class="who">
+          <div class="name">${esc(venue.name)}</div>
+          <div class="sub">${venue.active === false ? 'Inactiva' : 'Activa'}</div>
+        </div>
+        <button type="button" class="btn" data-venue-edit="${esc(venue.id)}">Editar</button>
+        <button type="button" class="btn" data-venue-active="${esc(venue.id)}">${venue.active === false ? 'Activar' : 'Desactivar'}</button>
+      </li>`).join('')}</ul>
+    <form id="venue-form" novalidate>
+      <label class="field"><span>Nueva sede</span><input name="name" maxlength="80" autocomplete="off" placeholder="Ej: Club Norte"></label>
+      <div class="err" id="venue-err"></div>
+      <div class="sheet-actions"><button type="button" class="btn" id="venues-back">Volver</button><button class="btn primary" type="submit">Agregar sede</button></div>
+    </form>`);
+  $('#venues-back').onclick = () => openSettings();
+  $('#venue-form').onsubmit = (e) => {
+    e.preventDefault();
+    const name = e.target.name.value;
+    Promise.resolve(app.store.addVenue(name)).then(() => { toast('Sede agregada'); openVenues(); }).catch((error) => {
+      $('#venue-err').textContent = isVenueDenied(error) ? VENUES_DENIED_WRITE : (error?.message || 'No se pudo guardar');
+    });
+  };
+  $('#venue-list').onclick = (e) => {
+    const edit = e.target.closest('[data-venue-edit]');
+    if (edit) {
+      const venue = (app.venues || []).find((item) => item.id === edit.dataset.venueEdit) || list.find((item) => item.id === edit.dataset.venueEdit);
+      if (venue) openVenueEdit(venue);
+      return;
+    }
+    const toggle = e.target.closest('[data-venue-active]');
+    if (!toggle) return;
+    const venue = (app.venues || []).find((item) => item.id === toggle.dataset.venueActive);
+    if (!venue) return;
+    const next = venue.active === false;
+    if (!next && !confirm(`¿Desactivar ${venue.name}? Los partidos que ya la usan la siguen mostrando.`)) return;
+    Promise.resolve(app.store.updateVenue(venue.id, { active: next })).then(() => openVenues()).catch((error) => {
+      toast(isVenueDenied(error) ? VENUES_DENIED_WRITE : (error?.message || 'No se pudo cambiar'));
+    });
+  };
+}
+
+function openVenueEdit(venue) {
+  openSheet(`
+    <form id="venue-edit" novalidate>
+      <h3>Editar sede</h3>
+      <label class="field"><span>Nombre</span><input name="name" maxlength="80" required autocomplete="off" value="${esc(venue.name)}"></label>
+      <div class="err" id="venue-err"></div>
+      <div class="sheet-actions"><button type="button" class="btn" id="venue-edit-back">Volver</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  $('#venue-edit-back').onclick = () => openVenues();
+  $('#venue-edit').onsubmit = (e) => {
+    e.preventDefault();
+    Promise.resolve(app.store.updateVenue(venue.id, { name: e.target.name.value })).then(() => { toast('Sede actualizada'); openVenues(); }).catch((error) => {
+      $('#venue-err').textContent = isVenueDenied(error) ? VENUES_DENIED_WRITE : (error?.message || 'No se pudo guardar');
+    });
+  };
+}
+
 /* Agregar / editar partido */
 function openMatchForm(m) {
   const today = todayISO();
   const editingAccess = !m || canEditAccess(m, actor().uid);
+  const venues = venueOptions(m);
+  const perTeam = perTeamOf(m);
   openSheet(`
     <form id="match-form" novalidate>
       <h3>${m ? 'Editar partido' : 'Agregar partido'}</h3>
-      <p class="hint">${esc(VENUE)} · Fútbol 7 contra 7 (${CAPACITY} jugadores)</p>
+      <p class="hint" id="match-size-hint">Fútbol ${perTeam} contra ${perTeam} (${capacityFor(perTeam)} jugadores)</p>
+      <label class="field"><span>Sede</span><select name="venue" id="match-venue" required>${venues.choices.map((item) => `<option value="${esc(item.id)}"${item.id === venues.selected ? ' selected' : ''}>${esc(item.name)}${item.active === false ? ' (inactiva)' : ''}</option>`).join('')}</select></label>
+      <label class="field"><span>Jugadores por equipo</span><select name="perTeam" id="match-per-team">${perTeamOptions().map((n) => `<option value="${n}"${n === perTeam ? ' selected' : ''}>${n}</option>`).join('')}</select></label>
       <div class="row">
         <label class="field"><span>Fecha</span><input type="date" name="date" required min="${m ? '' : today}" value="${esc(m ? m.date : today)}"></label>
         <label class="field"><span>Hora</span><input type="time" name="time" required value="${esc(m ? m.time : '21:00')}"></label>
@@ -1163,18 +1261,32 @@ function openMatchForm(m) {
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${m ? 'Guardar' : 'Crear'}</button></div>
     </form>`);
   bindAccessForm();
+  const perSelect = $('#match-per-team');
+  const paintSize = () => {
+    const n = Number(perSelect.value);
+    $('#match-size-hint').textContent = `Fútbol ${n} contra ${n} (${capacityFor(n)} jugadores)`;
+  };
+  perSelect.addEventListener('change', paintSize);
   $('#match-form').onsubmit = (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
     const data = { date: f.get('date'), time: f.get('time'), note: String(f.get('note') || '').trim() };
     if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date) || !/^\d{2}:\d{2}$/.test(data.time)) { $('#mf-err').textContent = 'Completá fecha y hora.'; return; }
+    const picked = venueOptions(m).choices.find((item) => item.id === String(f.get('venue') || ''));
+    if (!picked) { $('#mf-err').textContent = 'Elegí una sede.'; return; }
+    const team = Number(f.get('perTeam'));
+    if (!perTeamOptions().includes(team)) { $('#mf-err').textContent = 'Elegí cuántos jugadores por equipo.'; return; }
+    data.venueId = picked.id;
+    data.venueName = picked.name;
+    data.perTeam = team;
+    data.capacity = capacityFor(team);
     const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
     if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
     if (editingAccess) data.access = readAccessForm();
     closeSheet();
     if (splitNear([{ date: data.date }]).later.length) rememberLater(true);
     if (m) run(app.store.updateMatch(m.id, data, app.who), 'Partido actualizado');
-    else run(app.store.addMatch({ ...data, source: 'manual', capacity: CAPACITY }, app.who), 'Partido agregado');
+    else run(app.store.addMatch({ ...data, source: 'manual' }, app.who), 'Partido agregado');
   };
 }
 
@@ -1237,7 +1349,7 @@ function openImportPreview(text, found) {
     if (!sel.length) return;
     if (sel.some((item) => splitNear([{ date: item.date }]).later.length)) rememberLater(true);
     closeSheet();
-    run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, capacity: CAPACITY, access: publicAccess(actor()) })), app.who),
+    run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, perTeam: 7, venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }), venueName: venueLabel({ venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }) }, app.venues), access: publicAccess(actor()) })), app.who),
       `${sel.length} partido${sel.length > 1 ? 's' : ''} importado${sel.length > 1 ? 's' : ''}`);
   };
 }
@@ -1490,7 +1602,7 @@ function renderUsers() {
       ${user.role === 'organizer' ? `<button type="button" class="btn danger" data-user-del="${esc(user.uid)}">Borrar</button>` : ''}
     </li>`).join('');
   if (!replaceView(`
-    <h2 class="section">Usuarios</h2>
+    <h2 class="section">Organizadores</h2>
     <p class="hint roster-lead">Esta es la única diferencia con los organizadores: crear, desactivar o borrar sus cuentas. El rol no se cambia. En los partidos pueden lo mismo.</p>
     <ul class="slots" id="user-list">${rows || '<li class="empty-wait">No hay usuarios.</li>'}</ul>
     <form id="user-form" class="user-form" novalidate>
@@ -1757,7 +1869,7 @@ function bindPartidos(person) {
     const fromMain = player.waiting !== true;
     const top = waitingOf(match.id).find((item) => item.id !== player.id);
     if (!confirm(`¿Quitar a ${person.name} de ${labelDate(match.date)} ${match.time || ''} hs?`)) return;
-    const promote = fromMain && top && playersOf(match.id).length - 1 < (match.capacity || CAPACITY)
+    const promote = fromMain && top && playersOf(match.id).length - 1 < capOf(match)
       && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
     const job = Promise.resolve(app.store.deletePlayer(player.id)).then(async () => {
       if (!promote) return;
@@ -1856,7 +1968,7 @@ async function linkedRosterId({ name, phone, rosterId, phoneKey: key, phoneShare
 function addSignedPlayer(m, { name, phone, rosterId, phoneKey: key, hasPhone, phoneShared }, asWait, tentative) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return; }
-  const full = playersOf(m.id).length >= (m.capacity || CAPACITY);
+  const full = playersOf(m.id).length >= capOf(m);
   if (tentative && (asWait || full)) {
     toast('No hay lugar libre para reservar.');
     return;
@@ -2233,7 +2345,7 @@ function openPlayerMenu(m, p) {
     const fromMain = !isWaiting(p);
     const top = waitingOf(m.id).find((w) => w.id !== p.id);
     if (!confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
-    const promote = fromMain && top && playersOf(m.id).length - 1 < (m.capacity || CAPACITY)
+    const promote = fromMain && top && playersOf(m.id).length - 1 < capOf(m)
       && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
     closeSheet();
     const job = Promise.resolve(app.store.deletePlayer(p.id)).then(async () => {
@@ -2393,22 +2505,25 @@ async function boot() {
   $('#demo-banner').hidden = app.store.mode === 'firebase';
   app.store.setActor(app.session.user);
   app.store.subscribe((view) => {
-    const { matches, players, roster, rosterError, organizers, organizersError, prices, pricesError, history, historyMeta, historyError } = view;
+    const { matches, players, roster, rosterError, organizers, organizersError, venues, venuesError, prices, pricesError, history, historyMeta, historyError } = view;
     app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
     app.history = history || [];
     app.historyMeta = historyMeta || null;
     app.historyError = historyError || '';
     app.roster = roster || [];
     app.organizers = organizers || [];
+    app.venues = venues || [];
     app.prices = prices || null;
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);
     app.rosterError = rosterError || null;
     if (organizersError && organizersError !== app.organizersError) showError(organizersError);
     app.organizersError = organizersError || null;
+    if (venuesError && venuesError !== app.venuesError) showError(venuesError);
+    app.venuesError = venuesError || null;
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.prices, app.rosterError, app.organizersError, app.pricesError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.rosterError, app.organizersError, app.venuesError, app.pricesError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     if (!changed) return;
@@ -2510,7 +2625,7 @@ async function fixOverflow() {
   const patches = [];
   for (const m of app.matches) {
     const all = app.players.filter((p) => p.matchId === m.id);
-    patches.push(...overflowPatches(all, m.capacity || CAPACITY));
+    patches.push(...overflowPatches(all, capOf(m)));
   }
   if (!patches.length) return;
   fixingOverflow = true;

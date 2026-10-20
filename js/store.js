@@ -88,6 +88,9 @@ import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
 } from './organizers.js';
 import { canEditPlayer, canEditRoster, editLockedError, playerPatchEditsIdentity } from './edit-lock.js';
+import {
+  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
+} from './venues.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
@@ -144,12 +147,16 @@ const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 function matchDoc(data, who) {
   const now = Date.now();
   const access = data?.access ? accessPatch(data.access) : null;
+  const size = matchSize(data);
   return {
     date: data.date,
     time: data.time,
     startsAt: toEpoch(data.date, data.time),
     note: (data.note || '').trim(),
-    capacity: data.capacity || 14,
+    venueId: String(data.venueId || DEFAULT_VENUE_ID),
+    venueName: String(data.venueName || DEFAULT_VENUE_NAME).trim() || DEFAULT_VENUE_NAME,
+    capacity: size.capacity,
+    ...(size.perTeam ? { perTeam: size.perTeam } : {}),
     source: data.source || 'manual',
     sourceRef: data.sourceRef || null,
     sourceText: data.sourceText || null,
@@ -286,12 +293,12 @@ class LocalStore {
   async ensureMatch() {}
   _load() {
     try {
-      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } };
-      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.confirmations ||= {}; db.settings ||= {};
+      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } };
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {};
       ensureContacts(db);
       migratePhones(db);
       return db;
-    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } }; }
+    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } }; }
   }
   _touchConfirmations(db) {
     db.confirmations ||= {};
@@ -345,6 +352,12 @@ class LocalStore {
     }
     return Object.keys(db.organizers).length > 0;
   }
+  _seedVenues(db) {
+    db.venues ||= {};
+    if (db.venues[DEFAULT_VENUE_ID]) return false;
+    db.venues[DEFAULT_VENUE_ID] = { name: DEFAULT_VENUE_NAME, active: true, order: 0, createdAt: Date.now() };
+    return true;
+  }
   _syncPlayerCounts(db) {
     const counts = {};
     for (const player of Object.values(db.players)) {
@@ -385,19 +398,21 @@ class LocalStore {
     const players = overlayConfirmations(presentRows(visible.players.map((p) => [p.id, p]), db.contacts.players, uid).map(({ id, ...rest }) => ({ id, ...rest })), cards);
     const roster = presentRows(Object.entries(db.roster), db.contacts.roster, uid);
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
+    const venues = Object.entries(db.venues || {}).map(([id, venue]) => ({ id, ...venue }));
     const prices = db.settings?.prices || null;
     const windowed = historyWindow(matches, this._historyFilter);
     const history = windowed.matches;
     const { matches: _rows, ...historyMeta } = windowed;
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
-      players, roster, rosterError: null, organizers, organizersError: null, prices, pricesError: null,
+      players, roster, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
     }));
   }
   async init() {
     if (typeof window !== 'undefined') window.addEventListener('storage', (e) => { if (e.key === this.key) this._emit(); });
     const db = this._load();
     this._seedOrganizers(db);
+    this._seedVenues(db);
     this._touchConfirmations(db);
     this._touchLinks(db);
     localStorage.setItem(this.key, JSON.stringify(db));
@@ -640,10 +655,42 @@ class LocalStore {
     this._save(db);
     return id;
   }
+  async addVenue(name) {
+    const clean = cleanVenueName(name);
+    if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-venue' });
+    const db = this._load();
+    db.venues ||= {};
+    if (Object.values(db.venues).some((item) => sameVenueName(item.name, clean.name))) {
+      throw Object.assign(new Error(`${clean.name} ya está en las sedes`), { code: 'venue-duplicate' });
+    }
+    let id = venueSlug(clean.name);
+    let n = 2;
+    while (db.venues[id]) id = `${venueSlug(clean.name)}-${n++}`;
+    const order = Object.values(db.venues).reduce((max, item) => Math.max(max, Number(item.order) || 0), 0) + 1;
+    db.venues[id] = { name: clean.name, active: true, order, createdAt: Date.now() };
+    this._save(db);
+    return id;
+  }
+  async updateVenue(id, patch) {
+    const db = this._load();
+    const cur = db.venues?.[id];
+    if (!cur) throw Object.assign(new Error('No está esa sede'), { code: 'venue-missing' });
+    if ('name' in (patch || {})) {
+      const clean = cleanVenueName(patch.name);
+      if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-venue' });
+      if (Object.entries(db.venues).some(([oid, item]) => oid !== id && sameVenueName(item.name, clean.name))) {
+        throw Object.assign(new Error(`${clean.name} ya está en las sedes`), { code: 'venue-duplicate' });
+      }
+      cur.name = clean.name;
+    }
+    if ('active' in (patch || {})) cur.active = patch.active !== false;
+    this._save(db);
+  }
   async clearAll() {
     localStorage.removeItem(this.key);
     const db = this._load();
     this._seedOrganizers(db);
+    this._seedVenues(db);
     localStorage.setItem(this.key, JSON.stringify(db));
     this._emit();
   }
@@ -667,7 +714,7 @@ class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {}, historyError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {}, historyError: '' };
   }
   setHistoryFilter(filter) {
     this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
@@ -722,6 +769,7 @@ class FirebaseStore {
     // nunca se entera del «Sí, juego».
     await this._refreshIdToken();
     this._listen();
+    this._seedVenues();
     // Si Firestore no existe o la API está deshabilitada, el SDK reintenta en silencio:
     // avisamos si en 15 s no llegó ninguna respuesta del servidor.
     setTimeout(() => {
@@ -963,6 +1011,15 @@ class FirebaseStore {
       this.state.organizersError = isOrganizerDenied(e) ? ORGANIZERS_DENIED_READ : ('No se pudo leer organizadores: ' + (e?.message || e?.code || e));
       this._emit();
     });
+    watch(collection(this.db, 'venues'), null, (snap) => {
+      this.state.venues = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this.state.venuesError = null;
+      this._emit();
+    }, (e) => {
+      this.state.venues = [];
+      this.state.venuesError = isVenueDenied(e) ? VENUES_DENIED_READ : ('No se pudieron leer las sedes: ' + (e?.message || e?.code || e));
+      this._emit();
+    });
     watch(doc(this.db, 'settings', 'prices'), null, (snap) => {
       this.state.prices = snap.exists() ? snap.data() : null;
       this.state.pricesError = null;
@@ -1042,6 +1099,23 @@ class FirebaseStore {
     finally {
       this._retrying = false;
       this._listen();
+    }
+  }
+  async _seedVenues() {
+    const { doc, getDoc, setDoc } = this.fs;
+    try {
+      const ref = doc(this.db, 'venues', DEFAULT_VENUE_ID);
+      const cur = await getDoc(ref);
+      if (!cur.exists()) {
+        await setDoc(ref, { name: DEFAULT_VENUE_NAME, active: true, order: 0, createdAt: Date.now() });
+      }
+    } catch (e) {
+      if (isVenueDenied(e)) {
+        this.state.venuesError = VENUES_DENIED_READ;
+        this._emit();
+        return;
+      }
+      console.error(e);
     }
   }
   async _seedOrganizers() {
@@ -1608,6 +1682,36 @@ class FirebaseStore {
     const { doc, setDoc } = this.fs;
     await setDoc(doc(this.db, 'organizers', id), { name: clean.name, createdAt: Date.now() });
     return id;
+  }
+  async addVenue(name) {
+    const clean = cleanVenueName(name);
+    if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-venue' });
+    if ((this.state.venues || []).some((item) => sameVenueName(item.name, clean.name))) {
+      throw Object.assign(new Error(`${clean.name} ya está en las sedes`), { code: 'venue-duplicate' });
+    }
+    let id = venueSlug(clean.name);
+    let n = 2;
+    while ((this.state.venues || []).some((item) => item.id === id)) id = `${venueSlug(clean.name)}-${n++}`;
+    const order = (this.state.venues || []).reduce((max, item) => Math.max(max, Number(item.order) || 0), 0) + 1;
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'venues', id), { name: clean.name, active: true, order, createdAt: Date.now() });
+    return id;
+  }
+  async updateVenue(id, patch) {
+    const cur = (this.state.venues || []).find((item) => item.id === id);
+    if (!cur) throw Object.assign(new Error('No está esa sede'), { code: 'venue-missing' });
+    const next = {};
+    if ('name' in (patch || {})) {
+      const clean = cleanVenueName(patch.name);
+      if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-venue' });
+      if ((this.state.venues || []).some((item) => item.id !== id && sameVenueName(item.name, clean.name))) {
+        throw Object.assign(new Error(`${clean.name} ya está en las sedes`), { code: 'venue-duplicate' });
+      }
+      next.name = clean.name;
+    }
+    if ('active' in (patch || {})) next.active = patch.active !== false;
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'venues', id), next);
   }
 }
 

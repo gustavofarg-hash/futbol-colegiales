@@ -57,6 +57,11 @@ service cloud.firestore {
           && (!('cancelledAt' in d) || d.cancelledAt == null || d.cancelledAt is number)
           && (!('cancelledBy' in d) || d.cancelledBy == null || (d.cancelledBy is string && d.cancelledBy.size() <= 128))
           && (!('playerCount' in d) || (d.playerCount is int && d.playerCount >= 0 && d.playerCount <= 500))
+          && (!('venueId' in d) || (d.venueId is string && d.venueId.size() > 0 && d.venueId.size() <= 40 && d.venueId.matches('^[a-z0-9][a-z0-9-]{0,39}$')))
+          && (!('venueName' in d) || (d.venueName is string && d.venueName.size() > 0 && d.venueName.size() <= 80))
+          && (!('perTeam' in d) || (d.perTeam is int && d.perTeam >= 5 && d.perTeam <= 11))
+          && (!('capacity' in d) || (d.capacity is int && d.capacity >= 1 && d.capacity <= 40))
+          && (!('perTeam' in d) || !('capacity' in d) || d.capacity == d.perTeam * 2)
           && accessShape(d);
     }
     function accessShape(d) {
@@ -359,7 +364,8 @@ service cloud.firestore {
           && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
           && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number)
           && (!('cancelled' in d) || d.cancelled is bool)
-          && (!('notes' in d) || (d.notes is string && d.notes.size() <= 2000));
+          && (!('notes' in d) || (d.notes is string && d.notes.size() <= 2000))
+          && (!('venue' in d) || (d.venue is string && d.venue.size() <= 80));
     }
     function anonymousConfirm() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
@@ -449,6 +455,21 @@ service cloud.firestore {
       allow update: if isActiveStaff() && validRoster(request.resource.data)
           && rosterStampSame()
           && (rosterIdentitySame() || isRosterCreator());
+    }
+
+    function validVenue(d) {
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 80
+          && d.active is bool
+          && d.order is int && d.order >= 0 && d.order <= 999
+          && (!('createdAt' in d) || d.createdAt is number);
+    }
+
+    match /venues/{venueId} {
+      allow read: if isActiveStaff();
+      allow create, update: if isActiveStaff()
+          && venueId.matches('^[a-z0-9][a-z0-9-]{0,39}$')
+          && validVenue(request.resource.data);
+      allow delete: if false;
     }
 
     match /organizers/{organizerId} {

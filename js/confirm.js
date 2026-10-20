@@ -42,6 +42,7 @@ function cardView(card) {
       note: card.note || '',
       notes: card.notes || '',
       cancelled: card.cancelled === true,
+      venueName: card.venue || '',
     },
     player: {
       id: playerId,
@@ -126,7 +127,7 @@ function render(state) {
       <section class="detail-head confirm-card">
         <h1>${esc(player.name)}</h1>
         <div class="when">${esc(when)}</div>
-        <div class="note">${esc(VENUE)}</div>
+        <div class="note">${esc(match.venueName || VENUE)}</div>
         <p class="match-cancelled" id="confirm-cancelled">Este partido se canceló.</p>
         ${reason ? `<p class="match-notes-text">${esc(reason)}</p>` : ''}
         <p class="hint">No hace falta confirmar si jugás.</p>
@@ -143,7 +144,7 @@ function render(state) {
     <section class="detail-head confirm-card">
       <h1>${esc(player.name)}</h1>
       <div class="when">${esc(when)}</div>
-      <div class="note">${esc(VENUE)}${match.note ? ` · ${esc(match.note)}` : ''}</div>
+      <div class="note">${esc(match.venueName || VENUE)}${match.note ? ` · ${esc(match.note)}` : ''}</div>
       <p class="hint">¿Jugás este partido?</p>
       <div class="confirm-actions">
         <button type="button" class="btn primary ${player.confirmed === 'si' ? 'chosen' : ''}" id="btn-si">Sí, juego</button>

@@ -13,6 +13,7 @@ import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, toEpoch } from '../js/dates.js';
+import { capacityFor, defaultVenueId, matchCapacity, matchSize, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
@@ -1311,6 +1312,44 @@ test('el mismo día no vuelve a emitir y repetir el actor tampoco', async () => 
   store.setActor({ uid: 'u1', name: 'Gustavo' });
   store.setActor({ uid: 'u1', name: 'Gustavo' });
   assert.equal(n, 3);
+});
+
+test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegiales', async () => {
+  assert.deepEqual(matchSize({}), { perTeam: 7, capacity: 14 });
+  assert.deepEqual(matchSize({ perTeam: 6 }), { perTeam: 6, capacity: 12 });
+  assert.deepEqual(matchSize({ capacity: 1 }), { perTeam: null, capacity: 1 });
+  assert.equal(perTeamOf({}), 7);
+  assert.equal(perTeamOf({ capacity: 14 }), 7);
+  assert.equal(matchCapacity({ capacity: 1 }), 1);
+  assert.equal(capacityFor(11), 22);
+  assert.equal(venueLabel({}, []), 'Polideportivo Colegiales');
+  assert.equal(venueLabel({ venueId: 'norte', venueName: 'Nombre viejo' }, [{ id: 'norte', name: 'Club Norte', active: true, order: 1 }]), 'Club Norte');
+  assert.equal(defaultVenueId([], { unreadable: true }), 'colegiales');
+  const choices = venueChoices([{ id: 'norte', name: 'Club Norte', active: false, order: 2 }, { id: 'colegiales', name: 'Polideportivo Colegiales', active: true, order: 0 }], { currentId: 'norte' });
+  assert.deepEqual(choices.map((item) => item.id), ['colegiales', 'norte']);
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  await store.init();
+  const id = await store.addMatch({ date: '2026-10-22', time: '21:00' }, 'Gustavo');
+  const db = JSON.parse(mem.get(store.key));
+  assert.equal(db.matches[id].venueId, 'colegiales');
+  assert.equal(db.matches[id].venueName, 'Polideportivo Colegiales');
+  assert.equal(db.matches[id].perTeam, 7);
+  assert.equal(db.matches[id].capacity, 14);
+  assert.equal(db.venues.colegiales.name, 'Polideportivo Colegiales');
+  const norte = await store.addVenue('Club Norte');
+  await store.updateVenue(norte, { name: 'Club Norte Sur' });
+  await assert.rejects(() => store.addVenue('club norte sur'), /sedes/);
+  await store.updateVenue(norte, { active: false });
+  assert.equal(JSON.parse(mem.get(store.key)).venues[norte].active, false);
+  const tight = await store.addMatch({ date: '2026-10-30', time: '19:00', capacity: 1 }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[tight].capacity, 1);
+  assert.equal(JSON.parse(mem.get(store.key)).matches[tight].perTeam, undefined);
 });
 
 test('no se cancela un partido que ya entró al historial', async () => {
