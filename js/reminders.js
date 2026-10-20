@@ -94,6 +94,8 @@ export function confirmationAllowed(player, matchId, token) {
 }
 
 export function confirmStatus(player) {
+  // En la lista de espera no confirman si juegan: no hay estado hasta que suben.
+  if (player?.waiting === true) return null;
   if (player?.tentative === true) {
     if (player.confirmed === 'no') {
       return { cls: 'reserved', text: 'Reservado · a confirmar', note: 'No juega · se puede liberar el lugar' };
@@ -116,6 +118,7 @@ export function confirmSummary(players) {
   let pending = 0;
   let hold = 0;
   for (const p of players || []) {
+    if (p?.waiting === true) continue;
     if (p?.tentative === true) hold += 1;
     if (p?.confirmed === 'si' && p?.tentative !== true) si += 1;
     else if (p?.confirmed === 'no') no += 1;

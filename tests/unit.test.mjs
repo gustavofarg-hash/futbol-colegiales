@@ -6,7 +6,7 @@ import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, pay
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
-import { matchSignupState, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
+import { keptSignupIds, matchSignupState, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -395,6 +395,22 @@ test('aviso al subir de la espera y lugar reservado', () => {
   assert.equal(sum.no, 1);
   assert.equal(sum.pending, 1);
   assert.equal(sum.text, 'Confirmados: 1 · A confirmar: 2 · No juegan: 1 · Sin respuesta: 1');
+  assert.equal(confirmStatus({ waiting: true }), null);
+  assert.equal(confirmStatus({ waiting: true, confirmed: 'si' }), null);
+  assert.equal(confirmStatus({ waiting: true, confirmed: 'no' }), null);
+  const waiting = confirmSummary([
+    { waiting: true },
+    { waiting: true, confirmed: 'si' },
+    { waiting: true, confirmed: 'no' },
+    { confirmed: 'si' },
+  ]);
+  assert.equal(waiting.pending, 0);
+  assert.equal(waiting.si, 1);
+  assert.equal(waiting.no, 0);
+  assert.equal(waiting.hold, 0);
+  assert.equal(waiting.text, 'Confirmados: 1 · No juegan: 0 · Sin respuesta: 0');
+  assert.equal(confirmStatus({ waiting: false }).text, '⏳ Sin respuesta');
+  assert.equal(confirmStatus({ confirmed: 'no' }).text, '❌ No juega');
 });
 
 test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
@@ -488,6 +504,16 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
   const record = playerRecord({ phone, players, matches });
   assert.equal(record.paidText, 'Pagó $10.000 en 2 partidos');
   assert.equal(record.confirmText, 'Confirmó 2 de 3');
+  assert.equal(playerRecord({
+    phone: '5491100001111',
+    players: [{ matchId: 'esp', phone: '5491100001111', waiting: true }],
+    matches,
+  }).confirmText, '');
+  assert.deepEqual(keptSignupIds(['libre', 'lleno', 'ya', 'fuera'], [
+    { id: 'libre', existing: false },
+    { id: 'lleno', existing: false },
+    { id: 'ya', existing: true },
+  ]), ['libre', 'lleno']);
   const ledger = paymentLedger({ phone, players, matches });
   assert.equal(ledger.totalText, 'Pagó $19.000');
   assert.equal(ledger.months[0].text, 'Oct 2026: $19.000');

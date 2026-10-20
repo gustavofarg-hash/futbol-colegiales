@@ -92,7 +92,7 @@ export function playerRecord({ phone, rosterId, name, players, matches }) {
     paidText: paid.length ? `Pagó ${formatARS(paidTotal)} en ${paid.length} ${paid.length === 1 ? 'partido' : 'partidos'}` : 'Sin pagos cargados',
     confirmed,
     declined,
-    confirmText: answered ? `Confirmó ${confirmed} de ${answered}` : 'Sin respuestas de confirmación',
+    confirmText: !rows.length ? '' : (answered ? `Confirmó ${confirmed} de ${answered}` : 'Sin respuestas de confirmación'),
   };
 }
 
@@ -141,6 +141,26 @@ export function matchSignupState({ phone, rosterId, name, match, players }) {
   }
   const label = spots === 1 ? 'Queda 1' : `Quedan ${spots}`;
   return { state: 'libre', label, willWait: false, spots, existing: false, playerId: null };
+}
+
+/**
+ * Ids que siguen elegidos para anotar.
+ * Si el partido ya no está en la lista, se suelta.
+ * Si ya está anotado, el casillero queda trabado aparte y sale de la selección.
+ * Si se llenó, se queda: al anotar va a la espera.
+ */
+export function keptSignupIds(selected, rows) {
+  const byId = new Map((rows || []).map((row) => [row.id, row]));
+  const keep = [];
+  const seen = new Set();
+  for (const id of selected || []) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const row = byId.get(id);
+    if (!row || row.existing) continue;
+    keep.push(id);
+  }
+  return keep;
 }
 
 export function noteWhen(note, matches) {

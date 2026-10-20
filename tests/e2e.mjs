@@ -308,6 +308,16 @@ await page.fill('#player-form [name=name]', 'Espera Cero');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#wait-list .name:text-is("Espera Cero")');
 check('Anotar en espera no ocupa un lugar libre', (await page.textContent('#slot-count')) === '3/14');
+const ceroText = (await page.locator('#wait-list .slot', { hasText: 'Espera Cero' }).innerText()).replace(/\s+/g, ' ');
+check('La lista de espera no muestra sin respuesta', !ceroText.includes('Sin respuesta') && !ceroText.includes('Confirmó'), ceroText);
+const ceroSum = await page.textContent('#confirm-sum');
+check('La espera no suma al pendiente de confirmar', ceroSum.includes('No juegan: 1') && ceroSum.includes('Sin respuesta: 2'), ceroSum);
+const ceroMatch = await page.evaluate(() => location.hash);
+await page.locator('#wait-list .who', { hasText: 'Espera Cero' }).click();
+await page.waitForSelector('#profile-phone');
+check('El perfil de quien solo está en espera no dice sin respuesta', (await page.locator('#stat-confirm').count()) === 0);
+await page.evaluate((hash) => { location.hash = hash; }, ceroMatch);
+await page.waitForSelector('#wait-list .name:text-is("Espera Cero")');
 check('Con un solo suplente, ↑ y ↓ están deshabilitadas',
   await page.isDisabled('#wait-list [data-wait-up]') && await page.isDisabled('#wait-list [data-wait-down]'));
 const barIds = await page.$$eval('.match-actions > *', (els) => els.map((el) => el.id));
@@ -449,11 +459,17 @@ await page.fill('#player-form [name=name]', 'Avisa Teo');
 await page.fill('#player-form [name=phone]', '11 6666-2222');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#wait-list .name:text-is("Avisa Teo")');
+const teoWait = (await page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).innerText()).replace(/\s+/g, ' ');
+check('En espera no figura sin respuesta', !teoWait.includes('Sin respuesta') && !teoWait.includes('Confirmó'), teoWait);
+const teoSum = await page.textContent('#confirm-sum');
+check('En espera no entra en el resumen', teoSum.includes('Sin respuesta: 0') && teoSum.includes('No juegan: 1'), teoSum);
 const [teoPopup] = await Promise.all([
   page.waitForEvent('popup'),
   page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).locator('[data-promote]').click(),
 ]);
 await page.waitForSelector('#slots .name:text-is("Avisa Teo")');
+const teoRow = (await page.locator('#slots .slot', { hasText: 'Avisa Teo' }).innerText()).replace(/\s+/g, ' ');
+check('Al subir al partido vuelve la confirmación', teoRow.includes('Sin respuesta') && (await page.textContent('#confirm-sum')).includes('Sin respuesta: 1'), teoRow);
 const teoUrl = teoPopup.url();
 check('Avisar por WhatsApp abre el chat sin mandar solo', /(?:wa\.me\/|phone=)5491166662222/.test(teoUrl), teoUrl.slice(0, 100));
 const teoText = decodeURIComponent(new URL(teoUrl).searchParams.get('text') || '');
@@ -790,6 +806,70 @@ await page.waitForFunction(() => {
   return row && !row.innerText.includes('Anotado');
 });
 check('Quitar lo saca solo de ese partido', await page.evaluate(() => !Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((p) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24')));
+
+const pickIds = await page.evaluate(async () => {
+  const store = window.__app.store;
+  const who = window.__app.who;
+  const open = await store.addMatch({ date: '2026-10-29', time: '19:00', note: '', capacity: 14 }, who);
+  const tight = await store.addMatch({ date: '2026-10-30', time: '19:00', note: '', capacity: 1 }, who);
+  return { open, tight };
+});
+await page.waitForSelector('#signup-list .signup-row:has-text("29/10") input');
+const row29 = page.locator('#signup-list .signup-row', { hasText: '29/10' });
+const row30 = page.locator('#signup-list .signup-row', { hasText: '30/10' });
+await row29.locator('input[type=checkbox]').check();
+await row30.locator('input[type=checkbox]').check();
+await page.check('#signup-tentative');
+check('El botón dice Anotar en 2 partidos', (await page.textContent('#btn-signup')).trim() === 'Anotar en 2 partidos');
+await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const juan = Object.values(db.players).find((p) => p.name === 'Juan Pérez');
+  juan.updatedAt = Date.now();
+  localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+  window.__app.store._emit();
+});
+await page.waitForFunction(() => {
+  const on = (label) => {
+    const row = [...document.querySelectorAll('#signup-list .signup-row')].find((el) => el.innerText.includes(label));
+    const input = row?.querySelector('input[type=checkbox]');
+    return !!(input && input.checked && !input.disabled);
+  };
+  return on('29/10') && on('30/10') && document.querySelector('#signup-tentative')?.checked
+    && document.querySelector('#btn-signup')?.textContent.trim() === 'Anotar en 2 partidos';
+});
+check('La selección sigue después de una actualización en vivo', true);
+await row30.locator('input[type=checkbox]').uncheck();
+await page.evaluate(() => window.__app.store._emit());
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('#signup-list .signup-row')].find((el) => el.innerText.includes('30/10'));
+  const input = row?.querySelector('input[type=checkbox]');
+  return input && !input.checked && document.querySelector('#btn-signup')?.textContent.trim() === 'Anotar en 1 partido';
+});
+check('Destildar uno sobrevive al refresh', await row29.locator('input[type=checkbox]').isChecked() && await page.isChecked('#signup-tentative'));
+await row30.locator('input[type=checkbox]').check();
+await page.evaluate((id) => window.__app.store.deleteMatch(id), pickIds.open);
+await page.waitForFunction(() => !document.querySelector('#signup-list')?.innerText.includes('29/10')
+  && document.querySelector('#btn-signup')?.textContent.trim() === 'Anotar en 1 partido');
+check('Si un partido desaparece, el resto sigue marcado', await row30.locator('input[type=checkbox]').isChecked() && await page.isChecked('#signup-tentative'));
+await page.evaluate(async (id) => {
+  await window.__app.store.addPlayer({ id, date: '2026-10-30', time: '19:00', capacity: 1 }, { name: 'Ocupa Cupo', phone: '' }, window.__app.who);
+}, pickIds.tight);
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('#signup-list .signup-row')].find((el) => el.innerText.includes('30/10'));
+  const input = row?.querySelector('input[type=checkbox]');
+  return row && input && input.checked && !input.disabled && row.innerText.includes('espera')
+    && document.querySelector('#btn-signup')?.textContent.trim() === 'Anotar en 1 partido';
+});
+check('Si el partido se llena, la selección sigue', true);
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card');
+await page.evaluate(() => { location.hash = '#/jugadores'; });
+await page.waitForSelector('#roster-list .name:text-is("Juan Pérez")');
+await page.locator('#roster-list .who', { hasText: 'Juan Pérez' }).click();
+await page.waitForSelector('#signup-list .signup-row:has-text("30/10") input');
+check('Cerrar el perfil suelta la selección', !(await page.locator('#signup-list .signup-row', { hasText: '30/10' }).locator('input').isChecked()) && !(await page.isChecked('#signup-tentative')));
+await page.evaluate((id) => window.__app.store.deleteMatch(id), pickIds.tight);
+await page.waitForFunction(() => !document.querySelector('#signup-list')?.innerText.includes('30/10'));
 
 // Precios y promo del mismo día. Gustavo sigue logueado. Al final vuelven los precios de siempre.
 await page.click('#btn-settings');

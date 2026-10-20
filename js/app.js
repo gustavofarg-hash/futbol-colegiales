@@ -14,7 +14,7 @@ import {
   reservationClearedByAnswer, waReminderUrl,
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, playerMatchesPerson, rosterByPhone, searchRoster } from './roster.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
@@ -52,6 +52,7 @@ const app = {
   mine: false,
   session: null,
   payFilter: '',
+  signupDraft: null,
   who: '',
   loaded: false,
 };
@@ -189,6 +190,7 @@ function render() {
     mine.classList.toggle('mine-on', app.mine);
     mine.setAttribute('aria-pressed', app.mine ? 'true' : 'false');
   }
+  if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'roster') renderRoster();
@@ -297,7 +299,7 @@ function renderMatch(id) {
       <div class="meta"><strong id="slot-count">${everyone.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (everyone.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - everyone.length}`}</span></div>
       ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
       <div class="mine-line" id="mine-stats">${esc(mineLine)}</div>
-      ${(everyone.length || waitingOf(id).length) ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary([...everyone, ...waitingOf(id)]).text)}</div>` : ''}
+      ${everyone.length ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary(everyone).text)}</div>` : ''}
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
         ${canEditMatch(m, who.uid) ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
@@ -430,6 +432,7 @@ function waitingSection(m, full, readOnly) {
 
 function confirmTag(p) {
   const s = confirmStatus(p);
+  if (!s) return '';
   if (p?.tentative === true) {
     const note = s.note ? `<span class="reserved-free">${esc(s.note)}</span>` : '';
     return `<span class="reserved-badge${s.note ? ' declined' : ''}">${esc(s.text)}</span>${note}`;
@@ -1128,6 +1131,7 @@ function renderPagos() {
 function renderProfile(id) {
   const person = app.roster.find((r) => r.id === id);
   if (!person) {
+    app.signupDraft = null;
     $('#view').innerHTML = `<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`;
     return;
   }
@@ -1163,7 +1167,7 @@ function renderProfile(id) {
         ${stats.summary ? `<p class="stat-summary" id="stat-summary">${esc(stats.summary)}</p>` : ''}
         ${stats.dates.length ? `<ul class="stat-dates">${stats.dates.map((d) => `<li>${esc(d.label)}</li>`).join('')}</ul>` : '<p class="hint">Cuenta solo partidos que ya pasaron, en la lista principal.</p>'}
         <p class="hint" id="stat-pay">${esc(record.paidText)}</p>
-        <p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>
+        ${record.confirmText ? `<p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>` : ''}
       </section>
       ${ledgerSection(person)}
       <section class="profile-block">
@@ -1210,12 +1214,31 @@ function renderProfile(id) {
   };
 }
 
-function partidosSection(person) {
+function signupDraft(person) {
+  if (!app.signupDraft || app.signupDraft.rosterId !== person.id) {
+    app.signupDraft = { rosterId: person.id, ids: new Set(), tentative: false };
+  }
+  return app.signupDraft;
+}
+
+function signupRows(person) {
+  const draft = signupDraft(person);
   const upcoming = upcomingMatches(app.matches);
   const rows = upcoming.map((match) => {
     const state = matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match, players: app.players });
+    return { id: match.id, match, state, existing: state.existing };
+  });
+  const keep = new Set(keptSignupIds(draft.ids, rows));
+  for (const id of [...draft.ids]) if (!keep.has(id)) draft.ids.delete(id);
+  return rows;
+}
+
+function partidosSection(person) {
+  const draft = signupDraft(person);
+  const rows = signupRows(person).map(({ match, state }) => {
     const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
-    const locked = state.existing ? 'checked disabled' : '';
+    const picked = !state.existing && draft.ids.has(match.id);
+    const locked = state.existing ? 'checked disabled' : (picked ? 'checked' : '');
     const remove = state.existing && state.playerId
       ? `<button type="button" class="btn" data-signup-remove="${esc(state.playerId)}">Quitar</button>`
       : '';
@@ -1234,7 +1257,7 @@ function partidosSection(person) {
     <p class="hint">Elegí los próximos y anotalo de una. Si el partido está completo, va a la lista de espera.</p>
     <ul class="slots" id="signup-list">${rows.join('')}</ul>
     ${empty}
-    <label class="checkline"><input type="checkbox" id="signup-tentative"> Lugar reservado (a confirmar)</label>
+    <label class="checkline"><input type="checkbox" id="signup-tentative" ${draft.tentative ? 'checked' : ''}> Lugar reservado (a confirmar)</label>
     <button type="button" class="btn primary block" id="btn-signup" disabled>Anotar en 0 partidos</button>
   </section>`;
 }
@@ -1247,14 +1270,22 @@ function signupButtonLabel(count) {
 function bindPartidos(person) {
   const list = $('#signup-list');
   const button = $('#btn-signup');
+  const draft = signupDraft(person);
   if (!list || !button) return;
-  const fresh = () => [...list.querySelectorAll('input[data-signup]:not(:disabled):checked')];
   const paint = () => {
-    const n = fresh().length;
+    const n = draft.ids.size;
     button.disabled = n === 0;
     button.textContent = signupButtonLabel(n);
   };
-  list.addEventListener('change', paint);
+  list.addEventListener('change', (event) => {
+    const input = event.target.closest('input[data-signup]');
+    if (!input || input.disabled) return;
+    if (input.checked) draft.ids.add(input.dataset.signup);
+    else draft.ids.delete(input.dataset.signup);
+    paint();
+  });
+  const tent = $('#signup-tentative');
+  if (tent) tent.addEventListener('change', () => { draft.tentative = tent.checked; });
   list.addEventListener('click', (event) => {
     const open = event.target.closest('[data-open-match]');
     if (open) {
@@ -1280,11 +1311,18 @@ function bindPartidos(person) {
     run(job, promote ? `${top.name} pasó al partido` : `${person.name} quitado`);
   });
   button.onclick = () => {
-    const chosen = fresh().map((input) => {
-      const match = matchById(input.dataset.signup);
-      const state = matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match, players: app.players });
-      return { match, state };
-    }).filter((row) => row.match && !row.state.existing);
+    const chosen = [];
+    for (const id of [...draft.ids]) {
+      const match = matchById(id);
+      const stillUp = match && upcomingMatches(app.matches).some((item) => item.id === id);
+      const state = match ? matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match, players: app.players }) : null;
+      if (!match || !stillUp || !state || state.existing) {
+        draft.ids.delete(id);
+        continue;
+      }
+      chosen.push({ match, state });
+    }
+    paint();
     if (!chosen.length) return;
     const waits = chosen.filter((row) => row.state.willWait);
     if (waits.length) {
@@ -1292,7 +1330,8 @@ function bindPartidos(person) {
       if (!confirm(`En ${which} no hay lugar: va a quedar en la lista de espera. ¿Seguís?`)) return;
     }
     button.disabled = true;
-    const tentative = !!$('#signup-tentative')?.checked;
+    const tentative = draft.tentative;
+    draft.tentative = false;
     const msg = waits.length === chosen.length
       ? (chosen.length === 1 ? `${person.name} quedó en la lista de espera` : `${person.name} quedó en la espera de ${chosen.length} partidos`)
       : waits.length
