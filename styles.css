@@ -251,6 +251,7 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .roster-hit small { color: var(--muted); font-size: 0.8125rem; }
 .profile-phone { margin: 0 0 12px; color: var(--muted); }
 .profile-wa { width: 100%; margin-bottom: 16px; background: var(--wa); border-color: var(--wa); color: #fff; }
+.profile-add-phone { width: 100%; margin-bottom: 16px; }
 .profile-block { margin: 0 0 18px; }
 .profile-block h2 { margin: 0 0 8px; font-size: 0.9375rem; }
 .stepper { display: flex; align-items: center; gap: 10px; }

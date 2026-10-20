@@ -2,7 +2,7 @@
 // settings/prices y, si todavía no existe, usa estos defaults.
 import { toEpoch } from './dates.js';
 import { formatARS, roundARS } from './payments.js';
-import { normalizePhone } from './phone.js';
+import { canonicalPhone, foldText } from './roster.js';
 
 export const DEFAULT_PRICES = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
 export const MAX_PRICE = 1_000_000_000;
@@ -45,20 +45,14 @@ export function priceRecord(input) {
   return { ok: true, patch: { matchPrice: matchPrice.amount, promo2Price: promo2Price.amount, promo3Price: promo3Price.amount } };
 }
 
-function phoneKey(phone) {
-  const raw = String(phone || '').trim();
-  if (!raw) return '';
-  const parsed = normalizePhone(raw);
-  return parsed.ok ? parsed.wa : raw;
-}
-
-/** Misma persona: teléfono normalizado, o el id del plantel si no hay teléfono. */
+/** Misma persona: teléfono, si no el id del plantel, si no el nombre. */
 export function playerPromoKey(player) {
-  const phone = phoneKey(player?.phone);
+  const phone = canonicalPhone(player?.phone);
   if (phone) return `p:${phone}`;
   const rosterId = String(player?.rosterId || '').trim();
   if (rosterId) return `r:${rosterId}`;
-  return '';
+  const name = foldText(player?.name);
+  return name ? `n:${name}` : '';
 }
 
 function whenOf(match) {

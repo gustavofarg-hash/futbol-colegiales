@@ -13,7 +13,7 @@ import {
   needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress,
   reservationClearedByAnswer, waReminderUrl,
 } from './reminders.js';
-import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, playerMatchesPerson, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
@@ -134,9 +134,14 @@ function promoBadge(player) {
   const promo = promoOf(player);
   return promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : '';
 }
-function payFilterChips(phone) {
+function payFilterChips(person) {
   const names = payOrganizerNames();
-  const showBlank = hasUnspecified({ players: app.players, phone });
+  const showBlank = hasUnspecified({
+    players: app.players,
+    phone: person?.phone || null,
+    rosterId: person?.id || null,
+    name: person?.name || null,
+  });
   const items = [{ value: '', label: 'Todos' }, ...names.map((name) => ({ value: name, label: name }))];
   if (showBlank) items.push({ value: UNSPECIFIED, label: UNSPECIFIED });
   return `<div class="chips" id="pay-filter">${items.map((item) => `<button type="button" class="btn chip ${app.payFilter === item.value ? 'on' : ''}" data-pay-filter="${esc(item.value)}">${esc(item.label)}</button>`).join('')}</div>`;
@@ -493,7 +498,7 @@ async function openReminders(m) {
     const rows = visible.map((p) => {
       const link = linkById.get(p.id);
       if (!link) {
-        return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div></li>`;
+        return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div><button type="button" class="btn" data-remind-phone="${esc(p.id)}">Cargar WhatsApp</button></li>`;
       }
       const sent = !!p.reminderSentAt;
       return `<li class="remind-row" data-remind="${esc(p.id)}">
@@ -522,6 +527,15 @@ async function openReminders(m) {
     const list = $('#remind-list');
     if (!list) return;
     list.addEventListener('click', (e) => {
+      const addPhone = e.target.closest('[data-remind-phone]');
+      if (addPhone) {
+        const person = fresh.find((p) => p.id === addPhone.dataset.remindPhone);
+        if (!person) return;
+        closeSheet();
+        app.wantPhoneForm = true;
+        openPlayerProfile(person, m.id);
+        return;
+      }
       const link = e.target.closest('[data-send]');
       if (!link) return;
       const id = link.dataset.send;
@@ -564,7 +578,7 @@ function promoteToMatch(m, player, disabled) {
 async function offerPromotionWhatsApp(player, match) {
   const phone = String(player?.phone || '').trim();
   if (!phone) {
-    toast(`${player.name} no tiene WhatsApp para avisarle`);
+    toast(`${player.name} no tiene WhatsApp para avisarle. Lo podés cargar en el perfil.`);
     return;
   }
   const token = await app.store.ensureConfirmToken(player.id);
@@ -837,7 +851,7 @@ function renderRoster() {
     <p class="hint roster-lead">Lista guardada de nombre y WhatsApp. Se comparte entre los dos.</p>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
     <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
-    ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido con WhatsApp, se guarda acá.'}</p>`}
+    ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.'}</p>`}
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
     </div></div>`;
@@ -878,7 +892,7 @@ function openRosterForm(person) {
   openSheet(`
     <form id="roster-form" novalidate>
       <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
-      <p class="hint">Nombre completo y WhatsApp. Si el número ya está, no se duplica.</p>
+      <p class="hint">Nombre completo. El WhatsApp es opcional. Si el número ya está, no se duplica.</p>
       <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
       <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person ? displayFromWa(person.phone) : '')}">
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>
@@ -899,12 +913,15 @@ function openRosterForm(person) {
     const name = form.name.value.trim();
     const phoneRaw = form.phone.value.trim();
     if (!name) { $('#rf-err').textContent = 'Poné el nombre.'; return; }
-    if (!phoneRaw) { $('#rf-err').textContent = 'Poné el WhatsApp.'; return; }
-    const r = normalizePhone(phoneRaw);
-    if (!r.ok) { $('#rf-err').textContent = r.error; return; }
+    let phone = '';
+    if (phoneRaw) {
+      const r = normalizePhone(phoneRaw);
+      if (!r.ok) { $('#rf-err').textContent = r.error; return; }
+      phone = r.wa;
+    }
     const job = person
-      ? app.store.updateRoster(person.id, { name, phone: r.wa })
-      : app.store.addRoster({ name, phone: r.wa }, app.who);
+      ? app.store.updateRoster(person.id, { name, phone })
+      : app.store.addRoster({ name, phone }, app.who);
     Promise.resolve(job).then(() => { closeSheet(); toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores'); }).catch((err) => rosterFormError(err, 'rf-err'));
   };
 }
@@ -920,25 +937,40 @@ function deleteRosterPlayer(person) {
 
 const noteId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 app.profileMatchId = null;
+app.wantPhoneForm = false;
+
+async function ensureRoster({ name, phone, rosterId }) {
+  const cleanName = String(name || '').trim();
+  if (rosterId && app.roster.some((person) => person.id === rosterId)) return rosterId;
+  const wa = canonicalPhone(phone);
+  if (wa) {
+    const found = rosterByPhone(app.roster, wa);
+    if (found) return found.id;
+  } else if (cleanName) {
+    const found = app.roster.find((person) => !canonicalPhone(person.phone) && foldText(person.name) === foldText(cleanName));
+    if (found) return found.id;
+  }
+  if (!cleanName) return '';
+  return app.store.addRoster({ name: cleanName, phone: wa }, app.who);
+}
 
 async function openPlayerProfile(player, matchId) {
   if (!player) return;
-  if (!player.phone) { toast('Para el perfil hace falta un WhatsApp'); return; }
   app.profileMatchId = matchId || null;
-  let person = rosterByPhone(app.roster, player.phone);
-  if (!person) {
-    try {
-      const id = await app.store.addRoster({ name: player.name, phone: player.phone }, app.who);
-      location.hash = `#/jugador/${encodeURIComponent(id)}`;
-      return;
-    } catch (error) {
-      if (error?.code === 'roster-duplicate') person = rosterByPhone(app.roster, player.phone);
-      else if (isRosterDenied(error)) { showError(`${ROSTER_DENIED_WRITE} El perfil no se pudo abrir.`); return; }
-      else { toast('No se pudo abrir el perfil'); return; }
+  try {
+    let id = player.rosterId && app.roster.some((person) => person.id === player.rosterId) ? player.rosterId : '';
+    if (!id) id = await ensureRoster({ name: player.name, phone: player.phone, rosterId: player.rosterId });
+    if (!id) { toast('No se pudo abrir el perfil'); return; }
+    if (player.id && player.rosterId !== id) await app.store.updatePlayer(player.id, { rosterId: id });
+    location.hash = `#/jugador/${encodeURIComponent(id)}`;
+  } catch (error) {
+    if (error?.code === 'roster-duplicate') {
+      const person = rosterByPhone(app.roster, player.phone);
+      if (person) { location.hash = `#/jugador/${encodeURIComponent(person.id)}`; return; }
     }
+    if (isRosterDenied(error)) { showError(`${ROSTER_DENIED_WRITE} El perfil no se pudo abrir.`); return; }
+    toast('No se pudo abrir el perfil');
   }
-  if (!person) { toast('No se pudo abrir el perfil'); return; }
-  location.hash = `#/jugador/${encodeURIComponent(person.id)}`;
 }
 
 function saveProfile(id, patch) {
@@ -948,10 +980,11 @@ function saveProfile(id, patch) {
   });
 }
 
-function ledgerSection(phone) {
+function ledgerSection(person) {
   const organizer = app.payFilter || null;
-  const money = paymentLedger({ phone, players: app.players, matches: app.matches, organizer });
-  const signups = signupLedger({ phone, players: app.players, organizer });
+  const who = { phone: person.phone, rosterId: person.id, name: person.name };
+  const money = paymentLedger({ ...who, players: app.players, matches: app.matches, organizer });
+  const signups = signupLedger({ ...who, players: app.players, organizer });
   const parts = { cash: 0, transfer: 0, pending: 0 };
   const shareOk = (name) => {
     const label = String(name || '').trim() || UNSPECIFIED;
@@ -960,7 +993,7 @@ function ledgerSection(phone) {
     return sameOrganizer(label, organizer);
   };
   for (const player of app.players) {
-    if (player.phone !== phone) continue;
+    if (!playerMatchesPerson(player, person)) continue;
     for (const share of paymentShares(player)) {
       if (!shareOk(share.name)) continue;
       if (share.kind === 'pending') parts.pending += share.amount;
@@ -987,7 +1020,7 @@ function ledgerSection(phone) {
   return `
     <section class="profile-block" id="ledger">
       <h2>Pagos</h2>
-      ${payFilterChips(phone)}
+      ${payFilterChips(person)}
       <p class="stat-summary" id="ledger-total">${esc(money.totalText)}</p>
       ${partsLine}
       ${pendingLine}
@@ -1054,7 +1087,7 @@ function renderPagos() {
   const totals = organizerTotals(app.players);
   const pending = pendingTransfers({ players: app.players, roster: app.roster, organizer });
   const body = rows.length ? `<ul class="slots" id="pay-summary">${rows.map((row) => {
-    const person = row.key.startsWith('n:') ? null : rosterByPhone(app.roster, row.key);
+    const personId = row.rosterId || '';
     const paid = row.paid.length
       ? row.paid.map((item) => `<div class="sub">${esc(item.name)}: ${esc(formatARS(item.amount))}</div>`).join('')
       : '<div class="sub">Sin pagos</div>';
@@ -1062,7 +1095,7 @@ function renderPagos() {
       ? row.signups.map((item) => `<div class="sub">Anotó ${esc(item.name)}: ${timesLabel(item.count)}</div>`).join('')
       : '<div class="sub">Sin anotaciones</div>';
     const later = row.pending > 0 ? `<div class="pay-pending">Transfiere después ${esc(formatARS(row.pending))}</div>` : '';
-    const open = person ? ` data-pay-open="${esc(person.id)}"` : '';
+    const open = personId ? ` data-pay-open="${esc(personId)}"` : '';
     return `<li class="slot pay-row"><button type="button" class="who"${open}><div class="name">${esc(row.name)}</div>${paid}${signed}${later}</button></li>`;
   }).join('')}</ul>` : '<p class="empty-wait" id="pay-summary">Nadie en este filtro.</p>';
   const pendingBody = pending.rows.length
@@ -1098,16 +1131,19 @@ function renderProfile(id) {
     $('#view').innerHTML = `<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`;
     return;
   }
-  const stats = playerStats({ phone: person.phone, players: app.players, matches: app.matches });
-  const record = playerRecord({ phone: person.phone, players: app.players, matches: app.matches });
+  const who = { phone: person.phone, rosterId: person.id, name: person.name };
+  const stats = playerStats({ ...who, players: app.players, matches: app.matches });
+  const record = playerRecord({ ...who, players: app.players, matches: app.matches });
   const positions = new Set(person.positions || []);
   const level = Number.isInteger(person.level) ? person.level : null;
   const notes = sortedNotes(person.notes);
   $('#view').innerHTML = `
     <article id="profile">
       <h2 class="section">${esc(person.name)}</h2>
-      <p class="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</p>
-      ${person.phone ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waLink(person.phone))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>` : ''}
+      <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</p>
+      ${person.phone
+        ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waLink(person.phone))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>`
+        : '<button type="button" class="btn profile-add-phone" id="profile-add-phone">Cargar WhatsApp</button>'}
       ${partidosSection(person)}
       <section class="profile-block">
         <h2>Nivel de juego</h2>
@@ -1129,7 +1165,7 @@ function renderProfile(id) {
         <p class="hint" id="stat-pay">${esc(record.paidText)}</p>
         <p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>
       </section>
-      ${ledgerSection(person.phone)}
+      ${ledgerSection(person)}
       <section class="profile-block">
         <h2>Notas de partido</h2>
         <div id="notes">${notes.length ? notes.map((note) => `
@@ -1144,6 +1180,12 @@ function renderProfile(id) {
         <button type="button" class="btn block" id="btn-add-note">Agregar nota</button>
       </section>
     </article>`;
+  const addPhone = $('#profile-add-phone');
+  if (addPhone) addPhone.onclick = () => openPhoneForm(person);
+  if (app.wantPhoneForm) {
+    app.wantPhoneForm = false;
+    if (!person.phone) openPhoneForm(person);
+  }
   $('#level-down').onclick = () => { if (level > 1) saveProfile(person.id, { level: level - 1 }); };
   $('#level-up').onclick = () => saveProfile(person.id, { level: level == null ? 1 : Math.min(10, level + 1) });
   $('#positions').onclick = (e) => {
@@ -1170,11 +1212,8 @@ function renderProfile(id) {
 
 function partidosSection(person) {
   const upcoming = upcomingMatches(app.matches);
-  if (!person.phone) {
-    return `<section class="profile-block" id="partidos"><h2>Partidos</h2><p class="hint">Sin número no se puede anotar en varios partidos.</p></section>`;
-  }
   const rows = upcoming.map((match) => {
-    const state = matchSignupState({ phone: person.phone, match, players: app.players });
+    const state = matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match, players: app.players });
     const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
     const locked = state.existing ? 'checked disabled' : '';
     const remove = state.existing && state.playerId
@@ -1208,7 +1247,7 @@ function signupButtonLabel(count) {
 function bindPartidos(person) {
   const list = $('#signup-list');
   const button = $('#btn-signup');
-  if (!list || !button || !person.phone) return;
+  if (!list || !button) return;
   const fresh = () => [...list.querySelectorAll('input[data-signup]:not(:disabled):checked')];
   const paint = () => {
     const n = fresh().length;
@@ -1243,7 +1282,7 @@ function bindPartidos(person) {
   button.onclick = () => {
     const chosen = fresh().map((input) => {
       const match = matchById(input.dataset.signup);
-      const state = matchSignupState({ phone: person.phone, match, players: app.players });
+      const state = matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match, players: app.players });
       return { match, state };
     }).filter((row) => row.match && !row.state.existing);
     if (!chosen.length) return;
@@ -1261,16 +1300,15 @@ function bindPartidos(person) {
         : (chosen.length === 1 ? `${person.name} anotado` : `${person.name} anotado en ${chosen.length} partidos`);
     run((async () => {
       for (const row of chosen) {
-        const again = matchSignupState({ phone: person.phone, match: row.match, players: app.players });
+        const again = matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match: row.match, players: app.players });
         if (again.existing) continue;
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
-        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone }, app.who, {
+        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone || '', rosterId: person.id }, app.who, {
           waiting: again.willWait,
           tentative: tentative && !again.willWait,
         });
       }
-      await rememberInRoster(person.name, person.phone);
     })(), msg);
   };
   paint();
@@ -1310,13 +1348,13 @@ function openNoteForm(person, note) {
   };
 }
 
-async function rememberInRoster(name, phone) {
-  if (!phone || rosterByPhone(app.roster, phone)) return;
-  try { await app.store.addRoster({ name, phone }, app.who); }
+async function linkedRosterId({ name, phone, rosterId }) {
+  try { return await ensureRoster({ name, phone, rosterId }); }
   catch (error) {
-    if (error?.code === 'roster-duplicate') return;
+    if (error?.code === 'roster-duplicate') return rosterByPhone(app.roster, phone)?.id || rosterId || '';
     if (isRosterDenied(error)) showError(`${ROSTER_DENIED_WRITE} El partido igual quedó anotado.`);
     else console.error(error);
+    return rosterId || '';
   }
 }
 
@@ -1331,9 +1369,48 @@ function addSignedPlayer(m, { name, phone, rosterId }, asWait, tentative) {
   const willWait = asWait || full;
   closeSheet();
   run((async () => {
-    await app.store.addPlayer(m, { name, phone, rosterId }, app.who, { waiting: asWait, tentative: tentative === true && !willWait });
-    await rememberInRoster(name, phone);
+    const id = await linkedRosterId({ name, phone, rosterId });
+    await app.store.addPlayer(m, { name, phone, rosterId: id }, app.who, { waiting: asWait, tentative: tentative === true && !willWait });
   })(), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
+}
+
+function openPhoneForm(person) {
+  openSheet(`
+    <form id="phone-form" novalidate>
+      <h3>WhatsApp de ${esc(person.name)}</h3>
+      <p class="hint">Es opcional. Con el número se puede escribir y mandar el link de confirmación.</p>
+      <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autofocus autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person.phone ? displayFromWa(person.phone) : '')}">
+        <div class="small muted" id="phone-hint">Característica + número. Sin 0 ni 15 también sirve.</div></label>
+      <div class="field"><div class="err" id="phone-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#phone-form');
+  const hint = $('#phone-hint');
+  form.phone.addEventListener('input', () => {
+    const v = form.phone.value.trim();
+    if (!v) { hint.className = 'small muted'; hint.textContent = 'Característica + número. Sin 0 ni 15 también sirve.'; return; }
+    const parsed = normalizePhone(v);
+    hint.className = parsed.ok ? 'ok' : 'err';
+    hint.textContent = parsed.ok ? `✓ ${parsed.display}` : parsed.error;
+  });
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const raw = form.phone.value.trim();
+    if (!raw) { $('#phone-err').textContent = 'Poné el WhatsApp, o cancelá.'; return; }
+    const parsed = normalizePhone(raw);
+    if (!parsed.ok) { $('#phone-err').textContent = parsed.error; return; }
+    const dup = app.roster.find((item) => item.id !== person.id && canonicalPhone(item.phone) === parsed.wa);
+    if (dup) { $('#phone-err').textContent = `${dup.name} ya tiene ese WhatsApp`; return; }
+    const linked = app.players.filter((player) => playerMatchesPerson(player, person));
+    closeSheet();
+    run((async () => {
+      await app.store.updateRoster(person.id, { name: person.name, phone: parsed.wa });
+      for (const player of linked) {
+        if (canonicalPhone(player.phone) === parsed.wa && player.rosterId === person.id) continue;
+        await app.store.updatePlayer(player.id, { phone: parsed.wa, rosterId: person.id });
+      }
+    })(), 'WhatsApp guardado');
+  };
 }
 
 /* Agregar / editar jugador */
@@ -1351,7 +1428,7 @@ function openPlayerForm(m, p, opts = {}) {
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
       <label class="field"><span>Nombre</span><input name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
-        <div class="small muted" id="pf-phone">Característica + número. Sin 0 ni 15 también sirve. Si no está guardado, se agrega a Jugadores.</div></label>
+        <div class="small muted" id="pf-phone">Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.</div></label>
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
       <div class="field"><div class="err" id="pf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${p ? 'Guardar' : 'Agregar'}</button></div>
@@ -1360,7 +1437,7 @@ function openPlayerForm(m, p, opts = {}) {
   const hint = $('#pf-phone');
   form.phone.addEventListener('input', () => {
     const v = form.phone.value.trim();
-    if (!v) { hint.className = 'small muted'; hint.textContent = 'Característica + número. Sin 0 ni 15 también sirve. Si no está guardado, se agrega a Jugadores.'; return; }
+    if (!v) { hint.className = 'small muted'; hint.textContent = 'Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.'; return; }
     const r = normalizePhone(v);
     hint.className = r.ok ? 'ok' : 'err';
     hint.textContent = r.ok ? `✓ ${r.display}` : r.error;
@@ -1397,10 +1474,10 @@ function openPlayerForm(m, p, opts = {}) {
     if (p) {
       closeSheet();
       run((async () => {
-        await app.store.updatePlayer(p.id, { name, phone });
-        await rememberInRoster(name, phone);
+        const id = await linkedRosterId({ name, phone, rosterId: p.rosterId });
+        await app.store.updatePlayer(p.id, { name, phone, ...(id ? { rosterId: id } : {}) });
       })(), 'Jugador actualizado');
-    } else addSignedPlayer(m, { name, phone }, asWait, !!$('#player-tentative')?.checked);
+    } else addSignedPlayer(m, { name, phone, rosterId: p?.rosterId }, asWait, !!$('#player-tentative')?.checked);
   };
 }
 /* Pago del jugador */
@@ -1619,7 +1696,7 @@ function openPlayerMenu(m, p) {
     <h3>${esc(p.name)}</h3>
     <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu">
-      ${p.phone ? `<a class="btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : ''}
+      ${p.phone ? `<a class="btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : '<button class="btn" id="pm-phone">Cargar WhatsApp</button>'}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
@@ -1628,6 +1705,8 @@ function openPlayerMenu(m, p) {
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, m.id); };
+  const loadPhone = $('#pm-phone');
+  if (loadPhone) loadPhone.onclick = () => { closeSheet(); app.wantPhoneForm = true; openPlayerProfile(p, m.id); };
   const spot = $('#pm-confirm-spot');
   if (spot) spot.onclick = () => { closeSheet(); clearReservedSpot(p); };
   $('#pm-edit').onclick = () => openPlayerForm(m, p);

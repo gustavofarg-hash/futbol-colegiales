@@ -625,6 +625,24 @@ check('Desde Jugadores es el mismo perfil', (await page.textContent('#level-val'
 await page.click('#btn-back');
 await page.waitForSelector('#btn-roster');
 
+await page.click('.match-card:has-text("Miércoles 21/10")');
+await page.click('#btn-add-player');
+await page.fill('#player-form [name=name]', 'Ciro Sinwa');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Ciro Sinwa")');
+check('Sin WhatsApp igual se anota', !((await page.textContent('#toast')) || '').includes('hace falta un WhatsApp'));
+await page.locator('#slots .who', { hasText: 'Ciro Sinwa' }).click();
+await page.waitForSelector('#profile');
+check('El perfil abre sin WhatsApp', (await page.textContent('#profile-phone')).includes('Sin número') && (await page.locator('#profile-wa').count()) === 0 && (await page.locator('#profile-add-phone').count()) === 1);
+check('Sin número se puede anotar en otros partidos', await page.isVisible('#signup-list'));
+await page.click('#profile-add-phone');
+await page.fill('#phone-form [name=phone]', '11 7777-8888');
+await page.click('#phone-form button[type=submit]');
+await page.waitForSelector('#profile-wa');
+check('Desde el perfil se carga el WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491177778888'));
+await page.click('#btn-back');
+await page.waitForSelector('#btn-roster');
+
 // Resumen de pagos (sigue la sesión de Martín) y alta de usuarios (solo el admin)
 await page.click('#btn-pagos');
 await page.waitForSelector('#pay-summary');

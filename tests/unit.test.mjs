@@ -5,7 +5,7 @@ import { normalizePhone } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
-import { rosterHit, searchRoster } from '../js/roster.js';
+import { playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
 import { matchSignupState, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
@@ -803,7 +803,12 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   ];
   assert.equal(playerPromoKey(rosterPlayers[0]), 'r:ros1');
   assert.equal(promoForPlayer({ player: rosterPlayers[0], players: rosterPlayers, matches, prices: null }).label, 'Promo 2 partidos por $9.000');
-  assert.equal(playerPromoKey({ phone: '', name: 'Solo' }), '');
+  assert.equal(playerPromoKey({ phone: '', name: 'Solo' }), 'n:solo');
+  const named = [
+    { id: 'n1', matchId: 'a', phone: '', name: 'Ciro Díaz', waiting: false },
+    { id: 'n2', matchId: 'b', phone: '', name: 'Ciro Díaz', waiting: false },
+  ];
+  assert.equal(promoForPlayer({ player: named[0], players: named, matches, prices: null }).label, 'Promo 2 partidos por $9.000');
   assert.equal(promoForPlayer({ player: { id: 'x', matchId: 'a', phone: '' }, players: [{ id: 'x', matchId: 'a', phone: '' }, { id: 'y', matchId: 'b', phone: '' }], matches, prices: null }), null);
   const fourPlayers = ['e', 'a', 'b', 'c'].map((id, i) => ({ id: `f${i}`, matchId: id, phone, waiting: false }));
   const four = promoForPlayer({ player: fourPlayers[0], players: fourPlayers, matches, prices: null });
@@ -871,4 +876,38 @@ test('permisos del partido: todos, solo yo, límite y sin excepción de admin', 
   });
   assert.deepEqual(openLimits.limits, []);
   assert.equal(limitFor(openLimits, 'gustavo'), null);
+});
+
+test('sin WhatsApp el perfil agrupa por plantel o por nombre', () => {
+  const matches = [
+    { id: 'viejo', date: '2026-10-15', time: '21:00', startsAt: Date.parse('2026-10-15T21:00:00-03:00') },
+    { id: 'nuevo', date: '2026-10-22', time: '21:00', startsAt: Date.parse('2026-10-22T21:00:00-03:00') },
+  ];
+  const players = [
+    { id: 'a', matchId: 'viejo', name: 'Ciro Díaz', phone: '', rosterId: 'ros-ciro', waiting: false, paid: true, amount: 5000, receivedBy: 'Gustavo', addedBy: 'Martín' },
+    { id: 'b', matchId: 'nuevo', name: 'Ciro Díaz', phone: '', rosterId: 'ros-ciro', waiting: false, addedBy: 'Martín' },
+    { id: 'c', matchId: 'nuevo', name: 'Ciro Díaz', phone: '', waiting: false, addedBy: 'Gustavo' },
+    { id: 'd', matchId: 'nuevo', name: 'Otro', phone: '', waiting: false, paid: true, amount: 1000, receivedBy: 'Martín', addedBy: 'Martín' },
+  ];
+  const person = { id: 'ros-ciro', phone: '', name: 'Ciro Díaz' };
+  assert.equal(playerMatchesPerson(players[0], person), true);
+  assert.equal(playerMatchesPerson(players[2], person), true);
+  assert.equal(playerMatchesPerson({ name: 'Ciro Díaz', phone: '', rosterId: 'otro' }, person), false);
+  assert.equal(playerMatchesPerson(players[3], person), false);
+  assert.equal(playerMatchesPerson({ name: 'Ciro Díaz', phone: '' }, { id: '', phone: '', name: 'Ciro Díaz' }), true);
+  assert.equal(playerMatchesPerson({ name: 'Ciro Díaz', phone: '5491111111111' }, { id: '', phone: '', name: 'Ciro Díaz' }), false);
+  const stats = playerStats({ rosterId: 'ros-ciro', name: 'Ciro Díaz', players, matches, now: Date.parse('2026-10-19T13:00:00-03:00') });
+  assert.equal(stats.played, 1);
+  assert.equal(playerRecord({ rosterId: 'ros-ciro', players, matches }).paidTotal, 5000);
+  const ledger = paymentLedger({ rosterId: 'ros-ciro', name: 'Ciro Díaz', players, matches });
+  assert.equal(ledger.total, 5000);
+  assert.equal(signupLedger({ name: 'Otro', players }).total, 1);
+  const signup = matchSignupState({ rosterId: 'ros-ciro', name: 'Ciro Díaz', match: matches[1], players });
+  assert.equal(signup.state, 'anotado');
+  const other = matchSignupState({ name: 'Libre', match: matches[1], players });
+  assert.equal(other.existing, false);
+  const summary = paymentsSummary({ players, roster: [{ id: 'ros-ciro', name: 'Ciro Díaz', phone: '' }] });
+  const ciro = summary.find((row) => row.name === 'Ciro Díaz');
+  assert.equal(ciro.rosterId, 'ros-ciro');
+  assert.equal(ciro.paidTotal, 5000);
 });
