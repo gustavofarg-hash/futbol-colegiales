@@ -122,6 +122,20 @@ export function currentMatches(matches, now = Date.now()) {
     .sort((a, b) => startsAtOf(a) - startsAtOf(b) || String(a.id).localeCompare(String(b.id)));
 }
 
+/** Próximos partidos: hoy inclusive hasta hoy + 7, en el calendario de Buenos Aires. */
+export const NEAR_DAYS = 7;
+
+export function splitNear(matches, now = Date.now()) {
+  const today = todayISO(new Date(now));
+  const limit = addDays(today, NEAR_DAYS);
+  const rows = (matches || []).filter((match) => match?.date >= today);
+  return {
+    limit,
+    next: rows.filter((match) => match.date <= limit),
+    later: rows.filter((match) => match.date > limit),
+  };
+}
+
 /**
  * Historial: la fecha de calendario ya pasó. El más reciente primero.
  * No borra nada: es el mismo partido, con jugadores y pagos.

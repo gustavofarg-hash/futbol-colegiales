@@ -117,7 +117,18 @@ await page.click('#imp-save');
 await page.waitForFunction(() => document.querySelectorAll('.match-card').length === 5);
 const order = await page.$$eval('.match-card .match-title', (els) => els.map((e) => e.textContent));
 check('Lista ordenada cronológicamente', JSON.stringify(order) === JSON.stringify(['Martes 20/10', 'Miércoles 21/10', 'Jueves 22/10', 'Sábado 24/10', 'Lunes 26/10']), order.join(', '));
-check('Partido a más de 7 días va a "Más adelante"', (await page.$$('#list-later .match-card')).length === 1 && (await page.$$('#list-next .match-card')).length === 4);
+check('El lunes 26/10 entra en los próximos 7 días', await page.locator('#list-next .match-card:has-text("26/10")').count() === 1 && await page.locator('#btn-later').count() === 0);
+await page.evaluate(async () => {
+  await window.__app.store.addMatch({ date: '2026-10-28', time: '21:00', note: 'Lejos', capacity: 14 }, window.__app.who);
+});
+await page.waitForSelector('#btn-later');
+check('Ver más adelante muestra la cantidad', (await page.textContent('#btn-later')).replace(/\s+/g, ' ').trim() === 'Ver más adelante (1)');
+check('Más adelante arranca cerrado', await page.locator('#list-later').count() === 0 && await page.locator('#list-next .match-card:has-text("28/10")').count() === 0);
+await page.click('#btn-later');
+await page.waitForSelector('#list-later .match-card:has-text("28/10")');
+check('Ver más adelante despliega los que siguen', await page.locator('#list-next .match-card').count() === 5 && await page.locator('#list-later .match-card').count() === 1);
+await page.click('#btn-later');
+await page.waitForFunction(() => !document.querySelector('#list-later') && document.querySelector('#btn-later')?.textContent.includes('Ver más adelante'));
 check('Badge "Mañana" en el partido del martes', (await page.textContent('#list-next .match-card >> nth=0')).includes('Mañana'));
 
 // Detalle y jugadores

@@ -3,7 +3,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
@@ -79,6 +79,7 @@ const app = {
   historyMeta: null,
   historyError: '',
   matchMiss: {},
+  showLater: false,
 };
 window.__app = app; // útil para depurar / tests
 
@@ -210,13 +211,24 @@ function route() {
 }
 window.addEventListener('hashchange', render);
 
-/* Al abrir la app (sesión nueva) siempre entra Próximos partidos.
-   Recargar o volver atrás, en la misma sesión, deja la pestaña en la que estabas. */
+/* Al abrir la app (sesión nueva) siempre entra Próximos partidos, con “más adelante” cerrado.
+   Recargar o volver atrás, en la misma sesión, deja la pestaña y el desplegable como estaban. */
+function rememberLater(open) {
+  app.showLater = !!open;
+  try {
+    if (app.showLater) sessionStorage.setItem('f7c-later', '1');
+    else sessionStorage.removeItem('f7c-later');
+  } catch { /* modo privado */ }
+}
 function openOnUpcoming() {
   try {
-    if (sessionStorage.getItem('f7c-session')) return;
+    if (sessionStorage.getItem('f7c-session')) {
+      app.showLater = sessionStorage.getItem('f7c-later') === '1';
+      return;
+    }
     sessionStorage.setItem('f7c-session', '1');
     sessionStorage.removeItem('f7c-tab');
+    sessionStorage.removeItem('f7c-later');
     const name = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || '';
     const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial';
     if (section && location.hash && location.hash !== '#/' && location.hash !== '#') {
@@ -322,20 +334,22 @@ function rosterSwitch(pay) {
 }
 
 function renderHome() {
-  const today = todayISO();
-  const limit = addDays(today, 6);
   const upcoming = currentMatches(app.matches);
   const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && minePlayer(p))) : upcoming;
-  const next = all.filter((m) => m.date <= limit);
-  const later = all.filter((m) => m.date > limit);
+  const { next, later } = splitNear(all);
+  const open = app.showLater && later.length > 0;
+  const emptyHint = later.length
+    ? 'Los que vienen después están en el botón de abajo.'
+    : 'Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.';
   $('#view').innerHTML = `
     ${reminderBanners(next)}
     ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
-      <div class="empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
-      <p class="small">Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.</p></div>`}
-    ${later.length ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
+      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
+      <p class="small">${emptyHint}</p></div>`}
+    ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
+    ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
     <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn" id="btn-import">${ICON.paste}Importar desde texto</button>
@@ -343,6 +357,8 @@ function renderHome() {
     </div></div>`;
   $('#btn-add-match').onclick = () => openMatchForm();
   $('#btn-import').onclick = () => openImport();
+  const laterBtn = $('#btn-later');
+  if (laterBtn) laterBtn.onclick = () => { rememberLater(!app.showLater); renderHome(); };
   bindReminderBanners();
 }
 
@@ -1095,6 +1111,7 @@ function openMatchForm(m) {
     if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
     if (editingAccess) data.access = readAccessForm();
     closeSheet();
+    if (splitNear([{ date: data.date }]).later.length) rememberLater(true);
     if (m) run(app.store.updateMatch(m.id, data, app.who), 'Partido actualizado');
     else run(app.store.addMatch({ ...data, source: 'manual', capacity: CAPACITY }, app.who), 'Partido agregado');
   };
@@ -1157,6 +1174,7 @@ function openImportPreview(text, found) {
   if (save) save.onclick = () => {
     const sel = items.filter((i) => i.on && i.date && i.time);
     if (!sel.length) return;
+    if (sel.some((item) => splitNear([{ date: item.date }]).later.length)) rememberLater(true);
     closeSheet();
     run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, capacity: CAPACITY, access: publicAccess(actor()) })), app.who),
       `${sel.length} partido${sel.length > 1 ? 's' : ''} importado${sel.length > 1 ? 's' : ''}`);

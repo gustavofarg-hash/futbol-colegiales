@@ -7,7 +7,7 @@ import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
+import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -1007,6 +1007,16 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
     { id: 'manana', date: '2026-10-20', time: '19:00' },
   ];
   assert.deepEqual(currentMatches(matches, now).map((match) => match.id), ['hoy-temprano', 'hoy-noche', 'cancelado', 'manana']);
+  const horizon = [
+    { id: 'hoy', date: '2026-10-19', time: '21:00' },
+    { id: 'mas7', date: '2026-10-26', time: '21:00' },
+    { id: 'mas8', date: '2026-10-27', time: '21:00' },
+    { id: 'ayer', date: '2026-10-18', time: '21:00' },
+  ];
+  const split = splitNear(horizon, now);
+  assert.deepEqual(split.next.map((match) => match.id), ['hoy', 'mas7']);
+  assert.deepEqual(split.later.map((match) => match.id), ['mas8']);
+  assert.equal(split.limit, '2026-10-26');
   assert.deepEqual(pastMatches(matches, now).map((match) => match.id), ['ayer', 'viejo']);
   assert.deepEqual(upcomingMatches(matches, now).map((match) => match.id), ['hoy-noche', 'manana']);
   const many = [];
