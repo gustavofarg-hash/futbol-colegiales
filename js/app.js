@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
@@ -104,6 +104,7 @@ function showError(msg) {
 // Las escrituras a Firestore resuelven cuando el servidor confirma; con caché
 // offline la UI no espera: se cierra el formulario y se avisa si falla.
 const PAY_RULES_MSG = 'No se pudo guardar el pago. Hay que volver a publicar firestore.rules para efectivo, transferencia y Transfiere después.';
+const RULES_MSG = 'Firebase rechazó el acceso. Hay que actualizar las reglas de Firestore (publicar firestore.rules).';
 function isPermissionDenied(error) {
   const code = error?.code || '';
   return code === 'permission-denied' || code === 'permission_denied';
@@ -295,8 +296,21 @@ function placeBars() {
   }
   document.documentElement.style.setProperty('--actionbar-h', `${action ? action.offsetHeight : 0}px`);
 }
+let renderKey = '';
+let viewHtml = '';
+// Misma pantalla y mismos datos: no se reemplaza el DOM, así no parpadea ni se pierde el scroll ni lo elegido.
+function replaceView(html) {
+  if (html === viewHtml) return false;
+  viewHtml = html;
+  $('#view').innerHTML = html;
+  return true;
+}
 function render() {
   const r = route();
+  const key = `${r.name}:${r.id || ''}:${r.pay ? 1 : 0}`;
+  const same = key === renderKey;
+  renderKey = key;
+  const y = same ? (document.scrollingElement?.scrollTop || 0) : 0;
   paintTabs(r);
   if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
@@ -311,6 +325,12 @@ function render() {
   else if (r.name === 'users') renderUsers();
   else renderHome();
   requestAnimationFrame(placeBars);
+  if (same && y > 0) {
+    const top = y;
+    requestAnimationFrame(() => {
+      if ((document.scrollingElement?.scrollTop || 0) !== top) document.scrollingElement.scrollTop = top;
+    });
+  }
 }
 
 function matchCard(m) {
@@ -349,7 +369,7 @@ function renderHome() {
   const emptyHint = later.length
     ? 'Los que vienen después están en el botón de abajo.'
     : 'Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.';
-  $('#view').innerHTML = `
+  if (!replaceView(`
     ${reminderBanners(next)}
     ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Próximos 7 días</h2>
@@ -362,7 +382,7 @@ function renderHome() {
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn" id="btn-import">${ICON.paste}Importar desde texto</button>
       <button class="btn primary" id="btn-add-match">${ICON.plus}Agregar partido</button>
-    </div></div>`;
+    </div></div>`)) return;
   $('#btn-add-match').onclick = () => openMatchForm();
   $('#btn-import').onclick = () => openImport();
   const laterBtn = $('#btn-later');
@@ -373,7 +393,7 @@ function renderHome() {
 function renderTeams(id) {
   const m = matchById(id);
   if (!m) {
-    $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
+    if (!replaceView(`<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`)) return;
     return;
   }
   const main = playersOf(id);
@@ -397,7 +417,7 @@ function renderTeams(id) {
     </section>`;
   const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
   const share = teamsMessage({ when, venue: VENUE, players: main, teams });
-  $('#view').innerHTML = `
+  if (!replaceView(`
     <section class="detail-head">
       <h1>Equipos</h1>
       <div class="when">${esc(when)} · ${esc(VENUE)}</div>
@@ -418,7 +438,7 @@ function renderTeams(id) {
         ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Limpiar</button>'}
         <a class="btn nav-wide" id="btn-teams-wa" href="${esc(waHref('', share))}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
       </div>
-    </div>`;
+    </div>`)) return;
   const save = (next, msg) => run(app.store.setTeams(m.id, normalizeTeams(next, ids), app.who), msg);
   if (!readOnly) {
     $('#team-board').onclick = (e) => {
@@ -436,7 +456,7 @@ function renderHistory() {
   const filter = app.historyFilter || {};
   const caption = app.historyMeta?.caption || 'Partidos pasados, los más recientes primero.';
   const active = !!(filter.day || filter.from || filter.to);
-  $('#view').innerHTML = `
+  if (!replaceView(`
     <h2 class="section">Historial de partidos</h2>
     <form id="history-filter" class="history-filter">
       <p class="hint roster-lead">Por defecto, los últimos 30. Una fecha, o un desde y hasta. Si completás la fecha, esa manda.</p>
@@ -455,7 +475,7 @@ function renderHistory() {
     ${past.length ? `<ul class="match-list" id="list-history">${past.map(matchCard).join('')}</ul>` : `
       <div class="empty" id="list-history"><div class="big">📅</div><p><b>${active ? 'Nada en ese filtro.' : 'Todavía no hay partidos pasados.'}</b></p>
       <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}
-    <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>`;
+    <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>`)) return;
   $('#history-filter').onsubmit = (e) => {
     e.preventDefault();
     const day = $('#hist-day').value;
@@ -475,19 +495,24 @@ function renderHistory() {
 function renderMatch(id) {
   const m = matchById(id);
   if (!m) {
+    if (app.matchMiss[id] === 'denied') {
+      replaceView(`<div class="empty" id="match-denied"><div class="big">🔒</div><p><b>No se pudo abrir este partido.</b></p><p class="small">${esc(RULES_MSG)}</p><p><a class="btn" href="#/historial">Volver al historial</a></p></div>`);
+      return;
+    }
     if (app.matchMiss[id] !== 'done') {
       if (app.matchMiss[id] !== 'loading') {
         app.matchMiss[id] = 'loading';
-        Promise.resolve(app.store.ensureMatch?.(id)).finally(() => {
-          app.matchMiss[id] = 'done';
+        Promise.resolve(app.store.ensureMatch?.(id)).then((result) => {
+          app.matchMiss[id] = result === 'denied' ? 'denied' : 'done';
+          if (result === 'denied') showError(RULES_MSG);
           const current = route();
           if (current.name === 'match' && current.id === id) render();
         });
       }
-      $('#view').innerHTML = `<div class="empty" id="match-missing"><div class="big">⚽</div><p><b>Buscando el partido…</b></p></div>`;
+      replaceView(`<div class="empty" id="match-missing"><div class="big">⚽</div><p><b>Buscando el partido…</b></p></div>`);
       return;
     }
-    $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
+    replaceView(`<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`);
     return;
   }
   const everyone = playersOf(id);
@@ -530,7 +555,7 @@ function renderMatch(id) {
   const signed = everyone.length + waitingOf(id).length;
   const canEdit = canEditMatch(m, who.uid);
   const notesText = String(m.notes || '').trim();
-  $('#view').innerHTML = `
+  if (!replaceView(`
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
       <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
@@ -549,7 +574,7 @@ function renderMatch(id) {
         ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
         ${canDelete(m, who.uid) && signed === 0 ? `<button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>` : ''}
       </div>
-      ${canEdit && signed > 0 && !m.cancelled ? '<button type="button" class="btn danger block" id="btn-cancel-match">Cancelar partido</button>' : ''}
+      ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger block" id="btn-cancel-match">Cancelar partido</button>' : ''}
       ${canEdit && m.cancelled ? '<button type="button" class="btn block" id="btn-reactivate-match">Reactivar partido</button>' : ''}
       <button type="button" class="btn block" id="btn-teams">Equipos${teamCount ? ` · ${assigned.bib.length}-${assigned.plain.length}` : ''}</button>
     </section>
@@ -564,7 +589,7 @@ function renderMatch(id) {
       <button class="btn share-btn" id="btn-share" aria-label="Compartir lista">${ICON.share}</button>
       ${readOnly ? '' : `<button class="btn add-choice" id="btn-add-wait" ${block ? 'disabled' : ''}>${block ? esc(block) : 'Anotar en lista de espera'}</button>
       <button class="btn primary add-choice" id="btn-add-player" ${block ? 'disabled' : ''}>${block ? esc(block) : `${ICON.plus}Agregar jugador`}</button>`}
-    </div></div>`;
+    </div></div>`)) return;
 
   if ($('#btn-remind')) $('#btn-remind').onclick = () => openReminders(m);
   bindReminderBanners();
@@ -867,6 +892,7 @@ function openNotes(m) {
 }
 
 function openCancel(m) {
+  if (!m || matchAlreadyPlayed(m)) return;
   const signed = playersOf(m.id).length + waitingOf(m.id).length;
   openSheet(`
     <form id="cancel-form" novalidate>
@@ -1218,7 +1244,11 @@ function openImportPreview(text, found) {
 
 /* ───────── plantel (Jugadores) ───────── */
 function renderRoster() {
-  const q = $('#roster-q')?.value || '';
+  const prevSearch = $('#roster-q');
+  const q = prevSearch?.value || '';
+  const searchFocused = !!(prevSearch && document.activeElement === prevSearch);
+  const selStart = searchFocused ? prevSearch.selectionStart : 0;
+  const selEnd = searchFocused ? prevSearch.selectionEnd : 0;
   const people = searchRoster(app.roster, q);
   const rows = people.map((person) => {
     const locked = !canEditRoster(person, actor());
@@ -1233,7 +1263,7 @@ function renderRoster() {
       <button type="button" class="more-btn" data-roster-del="${esc(person.id)}" aria-label="Borrar ${esc(person.name)}">${ICON.trash}</button>
     </li>`;
   }).join('');
-  $('#view').innerHTML = `
+  if (!replaceView(`
     <h2 class="section">Jugadores</h2>
     ${rosterSwitch(false)}
     <p class="hint roster-lead">Lista guardada de nombre y WhatsApp. Se comparte entre los dos.</p>
@@ -1242,10 +1272,13 @@ function renderRoster() {
     ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.'}</p>`}
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
-    </div></div>`;
+    </div></div>`)) return;
   const input = $('#roster-q');
   input.addEventListener('input', () => renderRoster());
-  if (q) { input.focus(); input.setSelectionRange(q.length, q.length); }
+  if (searchFocused) {
+    input.focus({ preventScroll: true });
+    try { input.setSelectionRange(selStart, selEnd); } catch { /* el navegador puede rechazar el rango */ }
+  }
   $('#btn-add-roster').onclick = () => openRosterForm();
   const list = $('#roster-list');
   if (list) list.onclick = (e) => {
@@ -1444,7 +1477,7 @@ function ledgerSection(person) {
 
 function renderUsers() {
   if (app.role !== 'admin') {
-    $('#view').innerHTML = `<div class="empty"><div class="big">🔒</div><p><b>Solo el administrador puede crear o desactivar organizadores.</b></p><p class="small">Los partidos, los jugadores, los pagos y el plantel los pueden editar los dos.</p></div>`;
+    replaceView(`<div class="empty"><div class="big">🔒</div><p><b>Solo el administrador puede crear o desactivar organizadores.</b></p><p class="small">Los partidos, los jugadores, los pagos y el plantel los pueden editar los dos.</p></div>`);
     return;
   }
   const rows = (app.users || []).map((user) => `
@@ -1456,7 +1489,7 @@ function renderUsers() {
       ${user.role === 'organizer' ? `<button type="button" class="btn" data-user-active="${esc(user.uid)}">${user.active ? 'Desactivar' : 'Activar'}</button>` : ''}
       ${user.role === 'organizer' ? `<button type="button" class="btn danger" data-user-del="${esc(user.uid)}">Borrar</button>` : ''}
     </li>`).join('');
-  $('#view').innerHTML = `
+  if (!replaceView(`
     <h2 class="section">Usuarios</h2>
     <p class="hint roster-lead">Esta es la única diferencia con los organizadores: crear, desactivar o borrar sus cuentas. El rol no se cambia. En los partidos pueden lo mismo.</p>
     <ul class="slots" id="user-list">${rows || '<li class="empty-wait">No hay usuarios.</li>'}</ul>
@@ -1467,7 +1500,7 @@ function renderUsers() {
       <label class="field"><span>Contraseña</span><input name="password" type="password" autocomplete="new-password" placeholder="Al menos 6 caracteres"></label>
       <div class="field"><div class="err" id="user-err"></div></div>
       <button class="btn primary" type="submit">Crear organizador</button>
-    </form>`;
+    </form>`)) return;
   $('#user-form').onsubmit = (e) => {
     e.preventDefault();
     const form = e.target;
@@ -1515,7 +1548,7 @@ function renderPagos() {
     const later = item.pending > 0 ? ` · por transferir ${formatARS(item.pending)}` : '';
     return `${esc(item.name)}: ${esc(formatARS(item.collected))} · anotó ${item.added}${later}`;
   }).join(' · ');
-  $('#view').innerHTML = `
+  if (!replaceView(`
     <h2 class="section">Jugadores</h2>
     ${rosterSwitch(true)}
     <h2 class="section">Pagos</h2>
@@ -1526,7 +1559,7 @@ function renderPagos() {
     ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : payFilterChips(null)}
     ${body}
     <h2 class="section">Transfiere después</h2>
-    ${pendingBody}`;
+    ${pendingBody}`)) return;
   bindPayFilter();
   const list = $('#pay-summary');
   if (list) list.onclick = (e) => {
@@ -1542,7 +1575,7 @@ function renderProfile(id) {
   const person = app.roster.find((r) => r.id === id);
   if (!person) {
     app.signupDraft = null;
-    $('#view').innerHTML = `<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`;
+    replaceView(`<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
     return;
   }
   const who = rosterIdentity(person);
@@ -1553,7 +1586,7 @@ function renderProfile(id) {
   const notes = sortedNotes(person.notes);
   const own = canEditRoster(person, actor());
   const lockNote = own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`;
-  $('#view').innerHTML = `
+  const painted = replaceView(`
     <article id="profile">
       <h2 class="section">${esc(person.name)}</h2>
       <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</p>
@@ -1601,15 +1634,16 @@ function renderProfile(id) {
           </article>`).join('') : '<p class="empty-wait">Sin notas.</p>'}</div>
         <button type="button" class="btn block" id="btn-add-note"${own ? '' : ' disabled'}>Agregar nota</button>
       </section>
-    </article>`;
-  const addPhone = $('#profile-add-phone');
-  if (addPhone && own) addPhone.onclick = () => openPhoneForm(person);
-  const share = $('#phone-share');
-  if (share) share.onchange = () => run(app.store.setPhoneShared({ rosterId: person.id }, share.checked));
+    </article>`);
   if (app.wantPhoneForm) {
     app.wantPhoneForm = false;
     if (!person.phone && !phoneHidden(person)) openPhoneForm(person);
   }
+  if (!painted) return;
+  const addPhone = $('#profile-add-phone');
+  if (addPhone && own) addPhone.onclick = () => openPhoneForm(person);
+  const share = $('#phone-share');
+  if (share) share.onchange = () => run(app.store.setPhoneShared({ rosterId: person.id }, share.checked));
   $('#level-down').onclick = () => { if (own && level > 1) saveProfile(person.id, { level: level - 1 }); };
   $('#level-up').onclick = () => { if (own) saveProfile(person.id, { level: level == null ? 1 : Math.min(10, level + 1) }); };
   $('#positions').onclick = (e) => {
@@ -1680,7 +1714,7 @@ function partidosSection(person) {
     <ul class="slots" id="signup-list">${rows.join('')}</ul>
     ${empty}
     <label class="checkline"><input type="checkbox" id="signup-tentative" ${draft.tentative ? 'checked' : ''}> Lugar reservado (a confirmar)</label>
-    <button type="button" class="btn primary block" id="btn-signup" disabled>Anotar en 0 partidos</button>
+    <button type="button" class="btn primary block" id="btn-signup"${draft.ids.size ? '' : ' disabled'}>${esc(signupButtonLabel(draft.ids.size))}</button>
   </section>`;
 }
 
@@ -2216,7 +2250,7 @@ function promptLogin(session) {
   return new Promise((resolve) => {
     if (session.user) return resolve();
     const draw = (message = session.error || '') => {
-      $('#view').innerHTML = `
+      if (!replaceView(`
         <form class="gate" id="login-form">
           <div class="ball">⚽</div>
           <h2>Entrar</h2>
@@ -2228,7 +2262,7 @@ function promptLogin(session) {
           <button class="btn primary block" type="submit">Entrar</button>
           <button class="btn block" type="button" id="login-forgot">Olvidé mi contraseña</button>
           ${session.mode === 'firebase' ? '<button class="btn block" type="button" id="login-register">Crear cuenta de administrador</button>' : '<p class="footer-note">Demo: gustavo@demo.local · martin@demo.local</p>'}
-        </form>`;
+        </form>`)) return;
       $('#login-form').onsubmit = async (e) => {
         e.preventDefault();
         try {
@@ -2264,14 +2298,14 @@ function promptLogin(session) {
 function gate() {
   return new Promise((resolve) => {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
-    $('#view').innerHTML = `
+    if (!replaceView(`
       <form class="gate" id="gate">
         <div class="ball">⚽</div><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
         <button class="btn primary block">Entrar</button>
-      </form>`;
+      </form>`)) return;
     $('#gate').onsubmit = (e) => {
       e.preventDefault();
       if (e.target.code.value.trim() === ACCESS_CODE) { localStorage.setItem(CODE_KEY, ACCESS_CODE); resolve(); }
@@ -2330,14 +2364,19 @@ async function boot() {
   await app.session.init();
   app.users = app.session.users || [];
   app.session.subscribe(() => {
-    app.users = app.session.users || [];
-    if (app.session.user) {
-      app.who = app.session.user.name;
-      app.role = app.session.user.role;
-      app.uid = app.session.user.uid;
+    const users = app.session.users || [];
+    const user = app.session.user;
+    const stamp = JSON.stringify([user?.uid || '', user?.name || '', user?.role || '', users.map((item) => [item.uid, item.name, item.role, item.active])]);
+    const sameSession = stamp === app.sessionStamp;
+    app.sessionStamp = stamp;
+    app.users = users;
+    if (user) {
+      app.who = user.name;
+      app.role = user.role;
+      app.uid = user.uid;
     }
-    if (app.store) app.store.setActor(app.session.user);
-    if (app.loaded && (!sheet.open || !sheet.querySelector('input, textarea')) && location.hash !== '#/usuarios') render();
+    if (app.store) app.store.setActor(user);
+    if (!sameSession && app.loaded && (!sheet.open || !sheet.querySelector('input, textarea')) && location.hash !== '#/usuarios') render();
   });
   if (!app.session.user) await promptLogin(app.session);
   app.who = app.session.user.name;
@@ -2345,15 +2384,16 @@ async function boot() {
   app.uid = app.session.user.uid;
   app.users = app.session.users || [];
   app.store = await createStore((e) => {
-    showError(e?.code === 'permission-denied'
-      ? 'Firebase rechazó el acceso. Revisá las reglas de Firestore (ver README).'
+    showError(isPermissionDenied(e)
+      ? RULES_MSG
       : e?.code === 'no-server'
         ? 'No hay conexión con la base de datos de Firebase: los cambios quedan solo en este teléfono. ¿Está creada la base Firestore del proyecto? (ver README)'
         : 'Problema de conexión con Firebase: ' + (e?.message || e));
   });
   $('#demo-banner').hidden = app.store.mode === 'firebase';
   app.store.setActor(app.session.user);
-  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError, history, historyMeta, historyError }) => {
+  app.store.subscribe((view) => {
+    const { matches, players, roster, rosterError, organizers, organizersError, prices, pricesError, history, historyMeta, historyError } = view;
     app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
     app.history = history || [];
     app.historyMeta = historyMeta || null;
@@ -2368,6 +2408,10 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.prices, app.rosterError, app.organizersError, app.pricesError]);
+    const changed = stamp !== app.viewStamp;
+    app.viewStamp = stamp;
+    if (!changed) return;
     if (sheet.open && app.refreshPaySheet) app.refreshPaySheet();
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe
     if (!sheet.open || !sheet.querySelector('input, textarea, select')) render(); else pendingRender = true;
@@ -2377,11 +2421,8 @@ async function boot() {
   });
   render();
   armReminderTimer();
-  // refrescar etiquetas "Hoy/Mañana"; al cambiar el día, el partido pasa al historial (no se borra)
-  setInterval(() => {
-    app.store?.syncDay?.();
-    if (!sheet.open || !sheet.querySelector('input, textarea')) render();
-  }, 60_000);
+  // Al cambiar el día, Hoy/Mañana y el historial se actualizan. El mismo día no redibuja.
+  setInterval(() => { app.store?.syncDay?.(); }, 60_000);
 }
 
 // El aviso del navegador solo sale si la página está abierta cuando se cumplen

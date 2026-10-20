@@ -74,7 +74,7 @@
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { toEpoch, todayISO } from './dates.js';
-import { historyBounds, historyCaption, historyWindow, matchQueryPlan } from './profile.js';
+import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
@@ -119,6 +119,20 @@ export function isFirebaseConfigured(cfg = firebaseConfig) {
   return !Object.values(cfg).some((v) => typeof v === 'string' && /^TU_|TU_PROYECTO|^$/.test(v));
 }
 
+/**
+ * Una consulta vieja (toda la colección, sin el filtro de viewers) falla con
+ * permission-denied cuando las reglas ya piden ese filtro. Eso se atiende en
+ * su propio manejador y no reinicia el resto. Si no hay manejador, se reintenta
+ * una sola vez: el token a veces no estaba listo. Un snapshot que sí llega no
+ * vuelve el contador a cero, porque si no el reintento no termina nunca.
+ */
+export function listenDeniedPlan({ code, hasHandler, retrying, deniedRetries }) {
+  if (code !== 'permission-denied' && code !== 'permission_denied') return 'fail';
+  if (hasHandler) return 'handler';
+  if (!retrying && (deniedRetries || 0) < 1) return 'retry';
+  return 'fail';
+}
+
 export function matchIdFor(date, time, existingIds = new Set()) {
   const base = `${date}_${(time || '0000').replace(':', '')}`;
   if (!existingIds.has(base)) return base;
@@ -144,6 +158,14 @@ function matchDoc(data, who) {
     playerCount: 0,
     ...(access || {}),
   };
+}
+
+function refusePlayedCancel(match, data) {
+  if (data?.cancelled !== true || match?.cancelled === true) return;
+  const date = data.date || match?.date;
+  if (matchAlreadyPlayed({ date })) {
+    throw Object.assign(new Error('Este partido ya se jugó. No se puede cancelar.'), { code: 'already-played' });
+  }
 }
 
 function cleanMatchPatch(data) {
@@ -244,16 +266,23 @@ function countPatch(fs, match, delta, localCount) {
 
 /* ───────────── Modo demo (localStorage) ───────────── */
 class LocalStore {
-  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; this._historyFilter = null; }
+  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; this._historyFilter = null; this._queryDay = todayISO(); }
   setActor(user) {
-    this.actor = { uid: user?.uid || '', name: user?.name || '' };
+    const next = { uid: user?.uid || '', name: user?.name || '' };
+    if (this.actor?.uid === next.uid && this.actor?.name === next.name) return;
+    this.actor = next;
     if (this.listeners.size) this._emit();
   }
   setHistoryFilter(filter) {
     this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
     this._emit();
   }
-  syncDay() { this._emit(); }
+  syncDay(now = Date.now()) {
+    const today = todayISO(new Date(now));
+    if (today === this._queryDay) return;
+    this._queryDay = today;
+    if (this.listeners.size) this._emit();
+  }
   async ensureMatch() {}
   _load() {
     try {
@@ -389,6 +418,7 @@ class LocalStore {
   }
   async updateMatch(id, data, who) {
     const db = this._load(); const m = db.matches[id]; if (!m) return;
+    refusePlayedCancel(m, data);
     const { rest, access } = cleanMatchPatch(data);
     Object.assign(m, rest, access || {}, { startsAt: toEpoch(data.date ?? m.date, data.time ?? m.time), updatedBy: who, updatedAt: Date.now() });
     const copied = playerAccess(m);
@@ -654,20 +684,23 @@ class FirebaseStore {
     }
   }
   async ensureMatch(id) {
-    if (!id || !this.fs) return;
-    if (this.state.matches.some((match) => match.id === id)) return;
+    if (!id || !this.fs) return 'missing';
+    if (this.state.matches.some((match) => match.id === id)) return 'ok';
     const { doc, getDoc } = this.fs;
     try {
       const snap = await getDoc(doc(this.db, 'matches', id));
-      if (!snap.exists()) return;
+      if (!snap.exists()) return 'missing';
       const match = { id: snap.id, ...snap.data() };
-      if (this.actor?.uid && !canView(match, this.actor.uid)) return;
+      if (this.actor?.uid && !canView(match, this.actor.uid)) return 'hidden';
       const opened = (this._buckets.matches.opened || []).filter((row) => row.id !== match.id);
       opened.push(match);
       this._buckets.matches.opened = opened;
       this._rebuild('matches');
+      return 'ok';
     } catch (e) {
-      if (e?.code !== 'permission-denied') console.error(e);
+      if (e?.code === 'permission-denied' || e?.code === 'permission_denied') return 'denied';
+      console.error(e);
+      return 'missing';
     }
   }
   setActor(user) {
@@ -692,7 +725,9 @@ class FirebaseStore {
     // Si Firestore no existe o la API está deshabilitada, el SDK reintenta en silencio:
     // avisamos si en 15 s no llegó ninguna respuesta del servidor.
     setTimeout(() => {
-      if (!this.serverOk && navigator.onLine !== false) this._fail({ code: 'no-server', message: 'sin respuesta del servidor' });
+      if (this.serverOk || navigator.onLine === false) return;
+      if (this._sawDenied) this._fail({ code: 'permission-denied', message: 'reglas' });
+      else this._fail({ code: 'no-server', message: 'sin respuesta del servidor' });
     }, 15000);
   }
   async _refreshIdToken(force = false) {
@@ -874,7 +909,7 @@ class FirebaseStore {
     this._queryDay = todayISO();
     const { collection, doc, query, where, onSnapshot } = this.fs;
     const watch = (ref, opts, onNext, onErr) => {
-      const next = (snap) => { this._deniedRetries = 0; onNext(snap); };
+      const next = (snap) => { onNext(snap); };
       const un = opts
         ? onSnapshot(ref, opts, next, (e) => this._onListenError(e, onErr))
         : onSnapshot(ref, next, (e) => this._onListenError(e, onErr));
@@ -979,7 +1014,19 @@ class FirebaseStore {
     this._unsubs.push(sharedPlayers, sharedRoster);
   }
   _onListenError(e, extra) {
-    if (e?.code === 'permission-denied' && !this._retrying && (this._deniedRetries || 0) < 2) {
+    const plan = listenDeniedPlan({
+      code: e?.code,
+      hasHandler: typeof extra === 'function',
+      retrying: !!this._retrying,
+      deniedRetries: this._deniedRetries || 0,
+    });
+    if (plan === 'handler') {
+      this._sawDenied = true;
+      extra(e);
+      return;
+    }
+    if (plan === 'retry') {
+      this._sawDenied = true;
       this._deniedRetries += 1;
       this._retrying = true;
       this._stop();
@@ -1065,6 +1112,7 @@ class FirebaseStore {
   async updateMatch(id, data, who) {
     const { doc, writeBatch } = this.fs;
     const cur = this.state.matches.find((m) => m.id === id) || {};
+    refusePlayedCancel(cur, data);
     const { rest, access } = cleanMatchPatch(data);
     const patch = { ...rest, ...(access || {}), startsAt: toEpoch(data.date ?? cur.date, data.time ?? cur.time), updatedBy: who, updatedAt: Date.now() };
     const batch = writeBatch(this.db);
