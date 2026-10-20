@@ -294,6 +294,8 @@ service cloud.firestore {
           && phoneGone(d)
           && phoneMeta(d)
           && (!('shortCode' in d) || (d.shortCode is string && d.shortCode.matches('^[0-9A-Za-z]{8}$')))
+          && (!('invitedBy' in d) || (d.invitedBy is string && d.invitedBy.size() > 0 && d.invitedBy.size() <= 128))
+          && (!('invitedByName' in d) || (d.invitedByName is string && d.invitedByName.size() > 0 && d.invitedByName.size() <= 60))
           && validPayment(d);
     }
 

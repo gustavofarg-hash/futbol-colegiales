@@ -6,6 +6,7 @@ import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, pay
 import { createDemoStore, listenDeniedPlan } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
+import { alreadyInMatch, firstDuplicate, groupByInviter, isAutoGuestName, placeGroup, resolveFriendNames, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
@@ -265,6 +266,76 @@ test('anotar desde el perfil: ya anotado, libre y completo a la espera', () => {
   assert.equal(full.willWait, true);
   assert.equal(full.label, 'Completo · va a la espera');
   assert.equal(full.spots, 0);
+  const byName = matchSignupState({
+    name: 'Juan Pérez',
+    match: matches[1],
+    players: [{ id: 'j', matchId: 'jue', name: 'Juan Pérez', phone: '5491112345678', waiting: false }],
+  });
+  assert.equal(byName.existing, true);
+  assert.equal(byName.state, 'anotado');
+  const otherPhone = matchSignupState({
+    name: 'Juan Pérez',
+    phone: '5491100001111',
+    match: matches[1],
+    players: [{ id: 'j', matchId: 'jue', name: 'Juan Pérez', phone: '5491112345678', waiting: false }],
+  });
+  assert.equal(otherPhone.existing, false);
+});
+
+test('no se anota dos veces y Amigo N es de quien invita', () => {
+  const mates = [
+    { id: 'juan', name: 'Juan Pérez', phone: '5491112345678', rosterId: 'r-juan' },
+    { id: 'nico', name: 'Nico', phone: '5491112345678', rosterId: 'r-nico' },
+    { id: 'a1', name: 'Amigo 1', invitedBy: 'juan', invitedByName: 'Juan Pérez' },
+  ];
+  assert.equal(alreadyInMatch(mates, { name: 'juan perez' })?.id, 'juan');
+  assert.equal(alreadyInMatch(mates, { name: 'Juan Pérez', phone: '5491199990000' }), null);
+  assert.equal(alreadyInMatch(mates, { name: 'Nico', phone: '5491112345678', rosterId: 'r-nico' })?.id, 'nico');
+  assert.equal(alreadyInMatch(mates, { name: 'Otra', phone: '5491112345678', rosterId: 'r-otra' }), null);
+  assert.equal(alreadyInMatch(mates, { name: 'Amigo 1', guestAuto: true, invitedBy: 'nuevo' }), null);
+  assert.equal(alreadyInMatch(mates, { name: 'Amigo 1' })?.id, 'a1');
+  assert.equal(isAutoGuestName('Amigo 2'), true);
+  assert.equal(isAutoGuestName('Pedro'), false);
+  assert.deepEqual(resolveFriendNames(['Pedro', '', ''], ['Amigo 1']), [
+    { name: 'Pedro', guestAuto: false },
+    { name: 'Amigo 2', guestAuto: true },
+    { name: 'Amigo 3', guestAuto: true },
+  ]);
+  assert.equal(firstDuplicate(mates, [{ name: 'Pedro' }, { name: 'pedro' }])?.person.name, 'pedro');
+  assert.deepEqual(placeGroup({ mainCount: 9, capacity: 10, count: 3 }), { main: 1, wait: 2, spots: 1 });
+  assert.equal(waitWarning(1, 2), 'Queda 1 lugar: 2 van a quedar en lista de espera');
+  assert.equal(waitWarning(0, 1), 'Quedan 0 lugares: 1 va a quedar en lista de espera');
+  assert.equal(waitWarning(4, 0), '');
+  const grouped = groupByInviter([
+    { id: 'juan', createdAt: 1 },
+    { id: 'despues', createdAt: 2 },
+    { id: 'a1', invitedBy: 'juan', createdAt: 3 },
+  ]);
+  assert.deepEqual(grouped.map((player) => player.id), ['juan', 'a1', 'despues']);
+});
+
+test('el partido rechaza al mismo jugador y guarda al amigo', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  const mid = await store.addMatch({ date: '2026-10-25', time: '19:00', capacity: 10 }, 'Gustavo');
+  const match = { id: mid, date: '2026-10-25', capacity: 10 };
+  const juan = await store.addPlayer(match, { name: 'Juan Pérez', phone: '' }, 'Gustavo');
+  await assert.rejects(() => store.addPlayer(match, { name: 'juan pérez' }, 'Gustavo'), (error) => error.code === 'already-in-match');
+  const amigo = await store.addPlayer(match, { name: 'Amigo 1', invitedBy: juan, invitedByName: 'Juan Pérez', guestAuto: true }, 'Gustavo');
+  const otro = await store.addPlayer(match, { name: 'Amigo 1', invitedBy: 'otro', invitedByName: 'Pedro', guestAuto: true }, 'Gustavo', { waiting: true });
+  await store.setPayment(amigo, { paid: true, amount: 5000, method: 'efectivo' }, 'Gustavo');
+  const db = JSON.parse(mem.get('f7c-demo-db'));
+  assert.equal(Object.values(db.players).filter((player) => player.matchId === mid && player.name === 'Juan Pérez').length, 1);
+  assert.equal(db.players[amigo].invitedBy, juan);
+  assert.equal(db.players[amigo].invitedByName, 'Juan Pérez');
+  assert.equal(db.players[amigo].paid, true);
+  assert.equal(db.players[otro].waiting, true);
+  assert.equal(db.players[otro].invitedBy, 'otro');
 });
 
 test('modo demo guarda el pago en el jugador y lo emite', async () => {

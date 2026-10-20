@@ -4,6 +4,7 @@
 import { DIAS, addDays, capitalize, labelDate, todayISO, toEpoch, weekdayOf } from './dates.js';
 import { formatARS } from './payments.js';
 import { playerMatchesPerson } from './roster.js';
+import { alreadyInMatch } from './guests.js';
 
 export const POSITIONS = ['Arquero', 'Defensa', 'Mediocampo', 'Ataque'];
 export const MAX_NOTES = 20;
@@ -262,14 +263,15 @@ export function upcomingMatches(matches, now = Date.now()) {
 /**
  * Estado de anotar a esta persona en un partido.
  * state: anotado | espera | lleno | libre.
- * Si ya está (teléfono, id del plantel o, sin número, el mismo nombre), no se vuelve a anotar.
+ * Si ya está (teléfono, id del plantel o el mismo nombre), no se vuelve a anotar.
+ * Un teléfono distinto con el mismo nombre es otra persona.
  * Si no quedan lugares en la lista principal, va a la espera.
  */
 export function matchSignupState({ phone, phoneKey, rosterId, name, match, players }) {
   const cap = match?.capacity || 14;
   const mates = (players || []).filter((player) => player.matchId === match?.id);
   const person = asPerson({ phone, phoneKey, rosterId, name });
-  const same = mates.filter((player) => playerMatchesPerson(player, person));
+  const same = mates.filter((player) => playerMatchesPerson(player, person) || alreadyInMatch([player], { ...person, rosterId: person.id }));
   const mainCount = mates.filter((player) => player.waiting !== true).length;
   const spots = Math.max(0, cap - mainCount);
   if (same.length) {

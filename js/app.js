@@ -17,6 +17,7 @@ import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
+import { ALREADY_IN_MATCH, firstDuplicate, groupByInviter, placeGroup, resolveFriendNames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
@@ -123,7 +124,8 @@ function run(p, okMsg, deniedMsg) {
   if (okMsg) toast(okMsg);
   return Promise.resolve(p).catch((e) => {
     console.error(e);
-    if (deniedMsg && isPermissionDenied(e)) toast(deniedMsg);
+    if (e?.code === 'already-in-match') toast(e.message || ALREADY_IN_MATCH);
+    else if (deniedMsg && isPermissionDenied(e)) toast(deniedMsg);
     else toast('No se pudo guardar: ' + (e.code || e.message || e));
   });
 }
@@ -139,9 +141,9 @@ const addBlock = (m) => {
   return n >= max ? limitMessage(max) : '';
 };
 const isWaiting = (p) => p.waiting === true;
-const playersOf = (matchId) => app.players
+const playersOf = (matchId) => groupByInviter(app.players
   .filter((p) => p.matchId === matchId && !isWaiting(p))
-  .sort((a, b) => (a.rosterAt ?? a.createdAt) - (b.rosterAt ?? b.createdAt));
+  .sort((a, b) => (a.rosterAt ?? a.createdAt) - (b.rosterAt ?? b.createdAt) || String(a.id).localeCompare(String(b.id))));
 const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
@@ -162,6 +164,20 @@ function priceExample(amount) {
 }
 function addedTag(player) {
   return `<span class="tag ${organizerTagClass(player.addedBy)}">Agregó: ${esc(player.addedBy || '?')}</span>`;
+}
+function friendHostName(player) {
+  if (!player?.invitedBy) return '';
+  const host = app.players.find((item) => item.id === player.invitedBy);
+  return host?.name || player.invitedByName || '';
+}
+function friendTag(player) {
+  if (!player?.invitedBy) return '';
+  const name = friendHostName(player);
+  return `<span class="tag friend-tag">${esc(name ? `amigo de ${name}` : 'amigo')}</span>`;
+}
+function friendSuffix(player) {
+  const name = friendHostName(player);
+  return name ? ` (de ${name})` : '';
 }
 function payMarkup(player) {
   const pending = pendingStatusText(player);
@@ -557,7 +573,7 @@ function renderMatch(id) {
         <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${phoneSub(p)}
-            ${addedTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
+            ${friendTag(p)}${addedTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payMarkup(p)}
           ${promoBadge(p)}
         </button>
@@ -687,7 +703,7 @@ function listText(m) {
     const pay = p ? paymentStatusText(p) : '';
     const hold = p?.tentative === true ? 'a confirmar' : '';
     const bits = [pay, hold].filter(Boolean).join(' · ');
-    lines.push(`${i + 1}. ${p ? p.name : ''}${bits ? ` — ${bits}` : ''}`);
+    lines.push(`${i + 1}. ${p ? p.name + friendSuffix(p) : ''}${bits ? ` — ${bits}` : ''}`);
   }
   lines.push('', ps.length >= cap ? '✅ ¡Completo!' : `Faltan ${cap - ps.length}`);
   const collected = collectedLine(ps);
@@ -699,7 +715,7 @@ function listText(m) {
     lines.push('', 'Lista de espera:');
     wait.forEach((p, i) => {
       const pay = paymentStatusText(p);
-      lines.push(`${i + 1}. ${p.name}${pay ? ` — ${pay}` : ''}`);
+      lines.push(`${i + 1}. ${p.name}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
     });
   }
   return lines.join('\n');
@@ -722,7 +738,7 @@ function waitingSection(m, full, readOnly) {
         <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name">${esc(p.name)}</div>
           <div class="sub">${phoneSub(p)}
-            ${addedTag(p)}${confirmTag(p)}</div>
+            ${friendTag(p)}${addedTag(p)}${confirmTag(p)}</div>
           ${payMarkup(p)}
         </button>
         ${readOnly ? '' : `<button type="button" class="btn promote-btn" data-promote="${esc(p.id)}" ${full ? 'disabled' : ''} aria-label="Subir a ${esc(p.name)} al partido">Subir al partido</button>`}
@@ -1933,17 +1949,8 @@ function bindPartidos(person) {
     const match = player ? matchById(player.matchId) : null;
     if (!player || !match) return;
     if (!canAdd(match, actor().uid)) { toast('Este partido es de solo lectura.'); return; }
-    const fromMain = player.waiting !== true;
-    const top = waitingOf(match.id).find((item) => item.id !== player.id);
     if (!confirm(`¿Quitar a ${person.name} de ${labelDate(match.date)} ${match.time || ''} hs?`)) return;
-    const promote = fromMain && top && playersOf(match.id).length - 1 < capOf(match)
-      && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
-    const job = Promise.resolve(app.store.deletePlayer(player.id)).then(async () => {
-      if (!promote) return;
-      await app.store.promoteFromWaiting(top.id);
-      await offerPromotionWhatsApp(top, match);
-    });
-    run(job, promote ? `${top.name} pasó al partido` : `${person.name} quitado`);
+    removeMatchPlayer(match, player, { asked: true });
   });
   button.onclick = () => {
     const chosen = [];
@@ -1975,13 +1982,18 @@ function bindPartidos(person) {
     run((async () => {
       for (const row of chosen) {
         const again = matchSignupState({ ...rosterIdentity(person), match: row.match, players: app.players });
-        if (again.existing) continue;
+        if (again.existing) { toast(ALREADY_IN_MATCH); continue; }
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
-        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true, phoneShared: person.phoneShared === true }, app.who, {
-          waiting: again.willWait,
-          tentative: tentative && !again.willWait,
-        });
+        try {
+          await app.store.addPlayer(row.match, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true, phoneShared: person.phoneShared === true }, app.who, {
+            waiting: again.willWait,
+            tentative: tentative && !again.willWait,
+          });
+        } catch (error) {
+          if (error?.code === 'already-in-match') { toast(ALREADY_IN_MATCH); continue; }
+          throw error;
+        }
       }
     })(), msg);
   };
@@ -2032,28 +2044,98 @@ async function linkedRosterId({ name, phone, rosterId, phoneKey: key, phoneShare
   }
 }
 
-function addSignedPlayer(m, { name, phone, rosterId, phoneKey: key, hasPhone, phoneShared }, asWait, tentative) {
+function matesOf(matchId) {
+  return app.players.filter((player) => player.matchId === matchId);
+}
+
+function friendNamesOf(matchId, hostId) {
+  return matesOf(matchId).filter((player) => player.invitedBy === hostId).map((player) => player.name);
+}
+
+function signupError(matchId, people) {
+  return firstDuplicate(matesOf(matchId), people) ? ALREADY_IN_MATCH : '';
+}
+
+function focusField(el) {
+  if (!el || el.disabled) return false;
+  el.focus();
+  return true;
+}
+
+/** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
+function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
   const blocked = addBlock(m);
-  if (blocked) { toast(blocked); return; }
-  const full = playersOf(m.id).length >= capOf(m);
-  if (tentative && (asWait || full)) {
-    toast('No hay lugar libre para reservar.');
-    return;
+  if (blocked) { toast(blocked); return false; }
+  const taken = host?.id ? friendNamesOf(m.id, host.id) : [];
+  const friends = resolveFriendNames(friendRows, taken).map((friend) => ({
+    name: friend.name,
+    guestAuto: friend.guestAuto,
+    invitedBy: host?.id || (friend.guestAuto ? 'nuevo' : ''),
+    invitedByName: host?.name || '',
+  }));
+  const people = host?.id
+    ? friends
+    : [{ name: host.name, phone: host.phone || '', phoneKey: host.phoneKey || '', rosterId: host.rosterId || '', hasPhone: host.hasPhone === true, phoneShared: host.phoneShared === true }, ...friends];
+  if (!people.length) return false;
+  const dup = signupError(m.id, people);
+  if (dup) return dup;
+  const max = limitFor(m, actor().uid);
+  if (max != null && addedCount(matesOf(m.id), actor()) + people.length > max) {
+    toast(limitMessage(max));
+    return false;
   }
-  const willWait = asWait || full;
-  const known = rosterId ? app.roster.find((person) => person.id === rosterId) : null;
-  const share = phoneShared === true || known?.phoneShared === true;
+  const onWait = asWait === true || host?.waiting === true;
+  const place = placeGroup({ mainCount: playersOf(m.id).length, capacity: capOf(m), count: people.length, forceWait: onWait });
+  if (tentative && place.main < 1) {
+    toast('No hay lugar libre para reservar.');
+    return false;
+  }
+  const warning = friends.length && !onWait ? waitWarning(place.spots, place.wait) : '';
+  if (warning && !confirm(warning)) return false;
+  const known = host?.rosterId ? app.roster.find((person) => person.id === host.rosterId) : null;
+  const share = host?.phoneShared === true || known?.phoneShared === true;
+  const lead = host?.name || friends[0]?.name || '';
+  const msg = host?.id
+    ? (place.wait && place.main ? `Amigos de ${lead} anotados · ${place.wait} en espera` : place.main ? `Amigos de ${lead} anotados` : `Amigos de ${lead} en la lista de espera`)
+    : (place.wait && place.main ? `${lead} anotado · ${place.wait} en espera` : place.main ? `${lead} anotado` : `${lead} quedó en la lista de espera`);
   closeSheet();
   run((async () => {
-    const id = await linkedRosterId({ name, phone, rosterId, phoneShared: share && !known });
-    let saved = id ? app.roster.find((person) => person.id === id) : null;
-    if (share && saved && saved.phoneShared !== true && saved.phoneOwnerUid === actor().uid) {
-      try { await app.store.setPhoneShared({ rosterId: id }, true); } catch { /* el dueño lo cambia desde el perfil */ }
-      saved = app.roster.find((person) => person.id === id) || saved;
+    let hostId = host?.id || '';
+    let hostName = host?.name || '';
+    let offset = 0;
+    if (!host?.id) {
+      const id = await linkedRosterId({ name: host.name, phone: host.phone, rosterId: host.rosterId, phoneKey: host.phoneKey, phoneShared: share && !known });
+      let saved = id ? app.roster.find((person) => person.id === id) : null;
+      if (share && saved && saved.phoneShared !== true && saved.phoneOwnerUid === actor().uid) {
+        try { await app.store.setPhoneShared({ rosterId: id }, true); } catch { /* el dueño lo cambia desde el perfil */ }
+        saved = app.roster.find((person) => person.id === id) || saved;
+      }
+      const visible = share || saved?.phoneShared === true;
+      const waiting = offset >= place.main;
+      hostId = await app.store.addPlayer(m, {
+        name: host.name,
+        phone: host.phone || '',
+        rosterId: id,
+        phoneKey: host.phoneKey || saved?.phoneKey || '',
+        hasPhone: host.hasPhone === true || saved?.hasPhone === true,
+        phoneShared: visible,
+      }, app.who, { waiting, tentative: tentative === true && !waiting });
+      hostName = host.name;
+      offset = 1;
     }
-    const visible = share || saved?.phoneShared === true;
-    await app.store.addPlayer(m, { name, phone, rosterId: id, phoneKey: key || saved?.phoneKey || '', hasPhone: hasPhone === true || saved?.hasPhone === true, phoneShared: visible }, app.who, { waiting: asWait, tentative: tentative === true && !willWait });
-  })(), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
+    for (const friend of friends) {
+      const waiting = offset >= place.main;
+      await app.store.addPlayer(m, {
+        name: friend.name,
+        phone: '',
+        invitedBy: hostId,
+        invitedByName: hostName,
+        guestAuto: friend.guestAuto === true,
+      }, app.who, { waiting });
+      offset += 1;
+    }
+  })(), msg);
+  return true;
 }
 
 function openPhoneForm(person) {
@@ -2112,13 +2194,18 @@ function openPlayerForm(m, p, opts = {}) {
       <h3>${p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
-      ${p ? '' : `<label class="field"><span>Buscar guardados</span><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"></label>
+      ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
-      <label class="field"><span>Nombre</span><input name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
+      <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
         <div class="small muted" id="pf-phone">Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.</div></label>`}
       ${p ? '' : '<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"><span>Mostrar el WhatsApp para todos</span></label>'}
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
+      ${p ? '' : `<div class="friend-box" id="friend-box">
+        <div class="friend-head"><span>Amigos</span><button type="button" class="btn" id="btn-add-friend">Agregar amigo</button></div>
+        <div id="friend-rows"></div>
+        <p class="hint" id="friend-hint">Si dejás el nombre vacío, queda como Amigo 1, Amigo 2…</p>
+      </div>`}
       <div class="field"><div class="err" id="pf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit"${locked ? ' disabled' : ''}>${p ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
@@ -2140,19 +2227,50 @@ function openPlayerForm(m, p, opts = {}) {
   if (find) {
     const paint = () => {
       const hits = $('#roster-hits');
+      const addNew = $('#roster-add-new');
       const q = find.value.trim();
       const found = q ? searchRoster(app.roster, q).slice(0, 8) : [];
+      if (addNew) addNew.hidden = !q || found.length > 0;
       hits.hidden = !found.length;
-      hits.innerHTML = found.map((person) => `<li><button type="button" class="roster-hit" data-pick="${esc(person.id)}"><b>${esc(person.name)}</b><small>${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</small></button></li>`).join('');
+      hits.innerHTML = found.map((person) => {
+        const taken = signupError(m.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]);
+        const detail = person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número';
+        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+      }).join('');
     };
     find.addEventListener('input', paint);
+    $('#roster-add-new').onclick = () => {
+      const text = find.value.trim();
+      if (!text) return;
+      form.name.value = text;
+      if (!focusField(form.name)) {
+        const next = [...form.querySelectorAll('input, textarea, select')].find((el) => el !== find && !el.disabled && !String(el.value || '').trim() && el.type !== 'checkbox');
+        focusField(next);
+      }
+    };
     $('#roster-hits').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-pick]');
-      if (!btn) return;
+      if (!btn || btn.disabled) return;
       const person = app.roster.find((r) => r.id === btn.dataset.pick);
-      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked);
+      if (!person) return;
+      const result = addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
+      if (result === ALREADY_IN_MATCH) $('#pf-err').textContent = result;
     });
     setTimeout(() => find.focus(), 50);
+  }
+  const friendAdd = $('#btn-add-friend');
+  if (friendAdd) {
+    friendAdd.onclick = () => {
+      const row = document.createElement('div');
+      row.className = 'friend-row';
+      row.innerHTML = '<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del amigo"><button type="button" class="btn friend-remove" aria-label="Quitar amigo">×</button>';
+      $('#friend-rows').appendChild(row);
+      row.querySelector('input').focus();
+    };
+    $('#friend-rows').addEventListener('click', (e) => {
+      const btn = e.target.closest('.friend-remove');
+      if (btn) btn.closest('.friend-row')?.remove();
+    });
   }
   form.onsubmit = (e) => {
     e.preventDefault();
@@ -2173,8 +2291,15 @@ function openPlayerForm(m, p, opts = {}) {
         if (phoneRaw !== null) patch.phone = phone;
         await app.store.updatePlayer(p.id, patch);
       })(), 'Jugador actualizado');
-    } else addSignedPlayer(m, { name, phone, rosterId: p?.rosterId, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked);
+      return;
+    }
+    const result = addSignedPlayer(m, { name, phone, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
+    if (result === ALREADY_IN_MATCH) $('#pf-err').textContent = result;
   };
+}
+
+function friendRowValues() {
+  return [...document.querySelectorAll('#friend-rows input')].map((input) => input.value);
 }
 /* Pago del jugador */
 function moneyText(amount) {
@@ -2399,6 +2524,7 @@ function openPlayerMenu(m, p) {
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
       <button class="btn" id="pm-edit"${own ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
+      <button class="btn" id="pm-friend">Agregar amigo</button>
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
@@ -2408,19 +2534,66 @@ function openPlayerMenu(m, p) {
   const spot = $('#pm-confirm-spot');
   if (spot) spot.onclick = () => { closeSheet(); clearReservedSpot(p); };
   if (own) $('#pm-edit').onclick = () => openPlayerForm(m, p);
-  $('#pm-del').onclick = () => {
-    const fromMain = !isWaiting(p);
-    const top = waitingOf(m.id).find((w) => w.id !== p.id);
-    if (!confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
-    const promote = fromMain && top && playersOf(m.id).length - 1 < capOf(m)
-      && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
-    closeSheet();
-    const job = Promise.resolve(app.store.deletePlayer(p.id)).then(async () => {
-      if (!promote) return;
-      await app.store.promoteFromWaiting(top.id);
-      await offerPromotionWhatsApp(top, m);
-    });
-    run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);
+  $('#pm-friend').onclick = () => openFriendForm(m, p);
+  $('#pm-del').onclick = () => removeMatchPlayer(m, p);
+}
+
+function removeMatchPlayer(m, p, { asked = false } = {}) {
+  const fromMain = !isWaiting(p);
+  const friends = matesOf(m.id).filter((item) => item.invitedBy === p.id);
+  if (!asked && !confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
+  const dropFriends = friends.length > 0 && confirm(`¿Quitar también a sus amigos (${friends.map((item) => item.name).join(', ')})?`);
+  const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
+  const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
+  const mainLeft = playersOf(m.id).filter((item) => !dropping.has(item.id)).length;
+  const promote = fromMain && top && mainLeft < capOf(m)
+    && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
+  closeSheet();
+  const job = (async () => {
+    for (const id of dropping) await app.store.deletePlayer(id);
+    if (!promote) return;
+    await app.store.promoteFromWaiting(top.id);
+    await offerPromotionWhatsApp(top, m);
+  })();
+  run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);
+}
+
+function openFriendForm(m, host) {
+  if (!host) return;
+  const blocked = addBlock(m);
+  if (blocked) { toast(blocked); return; }
+  const next = resolveFriendNames([''], friendNamesOf(m.id, host.id))[0]?.name || 'Amigo 1';
+  openSheet(`
+    <form id="friend-form" novalidate>
+      <h3>Amigos de ${esc(host.name)}</h3>
+      <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Cuentan para el cupo como cualquier jugador.</p>
+      <div class="friend-box">
+        <div class="friend-head"><span>Amigos</span><button type="button" class="btn" id="btn-add-friend">Agregar amigo</button></div>
+        <div id="friend-rows"></div>
+      </div>
+      <div class="field"><div class="err" id="friend-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Agregar</button></div>
+    </form>`);
+  const form = $('#friend-form');
+  const addRow = () => {
+    const row = document.createElement('div');
+    row.className = 'friend-row';
+    row.innerHTML = '<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del amigo"><button type="button" class="btn friend-remove" aria-label="Quitar amigo">×</button>';
+    $('#friend-rows').appendChild(row);
+    row.querySelector('input').focus();
+  };
+  $('#btn-add-friend').onclick = () => addRow();
+  $('#friend-rows').addEventListener('click', (e) => {
+    const btn = e.target.closest('.friend-remove');
+    if (btn) btn.closest('.friend-row')?.remove();
+  });
+  addRow();
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const rows = friendRowValues();
+    if (!rows.length) { $('#friend-err').textContent = 'Agregá al menos un amigo.'; return; }
+    const result = addSignedPlayer(m, host, host.waiting === true, false, rows);
+    if (result === ALREADY_IN_MATCH) $('#friend-err').textContent = result;
   };
 }
 
