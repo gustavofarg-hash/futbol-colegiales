@@ -3,16 +3,17 @@ import assert from 'node:assert/strict';
 import { parseMatchesFromText as p } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
-import { createDemoStore } from '../js/store.js';
+import { createDemoStore, listenDeniedPlan } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from '../js/profile.js';
+import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, toEpoch } from '../js/dates.js';
+import { capacityFor, defaultVenueId, matchCapacity, matchSize, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
@@ -1021,6 +1022,9 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   assert.deepEqual(split.later.map((match) => match.id), ['mas8']);
   assert.equal(split.limit, '2026-10-26');
   assert.deepEqual(pastMatches(matches, now).map((match) => match.id), ['ayer', 'viejo']);
+  assert.equal(matchAlreadyPlayed({ date: '2026-10-18', time: '21:00' }, now), true);
+  assert.equal(matchAlreadyPlayed({ date: '2026-10-19', time: '10:00' }, now), false);
+  assert.equal(matchAlreadyPlayed({ date: '2026-10-22', time: '21:00' }, now), false);
   assert.deepEqual(upcomingMatches(matches, now).map((match) => match.id), ['hoy-noche', 'manana']);
   const many = [];
   for (let i = 0; i < 40; i++) {
@@ -1277,4 +1281,92 @@ test('solo edita el jugador quien lo agregó', async () => {
   delete raw.roster[orphan].createdBy;
   mem.set('f7c-test-edit-lock', JSON.stringify(raw));
   await assert.rejects(() => store.updateRoster(orphan, { name: 'Con sello' }), /Solo lo puede editar/);
+});
+
+test('permission-denied de una consulta vieja no reinicia el resto', () => {
+  assert.equal(listenDeniedPlan({ code: 'permission-denied', hasHandler: true, retrying: false, deniedRetries: 0 }), 'handler');
+  assert.equal(listenDeniedPlan({ code: 'permission_denied', hasHandler: true, retrying: false, deniedRetries: 4 }), 'handler');
+  assert.equal(listenDeniedPlan({ code: 'permission-denied', hasHandler: false, retrying: false, deniedRetries: 0 }), 'retry');
+  assert.equal(listenDeniedPlan({ code: 'permission-denied', hasHandler: false, retrying: true, deniedRetries: 0 }), 'fail');
+  assert.equal(listenDeniedPlan({ code: 'permission-denied', hasHandler: false, retrying: false, deniedRetries: 1 }), 'fail');
+  assert.equal(listenDeniedPlan({ code: 'unavailable', hasHandler: true, retrying: false, deniedRetries: 0 }), 'fail');
+});
+
+test('el mismo día no vuelve a emitir y repetir el actor tampoco', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  let n = 0;
+  store.subscribe(() => { n += 1; });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(n, 1);
+  store._queryDay = '2026-10-20';
+  store.syncDay(new Date('2026-10-20T23:00:00-03:00').getTime());
+  assert.equal(n, 1);
+  store.syncDay(new Date('2026-10-21T01:00:00-03:00').getTime());
+  assert.equal(n, 2);
+  store.setActor({ uid: 'u1', name: 'Gustavo' });
+  store.setActor({ uid: 'u1', name: 'Gustavo' });
+  assert.equal(n, 3);
+});
+
+test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegiales', async () => {
+  assert.deepEqual(matchSize({}), { perTeam: 7, capacity: 14 });
+  assert.deepEqual(matchSize({ perTeam: 6 }), { perTeam: 6, capacity: 12 });
+  assert.deepEqual(matchSize({ capacity: 1 }), { perTeam: null, capacity: 1 });
+  assert.equal(perTeamOf({}), 7);
+  assert.equal(perTeamOf({ capacity: 14 }), 7);
+  assert.equal(matchCapacity({ capacity: 1 }), 1);
+  assert.equal(capacityFor(11), 22);
+  assert.equal(venueLabel({}, []), 'Polideportivo Colegiales');
+  assert.equal(venueLabel({ venueId: 'norte', venueName: 'Nombre viejo' }, [{ id: 'norte', name: 'Club Norte', active: true, order: 1 }]), 'Club Norte');
+  assert.equal(defaultVenueId([], { unreadable: true }), 'colegiales');
+  const choices = venueChoices([{ id: 'norte', name: 'Club Norte', active: false, order: 2 }, { id: 'colegiales', name: 'Polideportivo Colegiales', active: true, order: 0 }], { currentId: 'norte' });
+  assert.deepEqual(choices.map((item) => item.id), ['colegiales', 'norte']);
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  await store.init();
+  const id = await store.addMatch({ date: '2026-10-22', time: '21:00' }, 'Gustavo');
+  const db = JSON.parse(mem.get(store.key));
+  assert.equal(db.matches[id].venueId, 'colegiales');
+  assert.equal(db.matches[id].venueName, 'Polideportivo Colegiales');
+  assert.equal(db.matches[id].perTeam, 7);
+  assert.equal(db.matches[id].capacity, 14);
+  assert.equal(db.venues.colegiales.name, 'Polideportivo Colegiales');
+  const norte = await store.addVenue('Club Norte');
+  await store.updateVenue(norte, { name: 'Club Norte Sur' });
+  await assert.rejects(() => store.addVenue('club norte sur'), /sedes/);
+  await store.updateVenue(norte, { active: false });
+  assert.equal(JSON.parse(mem.get(store.key)).venues[norte].active, false);
+  const tight = await store.addMatch({ date: '2026-10-30', time: '19:00', capacity: 1 }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[tight].capacity, 1);
+  assert.equal(JSON.parse(mem.get(store.key)).matches[tight].perTeam, undefined);
+});
+
+test('no se cancela un partido que ya entró al historial', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  const played = await store.addMatch({ date: '2026-10-11', time: '19:00', note: 'Viejo' }, 'Gustavo');
+  const ahead = await store.addMatch({ date: '2026-10-26', time: '21:00', note: 'Futuro' }, 'Gustavo');
+  await assert.rejects(() => store.updateMatch(played, { cancelled: true, notes: 'Se suspendió' }, 'Gustavo'), /ya se jugó/);
+  await store.updateMatch(played, { notes: 'Se puede anotar' }, 'Gustavo');
+  await store.updateMatch(ahead, { cancelled: true, notes: 'Lluvia' }, 'Gustavo');
+  const db = JSON.parse(mem.get(store.key));
+  assert.equal(db.matches[played].cancelled, undefined);
+  assert.equal(db.matches[played].notes, 'Se puede anotar');
+  assert.equal(db.matches[ahead].cancelled, true);
 });

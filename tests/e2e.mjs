@@ -9,6 +9,51 @@ const NOW = new Date('2026-10-19T13:00:00-03:00'); // lunes 19/10/2026 13:00 (BA
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond, extra }); console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' — ' + extra : ''}`); };
 
+async function viewState() {
+  return page.evaluate(() => ({
+    y: document.scrollingElement?.scrollTop || 0,
+    hash: location.hash,
+    search: document.querySelector('#roster-q')?.value ?? null,
+    filter: document.querySelector('#pay-filter .chip.on')?.getAttribute('data-pay-filter') ?? null,
+    signups: [...document.querySelectorAll('input[data-signup]')].map((el) => `${el.dataset.signup}:${el.checked ? 1 : 0}`).join(','),
+    tentative: document.querySelector('#signup-tentative')?.checked ?? null,
+    profile: document.querySelector('#profile h2.section')?.textContent || '',
+    section: document.querySelector('#roster-section .chip.on')?.id || '',
+  }));
+}
+function sameView(a, b) {
+  return a.y === b.y && a.hash === b.hash && a.search === b.search && a.filter === b.filter
+    && a.signups === b.signups && a.tentative === b.tentative && a.profile === b.profile && a.section === b.section;
+}
+async function assertStill(label) {
+  const before = await viewState();
+  await page.evaluate(() => {
+    window.__viewMutations = 0;
+    const view = document.getElementById('view');
+    window.__viewObs?.disconnect();
+    window.__viewObs = new MutationObserver(() => { window.__viewMutations += 1; });
+    window.__viewObs.observe(view, { childList: true, subtree: true, characterData: true });
+    const app = window.__app;
+    app.store.syncDay(Date.now());
+    app.store.setActor({ uid: app.uid, name: app.who });
+    app.store._emit();
+  });
+  await page.waitForTimeout(500);
+  const after = await viewState();
+  const n = await page.evaluate(() => { window.__viewObs?.disconnect(); return window.__viewMutations; });
+  check(label, n === 0 && sameView(before, after), `mut=${n} y=${before.y}->${after.y} hash=${after.hash} filtro=${after.filter} busca=${after.search} seccion=${after.section}`);
+}
+async function assertRepaintKeeps(label) {
+  const before = await viewState();
+  await page.evaluate(() => {
+    window.__app.viewStamp = '';
+    window.__app.store._emit();
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const after = await viewState();
+  check(label, sameView(before, after), `y=${before.y}->${after.y} filtro=${before.filter}->${after.filter} busca=${after.search} signups=${after.signups} perfil=${after.profile}`);
+}
+
 const browser = await chromium.launch();
 const ctx = await browser.newContext({
   viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
@@ -105,6 +150,10 @@ await page.waitForSelector('text=No hay partidos en los próximos 7 días');
 
 // Agregar partido
 await page.click('#btn-add-match');
+await page.waitForSelector('#match-venue');
+check('Alta: Sede arranca en Polideportivo Colegiales', (await page.locator('#match-venue option:checked').innerText()).trim() === 'Polideportivo Colegiales');
+check('Alta: Jugadores por equipo arranca en 7', await page.inputValue('#match-per-team') === '7');
+check('Jugadores por equipo va de 5 a 11', JSON.stringify(await page.$$eval('#match-per-team option', (els) => els.map((el) => el.value))) === JSON.stringify(['5', '6', '7', '8', '9', '10', '11']));
 await page.fill('#match-form [name=date]', '2026-10-22');
 await page.fill('#match-form [name=time]', '21:00');
 await page.fill('#match-form [name=note]', 'Cancha 2');
@@ -176,6 +225,13 @@ check('Badge "Mañana" en el partido del martes', (await page.textContent('#list
 await page.click('.match-card:has-text("Jueves 22/10")');
 await page.waitForSelector('#slots');
 check('Detalle muestra 14 lugares', (await page.$$('#slots > li')).length === 14);
+await page.setViewportSize({ width: 390, height: 480 });
+await page.evaluate(() => window.scrollTo(0, 220));
+await page.waitForFunction(() => (document.scrollingElement?.scrollTop || 0) > 100);
+await assertStill('El detalle de Próximos no se redibuja solo');
+await assertRepaintKeeps('El detalle de Próximos conserva el scroll si los datos no cambian');
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.setViewportSize({ width: 390, height: 844 });
 const players = [
   ['Juan Pérez', '11 1234-5678', '5491112345678'],
   ['Pedro Gómez', '011 15 4444-3333', '5491144443333'],
@@ -738,6 +794,7 @@ await page.click('dialog.sheet [data-close]');
 await page.click('#btn-roster');
 await page.waitForSelector('#btn-add-roster');
 check('Pantalla Jugadores desde el inicio', (await page.textContent('h2')).includes('Jugadores'));
+await assertStill('La lista de Jugadores no se redibuja sola');
 await page.click('#btn-add-roster');
 await page.fill('#roster-form [name=name]', 'Ernesto Pereira');
 await page.fill('#roster-form [name=phone]', '11 2222-3333');
@@ -754,6 +811,13 @@ await page.waitForFunction(() => {
   return names.length === 1 && names[0] === 'José Pérez';
 });
 check('Buscar jose encuentra a José Pérez', true);
+await page.setViewportSize({ width: 390, height: 480 });
+await page.evaluate(() => window.scrollTo(0, 80));
+await assertStill('La búsqueda de Jugadores se queda quieta');
+await assertRepaintKeeps('La búsqueda de Jugadores conserva el texto y el scroll');
+check('La búsqueda sigue en jose', (await page.inputValue('#roster-q')) === 'jose' && await page.locator('#roster-list .name').count() === 1);
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.setViewportSize({ width: 390, height: 844 });
 await page.click('#tab-proximos');
 await page.waitForSelector('.match-card');
 await page.click('.match-card:has-text("Martes 20/10")');
@@ -811,6 +875,7 @@ await page.waitForFunction(() => document.querySelector('h1')?.textContent.inclu
 await page.locator('#slots .who', { hasText: 'Ernesto Pereira' }).click();
 await page.waitForSelector('#profile');
 check('Tocarlo abre el perfil con WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491122223333'));
+await assertStill('El perfil no se redibuja solo');
 check('Mostrar el WhatsApp a los demás arranca desactivado', (await page.locator('#phone-share').count()) === 1 && !(await page.isChecked('#phone-share')) && (await page.textContent('#phone-share-line')).includes('Mostrar mi WhatsApp a los demás organizadores'));
 check('Cuenta el partido pasado en la lista principal', (await page.textContent('#stat-times')).includes('Jugó 1 vez'));
 check('Mayormente jueves · 21:00', (await page.textContent('#stat-summary')).includes('Mayormente jueves · 21:00'));
@@ -830,6 +895,18 @@ await page.click('#btn-roster');
 await page.locator('#roster-list .who', { hasText: 'Ernesto P.' }).click();
 await page.waitForSelector('#profile');
 check('Desde Jugadores es el mismo perfil', (await page.textContent('#level-val')) === '8' && (await page.textContent('#notes')).includes('Hizo un gol'));
+const signupBox = page.locator('#signup-list input[data-signup]:not([disabled])').first();
+await signupBox.check();
+await page.locator('#signup-tentative').check();
+await page.waitForFunction(() => document.querySelector('#btn-signup')?.textContent === 'Anotar en 1 partido');
+await page.setViewportSize({ width: 390, height: 480 });
+await page.locator('#ledger').scrollIntoViewIfNeeded();
+await page.evaluate(() => window.scrollTo(0, Math.max(200, (document.scrollingElement?.scrollTop || 0))));
+await assertStill('El perfil conserva la selección y no se redibuja solo');
+await assertRepaintKeeps('El perfil conserva partidos elegidos, el filtro y el scroll');
+check('Sigue elegido un partido y el lugar reservado', (await page.locator('#signup-list input[data-signup]:checked').count()) === 1 && await page.isChecked('#signup-tentative') && (await page.textContent('#btn-signup')) === 'Anotar en 1 partido');
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.setViewportSize({ width: 390, height: 844 });
 await page.click('#btn-back');
 await page.waitForSelector('#roster-list');
 await page.click('#tab-proximos');
@@ -862,6 +939,13 @@ check('Pagos: Juan le pagó $4.500 a Martín', juanMoney.includes('Martín: $4.5
 await page.click('#pay-filter [data-pay-filter="Martín"]');
 juanMoney = await juanPayRow();
 check('El filtro de Pagos deja solo a Martín', juanMoney.includes('Martín: $4.500') && !juanMoney.includes('Gustavo'), juanMoney);
+await page.setViewportSize({ width: 390, height: 480 });
+await page.evaluate(() => window.scrollTo(0, 160));
+await assertStill('Pagos con el filtro elegido no se redibuja solo');
+await assertRepaintKeeps('Pagos conserva el filtro y el scroll');
+check('Sigue el filtro de Martín en Pagos', await page.getAttribute('#pay-filter .chip.on', 'data-pay-filter') === 'Martín' && (await page.getAttribute('#btn-pagos', 'class')).includes('on'));
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.setViewportSize({ width: 390, height: 844 });
 await page.click('#pay-filter [data-pay-filter=""]');
 await page.locator('#pay-summary .pay-row', { hasText: 'Juan Pérez' }).locator('[data-pay-open]').click();
 await page.waitForSelector('#ledger-total');
@@ -886,7 +970,7 @@ await page.waitForSelector('#btn-add-match');
 check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-match'));
 
 await page.click('#btn-settings');
-check('Un organizador no administra usuarios', (await page.locator('#set-users').count()) === 0);
+check('Un organizador no administra usuarios', (await page.locator('#set-organizers').count()) === 0 && await page.isVisible('#set-venues'));
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
@@ -895,7 +979,7 @@ await page.click('#login-form button[type=submit]');
 await page.waitForFunction(() => window.__app?.who);
 await page.waitForSelector('#btn-add-match');
 await page.click('#btn-settings');
-await page.click('#set-users');
+await page.click('#set-organizers');
 await page.waitForSelector('#user-form');
 await page.fill('#user-form [name=name]', 'Lucía');
 await page.fill('#user-form [name=email]', 'lucia@demo.local');
@@ -1257,6 +1341,13 @@ check('Hoy no entra al historial', await page.locator('#list-history .match-card
 await page.click('#list-history .match-card:has-text("Ayer")');
 await page.waitForSelector('#slots .name:text-is("Histórico Pérez")');
 check('El detalle muestra jugadores y la lista de espera', await page.locator('#wait-list .name:text-is("Espera Vieja")').count() === 1 && await page.isVisible('#btn-add-player'));
+check('Un partido ya jugado no muestra Cancelar partido', await page.locator('#btn-cancel-match').count() === 0);
+await page.setViewportSize({ width: 390, height: 480 });
+await page.evaluate(() => window.scrollTo(0, 180));
+await assertStill('El detalle del historial no se redibuja solo');
+await assertRepaintKeeps('El detalle del historial conserva el scroll');
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.setViewportSize({ width: 390, height: 844 });
 await page.click('#slots .pay-btn');
 await page.waitForSelector('#pay-form');
 await page.click('#pay-form [data-paid="si"]');
@@ -1400,22 +1491,80 @@ await page.evaluate(async () => {
   const id = await window.__app.store.addMatch({ date: '2026-10-11', time: '19:00', note: 'Viejo cancelable', capacity: 14 }, who);
   const match = window.__app.matches.find((m) => m.id === id);
   await window.__app.store.addPlayer(match, { name: 'Cancel Viejo', phone: '5491188887777' }, who);
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  db.matches[id].cancelled = true;
+  db.matches[id].notes = 'Se suspendió';
+  localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+  window.__app.store._emit();
 });
 await page.evaluate(() => { location.hash = '#/historial'; });
 await page.waitForSelector('#list-history .match-card:has-text("Viejo cancelable")');
 await page.click('#list-history .match-card:has-text("Viejo cancelable")');
-await page.waitForSelector('#btn-cancel-match');
-await page.click('#btn-cancel-match');
-await page.fill('#cancel-notes', 'Se suspendió');
-await page.click('#cancel-form button[type=submit]');
-await page.waitForSelector('#cancel-links');
-await page.click('dialog.sheet [data-close]');
 await page.waitForSelector('#match-cancelled');
+check('Un partido del historial no ofrece Cancelar partido', await page.locator('#btn-cancel-match').count() === 0 && await page.locator('#btn-reactivate-match').count() === 1);
 await page.click('#btn-back');
 await page.waitForSelector('#list-history .match-card:has-text("Viejo cancelable")');
 check('El historial muestra Cancelado', (await page.textContent('#list-history .match-card:has-text("Viejo cancelable")')).includes('Cancelado'));
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
+
+await page.click('#btn-settings');
+await page.waitForSelector('#set-sections');
+check('Ajustes tiene Sedes y Organizadores aparte de los precios', await page.isVisible('#set-venues') && await page.isVisible('#set-organizers') && await page.isVisible('#price-form'));
+await page.click('#set-venues');
+await page.waitForSelector('#venue-list .name:text-is("Polideportivo Colegiales")');
+await page.fill('#venue-form [name=name]', 'Club Norte');
+await page.click('#venue-form button[type=submit]');
+await page.waitForSelector('#venue-list .name:text-is("Club Norte")');
+await page.locator('#venue-list .slot', { hasText: 'Club Norte' }).locator('[data-venue-edit]').click();
+await page.fill('#venue-edit [name=name]', 'Club Norte Sur');
+await page.click('#venue-edit button[type=submit]');
+await page.waitForSelector('#venue-list .name:text-is("Club Norte Sur")');
+check('Se puede renombrar una sede', true);
+await page.click('#venues-back');
+await page.waitForSelector('#set-sections');
+await page.click('dialog.sheet [data-close]');
+await page.waitForFunction(() => document.querySelectorAll('dialog.sheet[open]').length === 0);
+await page.click('#btn-add-match');
+await page.selectOption('#match-venue', { label: 'Club Norte Sur' });
+await page.selectOption('#match-per-team', '6');
+await page.fill('#match-form [name=date]', '2026-11-08');
+await page.fill('#match-form [name=time]', '19:30');
+await page.click('#match-form button[type=submit]');
+await page.waitForSelector('.match-card:has-text("8/11")');
+const norteCard = (await page.locator('.match-card:has-text("8/11")').innerText()).replace(/\s+/g, ' ');
+check('La tarjeta muestra la sede y el cupo de 6 por equipo', norteCard.includes('Club Norte Sur') && /0\/12/.test(norteCard), norteCard);
+await page.click('.match-card:has-text("8/11")');
+await page.waitForSelector('#slot-count');
+check('El detalle usa la sede y Faltan 12', (await page.textContent('.when')).includes('Club Norte Sur') && (await page.textContent('#slot-count')) === '0/12' && (await page.textContent('#match-size')).includes('6 contra 6'));
+await page.click('#btn-copy');
+const norteCopy = await page.evaluate(() => navigator.clipboard.readText());
+check('La lista copiada nombra la sede', norteCopy.includes('Club Norte Sur') && norteCopy.includes('Faltan 12'), norteCopy.split('\n').slice(0, 3).join(' | '));
+await page.click('#btn-edit-match');
+await page.waitForSelector('#match-venue');
+check('Editar partido conserva la sede y los 6', (await page.locator('#match-venue option:checked').innerText()).trim() === 'Club Norte Sur' && await page.inputValue('#match-per-team') === '6');
+await page.click('#match-form [data-close]');
+await page.click('#btn-settings');
+await page.click('#set-venues');
+await page.locator('#venue-list .slot', { hasText: 'Club Norte Sur' }).locator('[data-venue-active]').click();
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('#venue-list .slot')].find((el) => el.innerText.includes('Club Norte Sur'));
+  return row && row.innerText.includes('Inactiva');
+});
+await page.click('#venues-back');
+await page.waitForSelector('#set-sections');
+await page.click('dialog.sheet [data-close]');
+await page.waitForFunction(() => document.querySelectorAll('dialog.sheet[open]').length === 0);
+await page.click('#btn-back');
+await page.waitForSelector('#btn-add-match');
+await page.click('#btn-add-match');
+check('Una sede inactiva no sale en un partido nuevo', await page.locator('#match-venue option', { hasText: 'Club Norte Sur' }).count() === 0);
+await page.click('#match-form [data-close]');
+await page.click('.match-card:has-text("8/11")');
+await page.waitForSelector('.when');
+check('El partido que ya la usa sigue mostrando el nombre nuevo', (await page.textContent('.when')).includes('Club Norte Sur'));
+await page.click('#btn-back');
+await page.waitForSelector('#list-next');
 
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());
@@ -1454,8 +1603,9 @@ await page.click('#list-history .match-card:has-text("Viejo cancelable")');
 await page.waitForSelector('#btn-reactivate-match');
 check('En el historial se leen las notas', (await page.textContent('#match-notes')).includes('Se suspendió'));
 await page.click('#btn-reactivate-match');
-await page.waitForFunction(() => !document.querySelector('#match-cancelled') && !!document.querySelector('#btn-cancel-match'));
+await page.waitForFunction(() => !document.querySelector('#match-cancelled') && !document.querySelector('#btn-cancel-match'));
 check('Reactivar conserva las notas', (await page.textContent('#match-notes')).includes('Se suspendió'));
+check('Después de reactivar, un partido jugado sigue sin Cancelar', await page.locator('#btn-cancel-match').count() === 0);
 await page.click('#btn-back');
 await page.waitForSelector('#list-history');
 check('Al reactivar sale el badge del historial', !(await page.textContent('#list-history .match-card:has-text("Viejo cancelable")')).includes('Cancelado'));

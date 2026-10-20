@@ -63,6 +63,7 @@ export function confirmationIdentity({ playerId, player, match }) {
     time: match?.time || '',
     note: match?.note || '',
     notes: String(match?.notes || '').slice(0, 2000),
+    venue: String(match?.venueName || '').trim().slice(0, 80) || 'Polideportivo Colegiales',
     cancelled: match?.cancelled === true,
     viewers: playerAccess(match).viewers,
   };
