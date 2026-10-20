@@ -57,6 +57,29 @@ await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
 await page.waitForSelector('#btn-who');
+check('Al entrar no obliga a elegir WhatsApp', (await page.locator('#wa-choice').count()) === 0);
+await page.click('#btn-settings');
+await page.waitForSelector('#wa-choice');
+check('En Ajustes se elige el WhatsApp', (await page.textContent('#wa-choice')).includes('¿Desde qué WhatsApp querés mandar los mensajes?'));
+check('Avisa que Dual Messenger deja elegir', (await page.textContent('#wa-choice-note')).includes('Si tenés dos WhatsApp (Dual Messenger), el celular te va a dejar elegir'));
+check('Por defecto pregunta cada vez', (await page.locator('#wa-choice-ask').getAttribute('aria-pressed')) === 'true' && await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
+check('Las apps forzadas no distinguen el dual', (await page.textContent('#wa-choice-force')).includes('No distinguen el WhatsApp dual'));
+await page.click('#wa-choice-business');
+check('Guarda WhatsApp Business en este dispositivo', await page.evaluate(() => localStorage.getItem('f7c-wa-from') === 'business'));
+const androidLink = await page.evaluate(async () => {
+  const { waSendUrl } = await import('./js/phone.js');
+  const ask = waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'ask', android: true });
+  const business = waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'business', android: true });
+  return { ask, business };
+});
+const androidFallback = decodeURIComponent(androidLink.business.split('S.browser_fallback_url=')[1].replace(/;end$/, ''));
+check('Preguntar cada vez es un wa.me plano, sin package', androidLink.ask === 'https://wa.me/5491112345678?text=Hola%20Juan' && !androidLink.ask.includes('package='), androidLink.ask);
+check('En Android el intent apunta a WhatsApp Business y cae a wa.me',
+  androidLink.business.startsWith('intent://wa.me/5491112345678?text=Hola%20Juan#Intent;scheme=https;package=com.whatsapp.w4b;')
+  && androidFallback === 'https://wa.me/5491112345678?text=Hola%20Juan', androidLink.business.slice(0, 120));
+await page.click('#wa-choice-ask');
+check('Se puede volver a que el celular pregunte', await page.evaluate(() => localStorage.getItem('f7c-wa-from') === 'ask'));
+await page.click('dialog.sheet [data-close]');
 await page.waitForSelector('text=No hay partidos en los próximos 7 días');
 check('Banner de modo demo visible', await page.isVisible('#demo-banner'));
 const demoMode = await page.evaluate(() => window.__app?.store?.mode);

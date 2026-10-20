@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMatchesFromText as p } from '../js/parser.js';
-import { normalizePhone } from '../js/phone.js';
+import { isAndroidUa, normalizePhone, normalizeWaChoice, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
@@ -76,6 +76,24 @@ test('teléfonos argentinos', () => {
   assert.equal(normalizePhone('123').ok, false);
   assert.equal(normalizePhone('+34 612 345 678').wa, '34612345678');
   assert.equal(normalizePhone('11 1234-5678').display, '+54 9 11 1234-5678');
+});
+
+test('WhatsApp: wa.me por defecto y package en Android', () => {
+  assert.equal(waLink('5491112345678', 'Hola'), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: false }), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'ask', android: true }), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', android: true }), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ text: 'Lista', choice: 'whatsapp', android: false }), 'https://wa.me/?text=Lista');
+  const business = waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'business', android: true });
+  assert.equal(business, `intent://wa.me/5491112345678?text=Hola%20Juan#Intent;scheme=https;package=com.whatsapp.w4b;S.browser_fallback_url=${encodeURIComponent('https://wa.me/5491112345678?text=Hola%20Juan')};end`);
+  const plain = waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'whatsapp', android: true });
+  assert.match(plain, /package=com\.whatsapp;/);
+  assert.doesNotMatch(plain, /package=com\.whatsapp\.w4b/);
+  assert.equal(isAndroidUa('Mozilla/5.0 (Linux; Android 14; Pixel 7)'), true);
+  assert.equal(isAndroidUa('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'), false);
+  assert.equal(normalizeWaChoice('business'), 'business');
+  assert.equal(normalizeWaChoice('ask'), 'ask');
+  assert.equal(normalizeWaChoice('otro'), null);
 });
 
 test('montos en pesos', () => {
@@ -358,6 +376,9 @@ test('recordatorio: token, link y mensaje', () => {
   assert.match(msg, /\(Cancha 2\)/);
   assert.ok(msg.includes(url));
   assert.ok(waReminderUrl('5491112345678', msg).startsWith('https://wa.me/5491112345678?text='));
+  const forced = waReminderUrl('5491112345678', msg, { choice: 'whatsapp', android: true });
+  assert.match(forced, /package=com\.whatsapp;/);
+  assert.equal(decodeURIComponent(forced.split('S.browser_fallback_url=')[1].replace(/;end$/, '')).startsWith('https://wa.me/5491112345678?text='), true);
   const player = { matchId: '2026-10-22_2100', confirmToken: a };
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', a), true);
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', 'otro-token-largo-falso'), false);
@@ -436,6 +457,9 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(links[0].name, 'Juan Pérez');
   assert.equal(links[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-19_1500&p=p1&t=${token}`);
   assert.ok(links[0].waUrl.startsWith('https://wa.me/5491112345678?text='));
+  const businessLinks = reminderLinks({ match, players, venue: 'Polideportivo Colegiales', choice: 'business', android: true });
+  assert.match(businessLinks[0].waUrl, /package=com\.whatsapp\.w4b;/);
+  assert.equal(businessLinks[0].phone, '5491112345678');
   const text = decodeURIComponent(links[0].waUrl.split('text=')[1]);
   assert.match(text, /^¡Hola Juan!/);
   assert.match(text, /lunes 19\/10 a las 15:00 hs \(Cancha 2\)/);
