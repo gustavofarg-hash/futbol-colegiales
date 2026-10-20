@@ -80,11 +80,19 @@ await ctx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.goo
   console.error('BLOCKED', route.request().url());
   return route.abort();
 });
+await ctx.route(/https:\/\/spoo\.me\//, (route) => route.abort());
+await ctx.route(/https:\/\/da\.gd\//, (route) => route.abort());
 const page = await ctx.newPage();
 await page.clock.install({ time: NOW });
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+page.on('console', (m) => {
+  if (m.type() !== 'error') return;
+  const text = m.text();
+  // Los mocks de spoo.me y da.gd abortan o contestan 503. Chrome lo anota en la consola.
+  if (/^Failed to load resource: (net::ERR_(FAILED|ABORTED)|the server responded with a status of 503 )/.test(text)) return;
+  errors.push('console: ' + text);
+});
 page.on('dialog', (d) => d.accept());
 
 await page.goto(BASE);
@@ -654,6 +662,7 @@ const [teoPopup] = await Promise.all([
   page.waitForEvent('popup'),
   page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).locator('[data-promote]').click(),
 ]);
+await teoPopup.waitForURL((url) => /wa\.me|phone=/.test(String(url)), { waitUntil: 'commit' });
 await page.waitForSelector('#slots .name:text-is("Avisa Teo")');
 const teoRow = (await page.locator('#slots .slot', { hasText: 'Avisa Teo' }).innerText()).replace(/\s+/g, ' ');
 check('Al subir al partido vuelve la confirmación', teoRow.includes('Sin respuesta') && (await page.textContent('#confirm-sum')).includes('Sin respuesta: 1'), teoRow);
@@ -1483,6 +1492,137 @@ await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
 await page.waitForFunction(() => window.__app?.who);
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card:has-text("Hoy temprano")');
+
+async function routeShorten(spoo, dagd) {
+  await page.route(/https:\/\/spoo\.me\//, spoo);
+  await page.route(/https:\/\/da\.gd\//, dagd);
+  return async () => {
+    await page.unroute(/https:\/\/spoo\.me\//, spoo);
+    await page.unroute(/https:\/\/da\.gd\//, dagd);
+  };
+}
+const shortMatchId = await page.evaluate(async () => {
+  const who = window.__app.who;
+  const id = await window.__app.store.addMatch({ date: '2026-10-23', time: '18:00', note: 'Acortar', capacity: 14 }, who);
+  const match = window.__app.matches.find((m) => m.id === id);
+  await window.__app.store.addPlayer(match, { name: 'Corto Uno', phone: '5491199990001' }, who);
+  return id;
+});
+let earlyShort = 0;
+const countAbort = (route) => { earlyShort += 1; return route.abort(); };
+await page.route(/https:\/\/spoo\.me\//, countAbort);
+await page.route(/https:\/\/da\.gd\//, countAbort);
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, shortMatchId);
+await page.waitForSelector('#slots .wa-btn[data-short-code]');
+await page.waitForTimeout(250);
+check('Abrir el partido no llama al acortador', earlyShort === 0, String(earlyShort));
+await page.unroute(/https:\/\/spoo\.me\//, countAbort);
+await page.unroute(/https:\/\/da\.gd\//, countAbort);
+
+let spooHits = 0;
+let spooBody = null;
+let off = await routeShorten(async (route) => {
+  spooHits += 1;
+  spooBody = route.request().postDataJSON();
+  await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ short_url: 'https://spoo.me/ZXwB0uF' }) });
+}, (route) => route.fulfill({ status: 500, body: 'no' }));
+await page.click('#btn-remind');
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('#remind-list .remind-row')].find((el) => el.innerText.includes('Corto Uno'));
+  const href = row?.querySelector('a')?.getAttribute('href') || '';
+  return decodeURIComponent(href).includes('https://spoo.me/ZXwB0uF');
+});
+check('spoo.me recibe solo long_url', spooBody && spooBody.long_url.includes('/c/?k=') && !Object.hasOwn(spooBody, 'block_bots') && Object.keys(spooBody).join(',') === 'long_url', JSON.stringify(spooBody));
+const cachedShort = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  return Object.values(db.links).find((row) => row.shortUrl === 'https://spoo.me/ZXwB0uF') || null;
+});
+check('El link guarda shortUrl, shortProvider y shortAt', cachedShort?.shortProvider === 'spoo' && typeof cachedShort?.shortAt === 'number' && !!cachedShort.m && !!cachedShort.t, JSON.stringify(cachedShort));
+await page.click('dialog.sheet [data-close]');
+await page.click('#btn-remind');
+await page.waitForFunction(() => decodeURIComponent([...document.querySelectorAll('#remind-list a')].find((a) => a.closest('.remind-row')?.innerText.includes('Corto Uno'))?.getAttribute('href') || '').includes('https://spoo.me/ZXwB0uF'));
+check('El segundo envío no vuelve a llamar a spoo.me', spooHits === 1, String(spooHits));
+const [shortPop] = await Promise.all([
+  page.waitForEvent('popup'),
+  page.locator('#remind-list .remind-row', { hasText: 'Corto Uno' }).locator('a').click(),
+]);
+await shortPop.waitForURL((url) => /wa\.me|spoo\.me|phone=/.test(String(url)), { waitUntil: 'commit' });
+check('Enviar abre WhatsApp con el link de spoo.me', /wa\.me|phone=/.test(shortPop.url()) && decodeURIComponent(shortPop.url()).includes('https://spoo.me/ZXwB0uF'));
+await shortPop.close();
+await page.click('dialog.sheet [data-close]');
+await off();
+
+const [waPop] = await Promise.all([
+  page.waitForEvent('popup'),
+  page.locator('#slots .slot', { hasText: 'Corto Uno' }).locator('.wa-btn').click(),
+]);
+await waPop.waitForURL((url) => /wa\.me|spoo\.me|phone=/.test(String(url)), { waitUntil: 'commit' });
+check('El botón de WhatsApp abre WhatsApp con spoo.me', /wa\.me|phone=/.test(waPop.url()) && decodeURIComponent(waPop.url()).includes('https://spoo.me/ZXwB0uF') && decodeURIComponent(waPop.url()).includes('¿Confirmás?'));
+await waPop.close();
+
+await page.evaluate(async () => {
+  const match = window.__app.matches.find((m) => m.note === 'Acortar');
+  await window.__app.store.addPlayer(match, { name: 'Corto Dos', phone: '5491199990002' }, window.__app.who);
+  await window.__app.store.addPlayer(match, { name: 'Corto Tres', phone: '5491199990003' }, window.__app.who);
+  await window.__app.store.addPlayer(match, { name: 'Corto Cuatro', phone: '5491199990004' }, window.__app.who);
+});
+await page.waitForSelector('#slots .name:text-is("Corto Cuatro")');
+
+let garbageCalls = 0;
+off = await routeShorten(async (route) => {
+  garbageCalls += 1;
+  await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ short_url: 'https://evil.example/phish' }) });
+}, async (route) => {
+  garbageCalls += 1;
+  await route.fulfill({ status: 200, contentType: 'text/plain', body: 'hola no es un link' });
+});
+await page.click('#btn-remind');
+await page.waitForSelector('#remind-list .remind-row:has-text("Corto Dos") a');
+for (let i = 0; i < 30 && garbageCalls < 2; i++) await page.waitForTimeout(50);
+check('La basura consulta los dos servicios', garbageCalls >= 2, String(garbageCalls));
+const garbageHref = decodeURIComponent(await page.locator('#remind-list .remind-row', { hasText: 'Corto Dos' }).locator('a').getAttribute('href'));
+check('Una respuesta basura deja el link propio', /\/c\/\?k=[0-9A-Za-z]{8}/.test(garbageHref) && !garbageHref.includes('evil.example') && !garbageHref.includes('spoo.me'));
+const garbageStored = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const player = Object.values(db.players).find((p) => p.name === 'Corto Dos');
+  return db.links[player.shortCode];
+});
+check('La basura no se guarda en el link', garbageStored && !garbageStored.shortUrl, JSON.stringify(garbageStored));
+await page.click('dialog.sheet [data-close]');
+await off();
+
+off = await routeShorten(
+  (route) => route.fulfill({ status: 503, contentType: 'text/plain', body: 'down' }),
+  (route) => route.abort(),
+);
+await page.click('#btn-remind');
+await page.waitForSelector('#remind-list .remind-row:has-text("Corto Tres") a');
+await page.waitForTimeout(300);
+const failHref = decodeURIComponent(await page.locator('#remind-list .remind-row', { hasText: 'Corto Tres' }).locator('a').getAttribute('href'));
+check('Si los dos servicios fallan queda el link propio', /\/c\/\?k=[0-9A-Za-z]{8}/.test(failHref) && !failHref.includes('spoo.me') && !failHref.includes('da.gd'));
+await page.click('dialog.sheet [data-close]');
+await off();
+
+off = await routeShorten(async (route) => {
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+  try { await route.abort(); } catch { /* el fetch ya se abortó a los 3 s */ }
+}, (route) => route.fulfill({ status: 200, contentType: 'text/plain', body: 'https://da.gd/jjXrP' }));
+await page.click('#btn-remind');
+await page.waitForFunction(() => {
+  const row = [...document.querySelectorAll('#remind-list .remind-row')].find((el) => el.innerText.includes('Corto Cuatro'));
+  return decodeURIComponent(row?.querySelector('a')?.getAttribute('href') || '').includes('https://da.gd/jjXrP');
+});
+check('Si spoo.me no contesta se usa da.gd', true);
+const dagdStored = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const player = Object.values(db.players).find((p) => p.name === 'Corto Cuatro');
+  return db.links[player.shortCode];
+});
+check('da.gd queda guardado como dagd', dagdStored?.shortProvider === 'dagd' && dagdStored?.shortUrl === 'https://da.gd/jjXrP');
+await page.click('dialog.sheet [data-close]');
+await off();
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
 

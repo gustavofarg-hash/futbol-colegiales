@@ -34,6 +34,7 @@
 //    shortCode: string                  (8 caracteres; el mensaje usa /c/?k=shortCode)
 //  links/{code}
 //    m: matchId, p: playerId, t: confirmToken
+//    shortUrl, shortProvider ('spoo'|'dagd'), shortAt   (cache del acortador; se escribe al mandar)
 //    El código es el id. Se lee sin cuenta, igual que confirmations. No se lista.
 //    confirmed: "si"|"no"               (respuesta del jugador)
 //    confirmedAt, reminderSentAt: number
@@ -81,6 +82,7 @@ import { nextWaitOrder } from './waiting.js';
 import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
+import { acceptedExternalShort } from './shorten.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
@@ -329,7 +331,15 @@ class LocalStore {
         while (db.links[code]) code = newShortCode();
         player.shortCode = code;
       }
-      db.links[code] = { m: player.matchId, p: pid, t: player.confirmToken };
+      const prev = db.links[code] || {};
+      const next = { m: player.matchId, p: pid, t: player.confirmToken };
+      const cached = prev.t === player.confirmToken ? acceptedExternalShort(prev) : null;
+      if (cached) {
+        next.shortUrl = cached.shortUrl;
+        next.shortProvider = cached.shortProvider;
+        next.shortAt = typeof prev.shortAt === 'number' ? prev.shortAt : Date.now();
+      }
+      db.links[code] = next;
       live.add(code);
     }
     for (const code of Object.keys(db.links)) if (!live.has(code)) delete db.links[code];
@@ -341,6 +351,24 @@ class LocalStore {
     if (isShortCode(player.shortCode) && db.links?.[player.shortCode]?.t === player.confirmToken) return player.shortCode;
     this._save(db);
     return this._load().players[id]?.shortCode || '';
+  }
+  async readExternalShort(code) {
+    if (!isShortCode(code)) return null;
+    const row = this._load().links?.[code];
+    const parsed = acceptedExternalShort(row);
+    return parsed ? { ...parsed, shortAt: row.shortAt } : null;
+  }
+  async saveExternalShort(code, rec) {
+    if (!isShortCode(code)) return;
+    const parsed = acceptedExternalShort(rec);
+    if (!parsed) return;
+    const db = this._load();
+    const row = db.links?.[code];
+    if (!row) return;
+    row.shortUrl = parsed.shortUrl;
+    row.shortProvider = parsed.shortProvider;
+    row.shortAt = Date.now();
+    this._save(db);
   }
   _seedOrganizers(db) {
     if (Object.keys(db.organizers).length) return false;
@@ -1477,6 +1505,34 @@ class FirebaseStore {
       return code;
     }
     return '';
+  }
+  async readExternalShort(code) {
+    if (!isShortCode(code)) return null;
+    try {
+      const { doc, getDoc } = this.fs;
+      const snap = await getDoc(doc(this.db, 'links', code));
+      if (!snap.exists()) return null;
+      const data = snap.data();
+      const parsed = acceptedExternalShort(data);
+      return parsed ? { ...parsed, shortAt: data.shortAt } : null;
+    } catch {
+      return null;
+    }
+  }
+  async saveExternalShort(code, rec) {
+    if (!isShortCode(code)) return;
+    const parsed = acceptedExternalShort(rec);
+    if (!parsed) return;
+    try {
+      const { doc, updateDoc } = this.fs;
+      await updateDoc(doc(this.db, 'links', code), {
+        shortUrl: parsed.shortUrl,
+        shortProvider: parsed.shortProvider,
+        shortAt: Date.now(),
+      });
+    } catch (e) {
+      if (e?.code !== 'permission-denied') console.error(e);
+    }
   }
   async ensureConfirmToken(id) {
     const p = this.state.players.find((x) => x.id === id);
