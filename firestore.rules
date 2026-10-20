@@ -9,10 +9,11 @@ rules_version = '2';
 // admin sigue permitida) y recién ahí publicar. Publicar esto no borra datos.
 //
 // La única diferencia de rol en users: el admin crea, desactiva y borra
-// organizadores. Nadie cambia el rol. En partidos no hay excepción de admin:
-// si el partido tiene viewers, solo esas cuentas lo ven, lo leen y anotan.
-// Sin viewers (los partidos de antes) lo ven todos los que están activos.
-// Sin sesión no hay escrituras, salvo confirmed/confirmedAt con el token.
+// organizadores. Nadie cambia el rol. En partidos no hay excepción de admin.
+// Sin viewers, o con `*`, lo ven todos los activos. Con una lista de uids,
+// solo esas cuentas (y el creador) lo leen. Quien no está en adders lo ve
+// y no anota. Sin sesión no hay escrituras, salvo confirmed/confirmedAt
+// con el token.
 service cloud.firestore {
   match /databases/{database}/documents {
 
