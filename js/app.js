@@ -1282,6 +1282,7 @@ function openRosterForm(person) {
       <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person ? displayFromWa(person.phone) : '')}">
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
+      ${person ? '' : '<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"><span>Mostrar el WhatsApp para todos</span></label>'}
       <div class="field"><div class="err" id="rf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${person ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
@@ -1307,7 +1308,7 @@ function openRosterForm(person) {
     }
     const job = person
       ? app.store.updateRoster(person.id, phoneRaw === null ? { name } : { name, phone })
-      : app.store.addRoster({ name, phone }, app.who);
+      : app.store.addRoster({ name, phone, phoneShared: $('#wa-share')?.checked === true }, app.who);
     Promise.resolve(job).then(() => { closeSheet(); toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores'); }).catch((err) => rosterFormError(err, 'rf-err'));
   };
 }
@@ -1326,7 +1327,7 @@ app.profileMatchId = null;
 app.profilePay = false;
 app.wantPhoneForm = false;
 
-async function ensureRoster({ name, phone, rosterId, phoneKey: key }) {
+async function ensureRoster({ name, phone, rosterId, phoneKey: key, phoneShared }) {
   const cleanName = String(name || '').trim();
   if (rosterId && app.roster.some((person) => person.id === rosterId)) return rosterId;
   const wa = canonicalPhone(phone);
@@ -1344,7 +1345,7 @@ async function ensureRoster({ name, phone, rosterId, phoneKey: key }) {
     if (found) return found.id;
   }
   if (!cleanName) return '';
-  return app.store.addRoster({ name: cleanName, phone: wa }, app.who);
+  return app.store.addRoster({ name: cleanName, phone: wa, phoneShared: phoneShared === true }, app.who);
 }
 
 async function openPlayerProfile(player, matchId) {
@@ -1744,7 +1745,7 @@ function bindPartidos(person) {
         if (again.existing) continue;
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
-        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true }, app.who, {
+        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true, phoneShared: person.phoneShared === true }, app.who, {
           waiting: again.willWait,
           tentative: tentative && !again.willWait,
         });
@@ -1788,8 +1789,8 @@ function openNoteForm(person, note) {
   };
 }
 
-async function linkedRosterId({ name, phone, rosterId, phoneKey: key }) {
-  try { return await ensureRoster({ name, phone, rosterId, phoneKey: key || (phone ? phoneIdentity({ phone }) : '') }); }
+async function linkedRosterId({ name, phone, rosterId, phoneKey: key, phoneShared }) {
+  try { return await ensureRoster({ name, phone, rosterId, phoneKey: key || (phone ? phoneIdentity({ phone }) : ''), phoneShared }); }
   catch (error) {
     if (error?.code === 'roster-duplicate') return rosterByPhone(app.roster, phone)?.id || rosterByIdentity(app.roster, phoneIdentity({ phone }))?.id || rosterId || '';
     if (isRosterDenied(error)) showError(`${ROSTER_DENIED_WRITE} El partido igual quedó anotado.`);
@@ -1798,7 +1799,7 @@ async function linkedRosterId({ name, phone, rosterId, phoneKey: key }) {
   }
 }
 
-function addSignedPlayer(m, { name, phone, rosterId, phoneKey: key, hasPhone }, asWait, tentative) {
+function addSignedPlayer(m, { name, phone, rosterId, phoneKey: key, hasPhone, phoneShared }, asWait, tentative) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return; }
   const full = playersOf(m.id).length >= (m.capacity || CAPACITY);
@@ -1807,10 +1808,18 @@ function addSignedPlayer(m, { name, phone, rosterId, phoneKey: key, hasPhone }, 
     return;
   }
   const willWait = asWait || full;
+  const known = rosterId ? app.roster.find((person) => person.id === rosterId) : null;
+  const share = phoneShared === true || known?.phoneShared === true;
   closeSheet();
   run((async () => {
-    const id = await linkedRosterId({ name, phone, rosterId });
-    await app.store.addPlayer(m, { name, phone, rosterId: id, phoneKey: key || '', hasPhone: hasPhone === true }, app.who, { waiting: asWait, tentative: tentative === true && !willWait });
+    const id = await linkedRosterId({ name, phone, rosterId, phoneShared: share && !known });
+    let saved = id ? app.roster.find((person) => person.id === id) : null;
+    if (share && saved && saved.phoneShared !== true && saved.phoneOwnerUid === actor().uid) {
+      try { await app.store.setPhoneShared({ rosterId: id }, true); } catch { /* el dueño lo cambia desde el perfil */ }
+      saved = app.roster.find((person) => person.id === id) || saved;
+    }
+    const visible = share || saved?.phoneShared === true;
+    await app.store.addPlayer(m, { name, phone, rosterId: id, phoneKey: key || saved?.phoneKey || '', hasPhone: hasPhone === true || saved?.hasPhone === true, phoneShared: visible }, app.who, { waiting: asWait, tentative: tentative === true && !willWait });
   })(), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
 }
 
@@ -1871,6 +1880,7 @@ function openPlayerForm(m, p, opts = {}) {
       <label class="field"><span>Nombre</span><input name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
         <div class="small muted" id="pf-phone">Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.</div></label>`}
+      ${p ? '' : '<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"><span>Mostrar el WhatsApp para todos</span></label>'}
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
       <div class="field"><div class="err" id="pf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${p ? 'Guardar' : 'Agregar'}</button></div>
@@ -1898,7 +1908,7 @@ function openPlayerForm(m, p, opts = {}) {
       const btn = e.target.closest('[data-pick]');
       if (!btn) return;
       const person = app.roster.find((r) => r.id === btn.dataset.pick);
-      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }, asWait, !!$('#player-tentative')?.checked);
+      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked);
     });
     setTimeout(() => find.focus(), 50);
   }
@@ -1921,7 +1931,7 @@ function openPlayerForm(m, p, opts = {}) {
         if (phoneRaw !== null) patch.phone = phone;
         await app.store.updatePlayer(p.id, patch);
       })(), 'Jugador actualizado');
-    } else addSignedPlayer(m, { name, phone, rosterId: p?.rosterId }, asWait, !!$('#player-tentative')?.checked);
+    } else addSignedPlayer(m, { name, phone, rosterId: p?.rosterId, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked);
   };
 }
 /* Pago del jugador */

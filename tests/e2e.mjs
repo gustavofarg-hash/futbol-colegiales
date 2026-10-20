@@ -181,6 +181,10 @@ const players = [
   ['Pedro Gómez', '011 15 4444-3333', '5491144443333'],
   ['Lucas Díaz', '+54 9 351 555-1234', '5493515551234'],
 ];
+await page.click('#btn-add-player');
+await page.waitForSelector('#wa-share');
+check('Alta del partido: Mostrar el WhatsApp para todos, destildado', (await page.locator('#wa-share-line').innerText()).replace(/\s+/g, ' ').trim() === 'Mostrar el WhatsApp para todos' && !(await page.isChecked('#wa-share')));
+await page.click('#player-form [data-close]');
 for (const [name, phone] of players) {
   await page.click('#btn-add-player');
   await page.fill('#player-form [name=name]', name);
@@ -770,6 +774,8 @@ await page.locator('#roster-list .slot', { hasText: 'Luis Gómez' }).locator('[d
 await page.waitForFunction(() => !document.body.innerText.includes('Luis Gómez'));
 check('Se puede borrar un jugador guardado', (await page.locator('#roster-list .name', { hasText: 'Luis Gómez' }).count()) === 0);
 await page.click('#btn-add-roster');
+await page.waitForSelector('#roster-form #wa-share');
+check('Alta de Jugadores: Mostrar el WhatsApp para todos, destildado', (await page.locator('#roster-form #wa-share-line').innerText()).replace(/\s+/g, ' ').trim() === 'Mostrar el WhatsApp para todos' && !(await page.isChecked('#roster-form #wa-share')));
 await page.fill('#roster-form [name=name]', 'Otro Pérez');
 await page.fill('#roster-form [name=phone]', '11 4444-5555');
 await page.click('#roster-form button[type=submit]');

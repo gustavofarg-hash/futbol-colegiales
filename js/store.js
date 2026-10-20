@@ -177,7 +177,7 @@ function phoneDup(db, kind, id, phone) {
   return null;
 }
 
-function writeContact(db, kind, id, phone, entity, ownerUid) {
+function writeContact(db, kind, id, phone, entity, ownerUid, visibleToAll) {
   const contacts = ensureContacts(db);
   const canon = canonicalWa(phone);
   if (!canon) {
@@ -192,7 +192,7 @@ function writeContact(db, kind, id, phone, entity, ownerUid) {
   const key = phoneKey(canon);
   const prev = contacts[kind][id];
   const owner = prev?.ownerUid || entity.phoneOwnerUid || ownerUid || '';
-  const visible = prev ? prev.visibleToAll === true : false;
+  const visible = typeof visibleToAll === 'boolean' ? visibleToAll : (prev ? prev.visibleToAll === true : false);
   const contact = { phone: canon, ownerUid: owner, visibleToAll: visible, phoneKey: key };
   if (kind === 'players') contact.viewers = Array.isArray(entity.viewers) && entity.viewers.length ? [...entity.viewers] : ['*'];
   contacts[kind][id] = contact;
@@ -428,7 +428,7 @@ class LocalStore {
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     db.players[id] = player;
-    if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '');
+    if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '', data.phoneShared === true);
     else if (data.hasPhone && /^[0-9a-f]{64}$/.test(String(data.phoneKey || ''))) {
       player.phoneKey = data.phoneKey;
       player.hasPhone = true;
@@ -521,7 +521,7 @@ class LocalStore {
     const id = rid(); const now = Date.now();
     const person = { name: data.name.trim(), createdBy: who || '', createdByUid: this.actor?.uid || '', createdAt: now, updatedAt: now, hasPhone: false, phoneKey: '', phoneOwnerUid: this.actor?.uid || '', phoneShared: false };
     db.roster[id] = person;
-    if (phone) writeContact(db, 'roster', id, phone, person, this.actor?.uid || '');
+    if (phone) writeContact(db, 'roster', id, phone, person, this.actor?.uid || '', data.phoneShared === true);
     this._save(db); return id;
   }
   async updateRoster(id, data) {
@@ -1135,7 +1135,7 @@ class FirebaseStore {
     const body = {
       phone: canon,
       ownerUid,
-      visibleToAll: opts.migrating ? false : existing?.visibleToAll === true,
+      visibleToAll: opts.migrating ? false : (typeof opts.visibleToAll === 'boolean' ? opts.visibleToAll : existing?.visibleToAll === true),
       phoneKey: phoneKey(canon),
     };
     if (kind === 'players') body.viewers = this._viewersOf(entity);
@@ -1219,8 +1219,8 @@ class FirebaseStore {
     await updateDoc(doc(this.db, 'matches', match.id), { ...countPatch(this.fs, stored, 1, mates.length), updatedAt: now });
     if (canon) {
       try {
-        await this._writeContactDoc('players', ref.id, canon, player);
-        await updateDoc(doc(this.db, 'players', ref.id), { hasPhone: true, phone: deleteField() });
+        await this._writeContactDoc('players', ref.id, canon, player, { visibleToAll: data.phoneShared === true });
+        await updateDoc(doc(this.db, 'players', ref.id), { hasPhone: true, phone: deleteField(), phoneShared: data.phoneShared === true });
         this._contactsLive = true;
       } catch (e) {
         if (e?.code !== 'permission-denied') throw e;
@@ -1413,8 +1413,8 @@ class FirebaseStore {
     const ref = await addDoc(collection(this.db, 'roster'), person);
     if (phone) {
       try {
-        await this._writeContactDoc('roster', ref.id, phone, person);
-        await updateDoc(doc(this.db, 'roster', ref.id), { hasPhone: true, phone: deleteField() });
+        await this._writeContactDoc('roster', ref.id, phone, person, { visibleToAll: data.phoneShared === true });
+        await updateDoc(doc(this.db, 'roster', ref.id), { hasPhone: true, phone: deleteField(), phoneShared: data.phoneShared === true });
         this._contactsLive = true;
       } catch (e) {
         if (e?.code !== 'permission-denied') throw e;
