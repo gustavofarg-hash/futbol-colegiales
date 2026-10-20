@@ -283,9 +283,16 @@ function paintTabs(r) {
   requestAnimationFrame(placeBars);
 }
 function placeBars() {
+  const header = document.querySelector('.topbar');
   const bar = document.getElementById('tabbar');
-  if (!bar) return;
-  document.documentElement.style.setProperty('--tabbar-h', `${bar.offsetHeight}px`);
+  const slot = document.getElementById('tab-slot');
+  const action = document.querySelector('#view .actionbar');
+  if (header) document.documentElement.style.setProperty('--header-h', `${header.offsetHeight}px`);
+  if (bar) {
+    document.documentElement.style.setProperty('--tabbar-h', `${bar.offsetHeight}px`);
+    if (slot && bar.parentElement === document.getElementById('sheet')) slot.style.minHeight = `${bar.offsetHeight}px`;
+  }
+  document.documentElement.style.setProperty('--actionbar-h', `${action ? action.offsetHeight : 0}px`);
 }
 function render() {
   const r = route();
@@ -944,16 +951,43 @@ async function shareText(text) {
 
 /* ───────── sheet (dialog) ───────── */
 const sheet = $('#sheet');
+const tabbar = $('#tabbar');
+const tabSlot = $('#tab-slot');
 let sheetLocked = false;
+function restoreTabs() {
+  if (!tabbar || !tabSlot || tabbar.parentElement === tabSlot) return;
+  tabSlot.append(tabbar);
+  tabSlot.style.minHeight = '';
+}
+/* Mientras hay una hoja abierta, las pestañas viven dentro del diálogo
+   para seguir tocables. La hoja queda debajo y no las tapa. */
+function liftTabs() {
+  if (!tabbar || !sheet.open) return;
+  placeBars();
+  if (tabbar.parentElement === sheet) return;
+  if (tabSlot) tabSlot.style.minHeight = `${tabbar.offsetHeight}px`;
+  sheet.prepend(tabbar);
+  placeBars();
+}
 function openSheet(html, { locked = false } = {}) {
   sheetLocked = locked;
+  restoreTabs();
   sheet.innerHTML = `<div class="sheet-body">${html}</div>`;
   if (!sheet.open) sheet.showModal();
+  liftTabs();
   const first = sheet.querySelector('[autofocus]');
   if (first) setTimeout(() => first.focus(), 50);
   return sheet;
 }
 function closeSheet() { sheetLocked = false; if (sheet.open) sheet.close(); }
+if (tabbar) tabbar.addEventListener('click', (e) => {
+  const link = e.target.closest('a[href]');
+  if (!link || !sheet.open) return;
+  e.preventDefault();
+  const href = link.getAttribute('href');
+  closeSheet();
+  if (href && location.hash !== href) location.hash = href;
+});
 sheet.addEventListener('cancel', (e) => { if (sheetLocked) e.preventDefault(); });
 sheet.addEventListener('click', (e) => {
   if (e.target === sheet && !sheetLocked) closeSheet();
@@ -2404,6 +2438,12 @@ async function fixOverflow() {
   finally { fixingOverflow = false; }
 }
 
-sheet.addEventListener('close', () => { app.refreshPaySheet = null; pendingRender = false; render(); });
+sheet.addEventListener('close', () => {
+  restoreTabs();
+  placeBars();
+  app.refreshPaySheet = null;
+  pendingRender = false;
+  render();
+});
 
 boot().catch((e) => { console.error(e); showError('Error al iniciar la app: ' + e.message); });

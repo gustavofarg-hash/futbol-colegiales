@@ -84,7 +84,24 @@ check('Próximos partidos queda activo', await page.getAttribute('#tab-proximos'
 await page.click('#btn-settings');
 check('Ajustes dice quién entró', (await page.textContent('#set-who')).includes('Entraste como Gustavo'));
 check('El filtro de lo propio arranca apagado', !(await page.isChecked('#set-mine')));
-await page.click('dialog.sheet [data-close]');
+const settingsBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const body = document.querySelector('.sheet-body').getBoundingClientRect();
+  const labels = [...document.querySelectorAll('#tabbar a')].map((el) => el.textContent.trim());
+  return {
+    labels,
+    tabsInView: tabs.top >= 0 && tabs.bottom <= window.innerHeight && tabs.height >= 44,
+    sheetBelow: body.top >= tabs.bottom - 1,
+    inDialog: document.querySelector('#tabbar').parentElement?.id === 'sheet',
+  };
+});
+check('En Ajustes las tres pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial']), JSON.stringify(settingsBars));
+check('La hoja de Ajustes no queda debajo de las pestañas', settingsBars.sheetBelow, JSON.stringify(settingsBars));
+await page.click('#btn-historial');
+await page.waitForSelector('#history-filter');
+check('Desde Ajustes, Historial abre esa sección', (await page.evaluate(() => location.hash)) === '#/historial' && await page.locator('dialog.sheet[open]').count() === 0 && await page.getAttribute('#btn-historial', 'aria-current') === 'page');
+await page.click('#tab-proximos');
+await page.waitForSelector('text=No hay partidos en los próximos 7 días');
 
 // Agregar partido
 await page.click('#btn-add-match');
@@ -95,6 +112,30 @@ await page.click('#match-form button[type=submit]');
 await page.waitForSelector('.match-card');
 let cardText = (await page.textContent('.match-card')).replace(/\s+/g, ' ');
 check('Partido agregado aparece en la lista', /Jueves 22\/10/.test(cardText) && /21:00 hs/.test(cardText) && /0\/14/.test(cardText), cardText.trim());
+await page.click('.match-card');
+await page.waitForSelector('#btn-add-player');
+await page.evaluate(() => window.scrollTo(0, 600));
+const matchBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const bar = document.querySelector('.actionbar').getBoundingClientRect();
+  const share = document.querySelector('#btn-share').getBoundingClientRect();
+  const add = document.querySelector('#btn-add-player').getBoundingClientRect();
+  const inside = (el, box) => el.top >= box.top - 1 && el.bottom <= box.bottom + 1 && el.left >= box.left - 1 && el.right <= box.right + 1;
+  return {
+    tabsStuck: tabs.top >= 0 && tabs.bottom < window.innerHeight / 2 && tabs.bottom <= window.innerHeight,
+    apart: bar.top >= tabs.bottom + 8,
+    barInView: bar.top >= 0 && bar.bottom <= window.innerHeight + 1,
+    share: inside(share, bar) && share.width > 20,
+    add: inside(add, bar) && add.bottom <= window.innerHeight + 1,
+  };
+});
+check('Al bajar el partido las pestañas siguen arriba', matchBars.tabsStuck, JSON.stringify(matchBars));
+check('La barra de compartir y agregar no queda tapada', matchBars.apart && matchBars.barInView && matchBars.share && matchBars.add, JSON.stringify(matchBars));
+await page.click('#btn-roster');
+await page.waitForSelector('#roster-section');
+check('Desde el partido, Jugadores abre el listado', (await page.evaluate(() => location.hash)) === '#/jugadores' && await page.getAttribute('#btn-roster', 'aria-current') === 'page');
+await page.click('#tab-proximos');
+await page.waitForSelector('.match-card');
 
 // Importar desde texto
 await page.click('#btn-import');
@@ -1401,6 +1442,17 @@ await page.click('#list-next .match-card:has-text("22/10")');
 await page.waitForSelector('#btn-add-player');
 const overflowMatch = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en 360px no desborda el partido', overflowMatch <= 1, String(overflowMatch));
+const hugeBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const bar = document.querySelector('.actionbar').getBoundingClientRect();
+  const add = document.querySelector('#btn-add-player').getBoundingClientRect();
+  return {
+    apart: bar.top >= tabs.bottom + 4,
+    addVisible: add.top >= bar.top - 1 && add.bottom <= window.innerHeight + 1 && add.height >= 32,
+    tabsVisible: tabs.top >= 0 && tabs.bottom <= window.innerHeight && tabs.width <= window.innerWidth + 1,
+  };
+});
+check('Con letra Enorme las pestañas no tapan agregar jugador', hugeBars.apart && hugeBars.addVisible && hugeBars.tabsVisible, JSON.stringify(hugeBars));
 await page.click('#btn-teams');
 await page.waitForSelector('#team-board');
 const overflowTeams = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -1424,6 +1476,12 @@ const moneyRow = await page.evaluate(() => {
   };
 });
 check('En 360px el monto y el desplegable van en una fila', moneyRow.sameTop && moneyRow.inside && moneyRow.wide, JSON.stringify(moneyRow));
+const paySheet = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const body = document.querySelector('.sheet-body').getBoundingClientRect();
+  return body.top >= tabs.bottom - 1 && tabs.bottom <= window.innerHeight && body.bottom <= window.innerHeight + 1;
+});
+check('Con letra Enorme la hoja de pago queda debajo de las pestañas', paySheet);
 await page.click('#pay-form [data-close]');
 const confirmSize = await ctx.newPage();
 await confirmSize.setViewportSize({ width: 360, height: 740 });
