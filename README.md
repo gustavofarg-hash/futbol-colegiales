@@ -4,7 +4,8 @@ App web (PWA, se instala en el celular) para organizar los partidos de **fútbol
 
 ## Qué hace (v1)
 
-- **Inicio:** partidos de los próximos 7 días (día, fecha y hora, en orden), con la cantidad de anotados (ej. `9/14`). Los que están más lejos aparecen en “Más adelante”.
+- **Inicio:** partidos de hoy y de los próximos 7 días (hoy se queda en esta lista todo el día), con día, fecha, hora y anotados (ej. `9/14`). Los que están más lejos aparecen en “Más adelante”.
+- **Historial de partidos:** cuando la fecha ya pasó, el partido sale del inicio y queda en Historial (menú del inicio y de Ajustes). El más reciente primero, con fecha, hora y cantidad de jugadores. Abrirlo es la misma pantalla del partido: se pueden anotar pagos tarde, editar jugadores y ver la espera. No se borra solo. Quién lo ve sigue siendo el permiso del partido (Solo yo incluido).
 - **Agregar partido:** fecha, hora y nota opcional.
 - **Importar desde texto:** pegás un mensaje del grupo de WhatsApp y la app detecta expresiones como `jueves 22/10 21hs`, `miércoles 20:00`, `mañana 19 hs`, `sábado 24 de octubre a las 18`, `hoy a las 21 y media`, `jueves 20 y 21hs`. Muestra una **vista previa** para corregir y confirmar. Si pegás el mensaje con encabezado de WhatsApp (`[19/10/26, 12:40] Martín: …`), usa esa fecha como referencia para “mañana”, “jueves”, etc.
 - **Detalle del partido:** 14 lugares. Agregás jugador con nombre y WhatsApp (el número se normaliza: `11 1234-5678` → `5491112345678`; acepta `011 15…`, `15…`, `+54 9…`, otras características como `0351 15…`). Botón de **WhatsApp** por jugador que abre `https://wa.me/<número>?text=…` con un mensaje con día, fecha y hora. Editar y quitar jugadores. **Copiar / compartir** la lista como texto.

@@ -52,7 +52,7 @@
 // matchId determinístico: "YYYY-MM-DD_HHMM" (si ya existe se agrega un sufijo),
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
-import { addDays, todayISO, toEpoch } from './dates.js';
+import { toEpoch } from './dates.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
@@ -459,7 +459,9 @@ class FirebaseStore {
   _listen() {
     this._stop();
     this._buckets = { matches: {}, players: {}, confirmations: {} };
-    const from = addDays(todayISO(), -1);
+    // Sin ventana de fechas: un partido viejo, sus jugadores y las confirmaciones
+    // se quedan. Nadie los borra solo. La lista ancha (sin viewers) la rechazan
+    // las reglas y queda vacía; la consulta por viewers trae todas las fechas.
     const { collection, doc, query, where, onSnapshot } = this.fs;
     const watch = (ref, opts, onNext, onErr) => {
       const next = (snap) => { this._deniedRetries = 0; onNext(snap); };
@@ -479,7 +481,7 @@ class FirebaseStore {
       }
       this._fail(e);
     };
-    watch(query(collection(this.db, 'matches'), where('date', '>=', from)), { includeMetadataChanges: true }, (snap) => {
+    watch(collection(this.db, 'matches'), { includeMetadataChanges: true }, (snap) => {
       if (!snap.metadata.fromCache) this.serverOk = true;
       this.state.pending = snap.metadata.hasPendingWrites;
       this._buckets.matches.broad = take(snap);
@@ -491,7 +493,7 @@ class FirebaseStore {
       this._buckets.matches.narrow = take(snap);
       this._rebuild('matches');
     });
-    watch(query(collection(this.db, 'players'), where('matchDate', '>=', from)), null, (snap) => {
+    watch(collection(this.db, 'players'), null, (snap) => {
       this._buckets.players.broad = take(snap);
       this._rebuild('players');
       this._backfillPlayers(snap.docs);

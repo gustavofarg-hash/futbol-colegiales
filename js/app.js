@@ -14,7 +14,7 @@ import {
   reservationClearedByAnswer,
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, playerMatchesPerson, rosterByPhone, searchRoster } from './roster.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
@@ -190,6 +190,7 @@ function route() {
   const h = location.hash.replace(/^#\/?/, '');
   const [name, id] = h.split('/');
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
+  if (name === 'historial') return { name: 'history' };
   if (name === 'jugadores') return { name: 'roster' };
   if (name === 'pagos') return { name: 'pagos' };
   if (name === 'usuarios') return { name: 'users' };
@@ -214,6 +215,7 @@ function render() {
   if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
   if (r.name === 'match') renderMatch(r.id);
+  else if (r.name === 'history') renderHistory();
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'pagos') renderPagos();
@@ -242,20 +244,27 @@ function matchCard(m) {
   </a></li>`;
 }
 
+function homeNav(current) {
+  const n = pastMatches(app.matches).length;
+  const item = (id, href, label, name, wide) =>
+    `<a class="btn roster-nav${wide ? ' nav-wide' : ''}" id="${id}" href="${href}"${current === name ? ' aria-current="page"' : ''}>${label}</a>`;
+  return `<nav class="home-nav" aria-label="Menú">
+    ${item('btn-roster', '#/jugadores', `Jugadores${app.roster.length ? ` · ${app.roster.length}` : ''}`, 'roster')}
+    ${item('btn-pagos', '#/pagos', 'Pagos', 'pagos')}
+    ${item('btn-historial', '#/historial', `Historial${n ? ` · ${n}` : ''}`, 'historial', true)}
+  </nav>`;
+}
+
 function renderHome() {
   const today = todayISO();
   const limit = addDays(today, 6);
-  const now = Date.now();
-  const upcoming = sortedMatches().filter((m) => m.date >= today && (m.startsAt ?? toEpoch(m.date, m.time)) > now - 2 * 3600e3);
+  const upcoming = currentMatches(app.matches);
   const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && minePlayer(p))) : upcoming;
   const next = all.filter((m) => m.date <= limit);
   const later = all.filter((m) => m.date > limit);
   $('#view').innerHTML = `
     ${reminderBanners(next)}
-    <div class="home-nav">
-      <a class="btn roster-nav" id="btn-roster" href="#/jugadores">Jugadores${app.roster.length ? ` · ${app.roster.length}` : ''}</a>
-      <a class="btn roster-nav" id="btn-pagos" href="#/pagos">Pagos</a>
-    </div>
+    ${homeNav()}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
       <div class="empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
@@ -269,6 +278,18 @@ function renderHome() {
   $('#btn-add-match').onclick = () => openMatchForm();
   $('#btn-import').onclick = () => openImport();
   bindReminderBanners();
+}
+
+function renderHistory() {
+  const past = pastMatches(app.matches);
+  $('#view').innerHTML = `
+    ${homeNav('historial')}
+    <h2 class="section">Historial de partidos</h2>
+    <p class="hint roster-lead">Los partidos cuya fecha ya pasó. Se pueden anotar pagos y corregir la lista.</p>
+    ${past.length ? `<ul class="match-list" id="list-history">${past.map(matchCard).join('')}</ul>` : `
+      <div class="empty" id="list-history"><div class="big">📅</div><p><b>Todavía no hay partidos pasados.</b></p>
+      <p class="small">Cuando pase el día, el partido sale del inicio y queda acá.</p></div>`}
+    <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>`;
 }
 
 function renderMatch(id) {
@@ -711,6 +732,7 @@ function openSettings() {
       ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
     </div>
     <div class="menu">
+      <a class="btn" id="set-history" href="#/historial">Historial de partidos</a>
       ${app.role === 'admin' ? '<a class="btn" id="set-users" href="#/usuarios">Usuarios</a>' : ''}
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -738,6 +760,8 @@ function openSettings() {
     paintWaChoice();
     toast(choice === 'business' ? 'Los mensajes salen por WhatsApp Business' : choice === 'whatsapp' ? 'Los mensajes salen por WhatsApp' : 'El celular va a preguntar cada vez');
   });
+  const history = $('#set-history');
+  if (history) history.onclick = () => closeSheet();
   const users = $('#set-users');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
@@ -1921,7 +1945,14 @@ function syncTextSize() {
 
 async function boot() {
   $('#venue-name').textContent = VENUE;
-  $('#btn-back').onclick = () => { location.hash = '#/'; };
+  $('#btn-back').onclick = () => {
+    const r = route();
+    if (r.name === 'match') {
+      const m = matchById(r.id);
+      if (m?.date && m.date < todayISO()) { location.hash = '#/historial'; return; }
+    }
+    location.hash = '#/';
+  };
   $('#btn-text-smaller').onclick = () => { stepTextSize(-1); syncTextSize(); };
   $('#btn-text-bigger').onclick = () => { stepTextSize(1); syncTextSize(); };
   syncTextSize();
@@ -1983,7 +2014,7 @@ async function boot() {
   });
   render();
   armReminderTimer();
-  // refrescar etiquetas "Hoy/Mañana" y ocultar partidos pasados
+  // refrescar etiquetas "Hoy/Mañana"; al cambiar el día, el partido pasa al historial (no se borra)
   setInterval(() => { if (!sheet.open || !sheet.querySelector('input, textarea')) render(); }, 60_000);
 }
 

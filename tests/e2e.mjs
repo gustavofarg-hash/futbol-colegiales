@@ -1009,6 +1009,87 @@ await page.evaluate(async () => {
 });
 await page.waitForFunction(() => !document.body.innerText.includes('4/11') && !document.body.innerText.includes('3/11'));
 
+// Historial: hoy se queda en el inicio; lo de ayer no se borra
+await page.evaluate(async () => {
+  const who = window.__app.who;
+  const uid = window.__app.uid;
+  await window.__app.store.addMatch({ date: '2026-10-19', time: '10:00', note: 'Hoy temprano', capacity: 14 }, who);
+  const pastId = await window.__app.store.addMatch({ date: '2026-10-18', time: '21:00', note: 'Ayer', capacity: 14 }, who);
+  const past = window.__app.matches.find((m) => m.id === pastId);
+  await window.__app.store.addPlayer(past, { name: 'Histórico Pérez', phone: '5491199990001' }, who);
+  await window.__app.store.addPlayer(past, { name: 'Espera Vieja', phone: '' }, who, { waiting: true });
+  await window.__app.store.addMatch({
+    date: '2026-10-12', time: '19:00', note: 'Solo viejo', capacity: 14,
+    access: { solo: true, viewers: [uid], adders: [uid], viewerNames: [], adderNames: [], limits: [], createdByUid: uid },
+  }, who);
+});
+await page.waitForSelector('.match-card:has-text("Hoy temprano")');
+check('Hoy temprano sigue en la lista principal', await page.locator('#list-next .match-card:has-text("Hoy temprano")').count() === 1);
+check('El de ayer no aparece en el inicio', await page.locator('#list-next .match-card:has-text("Ayer"), #list-later .match-card:has-text("Ayer")').count() === 0);
+check('El Solo yo viejo tampoco está en el inicio', await page.locator('.match-card:has-text("Solo viejo")').count() === 0);
+const kept = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const match = Object.values(db.matches).find((m) => m.note === 'Ayer');
+  const players = Object.values(db.players).filter((p) => p.matchId === Object.entries(db.matches).find(([, m]) => m.note === 'Ayer')?.[0]);
+  const tokens = players.map((p) => p.confirmToken).filter(Boolean);
+  return {
+    match: !!match,
+    players: players.length,
+    confirmations: tokens.filter((token) => db.confirmations[token]).length,
+  };
+});
+check('El partido de ayer, sus jugadores y las confirmaciones siguen guardados', kept.match && kept.players === 2 && kept.confirmations === 2, JSON.stringify(kept));
+await page.click('#btn-historial');
+await page.waitForSelector('#list-history .match-card');
+const historyOrder = await page.$$eval('#list-history .match-title', (els) => els.map((e) => e.textContent));
+const i18 = historyOrder.indexOf('Domingo 18/10');
+const i15 = historyOrder.indexOf('Jueves 15/10');
+const i12 = historyOrder.indexOf('Lunes 12/10');
+check('El historial lista lo pasado, más reciente primero', i18 !== -1 && i15 !== -1 && i12 !== -1 && i18 < i15 && i15 < i12, historyOrder.join(', '));
+const ayerCard = (await page.textContent('#list-history .match-card:has-text("Ayer")')).replace(/\s+/g, ' ');
+check('La tarjeta trae hora y cantidad de jugadores', /21:00 hs/.test(ayerCard) && /1\/14/.test(ayerCard) && /1 en espera/.test(ayerCard), ayerCard.trim());
+check('Hoy no entra al historial', await page.locator('#list-history .match-card:has-text("Hoy temprano")').count() === 0);
+await page.click('#list-history .match-card:has-text("Ayer")');
+await page.waitForSelector('#slots .name:text-is("Histórico Pérez")');
+check('El detalle muestra jugadores y la lista de espera', await page.locator('#wait-list .name:text-is("Espera Vieja")').count() === 1 && await page.isVisible('#btn-add-player'));
+await page.click('#slots .pay-btn');
+await page.waitForSelector('#pay-form');
+await page.click('#pay-form [data-paid="si"]');
+await page.fill('#pay-form [name=cash]', '5000');
+await page.fill('#pay-form [name=transfer]', '');
+await page.click('#pay-form button[type=submit]');
+await page.waitForFunction(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  return Object.values(db.players).some((p) => p.name === 'Histórico Pérez' && p.paid === true);
+});
+check('En el historial se puede registrar un pago tardío', true);
+await page.click('#btn-back');
+await page.waitForSelector('#list-history');
+check('Volver desde un partido pasado vuelve al historial', await page.locator('#list-history').count() === 1);
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'martin@demo.local');
+await page.fill('#login-password', 'demo-martin');
+await page.click('#login-form button[type=submit]');
+await page.waitForSelector('#btn-who');
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('#list-next');
+check('Martín ve el de hoy en el inicio', await page.locator('#list-next .match-card:has-text("Hoy temprano")').count() === 1);
+await page.click('#btn-historial');
+await page.waitForSelector('#list-history');
+check('Martín ve el partido de ayer', await page.locator('#list-history .match-card:has-text("Ayer")').count() === 1);
+check('Martín no ve el Solo yo viejo', await page.locator('#list-history .match-card:has-text("Solo viejo")').count() === 0 && !(await page.locator('body').innerText()).includes('Solo viejo'));
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.fill('#login-password', 'demo-gustavo');
+await page.click('#login-form button[type=submit]');
+await page.waitForSelector('#btn-who');
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card:has-text("Hoy temprano")');
+
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());
 check('Manifest válido con íconos 192/512 + maskable', manifest.icons.length === 3 && manifest.display === 'standalone');
@@ -1032,7 +1113,13 @@ await page.waitForSelector('.match-card');
 await page.setViewportSize({ width: 360, height: 740 });
 const overflowHome = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en un teléfono de 360px no desborda el inicio', overflowHome <= 1, String(overflowHome));
-await page.click('.match-card');
+await page.evaluate(() => { location.hash = '#/historial'; });
+await page.waitForSelector('#list-history');
+const overflowHistory = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+check('Enorme en 360px no desborda el historial', overflowHistory <= 1, String(overflowHistory));
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('#list-next .match-card');
+await page.click('#list-next .match-card:has-text("22/10")');
 await page.waitForSelector('#btn-add-player');
 const overflowMatch = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en 360px no desborda el partido', overflowMatch <= 1, String(overflowMatch));

@@ -101,8 +101,30 @@ export function sortedNotes(notes) {
 }
 
 /**
- * Partidos que todavía se pueden anotar: misma ventana que el inicio
- * (fecha de hoy en adelante, y que no hayan empezado hace más de 2 horas).
+ * Lista principal: hoy (todo el día de calendario) y los que vienen.
+ * El horario no los saca: un partido de hoy a la mañana sigue en el inicio a la noche.
+ */
+export function currentMatches(matches, now = Date.now()) {
+  const today = todayISO(new Date(now));
+  return [...(matches || [])]
+    .filter((match) => match?.date >= today)
+    .sort((a, b) => startsAtOf(a) - startsAtOf(b) || String(a.id).localeCompare(String(b.id)));
+}
+
+/**
+ * Historial: la fecha de calendario ya pasó. El más reciente primero.
+ * No borra nada: es el mismo partido, con jugadores y pagos.
+ */
+export function pastMatches(matches, now = Date.now()) {
+  const today = todayISO(new Date(now));
+  return [...(matches || [])]
+    .filter((match) => match?.date && match.date < today)
+    .sort((a, b) => startsAtOf(b) - startsAtOf(a) || String(b.id).localeCompare(String(a.id)));
+}
+
+/**
+ * Partidos que todavía se ofrecen para anotar desde el perfil:
+ * fecha de hoy en adelante, y que no hayan empezado hace más de 2 horas.
  */
 export function upcomingMatches(matches, now = Date.now()) {
   const today = todayISO(new Date(now));

@@ -6,7 +6,7 @@ import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, pay
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
-import { keptSignupIds, matchSignupState, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
+import { currentMatches, keptSignupIds, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -960,4 +960,18 @@ test('sin WhatsApp el perfil agrupa por plantel o por nombre', () => {
   const ciro = summary.find((row) => row.name === 'Ciro Díaz');
   assert.equal(ciro.rosterId, 'ros-ciro');
   assert.equal(ciro.paidTotal, 5000);
+});
+
+test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
+  const now = Date.parse('2026-10-19T13:00:00-03:00');
+  const matches = [
+    { id: 'viejo', date: '2026-10-12', time: '19:00' },
+    { id: 'ayer', date: '2026-10-18', time: '21:00' },
+    { id: 'hoy-temprano', date: '2026-10-19', time: '10:00' },
+    { id: 'hoy-noche', date: '2026-10-19', time: '21:00' },
+    { id: 'manana', date: '2026-10-20', time: '19:00' },
+  ];
+  assert.deepEqual(currentMatches(matches, now).map((match) => match.id), ['hoy-temprano', 'hoy-noche', 'manana']);
+  assert.deepEqual(pastMatches(matches, now).map((match) => match.id), ['ayer', 'viejo']);
+  assert.deepEqual(upcomingMatches(matches, now).map((match) => match.id), ['hoy-noche', 'manana']);
 });
