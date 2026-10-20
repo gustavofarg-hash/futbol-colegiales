@@ -21,6 +21,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
+import { cyclePlayer, emptyTeams, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -188,7 +189,8 @@ function sortedMatches() {
 /* ───────── router ───────── */
 function route() {
   const h = location.hash.replace(/^#\/?/, '');
-  const [name, id] = h.split('/');
+  const [name, id, extra] = h.split('/');
+  if (name === 'partido' && id && extra === 'equipos') return { name: 'teams', id: decodeURIComponent(id) };
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'historial') return { name: 'history' };
   if (name === 'jugadores') return { name: 'roster' };
@@ -215,6 +217,7 @@ function render() {
   if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
   if (r.name === 'match') renderMatch(r.id);
+  else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
@@ -280,6 +283,67 @@ function renderHome() {
   bindReminderBanners();
 }
 
+function renderTeams(id) {
+  const m = matchById(id);
+  if (!m) {
+    $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
+    return;
+  }
+  const main = playersOf(id);
+  const ids = main.map((p) => p.id);
+  const teams = normalizeTeams(m.teams, ids);
+  const balance = teamsBalance(teams);
+  const taken = new Set([...teams.bib, ...teams.plain]);
+  const free = main.filter((p) => !taken.has(p.id));
+  const readOnly = !canAdd(m, actor().uid);
+  const byId = new Map(main.map((p) => [p.id, p]));
+  const row = (player) => {
+    if (!player) return '';
+    return readOnly
+      ? `<li><div class="team-player" data-team-name="${esc(player.id)}">${esc(player.name)}</div></li>`
+      : `<li><button type="button" class="team-player" data-team-player="${esc(player.id)}">${esc(player.name)}</button></li>`;
+  };
+  const group = (title, list, listId) => `
+    <section>
+      <h2 class="section">${title}</h2>
+      ${list.length ? `<ul class="team-list" id="${listId}">${list.map(row).join('')}</ul>` : `<p class="empty-wait" id="${listId}">Nadie</p>`}
+    </section>`;
+  const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
+  const share = teamsMessage({ when, venue: VENUE, players: main, teams });
+  $('#view').innerHTML = `
+    <section class="detail-head">
+      <h1>Equipos</h1>
+      <div class="when">${esc(when)} · ${esc(VENUE)}</div>
+      <p class="hint">Con los anotados. La lista de espera no entra.</p>
+      ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : '<p class="hint">Tocá un jugador para moverlo: sin asignar, con pechera, sin pechera.</p>'}
+    </section>
+    <div class="team-board" id="team-board">
+      <div class="team-counts">
+        <div class="team-count"><strong id="team-bib-count">${balance.bib}</strong><span>Con pechera</span></div>
+        <div class="team-count"><strong id="team-plain-count">${balance.plain}</strong><span>Sin pechera</span></div>
+      </div>
+      ${balance.balanced ? '' : '<p class="team-warn" id="team-balance">Está desbalanceado</p>'}
+      ${main.length ? '' : '<p class="empty-wait">No hay jugadores anotados.</p>'}
+      ${group('Sin asignar', free, 'team-unassigned')}
+      ${group('Con pechera', teams.bib.map((pid) => byId.get(pid)).filter(Boolean), 'team-bib')}
+      ${group('Sin pechera', teams.plain.map((pid) => byId.get(pid)).filter(Boolean), 'team-plain')}
+      <div class="team-actions">
+        ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Limpiar</button>'}
+        <a class="btn nav-wide" id="btn-teams-wa" href="${esc(waHref('', share))}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
+      </div>
+    </div>`;
+  const save = (next, msg) => run(app.store.setTeams(m.id, normalizeTeams(next, ids), app.who), msg);
+  if (!readOnly) {
+    $('#team-board').onclick = (e) => {
+      const btn = e.target.closest('[data-team-player]');
+      if (!btn) return;
+      save(cyclePlayer(teams, btn.dataset.teamPlayer, ids));
+    };
+    $('#btn-teams-shuffle').onclick = () => save(shuffleTeams(ids), 'Equipos mezclados');
+    $('#btn-teams-clear').onclick = () => save(emptyTeams(), 'Equipos limpios');
+  }
+}
+
 function renderHistory() {
   const past = pastMatches(app.matches);
   $('#view').innerHTML = `
@@ -333,6 +397,8 @@ function renderMatch(id) {
   const full = everyone.length >= cap;
   const collected = collectedLine(everyone);
   const mineLine = mineSummary(app.players.filter((p) => p.matchId === id), app.who).text;
+  const assigned = normalizeTeams(m.teams, everyone.map((p) => p.id));
+  const teamCount = assigned.bib.length + assigned.plain.length;
   $('#view').innerHTML = `
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
@@ -347,6 +413,7 @@ function renderMatch(id) {
         ${canEditMatch(m, who.uid) ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
         ${canDelete(m, who.uid) ? `<button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>` : ''}
       </div>
+      <button type="button" class="btn block" id="btn-teams">Equipos${teamCount ? ` · ${assigned.bib.length}-${assigned.plain.length}` : ''}</button>
     </section>
     ${readOnly ? '<p class="hint" id="match-readonly">Solo lectura. No podés anotar ni cambiar este partido.</p>' : ''}
     ${reminderBanners([m])}
@@ -398,6 +465,7 @@ function renderMatch(id) {
   };
   $('#btn-copy').onclick = () => copyText(listText(m)).then((ok) => toast(ok ? 'Lista copiada' : 'No se pudo copiar'));
   $('#btn-share').onclick = () => shareText(listText(m));
+  $('#btn-teams').onclick = () => { location.hash = `#/partido/${encodeURIComponent(m.id)}/equipos`; };
   if ($('#btn-edit-match')) $('#btn-edit-match').onclick = () => openMatchForm(m);
   if ($('#btn-del-match')) $('#btn-del-match').onclick = () => {
     const n = playersOf(m.id).length + waitingOf(m.id).length;
@@ -1947,6 +2015,7 @@ async function boot() {
   $('#venue-name').textContent = VENUE;
   $('#btn-back').onclick = () => {
     const r = route();
+    if (r.name === 'teams') { location.hash = `#/partido/${encodeURIComponent(r.id)}`; return; }
     if (r.name === 'match') {
       const m = matchById(r.id);
       if (m?.date && m.date < todayISO()) { location.hash = '#/historial'; return; }

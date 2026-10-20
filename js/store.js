@@ -32,6 +32,10 @@
 //    confirmedAt, reminderSentAt: number
 //    tentative: bool|null               (lugar reservado, a confirmar; ocupa cupo)
 //    tentativeAt: number|null
+//  matches.teams (opcional)
+//    { bib: [playerId], plain: [playerId] }
+//    bib = con pechera, plain = sin pechera. Solo titulares.
+//    Se guarda en el mismo partido: quien puede anotar lo edita y el resto lo ve.
 //  roster/{rosterId}
 //    name, phone (dígitos wa.me, o vacío)
 //    createdBy, createdAt, updatedAt
@@ -56,6 +60,7 @@ import { toEpoch } from './dates.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
+import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { EVERYONE, accessPatch, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
@@ -244,9 +249,29 @@ class LocalStore {
     };
     this._save(db); return id;
   }
+  _dropFromTeams(db, matchId, playerId) {
+    const match = db.matches[matchId];
+    if (!match?.teams || !playerId) return;
+    const next = dropPlayer(match.teams, playerId);
+    if (next.changed) match.teams = next.teams;
+  }
+  async setTeams(id, teams, who) {
+    const rec = teamsRecord(teams);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-teams' });
+    const db = this._load();
+    const match = db.matches[id];
+    if (!match) return;
+    match.teams = rec.teams;
+    match.updatedBy = who || match.updatedBy;
+    match.updatedAt = Date.now();
+    this._save(db);
+  }
   async updatePlayer(id, data) {
     const db = this._load(); if (!db.players[id]) return;
-    Object.assign(db.players[id], data, { updatedAt: Date.now() }); this._save(db);
+    const player = db.players[id];
+    Object.assign(player, data, { updatedAt: Date.now() });
+    if (data.waiting === true) this._dropFromTeams(db, player.matchId, id);
+    this._save(db);
   }
   async setPayment(id, input, who) {
     const rec = paymentRecord(input, who);
@@ -286,7 +311,12 @@ class LocalStore {
   async markReminderSent(id) {
     await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
-  async deletePlayer(id) { const db = this._load(); delete db.players[id]; this._save(db); }
+  async deletePlayer(id) {
+    const db = this._load();
+    if (db.players[id]) this._dropFromTeams(db, db.players[id].matchId, id);
+    delete db.players[id];
+    this._save(db);
+  }
   async addRoster(data, who) {
     const db = this._load();
     const phone = data.phone || '';
@@ -671,13 +701,28 @@ class FirebaseStore {
     await this._writeConfirmation(token, ref.id, player, match);
     return ref.id;
   }
-  async updatePlayer(id, data) {
+  async setTeams(id, teams, who) {
+    const rec = teamsRecord(teams);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-teams' });
     const { doc, updateDoc } = this.fs;
-    await updateDoc(doc(this.db, 'players', id), { ...data, updatedAt: Date.now() });
+    await updateDoc(doc(this.db, 'matches', id), { teams: rec.teams, updatedBy: who || '', updatedAt: Date.now() });
+  }
+  async updatePlayer(id, data) {
+    const { doc, updateDoc, writeBatch } = this.fs;
     const cur = this.state.players.find((player) => player.id === id);
+    const patch = { ...data, updatedAt: Date.now() };
+    const match = this.state.matches.find((item) => item.id === cur?.matchId);
+    const nextTeams = data.waiting === true && cur ? dropPlayer(match?.teams, cur.id) : { changed: false };
+    if (nextTeams.changed) {
+      const batch = writeBatch(this.db);
+      batch.update(doc(this.db, 'players', id), patch);
+      batch.update(doc(this.db, 'matches', cur.matchId), { teams: nextTeams.teams, updatedAt: patch.updatedAt });
+      await batch.commit();
+    } else {
+      await updateDoc(doc(this.db, 'players', id), patch);
+    }
     const token = data.confirmToken || cur?.confirmToken;
     if (!token) return;
-    const match = this.state.matches.find((item) => item.id === (cur?.matchId));
     await this._writeConfirmation(token, id, { ...cur, ...data }, match);
   }
   async setPayment(id, input, who) {
@@ -719,10 +764,15 @@ class FirebaseStore {
     await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
   async deletePlayer(id) {
-    const { doc, deleteDoc } = this.fs;
+    const { doc, writeBatch } = this.fs;
     const player = this.state.players.find((item) => item.id === id);
-    await deleteDoc(doc(this.db, 'players', id));
-    if (player?.confirmToken) await deleteDoc(doc(this.db, 'confirmations', player.confirmToken));
+    const match = this.state.matches.find((item) => item.id === player?.matchId);
+    const nextTeams = dropPlayer(match?.teams, id);
+    const batch = writeBatch(this.db);
+    batch.delete(doc(this.db, 'players', id));
+    if (player?.confirmToken) batch.delete(doc(this.db, 'confirmations', player.confirmToken));
+    if (nextTeams.changed) batch.update(doc(this.db, 'matches', player.matchId), { teams: nextTeams.teams, updatedAt: Date.now() });
+    await batch.commit();
   }
   async addRoster(data, who) {
     const phone = data.phone || '';

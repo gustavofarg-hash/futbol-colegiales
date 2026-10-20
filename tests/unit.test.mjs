@@ -18,6 +18,7 @@ import {
 } from '../js/reminders.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
+import { cyclePlayer, dropPlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -974,4 +975,34 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   assert.deepEqual(currentMatches(matches, now).map((match) => match.id), ['hoy-temprano', 'hoy-noche', 'manana']);
   assert.deepEqual(pastMatches(matches, now).map((match) => match.id), ['ayer', 'viejo']);
   assert.deepEqual(upcomingMatches(matches, now).map((match) => match.id), ['hoy-noche', 'manana']);
+});
+
+test('equipos: toque, azar, baja y mensaje', () => {
+  const main = ['ana', 'beto'];
+  let teams = cyclePlayer({ bib: [], plain: [] }, 'ana', main);
+  assert.deepEqual(teams, { bib: ['ana'], plain: [] });
+  teams = cyclePlayer(teams, 'ana', main);
+  assert.deepEqual(teams, { bib: [], plain: ['ana'] });
+  teams = cyclePlayer(teams, 'ana', main);
+  assert.deepEqual(teams, { bib: [], plain: [] });
+  assert.deepEqual(cyclePlayer(teams, 'espera', main), { bib: [], plain: [] });
+  assert.deepEqual(normalizeTeams({ bib: ['ana', 'espera', 'ana'], plain: ['ana', 'beto'] }, main), { bib: ['ana'], plain: ['beto'] });
+  assert.equal(teamsBalance({ bib: ['a'], plain: ['b'] }).balanced, true);
+  assert.equal(teamsBalance({ bib: ['a', 'b'], plain: ['c'] }).balanced, false);
+  assert.deepEqual(shuffleTeams(['a', 'b', 'c'], () => 0.999), { bib: ['a', 'b'], plain: ['c'] });
+  const dropped = dropPlayer({ bib: ['ana', 'beto'], plain: [] }, 'beto');
+  assert.equal(dropped.changed, true);
+  assert.deepEqual(dropped.teams, { bib: ['ana'], plain: [] });
+  assert.equal(dropPlayer({ bib: ['ana'], plain: [] }, 'otro').changed, false);
+  const msg = teamsMessage({
+    when: 'Martes 20/10 · 21:00 hs',
+    venue: 'Polideportivo Colegiales',
+    players: [{ id: 'ana', name: 'Ana' }, { id: 'beto', name: 'Beto' }],
+    teams: { bib: ['ana'], plain: ['beto'] },
+  });
+  assert.match(msg, /Con pechera \(1\)/);
+  assert.match(msg, /1\. Ana/);
+  assert.match(msg, /Sin pechera \(1\)/);
+  assert.match(msg, /1\. Beto/);
+  assert.deepEqual(teamsRecord({ bib: ['ana'], plain: ['ana'] }).teams, { bib: ['ana'], plain: [] });
 });
