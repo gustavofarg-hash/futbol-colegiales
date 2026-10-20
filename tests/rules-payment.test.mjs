@@ -65,6 +65,17 @@ test('efectivo, transferencia y transfiere después: tipos y montos', async (t) 
     await assertSucceeds(updateDoc(doc(db, 'players', 'split'), {
       cash: 2000, transfer: 4500, pendingTransfer: null, amount: 6500, transferReceivedAt: 9, transferReceivedBy: 'Gustavo',
     }));
+    await assertSucceeds(updateDoc(doc(db, 'players', 'split'), { cashTo: 'Gustavo', transferTo: 'Martín', pendingTo: 'Gustavo' }));
+    await assertFails(updateDoc(doc(db, 'players', 'split'), { cashTo: 'x'.repeat(41) }));
+    await assertSucceeds(updateDoc(doc(db, 'players', 'split'), {
+      transferParts: [{ to: 'Martín', amount: 3000 }, { to: 'Gustavo', amount: 1500 }],
+    }));
+    await assertFails(updateDoc(doc(db, 'players', 'split'), { transferParts: [{ to: 'Martín', amount: -1 }] }));
+    await assertSucceeds(setDoc(doc(db, 'settings', 'prices'), { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 }));
+    await assertFails(setDoc(doc(db, 'settings', 'prices'), { matchPrice: -1, promo2Price: 9000, promo3Price: 12000 }));
+    await assertFails(setDoc(doc(db, 'settings', 'prices'), { matchPrice: 5000.5, promo2Price: 9000, promo3Price: 12000 }));
+    const anon = testEnv.unauthenticatedContext().firestore();
+    await assertFails(setDoc(doc(anon, 'settings', 'prices'), { matchPrice: 1, promo2Price: 1, promo3Price: 1 }));
   } finally {
     await testEnv.cleanup();
   }

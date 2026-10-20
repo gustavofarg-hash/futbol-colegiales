@@ -70,7 +70,34 @@ service cloud.firestore {
           && (!('transfer' in d) || d.transfer == null || (d.transfer is number && d.transfer >= 0 && d.transfer <= 1000000000))
           && (!('pendingTransfer' in d) || d.pendingTransfer == null || (d.pendingTransfer is number && d.pendingTransfer >= 0 && d.pendingTransfer <= 1000000000))
           && (!('transferReceivedAt' in d) || d.transferReceivedAt == null || d.transferReceivedAt is number)
-          && (!('transferReceivedBy' in d) || d.transferReceivedBy == null || (d.transferReceivedBy is string && d.transferReceivedBy.size() > 0 && d.transferReceivedBy.size() <= 40));
+          && (!('transferReceivedBy' in d) || d.transferReceivedBy == null || (d.transferReceivedBy is string && d.transferReceivedBy.size() > 0 && d.transferReceivedBy.size() <= 40))
+          && (!('cashTo' in d) || d.cashTo == null || (d.cashTo is string && d.cashTo.size() > 0 && d.cashTo.size() <= 40))
+          && (!('transferTo' in d) || d.transferTo == null || (d.transferTo is string && d.transferTo.size() > 0 && d.transferTo.size() <= 40))
+          && (!('pendingTo' in d) || d.pendingTo == null || (d.pendingTo is string && d.pendingTo.size() > 0 && d.pendingTo.size() <= 40))
+          && (!('transferParts' in d) || d.transferParts == null || transferPartsOk(d.transferParts));
+    }
+
+    function transferPartOk(p) {
+      return p is map
+          && p.keys().hasOnly(['to', 'amount'])
+          && p.to is string && p.to.size() > 0 && p.to.size() <= 40
+          && p.amount is number && p.amount >= 0 && p.amount <= 1000000000;
+    }
+    function transferPartsOk(p) {
+      return p is list && p.size() >= 1 && p.size() <= 6
+          && (p.size() < 1 || transferPartOk(p[0]))
+          && (p.size() < 2 || transferPartOk(p[1]))
+          && (p.size() < 3 || transferPartOk(p[2]))
+          && (p.size() < 4 || transferPartOk(p[3]))
+          && (p.size() < 5 || transferPartOk(p[4]))
+          && (p.size() < 6 || transferPartOk(p[5]));
+    }
+    function priceOk(n) {
+      return n is int && n >= 0 && n <= 1000000000;
+    }
+    function validPrices(d) {
+      return d.keys().hasOnly(['matchPrice', 'promo2Price', 'promo3Price'])
+          && priceOk(d.matchPrice) && priceOk(d.promo2Price) && priceOk(d.promo3Price);
     }
 
     // Un organizador puede actualizar al jugador. Si toca la respuesta,
@@ -221,6 +248,12 @@ service cloud.firestore {
     match /organizers/{organizerId} {
       allow read, delete: if isActiveStaff();
       allow create, update: if isActiveStaff() && validOrganizer(request.resource.data);
+    }
+
+    match /settings/{docId} {
+      allow read: if isActiveStaff() && docId == 'prices';
+      allow create, update: if isActiveStaff() && docId == 'prices' && validPrices(request.resource.data);
+      allow delete: if isActiveStaff() && docId == 'prices';
     }
 
     // El id es el token del link. Se puede leer UN documento si se conoce el

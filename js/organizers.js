@@ -48,6 +48,23 @@ export function organizerNames(stored, fallback = DEFAULT_ORGANIZERS) {
   return out.length ? out : [...fallback];
 }
 
+/**
+ * Nombres para los desplegables de pago. Salen de la colección organizers.
+ * Gustavo y Martín del config solo entran si la colección está vacía o no se pudo leer.
+ * Un nombre que ya está en un pago y ya no está en la lista se conserva.
+ */
+export function organizerChoices(stored, { unreadable = false, extra = [] } = {}) {
+  const fromList = organizerNames(stored, []);
+  const base = (!unreadable && fromList.length) ? fromList : [...DEFAULT_ORGANIZERS];
+  const out = [...base];
+  for (const raw of extra) {
+    const name = String(raw || '').trim();
+    if (!name || out.some((have) => sameOrganizer(have, name))) continue;
+    out.push(name);
+  }
+  return out;
+}
+
 export function cleanOrganizerName(raw) {
   const name = String(raw || '').trim().replace(/\s+/g, ' ');
   if (!name) return { ok: false, error: 'Poné el nombre.' };

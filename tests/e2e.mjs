@@ -236,9 +236,13 @@ await page.click('.slot:has-text("Juan Pérez") .pay-btn');
 await page.waitForSelector('#pay-form');
 check('El formulario de pago arranca sin monto', await page.isHidden('#pay-details'));
 await page.click('#pay-form [data-paid="si"]');
+check('El efectivo arranca en el precio del partido', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '5000'));
+await page.fill('#pay-form [name=cash]', '');
+await page.fill('#pay-form [name=transfer]', '');
 await page.click('#pay-form button[type=submit]');
 check('Pago exige monto', (await page.textContent('#pay-err')).includes('monto'));
 await page.fill('#pay-form [name=transfer]', '5.000');
+await page.fill('#pay-form [name=cash]', '');
 await page.click('#pay-form button[type=submit]');
 await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
 const juanPay = (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).replace(/\s+/g, ' ');
@@ -269,7 +273,7 @@ const stored = await page.evaluate(() => {
 });
 check('El pago queda en el jugador (localStorage)', stored?.paid === true && stored.amount === 5000 && stored.method === 'transferencia' && stored.paidUpdatedBy === 'Martín' && stored.receivedBy === 'Martín');
 await page.click('.slot:has-text("Juan Pérez") .pay-btn');
-check('Cobró arranca en quien está usando la app', await page.$eval('#pay-form [data-receiver="Martín"]', (el) => el.classList.contains('primary')));
+check('Cobró arranca en quien está usando la app', await page.$eval('#pay-form [name=transferTo]', (el) => el.value === 'Martín'));
 await page.click('#pay-form [data-close]');
 
 // Otra pestaña del mismo navegador ve el cambio al guardarlo
@@ -674,6 +678,68 @@ await page.waitForFunction(() => {
 });
 check('Quitar lo saca solo de ese partido', await page.evaluate(() => !Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((p) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24')));
 
+// Precios y promo del mismo día. Gustavo sigue logueado. Al final vuelven los precios de siempre.
+await page.click('#btn-settings');
+await page.waitForSelector('#price-form');
+check('Ajustes muestra los tres precios',
+  await page.$eval('#price-form [name=matchPrice]', (el) => el.value) === '5000'
+  && await page.$eval('#price-form [name=promo2Price]', (el) => el.value) === '9000'
+  && await page.$eval('#price-form [name=promo3Price]', (el) => el.value) === '12000');
+await page.fill('#price-form [name=matchPrice]', '6000');
+await page.click('#price-form button[type=submit]');
+await page.waitForFunction(() => JSON.parse(localStorage.getItem('f7c-demo-db'))?.settings?.prices?.matchPrice === 6000);
+await page.click('dialog.sheet [data-close]');
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card:has-text("Jueves 22/10")');
+await page.click('.match-card:has-text("Jueves 22/10")');
+await page.waitForSelector('.slot:has-text("Nico Ruiz") .pay-btn');
+await page.click('.slot:has-text("Nico Ruiz") .pay-btn');
+await page.click('#pay-form [data-paid="si"]');
+check('El pago usa el precio nuevo', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '6000'));
+check('El botón de un partido muestra el precio nuevo', (await page.textContent('#pay-prices')).includes('$6.000'));
+await page.click('#pay-form [data-close]');
+await page.click('#btn-settings');
+await page.fill('#price-form [name=matchPrice]', '5000');
+await page.fill('#price-form [name=promo2Price]', '9000');
+await page.fill('#price-form [name=promo3Price]', '12000');
+await page.click('#price-form button[type=submit]');
+await page.waitForFunction(() => JSON.parse(localStorage.getItem('f7c-demo-db'))?.settings?.prices?.matchPrice === 5000);
+await page.click('dialog.sheet [data-close]');
+const promoIds = await page.evaluate(async () => {
+  const store = window.__app.store;
+  const a = await store.addMatch({ date: '2026-10-27', time: '19:00', note: '' }, window.__app.who);
+  const b = await store.addMatch({ date: '2026-10-27', time: '21:00', note: '' }, window.__app.who);
+  const match = { capacity: 14 };
+  await store.addPlayer({ ...match, id: a, date: '2026-10-27' }, { name: 'Promo Uno', phone: '5491199990001' }, window.__app.who);
+  await store.addPlayer({ ...match, id: b, date: '2026-10-27' }, { name: 'Promo Uno', phone: '5491199990001' }, window.__app.who);
+  return { a, b };
+});
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoIds.a);
+await page.waitForSelector('.promo-badge');
+check('Badge de promo 2 en el partido', (await page.textContent('.promo-badge')).includes('Promo 2 partidos por $9.000'));
+await page.click('.slot:has-text("Promo Uno") .pay-btn');
+await page.click('#pay-form [data-paid="si"]');
+check('Sin aplicar, el monto es la parte de un partido', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '4500'));
+check('La hoja también muestra la promo', (await page.textContent('#pay-promo')).includes('Promo 2 partidos por $9.000'));
+await page.click('#pay-apply-promo');
+check('Aplicar a los dos partidos pone el total de la promo', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '9000'));
+await page.evaluate(() => window.__app.store.addOrganizer('Rita'));
+await page.waitForFunction(() => [...document.querySelectorAll('#pay-form [name=cashTo] option')].some((opt) => opt.textContent === 'Rita'));
+check('Un organizador nuevo aparece en el desplegable abierto', true);
+await page.click('#pay-form button[type=submit]');
+await page.waitForFunction(() => {
+  const rows = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((p) => p.name === 'Promo Uno');
+  return rows.length === 2 && rows.every((p) => p.paid === true && p.amount === 4500 && p.cashTo === 'Gustavo');
+});
+check('La promo se reparte en los dos partidos', true);
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoIds.b);
+await page.waitForSelector('.promo-badge');
+check('El otro partido del día también muestra la promo', (await page.textContent('.promo-badge')).includes('Promo 2 partidos por $9.000'));
+await page.evaluate(async (ids) => {
+  await window.__app.store.deleteMatch(ids.a);
+  await window.__app.store.deleteMatch(ids.b);
+}, promoIds);
+
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());
 check('Manifest válido con íconos 192/512 + maskable', manifest.icons.length === 3 && manifest.display === 'standalone');
@@ -701,6 +767,24 @@ await page.click('.match-card');
 await page.waitForSelector('#btn-add-player');
 const overflowMatch = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en 360px no desborda el partido', overflowMatch <= 1, String(overflowMatch));
+await page.click('.pay-btn');
+await page.waitForSelector('#pay-form');
+await page.click('#pay-form [data-paid="si"]');
+const moneyRow = await page.evaluate(() => {
+  const row = document.querySelector('#pay-form .pay-money');
+  const input = row.querySelector('input');
+  const select = row.querySelector('select');
+  const ir = input.getBoundingClientRect();
+  const sr = select.getBoundingClientRect();
+  const rr = row.getBoundingClientRect();
+  return {
+    sameTop: Math.abs(ir.top - sr.top) < 2,
+    inside: rr.right <= document.documentElement.clientWidth + 1,
+    wide: ir.width > 20 && sr.width > 20,
+  };
+});
+check('En 360px el monto y el desplegable van en una fila', moneyRow.sameTop && moneyRow.inside && moneyRow.wide, JSON.stringify(moneyRow));
+await page.click('#pay-form [data-close]');
 const confirmSize = await ctx.newPage();
 await confirmSize.setViewportSize({ width: 360, height: 740 });
 await confirmSize.goto(`${BASE}confirmar.html?m=x&p=y&t=token-corto`);

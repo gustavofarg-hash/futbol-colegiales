@@ -1,4 +1,4 @@
-import { ACCESS_CODE, ORGANIZERS, CAPACITY, VENUE } from '../config.js';
+import { ACCESS_CODE, CAPACITY, VENUE } from '../config.js';
 import { createStore } from './store.js';
 import { parseMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, waLink } from './phone.js';
@@ -6,7 +6,7 @@ import {
   todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentStatusText, pendingStatusText } from './payments.js';
+import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
 import {
   confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -14,10 +14,11 @@ import {
 } from './reminders.js';
 import { ROSTER_DENIED_WRITE, isRosterDenied, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
-import { UNSPECIFIED, organizerTagClass, sameOrganizer } from './organizers.js';
+import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
-import { openSession, staffUsers } from './auth.js';
+import { openSession } from './auth.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
+import { PRICES_DENIED_WRITE, normalizePrices, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -42,6 +43,8 @@ const app = {
   rosterError: null,
   organizers: [],
   organizersError: null,
+  prices: null,
+  pricesError: null,
   users: [],
   role: '',
   mine: false,
@@ -87,21 +90,19 @@ const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId =
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
 function minePlayer(p) {
-  return sameOrganizer(p.addedBy, app.who) || (p.paid === true && sameOrganizer(p.receivedBy, app.who));
+  if (sameOrganizer(p.addedBy, app.who)) return true;
+  return paymentShares(p).some((share) => share.kind !== 'pending' && share.amount > 0 && sameOrganizer(share.name, app.who));
 }
-function whoOptions() {
-  const names = [];
-  for (const user of staffUsers(app.users)) {
-    if (user.name && !names.some((name) => sameOrganizer(name, user.name))) names.push(user.name);
-  }
-  if (!names.length) names.push(...ORGANIZERS);
-  if (app.who && !names.some((name) => sameOrganizer(name, app.who))) names.push(app.who);
-  return names;
+function payOrganizerNames(extra = []) {
+  return organizerChoices(app.organizers, { unreadable: !!app.organizersError, extra });
 }
-function receiverOptions(current) {
-  const names = [...whoOptions()];
-  if (current && !names.some((name) => sameOrganizer(name, current))) names.push(current);
-  return names;
+function livePrices() {
+  return normalizePrices(app.prices);
+}
+function priceExample(amount) {
+  const n = Number(amount) || 0;
+  const pretty = formatARS(n).replace(/^\$/, '');
+  return `Podés escribir ${n} o ${pretty}. Vacío es 0.`;
 }
 function addedTag(player) {
   return `<span class="tag ${organizerTagClass(player.addedBy)}">Agregó: ${esc(player.addedBy || '?')}</span>`;
@@ -114,8 +115,16 @@ function payMarkup(player) {
   const badge = pending ? `<div class="pay-pending">${esc(pending)}</div>` : '';
   return line + badge;
 }
+function promoOf(player) {
+  if (!player || player.waiting === true) return null;
+  return promoForPlayer({ player, players: app.players, matches: app.matches, prices: app.prices });
+}
+function promoBadge(player) {
+  const promo = promoOf(player);
+  return promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : '';
+}
 function payFilterChips(phone) {
-  const names = whoOptions();
+  const names = payOrganizerNames();
   const showBlank = hasUnspecified({ players: app.players, phone });
   const items = [{ value: '', label: 'Todos' }, ...names.map((name) => ({ value: name, label: name }))];
   if (showBlank) items.push({ value: UNSPECIFIED, label: UNSPECIFIED });
@@ -199,7 +208,7 @@ function renderHome() {
   const limit = addDays(today, 6);
   const now = Date.now();
   const upcoming = sortedMatches().filter((m) => m.date >= today && (m.startsAt ?? toEpoch(m.date, m.time)) > now - 2 * 3600e3);
-  const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && (sameOrganizer(p.addedBy, app.who) || (p.paid === true && sameOrganizer(p.receivedBy, app.who))))) : upcoming;
+  const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && minePlayer(p))) : upcoming;
   const next = all.filter((m) => m.date <= limit);
   const later = all.filter((m) => m.date > limit);
   $('#view').innerHTML = `
@@ -248,6 +257,7 @@ function renderMatch(id) {
           <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
             ${addedTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payMarkup(p)}
+          ${promoBadge(p)}
         </button>
         <button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>
         ${p.phone ? `<a class="wa-btn" href="${esc(waLink(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
@@ -548,6 +558,15 @@ function openSettings() {
     <h3>Ajustes</h3>
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
     <p class="hint">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
+    <form id="price-form" novalidate>
+      <p class="hint">Precios. Los ven todos al toque.</p>
+      ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
+      <label class="field"><span>Un partido</span><input name="matchPrice" inputmode="numeric" autocomplete="off" value="${livePrices().matchPrice}"></label>
+      <label class="field"><span>Promo 2 partidos</span><input name="promo2Price" inputmode="numeric" autocomplete="off" value="${livePrices().promo2Price}"></label>
+      <label class="field"><span>Promo 3 partidos</span><input name="promo3Price" inputmode="numeric" autocomplete="off" value="${livePrices().promo3Price}"></label>
+      <div class="err" id="price-err"></div>
+      <button class="btn" type="submit">Guardar precios</button>
+    </form>
     <p class="hint">Tamaño del texto</p>
     <div class="text-size-choice" role="group" aria-label="Tamaño del texto">
       ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
@@ -561,6 +580,17 @@ function openSettings() {
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
     <p class="footer-note">Fútbol 7 · ${esc(VENUE)} · v1</p>`);
+  $('#price-form').onsubmit = (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const rec = priceRecord({ matchPrice: form.matchPrice.value, promo2Price: form.promo2Price.value, promo3Price: form.promo3Price.value });
+    if (!rec.ok) { $('#price-err').textContent = rec.error; return; }
+    $('#price-err').textContent = '';
+    Promise.resolve(app.store.setPrices(rec.patch)).then(() => toast('Precios guardados')).catch((error) => {
+      if (isPermissionDenied(error)) toast(PRICES_DENIED_WRITE);
+      else $('#price-err').textContent = error?.message || 'No se pudieron guardar los precios.';
+    });
+  };
   sheet.querySelectorAll('[data-text-size]').forEach((btn) => {
     btn.onclick = () => { saveTextSize(Number(btn.dataset.textSize)); syncTextSize(); };
   });
@@ -807,16 +837,20 @@ function ledgerSection(phone) {
   const money = paymentLedger({ phone, players: app.players, matches: app.matches, organizer });
   const signups = signupLedger({ phone, players: app.players, organizer });
   const parts = { cash: 0, transfer: 0, pending: 0 };
+  const shareOk = (name) => {
+    const label = String(name || '').trim() || UNSPECIFIED;
+    if (!organizer) return true;
+    if (organizer === UNSPECIFIED) return label === UNSPECIFIED;
+    return sameOrganizer(label, organizer);
+  };
   for (const player of app.players) {
     if (player.phone !== phone) continue;
-    const piece = paymentParts(player);
-    const receiverOk = !organizer || (organizer === UNSPECIFIED ? !String(player.receivedBy || '').trim() : sameOrganizer(player.receivedBy, organizer));
-    const pendingOk = !organizer || (organizer === UNSPECIFIED ? !String(player.paidUpdatedBy || '').trim() : sameOrganizer(player.paidUpdatedBy, organizer));
-    if (player.paid === true && receiverOk) {
-      parts.cash += piece.cash;
-      parts.transfer += piece.transfer;
+    for (const share of paymentShares(player)) {
+      if (!shareOk(share.name)) continue;
+      if (share.kind === 'pending') parts.pending += share.amount;
+      else if (share.kind === 'cash') parts.cash += share.amount;
+      else if (share.kind === 'transfer') parts.transfer += share.amount;
     }
-    if (pendingOk) parts.pending += piece.pending;
   }
   const partBits = [];
   if (parts.cash > 0) partBits.push(`Efectivo ${formatARS(parts.cash)}`);
@@ -1158,11 +1192,11 @@ async function rememberInRoster(name, phone) {
   }
 }
 
-function addSignedPlayer(m, { name, phone }, asWait) {
+function addSignedPlayer(m, { name, phone, rosterId }, asWait) {
   const willWait = asWait || playersOf(m.id).length >= (m.capacity || CAPACITY);
   closeSheet();
   run((async () => {
-    await app.store.addPlayer(m, { name, phone }, app.who, { waiting: asWait });
+    await app.store.addPlayer(m, { name, phone, rosterId }, app.who, { waiting: asWait });
     await rememberInRoster(name, phone);
   })(), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
 }
@@ -1205,7 +1239,7 @@ function openPlayerForm(m, p, opts = {}) {
       const btn = e.target.closest('[data-pick]');
       if (!btn) return;
       const person = app.roster.find((r) => r.id === btn.dataset.pick);
-      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '' }, asWait);
+      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id }, asWait);
     });
     setTimeout(() => find.focus(), 50);
   }
@@ -1230,10 +1264,9 @@ function openPlayerForm(m, p, opts = {}) {
   };
 }
 /* Pago del jugador */
-function moneyBox(amount, known) {
-  if (!known) return '';
-  const text = String(amount);
-  return text.replace('.', ',');
+function moneyText(amount) {
+  if (!amount) return '';
+  return String(amount).replace('.', ',');
 }
 function readMoney(raw) {
   if (String(raw ?? '').trim() === '') return { ok: true, amount: 0 };
@@ -1244,6 +1277,31 @@ function openPaymentForm(m, p) {
   let paid = p.paid === true ? true : p.paid === false ? false : null;
   const parts = paymentParts(p);
   const known = p.paid === true || p.paid === false || parts.pending > 0 || parts.split;
+  const promo = promoOf(p);
+  const prices = livePrices();
+  const shareSuggest = promo ? promo.share : prices.matchPrice;
+  const totalSuggest = promo ? promo.total : prices.matchPrice;
+  let suggestion = shareSuggest;
+  const directed = hasPaymentDirection(p);
+  const initialTo = (kind) => {
+    if (kind === 'cash') {
+      const saved = directed ? p.cashTo : (p.paid === true ? p.receivedBy : '');
+      return String(saved || '').trim() || app.who || '';
+    }
+    if (kind === 'transfer') {
+      if (Array.isArray(p.transferParts) && p.transferParts.length > 1) return String(p.transferParts[0].to || '').trim() || app.who || '';
+      const saved = directed ? p.transferTo : (p.paid === true ? p.receivedBy : '');
+      return String(saved || '').trim() || app.who || '';
+    }
+    const saved = directed ? p.pendingTo : (parts.pending > 0 ? p.paidUpdatedBy : '');
+    return String(saved || '').trim() || app.who || '';
+  };
+  const cashStart = known ? moneyText(parts.cash) : moneyText(shareSuggest);
+  const transferStart = known ? moneyText(parts.transfer) : '';
+  const pendingStart = known ? moneyText(parts.pending) : '';
+  const partsHint = Array.isArray(p.transferParts) && p.transferParts.length > 1
+    ? `<p class="hint" id="pay-parts">Transferencia repartida: ${p.transferParts.map((part) => `${esc(part.to)} ${esc(formatARS(part.amount))}`).join(' · ')}. Si cambiás el monto, queda en un solo organizador.</p>`
+    : '';
   const receivedNote = p.transferReceivedAt
     ? `<p class="hint">La transferencia se marcó como cobrada${p.transferReceivedBy ? ` · ${esc(p.transferReceivedBy)}` : ''}.</p>`
     : '';
@@ -1251,6 +1309,7 @@ function openPaymentForm(m, p) {
     <form id="pay-form" novalidate>
       <h3>Pago</h3>
       <p class="hint">${esc(p.name)} · ${esc(fmtWhen(m))}</p>
+      <div id="pay-promo">${promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : ''}</div>
       ${parts.pending > 0 ? `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(parts.pending))}</p>
       <button type="button" class="btn block" id="btn-receive-pending">Marcar transferencia como cobrada</button>` : ''}
       ${receivedNote}
@@ -1262,19 +1321,27 @@ function openPaymentForm(m, p) {
         </div>
       </div>
       <div id="pay-details">
-        <label class="field"><span>Efectivo</span>
-          <input name="cash" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(moneyBox(parts.cash, known))}">
-        </label>
-        <label class="field"><span>Transferencia</span>
-          <input name="transfer" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(moneyBox(parts.transfer, known))}">
-        </label>
-        <label class="field"><span>Transfiere después</span>
-          <input name="pending" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(moneyBox(parts.pending, known))}">
-          <div class="small muted">Lo cobrado es efectivo + transferencia. Transfiere después no entra en Recaudado hasta que lo marques como cobrado. Podés escribir 5000 o 5.000. Vacío es 0.</div>
-        </label>
-        <div class="field" id="pay-receiver">
-          <span>¿Quién cobró?</span>
-          <div class="chips" id="pay-who"></div>
+        <div class="price-picks" id="pay-prices"></div>
+        ${promo ? `<label class="pay-apply"><input type="checkbox" id="pay-apply-promo"><span id="pay-apply-label">Aplicar a los ${promo.count} partidos</span></label>` : ''}
+        <div class="field"><span>Efectivo</span>
+          <div class="pay-money">
+            <input name="cash" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(cashStart)}" aria-label="Efectivo">
+            <select name="cashTo" aria-label="Quién cobró el efectivo"></select>
+          </div>
+        </div>
+        <div class="field"><span>Transferencia</span>
+          <div class="pay-money">
+            <input name="transfer" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(transferStart)}" aria-label="Transferencia">
+            <select name="transferTo" aria-label="Quién cobró la transferencia"></select>
+          </div>
+        </div>
+        ${partsHint}
+        <div class="field"><span>Transfiere después</span>
+          <div class="pay-money">
+            <input name="pending" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(pendingStart)}" aria-label="Transfiere después">
+            <select name="pendingTo" aria-label="A quién le va a transferir"></select>
+          </div>
+          <div class="small muted" id="pay-hint"></div>
         </div>
       </div>
       <div class="field"><div class="err" id="pay-err"></div></div>
@@ -1282,25 +1349,64 @@ function openPaymentForm(m, p) {
     </form>`);
   const form = $('#pay-form');
   const details = $('#pay-details');
-  let receiver = p.paid === true ? String(p.receivedBy || '').trim() : (app.who || '');
-  const paintReceiver = () => {
-    const box = $('#pay-who');
-    const options = receiverOptions(receiver);
-    box.innerHTML = [
-      ...options.map((name) => `<button type="button" class="btn chip ${sameOrganizer(name, receiver) ? 'primary' : ''}" data-receiver="${esc(name)}">${esc(name)}</button>`),
-      `<button type="button" class="btn chip ${receiver ? '' : 'primary'}" data-receiver="">${UNSPECIFIED}</button>`,
-    ].join('');
-    box.querySelectorAll('[data-receiver]').forEach((b) => (b.onclick = () => {
-      receiver = b.dataset.receiver || '';
-      $('#pay-err').textContent = '';
-      paintReceiver();
-    }));
+  const paintSelect = (select, selected) => {
+    const names = payOrganizerNames([selected, app.who, ...paymentShares(p).map((share) => share.name)]);
+    const current = names.find((name) => sameOrganizer(name, selected)) || names[0] || '';
+    select.innerHTML = names.map((name) => `<option value="${esc(name)}"${sameOrganizer(name, current) ? ' selected' : ''}>${esc(name)}</option>`).join('');
+    if (current) select.value = names.find((name) => sameOrganizer(name, current)) || names[0];
+  };
+  const paintPrices = () => {
+    const nowPrices = livePrices();
+    const box = $('#pay-prices');
+    if (box) {
+      const picks = [
+        ['1 partido', nowPrices.matchPrice],
+        ['Promo 2', nowPrices.promo2Price],
+        ['Promo 3', nowPrices.promo3Price],
+      ];
+      box.innerHTML = picks.map(([label, amount]) => `<button type="button" class="btn" data-price="${amount}">${esc(label)} ${esc(formatARS(amount))}</button>`).join('');
+      box.querySelectorAll('[data-price]').forEach((btn) => {
+        btn.onclick = () => {
+          form.cash.value = btn.dataset.price;
+          form.transfer.value = '';
+          form.pending.value = '';
+          $('#pay-err').textContent = '';
+        };
+      });
+    }
+    const hint = $('#pay-hint');
+    if (hint) hint.textContent = `Lo cobrado es efectivo + transferencia. Transfiere después no entra en Recaudado hasta que lo marques como cobrado. ${priceExample(nowPrices.matchPrice)}`;
+    const fresh = promoOf(p);
+    const badge = $('#pay-promo');
+    if (badge) badge.innerHTML = fresh ? `<div class="promo-badge">${esc(fresh.label)}</div>` : '';
+    const applyLabel = $('#pay-apply-label');
+    if (applyLabel && fresh) applyLabel.textContent = `Aplicar a los ${fresh.count} partidos`;
+  };
+  paintSelect(form.cashTo, initialTo('cash'));
+  paintSelect(form.transferTo, initialTo('transfer'));
+  paintSelect(form.pendingTo, initialTo('pending'));
+  paintPrices();
+  app.refreshPaySheet = () => {
+    if (!$('#pay-form')) return;
+    paintSelect(form.cashTo, form.cashTo.value);
+    paintSelect(form.transferTo, form.transferTo.value);
+    paintSelect(form.pendingTo, form.pendingTo.value);
+    paintPrices();
+  };
+  const applyBox = $('#pay-apply-promo');
+  if (applyBox) applyBox.onchange = () => {
+    const next = applyBox.checked ? (promoOf(p)?.total ?? totalSuggest) : (promoOf(p)?.share ?? shareSuggest);
+    const cashNow = readMoney(form.cash.value);
+    const transferNow = readMoney(form.transfer.value);
+    const pendingNow = readMoney(form.pending.value);
+    const untouched = cashNow.ok && transferNow.ok && pendingNow.ok && transferNow.amount === 0 && pendingNow.amount === 0 && cashNow.amount === suggestion;
+    suggestion = next;
+    if (untouched) form.cash.value = moneyText(next);
   };
   const sync = () => {
     sheet.querySelector('[data-paid="si"]').classList.toggle('primary', paid === true);
     sheet.querySelector('[data-paid="no"]').classList.toggle('primary', paid === false);
     details.hidden = paid !== true;
-    if (paid === true) paintReceiver();
   };
   sheet.querySelectorAll('[data-paid]').forEach((b) => (b.onclick = () => {
     paid = b.dataset.paid === 'si';
@@ -1329,10 +1435,42 @@ function openPaymentForm(m, p) {
     const pending = readMoney(form.pending.value);
     if (!pending.ok) { $('#pay-err').textContent = pending.error; return; }
     if (cash.amount + transfer.amount + pending.amount <= 0) { $('#pay-err').textContent = 'Poné un monto.'; return; }
-    const rec = { paid: true, split: true, cash: cash.amount, transfer: transfer.amount, pendingTransfer: pending.amount, receivedBy: receiver || null };
+    const freshPromo = promoOf(p);
+    const applyAll = !!applyBox?.checked && freshPromo && freshPromo.rows.length >= 2;
+    if (applyAll) {
+      const shares = splitPaymentAcross({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount }, freshPromo.rows.length);
+      const jobs = freshPromo.rows.map((row, i) => app.store.setPayment(row.player.id, {
+        paid: true,
+        split: true,
+        cash: shares[i].cash,
+        transfer: shares[i].transfer,
+        pendingTransfer: shares[i].pending,
+        cashTo: shares[i].cash > 0 ? form.cashTo.value : null,
+        transferTo: shares[i].transfer > 0 ? form.transferTo.value : null,
+        pendingTo: shares[i].pending > 0 ? form.pendingTo.value : null,
+      }, app.who));
+      closeSheet();
+      run(Promise.all(jobs), 'Promo aplicada', PAY_RULES_MSG);
+      return;
+    }
+    const keepParts = roundMoney(transfer.amount) === parts.transfer && Array.isArray(p.transferParts) && p.transferParts.length > 1;
+    const rec = {
+      paid: true,
+      split: true,
+      cash: cash.amount,
+      transfer: transfer.amount,
+      pendingTransfer: pending.amount,
+      cashTo: cash.amount > 0 ? form.cashTo.value : null,
+      transferTo: transfer.amount > 0 ? form.transferTo.value : null,
+      pendingTo: pending.amount > 0 ? form.pendingTo.value : null,
+      transferParts: keepParts ? p.transferParts : null,
+    };
     closeSheet();
     run(app.store.setPayment(p.id, rec, app.who), 'Pago guardado', PAY_RULES_MSG);
   };
+}
+function roundMoney(n) {
+  return Math.round(Number(n) * 100) / 100;
 }
 
 function openPlayerMenu(m, p) {
@@ -1483,17 +1621,21 @@ async function boot() {
         : 'Problema de conexión con Firebase: ' + (e?.message || e));
   });
   $('#demo-banner').hidden = app.store.mode === 'firebase';
-  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError }) => {
+  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError }) => {
     app.matches = matches || []; app.players = players || [];
     app.roster = roster || [];
     app.organizers = organizers || [];
+    app.prices = prices || null;
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);
     app.rosterError = rosterError || null;
     if (organizersError && organizersError !== app.organizersError) showError(organizersError);
     app.organizersError = organizersError || null;
+    if (pricesError && pricesError !== app.pricesError) showError(pricesError);
+    app.pricesError = pricesError || null;
     app.loaded = true;
+    if (sheet.open && app.refreshPaySheet) app.refreshPaySheet();
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe
-    if (!sheet.open || !sheet.querySelector('input, textarea')) render(); else pendingRender = true;
+    if (!sheet.open || !sheet.querySelector('input, textarea, select')) render(); else pendingRender = true;
     fixOverflow();
     backfillConfirmTokens();
     armReminderTimer();
@@ -1581,6 +1723,6 @@ async function fixOverflow() {
   finally { fixingOverflow = false; }
 }
 
-sheet.addEventListener('close', () => { pendingRender = false; render(); });
+sheet.addEventListener('close', () => { app.refreshPaySheet = null; pendingRender = false; render(); });
 
 boot().catch((e) => { console.error(e); showError('Error al iniciar la app: ' + e.message); });

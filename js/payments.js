@@ -10,14 +10,23 @@
 //   pendingTransfer: number | null  (prometió transferir; NO entra en amount)
 //   transferReceivedAt: number | null
 //   transferReceivedBy: string | null
+//   cashTo: string | null           (quién cobró el efectivo)
+//   transferTo: string | null       (quién cobró la transferencia, si es uno solo)
+//   transferParts: { to, amount }[] | null  (transferencias a organizadores distintos)
+//   pendingTo: string | null        (a quién le va a transferir)
 //   receivedBy: string | null       (quién cobró; null = sin especificar)
 //   paidUpdatedBy: string
 //   paidUpdatedAt: number           (epoch ms)
 //
 // Un pago viejo no tiene cash/transfer/pendingTransfer: se lee entero
 // como efectivo o como transferencia según method.
+// Si no hay cashTo/transferTo/pendingTo/transferParts, receivedBy vale
+// para el efectivo y para la transferencia.
+
+import { sameOrganizer } from './organizers.js';
 
 export const MAX_AMOUNT = 1_000_000_000;
+export const MAX_TRANSFER_PARTS = 6;
 export const PAYMENT_METHODS = ['efectivo', 'transferencia'];
 const METHOD_LABEL = { efectivo: 'Efectivo', transferencia: 'Transferencia' };
 
@@ -104,14 +113,93 @@ export function sumParts(players) {
   return acc;
 }
 
+/** true si el pago ya dice quién cobró cada parte. */
+export function hasPaymentDirection(player) {
+  if (!player) return false;
+  return player.cashTo != null || player.transferTo != null || player.pendingTo != null
+    || (Array.isArray(player.transferParts) && player.transferParts.length > 0);
+}
+
+/**
+ * Cada parte con su organizador. Sin los campos nuevos, receivedBy cubre
+ * efectivo y transferencia, y lo pendiente queda en quien lo anotó (paidUpdatedBy).
+ */
+export function paymentShares(player) {
+  const parts = paymentParts(player);
+  const directed = hasPaymentDirection(player);
+  const legacy = String(player?.receivedBy || '').trim();
+  const shares = [];
+  if (!parts.split && parts.received > 0 && parts.cash === 0 && parts.transfer === 0) {
+    shares.push({ kind: 'received', name: legacy, amount: parts.received });
+  }
+  if (parts.cash > 0) {
+    shares.push({ kind: 'cash', name: directed ? String(player?.cashTo || '').trim() : legacy, amount: parts.cash });
+  }
+  if (parts.transfer > 0) {
+    if (Array.isArray(player?.transferParts) && player.transferParts.length) {
+      for (const part of player.transferParts) {
+        const amount = finiteMoney(part?.amount);
+        if (amount > 0) shares.push({ kind: 'transfer', name: String(part?.to || '').trim(), amount });
+      }
+    } else {
+      shares.push({
+        kind: 'transfer',
+        name: directed ? String(player?.transferTo || '').trim() : legacy,
+        amount: parts.transfer,
+      });
+    }
+  }
+  if (parts.pending > 0) {
+    const name = directed ? String(player?.pendingTo || '').trim() : String(player?.paidUpdatedBy || '').trim();
+    shares.push({ kind: 'pending', name, amount: parts.pending });
+  }
+  return shares;
+}
+
+function uniqueNames(names) {
+  const out = [];
+  for (const name of names) {
+    if (out.some((have) => sameOrganizer(have, name) || (!have && !name))) continue;
+    out.push(name || '');
+  }
+  return out;
+}
+
 /** "Transfiere después $1.500", o "" si no hay nada pendiente. */
 export function pendingStatusText(player) {
   const pending = paymentParts(player).pending;
-  return pending > 0 ? `Transfiere después ${formatARS(pending)}` : '';
+  if (pending <= 0) return '';
+  const base = `Transfiere después ${formatARS(pending)}`;
+  if (!hasPaymentDirection(player)) return base;
+  const name = String(player?.pendingTo || '').trim();
+  return name ? `${base} · a ${name}` : base;
+}
+
+function directedStatusText(player) {
+  const parts = paymentParts(player);
+  if (parts.received <= 0) return '';
+  const shares = paymentShares(player).filter((share) => share.kind !== 'pending');
+  const names = uniqueNames(shares.map((share) => share.name));
+  const amount = formatARS(parts.received);
+  if (names.length <= 1) {
+    let base;
+    if (parts.cash > 0 && parts.transfer === 0) base = `Pagó ${amount} · Efectivo`;
+    else if (parts.transfer > 0 && parts.cash === 0) base = `Pagó ${amount} · Transferencia`;
+    else base = `Pagó ${amount} · Efectivo ${formatARS(parts.cash)} · Transferencia ${formatARS(parts.transfer)}`;
+    return names[0] ? `${base} · cobró ${names[0]}` : base;
+  }
+  const bits = [`Pagó ${amount}`];
+  for (const share of shares) {
+    const label = share.kind === 'cash' ? 'Efectivo' : 'Transferencia';
+    const who = share.name ? ` · cobró ${share.name}` : '';
+    bits.push(`${label} ${formatARS(share.amount)}${who}`);
+  }
+  return bits.join(' · ');
 }
 
 function receivedStatusText(player) {
   if (!player) return '';
+  if (hasPaymentDirection(player)) return directedStatusText(player);
   const parts = paymentParts(player);
   if (!parts.split) {
     if (player.paid !== true && player.paid !== false) return '';
@@ -173,6 +261,13 @@ function receiverValue(input) {
   return name;
 }
 
+function nameField(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const name = String(value).trim().replace(/\s+/g, ' ');
+  if (name.length > 40) return { error: 'El nombre de quien cobró es muy largo.' };
+  return name;
+}
+
 function usesSplitInput(input) {
   return !!input && (input.split === true || 'cash' in input || 'transfer' in input || 'pendingTransfer' in input);
 }
@@ -205,6 +300,10 @@ export function paymentRecord(input, who, now = Date.now()) {
     pendingTransfer: null,
     transferReceivedAt: null,
     transferReceivedBy: null,
+    cashTo: null,
+    transferTo: null,
+    pendingTo: null,
+    transferParts: null,
   };
   if (paid === false) return { ok: true, patch: cleared };
   const cash = moneyField(input.cash, 'Efectivo inválido.');
@@ -214,9 +313,51 @@ export function paymentRecord(input, who, now = Date.now()) {
   const pending = moneyField(input.pendingTransfer, 'Monto inválido.');
   if (typeof pending === 'object') return { ok: false, error: pending.error };
   if (cash + transfer + pending <= 0) return { ok: false, error: 'Poné un monto.' };
+  const directed = 'cashTo' in input || 'transferTo' in input || 'pendingTo' in input || 'transferParts' in input;
+  let cashTo = null;
+  let transferTo = null;
+  let pendingTo = null;
+  let transferParts = null;
+  let receivedBy;
+  if (directed) {
+    const cashName = cash > 0 ? nameField(input.cashTo) : null;
+    if (cashName && typeof cashName === 'object') return { ok: false, error: cashName.error };
+    cashTo = cashName;
+    const pendingName = pending > 0 ? nameField(input.pendingTo) : null;
+    if (pendingName && typeof pendingName === 'object') return { ok: false, error: pendingName.error };
+    pendingTo = pendingName;
+    if (transfer > 0 && Array.isArray(input.transferParts) && input.transferParts.length > 1) {
+      if (input.transferParts.length > MAX_TRANSFER_PARTS) return { ok: false, error: 'Demasiados cobros de transferencia.' };
+      const built = [];
+      for (const part of input.transferParts) {
+        const amount = moneyField(part?.amount, 'Transferencia inválida.');
+        if (typeof amount === 'object') return { ok: false, error: amount.error };
+        const to = nameField(part?.to);
+        if (to && typeof to === 'object') return { ok: false, error: to.error };
+        if (amount > 0 && to) built.push({ to, amount });
+      }
+      const sum = roundARS(built.reduce((acc, part) => acc + part.amount, 0));
+      if (built.length > 1 && sum === transfer) {
+        transferParts = built;
+        transferTo = null;
+      }
+    }
+    if (!transferParts && transfer > 0) {
+      const transferName = nameField(input.transferTo);
+      if (transferName && typeof transferName === 'object') return { ok: false, error: transferName.error };
+      transferTo = transferName;
+    }
+    const who = [];
+    if (cashTo) who.push(cashTo);
+    if (transferParts) who.push(...transferParts.map((part) => part.to));
+    else if (transferTo) who.push(transferTo);
+    const names = uniqueNames(who);
+    receivedBy = names.length === 1 && names[0] ? names[0] : null;
+  } else {
+    receivedBy = receiverValue(input);
+    if (receivedBy && typeof receivedBy === 'object') return { ok: false, error: receivedBy.error };
+  }
   const received = roundARS(cash + transfer);
-  const receivedBy = receiverValue(input);
-  if (receivedBy && typeof receivedBy === 'object') return { ok: false, error: receivedBy.error };
   return {
     ok: true,
     patch: {
@@ -228,6 +369,10 @@ export function paymentRecord(input, who, now = Date.now()) {
       cash,
       transfer,
       pendingTransfer: pending > 0 ? pending : null,
+      cashTo,
+      transferTo,
+      pendingTo,
+      transferParts,
       transferReceivedAt: null,
       transferReceivedBy: null,
     },
@@ -251,15 +396,51 @@ function legacyPaymentRecord(input, who, now) {
   return { ok: true, patch: { ...stamp, paid: true, amount: roundARS(amount), method: input.method, receivedBy } };
 }
 
+function legacyReceiver(player) {
+  return String(player?.receivedBy || '').trim();
+}
+
+function transferBuckets(player, parts) {
+  if (Array.isArray(player?.transferParts) && player.transferParts.length) {
+    return player.transferParts
+      .map((part) => ({ to: String(part?.to || '').trim(), amount: finiteMoney(part?.amount) }))
+      .filter((part) => part.amount > 0 && part.to);
+  }
+  if (parts.transfer <= 0) return [];
+  const to = hasPaymentDirection(player) ? String(player?.transferTo || '').trim() : legacyReceiver(player);
+  return to ? [{ to, amount: parts.transfer }] : [{ to: '', amount: parts.transfer }];
+}
+
+function mergeTransfer(buckets, to, amount) {
+  const name = String(to || '').trim();
+  const next = buckets.map((part) => ({ ...part }));
+  const found = next.find((part) => sameOrganizer(part.to, name) || (!part.to && !name));
+  if (found) found.amount = roundARS(found.amount + amount);
+  else next.push({ to: name, amount });
+  return next.filter((part) => part.amount > 0);
+}
+
 /** Pasa "Transfiere después" a transferencia cobrada. No toca el efectivo. */
 export function receivePendingTransfer(player, who, now = Date.now()) {
   const parts = paymentParts(player);
   if (parts.pending <= 0) return { ok: false, error: 'No hay transferencia pendiente.' };
+  const directed = hasPaymentDirection(player);
+  const clicker = String(who || '').trim();
+  const pendingTo = directed
+    ? String(player?.pendingTo || '').trim()
+    : String(player?.paidUpdatedBy || '').trim() || clicker;
   const cash = parts.split ? parts.cash : (player?.method === 'efectivo' && player?.paid === true ? parts.received : 0);
-  const transfer = roundARS((parts.split ? parts.transfer : (player?.method === 'transferencia' ? parts.received : 0)) + parts.pending);
+  const cashTo = cash > 0 ? (directed ? String(player?.cashTo || '').trim() : legacyReceiver(player)) : '';
+  const buckets = mergeTransfer(transferBuckets(player, parts).filter((part) => part.to || parts.transfer > 0), pendingTo || clicker, parts.pending);
+  const named = buckets.filter((part) => part.to);
+  const useParts = named.length > 1;
+  const transfer = roundARS(buckets.reduce((sum, part) => sum + part.amount, 0));
+  const transferTo = useParts ? null : (named[0]?.to || pendingTo || clicker || null);
+  const receivedNames = uniqueNames([
+    ...(cash > 0 && cashTo ? [cashTo] : []),
+    ...named.map((part) => part.to),
+  ]);
   const received = roundARS(cash + transfer);
-  const name = String(who || '').trim();
-  const receivedBy = String(player?.receivedBy || '').trim() || name || null;
   return {
     ok: true,
     patch: {
@@ -267,12 +448,16 @@ export function receivePendingTransfer(player, who, now = Date.now()) {
       amount: received,
       method: methodOfParts(cash, transfer),
       cash,
+      cashTo: cash > 0 ? (cashTo || null) : null,
       transfer,
+      transferTo,
+      transferParts: useParts ? named.map((part) => ({ to: part.to, amount: part.amount })) : null,
       pendingTransfer: null,
+      pendingTo: null,
       transferReceivedAt: now,
-      transferReceivedBy: name || null,
-      receivedBy,
-      paidUpdatedBy: name,
+      transferReceivedBy: clicker || null,
+      receivedBy: receivedNames.length === 1 ? receivedNames[0] : null,
+      paidUpdatedBy: clicker,
       paidUpdatedAt: now,
     },
   };

@@ -52,6 +52,7 @@
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { addDays, todayISO, toEpoch } from './dates.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
+import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
@@ -118,10 +119,10 @@ class LocalStore {
   constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); }
   _load() {
     try {
-      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {} };
-      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.confirmations ||= {};
+      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {} };
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.confirmations ||= {}; db.settings ||= {};
       return db;
-    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {} }; }
+    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {} }; }
   }
   _touchConfirmations(db) {
     db.confirmations ||= {};
@@ -161,7 +162,8 @@ class LocalStore {
     );
     const roster = Object.entries(db.roster).map(([id, r]) => ({ id, ...r }));
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
-    this.listeners.forEach((fn) => fn({ matches, players, roster, rosterError: null, organizers, organizersError: null }));
+    const prices = db.settings?.prices || null;
+    this.listeners.forEach((fn) => fn({ matches, players, roster, rosterError: null, organizers, organizersError: null, prices, pricesError: null }));
   }
   async init() {
     if (typeof window !== 'undefined') window.addEventListener('storage', (e) => { if (e.key === this.key) this._emit(); });
@@ -201,12 +203,14 @@ class LocalStore {
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
     const waiting = opts.waiting === true || mainCount >= cap;
+    const rosterId = String(data.rosterId || '').trim();
     db.players[id] = {
       matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
       addedBy: who, createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: newConfirmToken(),
+      ...(rosterId ? { rosterId } : {}),
     };
     this._save(db); return id;
   }
@@ -286,6 +290,13 @@ class LocalStore {
     this._save(db);
   }
   async deleteRoster(id) { const db = this._load(); delete db.roster[id]; this._save(db); }
+  async setPrices(input) {
+    const rec = priceRecord(input);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-price' });
+    const db = this._load();
+    db.settings.prices = rec.patch;
+    this._save(db);
+  }
   async addOrganizer(name) {
     const clean = cleanOrganizerName(name);
     if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-organizer' });
@@ -311,7 +322,7 @@ class LocalStore {
 
 /* ───────────── Firebase / Firestore ───────────── */
 class FirebaseStore {
-  constructor() { this.mode = 'firebase'; this.listeners = new Set(); this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [] }; }
+  constructor() { this.mode = 'firebase'; this.listeners = new Set(); this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null }; }
   async init(onError) {
     const ready = await initFirebase();
     this.fs = ready.fs;
@@ -356,7 +367,7 @@ class FirebaseStore {
   _listen() {
     this._stop();
     const from = addDays(todayISO(), -1);
-    const { collection, query, where, onSnapshot } = this.fs;
+    const { collection, doc, query, where, onSnapshot } = this.fs;
     const watch = (ref, opts, onNext, onErr) => {
       const next = (snap) => { this._deniedRetries = 0; onNext(snap); };
       const un = opts
@@ -384,6 +395,23 @@ class FirebaseStore {
     });
     watch(collection(this.db, 'confirmations'), null, (snap) => {
       this.state.confirmations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this._emit();
+    });
+    watch(collection(this.db, 'organizers'), null, (snap) => {
+      this.state.organizers = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this.state.organizersError = null;
+      this._emit();
+    }, (e) => {
+      this.state.organizersError = isOrganizerDenied(e) ? ORGANIZERS_DENIED_READ : ('No se pudo leer organizadores: ' + (e?.message || e?.code || e));
+      this._emit();
+    });
+    watch(doc(this.db, 'settings', 'prices'), null, (snap) => {
+      this.state.prices = snap.exists() ? snap.data() : null;
+      this.state.pricesError = null;
+      this._emit();
+    }, (e) => {
+      this.state.prices = null;
+      this.state.pricesError = e?.code === 'permission-denied' ? PRICES_DENIED_READ : ('No se pudieron leer los precios: ' + (e?.message || e?.code || e));
       this._emit();
     });
   }
@@ -482,12 +510,14 @@ class FirebaseStore {
     const mainCount = mates.filter((p) => p.waiting !== true).length;
     const waiting = opts.waiting === true || mainCount >= cap;
     const token = newConfirmToken();
+    const rosterId = String(data.rosterId || '').trim();
     const player = {
       matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
       addedBy: who, createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: token,
+      ...(rosterId ? { rosterId } : {}),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);
     await this._writeConfirmation(token, ref.id, player, match);
@@ -578,6 +608,12 @@ class FirebaseStore {
     await updateDoc(doc(this.db, 'roster', id), next);
   }
   async deleteRoster(id) { const { doc, deleteDoc } = this.fs; await deleteDoc(doc(this.db, 'roster', id)); }
+  async setPrices(input) {
+    const rec = priceRecord(input);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-price' });
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'settings', 'prices'), rec.patch);
+  }
   async addOrganizer(name) {
     const clean = cleanOrganizerName(name);
     if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-organizer' });
