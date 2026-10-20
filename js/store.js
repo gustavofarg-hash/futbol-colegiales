@@ -30,7 +30,11 @@
 //    waiting: bool                      (true = lista de espera)
 //    waitOrder: number|null             (menor = más prioridad; null si es titular)
 //    rosterAt: number|null              (cuándo entró a la lista principal)
-//    confirmToken: string               (link de confirmar.html; se crea al anotar al jugador)
+//    confirmToken: string               (link largo de confirmar.html; se crea al anotar)
+//    shortCode: string                  (8 caracteres; el mensaje usa /c/?k=shortCode)
+//  links/{code}
+//    m: matchId, p: playerId, t: confirmToken
+//    El código es el id. Se lee sin cuenta, igual que confirmations. No se lista.
 //    confirmed: "si"|"no"               (respuesta del jugador)
 //    confirmedAt, reminderSentAt: number
 //    tentative: bool|null               (lugar reservado, a confirmar; ocupa cupo)
@@ -75,6 +79,7 @@ import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
+import { isShortCode, newShortCode } from './short.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
@@ -268,6 +273,31 @@ class LocalStore {
     }
     for (const token of Object.keys(db.confirmations)) if (!live.has(token)) delete db.confirmations[token];
   }
+  _touchLinks(db) {
+    db.links ||= {};
+    const live = new Set();
+    for (const [pid, player] of Object.entries(db.players)) {
+      if (!player?.confirmToken) continue;
+      let code = player.shortCode;
+      const current = code && db.links[code];
+      if (!isShortCode(code) || (current && current.t && current.t !== player.confirmToken)) {
+        code = newShortCode();
+        while (db.links[code]) code = newShortCode();
+        player.shortCode = code;
+      }
+      db.links[code] = { m: player.matchId, p: pid, t: player.confirmToken };
+      live.add(code);
+    }
+    for (const code of Object.keys(db.links)) if (!live.has(code)) delete db.links[code];
+  }
+  async ensureShortLink(id) {
+    const db = this._load();
+    const player = db.players[id];
+    if (!player?.confirmToken) return '';
+    if (isShortCode(player.shortCode) && db.links?.[player.shortCode]?.t === player.confirmToken) return player.shortCode;
+    this._save(db);
+    return this._load().players[id]?.shortCode || '';
+  }
   _seedOrganizers(db) {
     if (Object.keys(db.organizers).length) return false;
     const now = Date.now();
@@ -291,6 +321,7 @@ class LocalStore {
     migratePhones(db);
     this._syncPlayerCounts(db);
     this._touchConfirmations(db);
+    this._touchLinks(db);
     localStorage.setItem(this.key, JSON.stringify(db));
     this._emit();
   }
@@ -325,6 +356,7 @@ class LocalStore {
     const db = this._load();
     this._seedOrganizers(db);
     this._touchConfirmations(db);
+    this._touchLinks(db);
     localStorage.setItem(this.key, JSON.stringify(db));
   }
   subscribe(fn) { this.listeners.add(fn); setTimeout(() => this._emit()); return () => this.listeners.delete(fn); }
@@ -583,6 +615,8 @@ class FirebaseStore {
     this._migrated = new Set();
     this._migrating = false;
     this._contactsLive = false;
+    this._linksLive = false;
+    this._shortCodes = new Map();
     this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {} };
   }
   setActor(user) {
@@ -1078,6 +1112,7 @@ class FirebaseStore {
       }
     }
     await this._writeConfirmation(token, ref.id, player, match);
+    await this.ensureShortLink(ref.id, { matchId: match.id, confirmToken: token });
     return ref.id;
   }
   async setTeams(id, teams, who) {
@@ -1164,6 +1199,41 @@ class FirebaseStore {
   async clearTentative(id) {
     await this.updatePlayer(id, { tentative: null, tentativeAt: null });
   }
+  async ensureShortLink(id, hint) {
+    const p = this.state.players.find((x) => x.id === id) || hint || null;
+    const token = p?.confirmToken || hint?.confirmToken || '';
+    if (!token) return '';
+    const known = isShortCode(p?.shortCode) ? p.shortCode : (this._shortCodes.get(id) || '');
+    if (isShortCode(known)) return known;
+    const mint = this._mintShortLink(id, p?.matchId || hint?.matchId || '', token).catch((e) => {
+      if (e?.code === 'permission-denied') this._linksLive = false;
+      else console.error(e);
+      return '';
+    });
+    return await Promise.race([
+      mint,
+      new Promise((resolve) => setTimeout(() => resolve(''), 2000)),
+    ]);
+  }
+  async _mintShortLink(id, matchId, token) {
+    const { doc, getDoc, setDoc, updateDoc } = this.fs;
+    for (let n = 0; n < 4; n++) {
+      const code = newShortCode();
+      const ref = doc(this.db, 'links', code);
+      const cur = await getDoc(ref);
+      if (cur.exists()) continue;
+      await setDoc(ref, { m: matchId, p: id, t: token });
+      try {
+        await updateDoc(doc(this.db, 'players', id), { shortCode: code });
+      } catch (e) {
+        if (e?.code !== 'permission-denied') console.error(e);
+      }
+      this._linksLive = true;
+      this._shortCodes.set(id, code);
+      return code;
+    }
+    return '';
+  }
   async ensureConfirmToken(id) {
     const p = this.state.players.find((x) => x.id === id);
     if (!p) throw new Error('Jugador inexistente');
@@ -1173,6 +1243,7 @@ class FirebaseStore {
     const match = this.state.matches.find((item) => item.id === fresh.matchId);
     // Aunque el token ya exista: crea la ficha si falta y no toca la respuesta.
     await this._writeConfirmation(token, id, { ...fresh, confirmToken: token }, match);
+    await this.ensureShortLink(id, { matchId: fresh.matchId, confirmToken: token, shortCode: fresh.shortCode });
     return token;
   }
   async markReminderSent(id) {
@@ -1184,16 +1255,28 @@ class FirebaseStore {
     const match = this.state.matches.find((item) => item.id === player?.matchId);
     const nextTeams = dropPlayer(match?.teams, id);
     const localCount = this.state.players.filter((item) => item.matchId === player?.matchId).length;
-    const batch = writeBatch(this.db);
-    batch.delete(doc(this.db, 'players', id));
-    if (player?.confirmToken) batch.delete(doc(this.db, 'confirmations', player.confirmToken));
-    if (match) {
-      const patch = { ...countPatch(this.fs, match, -1, localCount), updatedAt: Date.now() };
-      if (nextTeams.changed) patch.teams = nextTeams.teams;
-      batch.update(doc(this.db, 'matches', match.id), patch);
+    const dropLink = isShortCode(player?.shortCode);
+    const commit = async (withLink) => {
+      const batch = writeBatch(this.db);
+      batch.delete(doc(this.db, 'players', id));
+      if (player?.confirmToken) batch.delete(doc(this.db, 'confirmations', player.confirmToken));
+      if (withLink) batch.delete(doc(this.db, 'links', player.shortCode));
+      if (match) {
+        const patch = { ...countPatch(this.fs, match, -1, localCount), updatedAt: Date.now() };
+        if (nextTeams.changed) patch.teams = nextTeams.teams;
+        batch.update(doc(this.db, 'matches', match.id), patch);
+      }
+      if (this._contactsLive) batch.delete(doc(this.db, 'playerContacts', id));
+      await batch.commit();
+    };
+    try {
+      await commit(dropLink);
+      if (dropLink) this._linksLive = true;
+    } catch (e) {
+      if (!dropLink || e?.code !== 'permission-denied') throw e;
+      this._linksLive = false;
+      await commit(false);
     }
-    if (this._contactsLive) batch.delete(doc(this.db, 'playerContacts', id));
-    await batch.commit();
   }
   _rosterDup(phone, id) {
     const key = phoneKey(canonicalWa(phone));

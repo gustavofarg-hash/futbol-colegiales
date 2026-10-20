@@ -13,6 +13,7 @@ import {
   needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress,
   reservationClearedByAnswer,
 } from './reminders.js';
+import { isShortCode, shortConfirmUrl } from './short.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
@@ -484,10 +485,16 @@ function renderMatch(id) {
 }
 
 /* ───────── textos ───────── */
+function confirmUrlFor(m, p) {
+  if (isShortCode(p?.shortCode)) return shortConfirmUrl(p.shortCode);
+  if (p?.confirmToken && p?.id) return confirmPageUrl({ matchId: m.id, playerId: p.id, token: p.confirmToken });
+  return '';
+}
 function waMessage(m, p) {
   const first = (p.name || '').trim().split(/\s+/)[0];
+  const link = confirmUrlFor(m, p);
   return `¡Hola ${first}! Te anoté para el fútbol 7 en ${VENUE} el ${labelDate(m.date)} a las ${m.time} hs.` +
-    (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽`;
+    (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽` + (link ? ` ${link}` : '');
 }
 function listText(m) {
   const ps = playersOf(m.id);
@@ -603,10 +610,13 @@ async function openReminders(m) {
   let showAll = false;
   openSheet(`<h3>Enviar recordatorios</h3><p class="hint">Armando los links…</p>`);
   const tokens = new Map();
+  const codes = new Map();
   try {
     for (const p of everyone) {
       if (!p.phone) continue;
       tokens.set(p.id, await app.store.ensureConfirmToken(p.id));
+      const code = await app.store.ensureShortLink(p.id);
+      if (code) codes.set(p.id, code);
     }
   } catch (e) {
     console.error(e);
@@ -614,10 +624,14 @@ async function openReminders(m) {
     closeSheet();
     return;
   }
-  const fresh = everyone.map((p) => ({ ...p, confirmToken: tokens.get(p.id) || p.confirmToken }));
+  const fresh = everyone.map((p) => ({
+    ...p,
+    confirmToken: tokens.get(p.id) || p.confirmToken,
+    shortCode: codes.get(p.id) || p.shortCode,
+  }));
   const linkById = new Map(reminderLinks({
     match: m, players: fresh, venue: VENUE,
-  }).map((row) => [new URL(row.confirmUrl).searchParams.get('p'), row]));
+  }).map((row) => [row.id, row]));
   const paint = () => {
     const visible = showAll ? fresh : playersForOrganizer(fresh, app.who);
     const prog = reminderProgress(visible);
@@ -782,7 +796,10 @@ async function offerPromotionWhatsApp(player, match) {
   }
   const token = await app.store.ensureConfirmToken(player.id);
   if (!confirm(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`)) return;
-  const confirmUrl = confirmPageUrl({ matchId: match.id, playerId: player.id, token });
+  const code = await app.store.ensureShortLink(player.id);
+  const confirmUrl = isShortCode(code)
+    ? shortConfirmUrl(code)
+    : confirmPageUrl({ matchId: match.id, playerId: player.id, token });
   const text = promotionMessage({ player, match, venue: VENUE, confirmUrl });
   openWa({ phone, text });
 }

@@ -17,6 +17,7 @@ import {
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
+import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
 import { cyclePlayer, dropPlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
@@ -351,6 +352,23 @@ test('lista de espera: al final, flechas y subir al primero', async () => {
   assert.equal(nextWaitOrder([{ waitOrder: 2 }, { waitOrder: 5 }]), 6);
 });
 
+test('link corto: código, url y el mismo destino', () => {
+  const code = newShortCode();
+  assert.equal(code.length, 8);
+  assert.equal(isShortCode(code), true);
+  assert.equal(isShortCode('corto'), false);
+  assert.equal(isShortCode(`${code}x`), false);
+  assert.equal(shortConfirmUrl(code), `https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=${code}`);
+  const token = 't'.repeat(24);
+  const landing = confirmTarget({
+    m: '2026-10-22_2100',
+    p: 'abc',
+    t: token,
+    href: 'http://127.0.0.1:18431/confirmar.html',
+  });
+  assert.equal(landing, `http://127.0.0.1:18431/confirmar.html?m=2026-10-22_2100&p=abc&t=${token}`);
+});
+
 test('recordatorio: token, link y mensaje', () => {
   const a = newConfirmToken();
   const b = newConfirmToken();
@@ -451,7 +469,17 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(links.length, 1);
   assert.equal(links[0].name, 'Juan Pérez');
   assert.equal(links[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-19_1500&p=p1&t=${token}`);
+  assert.equal(links[0].id, 'p1');
   assert.ok(links[0].waUrl.startsWith('https://wa.me/5491112345678?text='));
+  const short = 'Ab3x9Zk2';
+  const shortLinks = reminderLinks({
+    match,
+    players: [{ ...players[0], shortCode: short }],
+    venue: 'Polideportivo Colegiales',
+  });
+  assert.equal(shortLinks[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=${short}`);
+  assert.equal(decodeURIComponent(shortLinks[0].waUrl).includes(token), false);
+  assert.equal(decodeURIComponent(shortLinks[0].waUrl).includes(`/c/?k=${short}`), true);
   const businessLinks = reminderLinks({ match, players, venue: 'Polideportivo Colegiales', choice: 'business', android: true });
   assert.equal(businessLinks[0].waUrl.startsWith('https://wa.me/5491112345678?text='), true);
   assert.equal(businessLinks[0].waUrl.includes('package='), false);

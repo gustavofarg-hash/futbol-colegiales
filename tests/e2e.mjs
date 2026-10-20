@@ -136,8 +136,24 @@ for (const [name, phone] of players) {
 check('Contador 3/14', (await page.textContent('#slot-count')) === '3/14');
 check('Siguen 14 lugares (3 ocupados + 11 libres)', (await page.$$('#slots > li')).length === 14 && (await page.$$('.slot.free')).length === 11);
 const hrefs = await page.$$eval('.wa-btn', (els) => els.map((e) => e.getAttribute('href')));
-const msg = encodeURIComponent('¡Hola Juan! Te anoté para el fútbol 7 en Polideportivo Colegiales el jueves 22/10 a las 21:00 hs. (Cancha 2) ¿Confirmás? ⚽');
-check('Link wa.me Juan correcto', hrefs[0] === `https://wa.me/5491112345678?text=${msg}`, hrefs[0]);
+const juanHrefText = decodeURIComponent(new URL(hrefs[0]).searchParams.get('text') || '');
+const juanShort = juanHrefText.match(/\/c\/\?k=([0-9A-Za-z]{8})/)?.[1] || '';
+const juanLink = await page.evaluate((code) => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez');
+  return { id: found[0], player: found[1], link: db.links?.[code] || null };
+}, juanShort);
+check('Link wa.me Juan correcto',
+  hrefs[0].startsWith('https://wa.me/5491112345678?text=')
+  && juanHrefText.includes('¡Hola Juan!')
+  && juanHrefText.includes('¿Confirmás?')
+  && juanShort.length === 8
+  && juanLink.player.shortCode === juanShort
+  && juanLink.link?.m === juanLink.player.matchId
+  && juanLink.link?.p === juanLink.id
+  && juanLink.link?.t === juanLink.player.confirmToken
+  && juanHrefText.includes(juanLink.player.confirmToken) === false,
+  juanHrefText.slice(0, 180));
 players.forEach(([n, , wa], i) => check(`Número normalizado ${n} → ${wa}`, hrefs[i]?.startsWith(`https://wa.me/${wa}?text=`)));
 check('Cada jugador muestra "Agregó: Gustavo"', (await page.$$('.tag.g')).length === 3);
 check('Todos figuran sin respuesta', (await page.textContent('#confirm-sum')).includes('Sin respuesta: 3'));
@@ -161,10 +177,10 @@ const remindLink = page.locator('#remind-list .remind-row', { hasText: 'Juan Pé
 const remindHref = await remindLink.getAttribute('href');
 const remindText = decodeURIComponent(remindHref.split('text=')[1]);
 check('Recordatorio abre wa.me de Juan', remindHref.startsWith('https://wa.me/5491112345678?text='), remindHref.slice(0, 80));
-check('El mensaje saluda, da día, hora, lugar, nota y link',
+check('El mensaje saluda, da día, hora, lugar, nota y link corto',
   remindText.includes('¡Hola Juan!') && remindText.includes('jueves 22/10 a las 21:00 hs')
   && remindText.includes('Polideportivo Colegiales') && remindText.includes('(Cancha 2)')
-  && remindText.includes('confirmar.html?m='));
+  && remindText.includes('/c/?k='));
 const [popup] = await Promise.all([page.waitForEvent('popup'), remindLink.click()]);
 await popup.close();
 await page.waitForFunction(() => [...document.querySelectorAll('#remind-list .remind-row')].some((r) => r.textContent.includes('Juan') && r.textContent.includes('Enviado')));
@@ -174,7 +190,7 @@ const juan = await page.evaluate(() => {
   const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez');
   return { id: found[0], ...found[1] };
 });
-check('Token del link guardado en el jugador', juan.confirmToken && juan.confirmToken.length >= 16 && remindText.includes(`t=${juan.confirmToken}`) && juan.reminderSentAt > 0);
+check('Token del link guardado en el jugador', juan.confirmToken && juan.confirmToken.length >= 16 && juan.reminderSentAt > 0 && remindText.includes(`/c/?k=${juan.shortCode}`) && remindText.includes(juan.confirmToken) === false);
 const publicCard = await page.evaluate((token) => JSON.parse(localStorage.getItem('f7c-demo-db')).confirmations[token], juan.confirmToken);
 check('La ficha pública no tiene teléfono', publicCard && publicCard.name === 'Juan Pérez' && publicCard.phone == null && !JSON.stringify(publicCard).includes('549'));
 await page.click('dialog.sheet [data-close]');
@@ -184,6 +200,17 @@ await bad.goto(`${BASE}confirmar.html?m=${encodeURIComponent(juan.matchId)}&p=${
 await bad.waitForSelector('text=Este link no es válido');
 check('Token incorrecto no confirma', (await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).players[id].confirmed, juan.id)) == null);
 await bad.close();
+
+const shortPage = await ctx.newPage();
+await shortPage.goto(`${BASE}c/?k=${encodeURIComponent(juan.shortCode)}`);
+await shortPage.waitForSelector('#btn-si');
+check('El link corto abre la misma confirmación', (await shortPage.locator('body').innerText()).includes('Juan Pérez') && shortPage.url().includes('confirmar.html') && shortPage.url().includes(`t=${encodeURIComponent(juan.confirmToken)}`));
+const badShort = await ctx.newPage();
+await badShort.goto(`${BASE}c/?k=zzzzzzzz`);
+await badShort.waitForSelector('text=Este link no es válido');
+check('Un código corto inexistente no confirma', true);
+await badShort.close();
+await shortPage.close();
 
 const confirmPage = await ctx.newPage();
 await confirmPage.goto(`${BASE}confirmar.html?m=${encodeURIComponent(juan.matchId)}&p=${encodeURIComponent(juan.id)}&t=${encodeURIComponent(juan.confirmToken)}`);
@@ -509,9 +536,9 @@ check('El mensaje usa el nombre, el día, la hora y el link',
   && teoText.includes('Polideportivo Colegiales')
   && teoText.includes('lunes 26/10')
   && teoText.includes('21:00')
-  && teoText.includes('confirmar.html?m=')
+  && teoText.includes('/c/?k=')
   && teoText.includes(luisStored.token) === false
-  && teoText.includes('t='), teoText.slice(0, 180));
+  && /\/c\/\?k=[0-9A-Za-z]{8}/.test(teoText), teoText.slice(0, 180));
 await teoPopup.close();
 await page.click('#btn-add-wait');
 await page.fill('#player-form [name=name]', 'Sin Fono');
@@ -538,7 +565,7 @@ await page.waitForSelector('#cancel-links a');
 const cancelHref = await page.locator('#cancel-links a').first().getAttribute('href');
 const cancelText = decodeURIComponent(cancelHref || '');
 check('Pregunta y arma el aviso de WhatsApp sin link de confirmación',
-  /wa\.me\/549/.test(cancelHref || '') && cancelText.includes('se canceló') && cancelText.includes('Se inundó la cancha') && !cancelText.includes('confirmar.html'),
+  /wa\.me\/549/.test(cancelHref || '') && cancelText.includes('se canceló') && cancelText.includes('Se inundó la cancha') && !cancelText.includes('confirmar.html') && !cancelText.includes('/c/?k='),
   cancelText.slice(0, 180));
 await page.click('dialog.sheet [data-close]');
 await page.waitForSelector('#match-cancelled');
