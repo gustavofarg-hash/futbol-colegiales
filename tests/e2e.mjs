@@ -1159,6 +1159,23 @@ const i18 = historyOrder.indexOf('Domingo 18/10');
 const i15 = historyOrder.indexOf('Jueves 15/10');
 const i12 = historyOrder.indexOf('Lunes 12/10');
 check('El historial lista lo pasado, más reciente primero', i18 !== -1 && i15 !== -1 && i12 !== -1 && i18 < i15 && i15 < i12, historyOrder.join(', '));
+await page.fill('#hist-day', '2026-10-18');
+await page.click('#hist-apply');
+await page.waitForFunction(() => [...document.querySelectorAll('#list-history .match-title')].map((el) => el.textContent).join('|') === 'Domingo 18/10');
+check('Filtrar por una fecha deja ese día', (await page.textContent('#hist-caption')).includes('Domingo 18/10'));
+await page.click('#hist-clear');
+await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+await page.fill('#hist-from', '2026-10-12');
+await page.fill('#hist-to', '2026-10-15');
+await page.click('#hist-apply');
+await page.waitForFunction(() => {
+  const titles = [...document.querySelectorAll('#list-history .match-title')].map((el) => el.textContent);
+  return titles.includes('Jueves 15/10') && titles.includes('Lunes 12/10') && !titles.includes('Domingo 18/10');
+});
+check('Filtrar por rango desde-hasta', true);
+await page.click('#hist-clear');
+await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+check('Limpiar vuelve a los últimos partidos', await page.locator('#hist-clear').isHidden() && (await page.textContent('#hist-caption')).includes('más recientes primero'));
 const ayerCard = (await page.textContent('#list-history .match-card:has-text("Ayer")')).replace(/\s+/g, ' ');
 check('La tarjeta trae hora y cantidad de jugadores', /21:00 hs/.test(ayerCard) && /1\/14/.test(ayerCard) && /1 en espera/.test(ayerCard), ayerCard.trim());
 check('Hoy no entra al historial', await page.locator('#list-history .match-card:has-text("Hoy temprano")').count() === 0);
@@ -1405,6 +1422,14 @@ check('confirmar.html usa el tamaño guardado', await confirmSize.evaluate(() =>
 const overflowConfirm = await confirmSize.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('confirmar.html en 360px no desborda', overflowConfirm <= 1, String(overflowConfirm));
 await confirmSize.close();
+
+const fresh = await ctx.newPage();
+fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+await fresh.clock.install({ time: NOW });
+await fresh.goto(`${BASE}#/historial`);
+await fresh.waitForFunction(() => document.querySelector('#tab-proximos')?.getAttribute('aria-current') === 'page' && location.hash !== '#/historial');
+check('Al abrir la app arranca en Próximos partidos', await fresh.evaluate(() => location.hash === '#/' || location.hash === '' || location.hash === '#'));
+await fresh.close();
 
 check('Sin errores de JS', errors.length === 0, errors.join(' | '));
 await browser.close();

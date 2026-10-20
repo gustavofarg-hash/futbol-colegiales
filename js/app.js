@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
@@ -74,6 +74,11 @@ const app = {
   signupDraft: null,
   who: '',
   loaded: false,
+  history: [],
+  historyFilter: null,
+  historyMeta: null,
+  historyError: '',
+  matchMiss: {},
 };
 window.__app = app; // útil para depurar / tests
 
@@ -204,6 +209,22 @@ function route() {
   return { name: 'home' };
 }
 window.addEventListener('hashchange', render);
+
+/* Al abrir la app (sesión nueva) siempre entra Próximos partidos.
+   Recargar o volver atrás, en la misma sesión, deja la pestaña en la que estabas. */
+function openOnUpcoming() {
+  try {
+    if (sessionStorage.getItem('f7c-session')) return;
+    sessionStorage.setItem('f7c-session', '1');
+    sessionStorage.removeItem('f7c-tab');
+    const name = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || '';
+    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial';
+    if (section && location.hash && location.hash !== '#/' && location.hash !== '#') {
+      history.replaceState(null, '', `${location.pathname}${location.search}#/`);
+    }
+  } catch { /* modo privado */ }
+}
+openOnUpcoming();
 
 /* ───────── render ───────── */
 function savedTab() {
@@ -387,19 +408,61 @@ function renderTeams(id) {
 }
 
 function renderHistory() {
-  const past = pastMatches(app.matches);
+  const past = app.history || [];
+  const filter = app.historyFilter || {};
+  const caption = app.historyMeta?.caption || 'Partidos pasados, los más recientes primero.';
+  const active = !!(filter.day || filter.from || filter.to);
   $('#view').innerHTML = `
     <h2 class="section">Historial de partidos</h2>
-    <p class="hint roster-lead">Los partidos cuya fecha ya pasó. Se pueden anotar pagos y corregir la lista.</p>
+    <form id="history-filter" class="history-filter">
+      <p class="hint roster-lead">Por defecto, los últimos 30. Una fecha, o un desde y hasta. Si completás la fecha, esa manda.</p>
+      <label class="field"><span>Una fecha</span><input type="date" id="hist-day" value="${esc(filter.day || '')}"></label>
+      <div class="row">
+        <label class="field"><span>Desde</span><input type="date" id="hist-from" value="${esc(filter.from || '')}"></label>
+        <label class="field"><span>Hasta</span><input type="date" id="hist-to" value="${esc(filter.to || '')}"></label>
+      </div>
+      <div class="history-actions">
+        <button type="submit" class="btn primary" id="hist-apply">Ver</button>
+        <button type="button" class="btn" id="hist-clear"${active ? '' : ' hidden'}>Limpiar</button>
+      </div>
+    </form>
+    <p class="hint" id="hist-caption">${esc(caption)}</p>
+    ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
     ${past.length ? `<ul class="match-list" id="list-history">${past.map(matchCard).join('')}</ul>` : `
-      <div class="empty" id="list-history"><div class="big">📅</div><p><b>Todavía no hay partidos pasados.</b></p>
-      <p class="small">Cuando pase el día, el partido sale del inicio y queda acá.</p></div>`}
+      <div class="empty" id="list-history"><div class="big">📅</div><p><b>${active ? 'Nada en ese filtro.' : 'Todavía no hay partidos pasados.'}</b></p>
+      <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}
     <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>`;
+  $('#history-filter').onsubmit = (e) => {
+    e.preventDefault();
+    const day = $('#hist-day').value;
+    const from = $('#hist-from').value;
+    const to = $('#hist-to').value;
+    const next = day ? { day } : ((from || to) ? { from, to } : null);
+    app.historyFilter = next;
+    app.store.setHistoryFilter(next);
+  };
+  const clear = $('#hist-clear');
+  if (clear) clear.onclick = () => {
+    app.historyFilter = null;
+    app.store.setHistoryFilter(null);
+  };
 }
 
 function renderMatch(id) {
   const m = matchById(id);
   if (!m) {
+    if (app.matchMiss[id] !== 'done') {
+      if (app.matchMiss[id] !== 'loading') {
+        app.matchMiss[id] = 'loading';
+        Promise.resolve(app.store.ensureMatch?.(id)).finally(() => {
+          app.matchMiss[id] = 'done';
+          const current = route();
+          if (current.name === 'match' && current.id === id) render();
+        });
+      }
+      $('#view').innerHTML = `<div class="empty" id="match-missing"><div class="big">⚽</div><p><b>Buscando el partido…</b></p></div>`;
+      return;
+    }
     $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
     return;
   }
@@ -2197,8 +2260,11 @@ async function boot() {
   });
   $('#demo-banner').hidden = app.store.mode === 'firebase';
   app.store.setActor(app.session.user);
-  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError }) => {
+  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError, history, historyMeta, historyError }) => {
     app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
+    app.history = history || [];
+    app.historyMeta = historyMeta || null;
+    app.historyError = historyError || '';
     app.roster = roster || [];
     app.organizers = organizers || [];
     app.prices = prices || null;
@@ -2219,7 +2285,10 @@ async function boot() {
   render();
   armReminderTimer();
   // refrescar etiquetas "Hoy/Mañana"; al cambiar el día, el partido pasa al historial (no se borra)
-  setInterval(() => { if (!sheet.open || !sheet.querySelector('input, textarea')) render(); }, 60_000);
+  setInterval(() => {
+    app.store?.syncDay?.();
+    if (!sheet.open || !sheet.querySelector('input, textarea')) render();
+  }, 60_000);
 }
 
 // El aviso del navegador solo sale si la página está abierta cuando se cumplen
