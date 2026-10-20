@@ -2,6 +2,7 @@
 // La búsqueda no distingue mayúsculas ni acentos. El teléfono compara solo dígitos.
 // Sin WhatsApp, la misma persona se reconoce por el id del plantel y, si no hay, por el nombre.
 import { normalizePhone } from './phone.js';
+import { phoneKey } from './privacy.js';
 
 export const ROSTER_DENIED_READ = 'No se pueden leer los jugadores guardados. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 export const ROSTER_DENIED_WRITE = 'No se pudo guardar en Jugadores. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
@@ -48,21 +49,35 @@ export function canonicalPhone(phone) {
   return parsed.ok ? parsed.wa : phoneDigits(raw);
 }
 
+/** Hash guardado, o el hash del teléfono visible. Vacío si no hay número. */
+export function phoneIdentity(entity) {
+  const explicit = String(entity?.phoneKey || '').trim();
+  if (/^[0-9a-f]{64}$/.test(explicit)) return explicit;
+  const phone = canonicalPhone(entity?.phone);
+  return phone ? phoneKey(phone) : '';
+}
+
 export function rosterByPhone(roster, phone) {
-  const key = canonicalPhone(phone);
+  const key = phoneIdentity({ phone });
   if (!key) return null;
-  return (roster || []).find((person) => canonicalPhone(person.phone) === key) || null;
+  return (roster || []).find((person) => phoneIdentity(person) === key) || null;
+}
+
+export function rosterByIdentity(roster, key) {
+  const id = String(key || '').trim();
+  if (!id) return null;
+  return (roster || []).find((person) => phoneIdentity(person) === id) || null;
 }
 
 /**
  * El jugador es esta ficha del plantel.
- * Manda el teléfono. Si ninguno tiene, manda el id del plantel.
+ * Manda el teléfono (el hash, aunque el número esté oculto). Si ninguno tiene, manda el id del plantel.
  * Si el jugador no tiene teléfono ni id, alcanza el mismo nombre.
  */
 export function playerMatchesPerson(player, person) {
   if (!player || !person) return false;
-  const phoneP = canonicalPhone(player.phone);
-  const phoneR = canonicalPhone(person.phone);
+  const phoneP = phoneIdentity(player);
+  const phoneR = phoneIdentity(person);
   if (phoneP && phoneR && phoneP === phoneR) return true;
   if (player.rosterId && person.id && player.rosterId === person.id) return true;
   if (phoneP || player.rosterId || phoneR) return false;

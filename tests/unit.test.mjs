@@ -1,21 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMatchesFromText as p } from '../js/parser.js';
-import { isAndroidUa, normalizePhone, normalizeWaChoice, waLink, waSendUrl } from '../js/phone.js';
+import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
-import { playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
-import { currentMatches, keptSignupIds, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
+import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
+import { phoneKey, sha256Hex } from '../js/privacy.js';
+import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { toEpoch } from '../js/dates.js';
+import { addDays, toEpoch } from '../js/dates.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
+import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
 import { cyclePlayer, dropPlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
@@ -79,22 +81,14 @@ test('teléfonos argentinos', () => {
   assert.equal(normalizePhone('11 1234-5678').display, '+54 9 11 1234-5678');
 });
 
-test('WhatsApp: wa.me por defecto y package en Android', () => {
+test('WhatsApp: siempre wa.me, sin package', () => {
   assert.equal(waLink('5491112345678', 'Hola'), 'https://wa.me/5491112345678?text=Hola');
-  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: false }), 'https://wa.me/5491112345678?text=Hola');
-  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'ask', android: true }), 'https://wa.me/5491112345678?text=Hola');
-  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', android: true }), 'https://wa.me/5491112345678?text=Hola');
-  assert.equal(waSendUrl({ text: 'Lista', choice: 'whatsapp', android: false }), 'https://wa.me/?text=Lista');
-  const business = waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'business', android: true });
-  assert.equal(business, `intent://wa.me/5491112345678?text=Hola%20Juan#Intent;scheme=https;package=com.whatsapp.w4b;S.browser_fallback_url=${encodeURIComponent('https://wa.me/5491112345678?text=Hola%20Juan')};end`);
-  const plain = waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'whatsapp', android: true });
-  assert.match(plain, /package=com\.whatsapp;/);
-  assert.doesNotMatch(plain, /package=com\.whatsapp\.w4b/);
-  assert.equal(isAndroidUa('Mozilla/5.0 (Linux; Android 14; Pixel 7)'), true);
-  assert.equal(isAndroidUa('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'), false);
-  assert.equal(normalizeWaChoice('business'), 'business');
-  assert.equal(normalizeWaChoice('ask'), 'ask');
-  assert.equal(normalizeWaChoice('otro'), null);
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: true }), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'whatsapp', android: true }), 'https://wa.me/5491112345678?text=Hola%20Juan');
+  assert.equal(waSendUrl({ text: 'Lista', choice: 'ask', android: true }), 'https://wa.me/?text=Lista');
+  const url = waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: true });
+  assert.equal(url.includes('package='), false);
+  assert.equal(url.startsWith('intent://'), false);
 });
 
 test('montos en pesos', () => {
@@ -358,6 +352,23 @@ test('lista de espera: al final, flechas y subir al primero', async () => {
   assert.equal(nextWaitOrder([{ waitOrder: 2 }, { waitOrder: 5 }]), 6);
 });
 
+test('link corto: código, url y el mismo destino', () => {
+  const code = newShortCode();
+  assert.equal(code.length, 8);
+  assert.equal(isShortCode(code), true);
+  assert.equal(isShortCode('corto'), false);
+  assert.equal(isShortCode(`${code}x`), false);
+  assert.equal(shortConfirmUrl(code), `https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=${code}`);
+  const token = 't'.repeat(24);
+  const landing = confirmTarget({
+    m: '2026-10-22_2100',
+    p: 'abc',
+    t: token,
+    href: 'http://127.0.0.1:18431/confirmar.html',
+  });
+  assert.equal(landing, `http://127.0.0.1:18431/confirmar.html?m=2026-10-22_2100&p=abc&t=${token}`);
+});
+
 test('recordatorio: token, link y mensaje', () => {
   const a = newConfirmToken();
   const b = newConfirmToken();
@@ -378,8 +389,8 @@ test('recordatorio: token, link y mensaje', () => {
   assert.ok(msg.includes(url));
   assert.ok(waReminderUrl('5491112345678', msg).startsWith('https://wa.me/5491112345678?text='));
   const forced = waReminderUrl('5491112345678', msg, { choice: 'whatsapp', android: true });
-  assert.match(forced, /package=com\.whatsapp;/);
-  assert.equal(decodeURIComponent(forced.split('S.browser_fallback_url=')[1].replace(/;end$/, '')).startsWith('https://wa.me/5491112345678?text='), true);
+  assert.equal(forced.startsWith('https://wa.me/5491112345678?text='), true);
+  assert.equal(forced.includes('package='), false);
   const player = { matchId: '2026-10-22_2100', confirmToken: a };
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', a), true);
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', 'otro-token-largo-falso'), false);
@@ -458,9 +469,20 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(links.length, 1);
   assert.equal(links[0].name, 'Juan Pérez');
   assert.equal(links[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-19_1500&p=p1&t=${token}`);
+  assert.equal(links[0].id, 'p1');
   assert.ok(links[0].waUrl.startsWith('https://wa.me/5491112345678?text='));
+  const short = 'Ab3x9Zk2';
+  const shortLinks = reminderLinks({
+    match,
+    players: [{ ...players[0], shortCode: short }],
+    venue: 'Polideportivo Colegiales',
+  });
+  assert.equal(shortLinks[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=${short}`);
+  assert.equal(decodeURIComponent(shortLinks[0].waUrl).includes(token), false);
+  assert.equal(decodeURIComponent(shortLinks[0].waUrl).includes(`/c/?k=${short}`), true);
   const businessLinks = reminderLinks({ match, players, venue: 'Polideportivo Colegiales', choice: 'business', android: true });
-  assert.match(businessLinks[0].waUrl, /package=com\.whatsapp\.w4b;/);
+  assert.equal(businessLinks[0].waUrl.startsWith('https://wa.me/5491112345678?text='), true);
+  assert.equal(businessLinks[0].waUrl.includes('package='), false);
   assert.equal(businessLinks[0].phone, '5491112345678');
   const text = decodeURIComponent(links[0].waUrl.split('text=')[1]);
   assert.match(text, /^¡Hola Juan!/);
@@ -600,7 +622,7 @@ test('pagos por organizador: mes, cobrador y veces anotado', () => {
     organizer: 'Martín',
   });
   const juan = summary.find((row) => row.name === 'Juan Pérez');
-  const otro = summary.find((row) => row.key === '5491100000000');
+  const otro = summary.find((row) => row.key === `p:${phoneKey('5491100000000')}`);
   assert.equal(juan.paidTotal, 5000);
   assert.equal(juan.signupTotal, 1);
   assert.equal(otro.paid[0].amount, 9000);
@@ -985,8 +1007,63 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
     { id: 'manana', date: '2026-10-20', time: '19:00' },
   ];
   assert.deepEqual(currentMatches(matches, now).map((match) => match.id), ['hoy-temprano', 'hoy-noche', 'cancelado', 'manana']);
+  const horizon = [
+    { id: 'hoy', date: '2026-10-19', time: '21:00' },
+    { id: 'mas7', date: '2026-10-26', time: '21:00' },
+    { id: 'mas8', date: '2026-10-27', time: '21:00' },
+    { id: 'ayer', date: '2026-10-18', time: '21:00' },
+  ];
+  const split = splitNear(horizon, now);
+  assert.deepEqual(split.next.map((match) => match.id), ['hoy', 'mas7']);
+  assert.deepEqual(split.later.map((match) => match.id), ['mas8']);
+  assert.equal(split.limit, '2026-10-26');
   assert.deepEqual(pastMatches(matches, now).map((match) => match.id), ['ayer', 'viejo']);
   assert.deepEqual(upcomingMatches(matches, now).map((match) => match.id), ['hoy-noche', 'manana']);
+  const many = [];
+  for (let i = 0; i < 40; i++) {
+    const date = addDays('2026-10-18', -i);
+    many.push({ id: date, date, time: '21:00', startsAt: toEpoch(date, '21:00') });
+  }
+  many.push({ id: 'hoy', date: '2026-10-19', time: '10:00', startsAt: toEpoch('2026-10-19', '10:00') });
+  many.push({ id: 'despues', date: '2026-10-22', time: '21:00', startsAt: toEpoch('2026-10-22', '21:00') });
+  const recent = historyWindow(many, null, now);
+  assert.equal(recent.matches.length, HISTORY_PAGE);
+  assert.equal(recent.matches[0].id, '2026-10-18');
+  assert.equal(recent.matches.at(-1).id, addDays('2026-10-18', -(HISTORY_PAGE - 1)));
+  assert.equal(recent.matches.some((match) => match.date >= '2026-10-19'), false);
+  const outside = historyWindow(many, { day: '2026-09-09' }, now);
+  assert.equal(outside.matches.length, 1);
+  assert.equal(outside.matches[0].date, '2026-09-09');
+  assert.equal(historyWindow(many, { day: '2026-10-19' }, now).matches.length, 0);
+  const range = historyWindow(many, { from: '2026-10-15', to: '2026-10-12' }, now);
+  assert.deepEqual(range.matches.map((match) => match.date), ['2026-10-15', '2026-10-14', '2026-10-13', '2026-10-12']);
+  const visible = [
+    { id: 'solo', date: '2026-10-18', time: '21:00', viewers: ['gustavo'], createdByUid: 'gustavo' },
+    { id: 'abierto', date: '2026-10-18', time: '19:00', viewers: ['*'] },
+  ].filter((match) => canView(match, 'martin'));
+  assert.deepEqual(historyWindow(visible, { day: '2026-10-18' }, now).matches.map((match) => match.id), ['abierto']);
+  const bounds = historyBounds(null, now);
+  const plan = matchQueryPlan('history', bounds, '2026-10-19');
+  assert.equal(plan.limit, 30);
+  assert.deepEqual(plan.orderBy, ['date', 'desc']);
+  assert.ok(plan.filters.some((filter) => filter.op === 'array-contains-any' && filter.field === 'viewers'));
+  assert.ok(plan.filters.some((filter) => filter.field === 'date' && filter.op === '<' && filter.value === '2026-10-19'));
+  const ranged = matchQueryPlan('history', historyBounds({ from: '2026-10-01', to: '2026-10-10' }, now), '2026-10-19');
+  assert.equal(ranged.limit, null);
+  assert.ok(ranged.filters.some((filter) => filter.op === '>=' && filter.value === '2026-10-01'));
+  assert.ok(ranged.filters.some((filter) => filter.op === '<=' && filter.value === '2026-10-10'));
+  const upcoming = matchQueryPlan('upcoming', null, '2026-10-19');
+  assert.equal(upcoming.limit, null);
+  assert.deepEqual(upcoming.orderBy, ['date', 'asc']);
+  assert.ok(upcoming.filters.some((filter) => filter.op === '>=' && filter.value === '2026-10-19'));
+  const byDate = playerStats({
+    phone: '5491100002222',
+    players: [{ matchId: 'fuera', matchDate: '2026-10-15', phone: '5491100002222', waiting: false }],
+    matches: [],
+    now,
+  });
+  assert.equal(byDate.played, 1);
+  assert.equal(byDate.summary, 'Mayormente jueves');
 });
 
 test('equipos: toque, azar, baja y mensaje', () => {
@@ -1073,4 +1150,53 @@ test('con jugadores no se borra, el contador sigue y las notas quedan en la fich
   assert.equal(db.matches[mid].cancelledAt, null);
   assert.equal(db.matches[mid].notes.length, 2000);
   assert.equal(Object.values(db.confirmations).find((item) => item.matchId === mid).cancelled, false);
+});
+
+test('sha256 y privacidad del WhatsApp: el otro organizador no ve el número', async () => {
+  assert.equal(sha256Hex('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  assert.equal(phoneKey(''), '');
+  assert.equal(phoneKey('11 1234-5678'), phoneKey('5491112345678'));
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-privacy';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo' });
+  const mid = await store.addMatch({ date: '2026-10-22', time: '21:00', note: '' }, 'Gustavo');
+  const pid = await store.addPlayer({ id: mid, date: '2026-10-22', capacity: 14 }, { name: 'Juan Pérez', phone: '5491112345678' }, 'Gustavo');
+  const raw = JSON.parse(mem.get('f7c-test-privacy'));
+  assert.equal(raw.players[pid].phone, undefined);
+  assert.equal(raw.players[pid].hasPhone, true);
+  assert.equal(raw.contacts.players[pid].phone, '5491112345678');
+  assert.equal(raw.contacts.players[pid].ownerUid, 'gustavo');
+  assert.equal(raw.contacts.players[pid].visibleToAll, false);
+  assert.equal(raw.players[pid].phoneKey, phoneKey('5491112345678'));
+  let seen = null;
+  store.subscribe((snap) => { seen = snap; });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(seen.players.find((p) => p.id === pid).phone, '5491112345678');
+  store.setActor({ uid: 'martin', name: 'Martín' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const hidden = seen.players.find((p) => p.id === pid);
+  assert.equal(hidden.phone, '');
+  assert.equal(hidden.phonePrivate, true);
+  assert.equal(hidden.hasPhone, true);
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const rosterId = await store.addRoster({ name: 'Juan Pérez', phone: '5491112345678' }, 'Gustavo');
+  await store.setPhoneShared({ rosterId }, true);
+  store.setActor({ uid: 'martin', name: 'Martín' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(seen.players.find((p) => p.id === pid).phone, '5491112345678');
+  assert.equal(seen.roster.find((r) => r.id === rosterId).phone, '5491112345678');
+  const withKey = { phoneKey: phoneKey('5491112345678'), phone: '' };
+  const withPhone = { phone: '5491112345678' };
+  assert.equal(playerMatchesPerson(withKey, { id: 'ros', phone: '11 1234-5678', name: 'Juan' }), true);
+  assert.equal(playerPromoKey(withKey), playerPromoKey(withPhone));
+  assert.equal(playerPromoKey({ phone: '', rosterId: 'ros1' }), 'r:ros1');
+  assert.equal(playerPromoKey({ phone: '', name: 'Solo' }), 'n:solo');
+  assert.equal(phoneIdentity(withKey), phoneIdentity(withPhone));
+  assert.equal(rosterHit({ name: 'Juan', phone: '', phoneKey: phoneKey('5491112345678') }, '1234'), false);
 });

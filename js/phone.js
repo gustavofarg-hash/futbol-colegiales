@@ -65,35 +65,16 @@ export function waLink(wa, text) {
   return waSendUrl({ phone: wa, text });
 }
 
-/** Elección guardada en el dispositivo. `ask` es el wa.me de siempre. */
+/** Preferencia vieja. La app la borra al abrir: ya no se fuerza una app. */
 export const WA_CHOICE_KEY = 'f7c-wa-from';
 
-export function normalizeWaChoice(value) {
-  return value === 'whatsapp' || value === 'business' || value === 'ask' ? value : null;
-}
-
-/** Solo Android puede abrir un package concreto. En iPhone el scheme no es confiable. */
-export function isAndroidUa(ua) {
-  return /Android/i.test(String(ua || ''));
-}
-
 /**
- * Único armado de links de WhatsApp.
- * Por defecto (`ask`) es un wa.me plano, sin package: el celular pregunta
- * y Dual Messenger puede ofrecer los dos WhatsApp.
- * WhatsApp y WhatsApp Business, solo en Android, salen por intent con package
- * (com.whatsapp / com.whatsapp.w4b) y caen a wa.me si la app no está.
- * Ese package no distingue el WhatsApp clonado. En iPhone o escritorio
- * siempre es wa.me: no hay forma confiable de forzar la app.
+ * Único armado de links de WhatsApp. Siempre es un wa.me plano, sin package
+ * ni intent: el celular elige la app (y Dual Messenger puede ofrecer las dos).
+ * `choice` y `android` se ignoran para que un valor viejo no cambie el link.
  */
-export function waSendUrl({ phone = '', text = '', choice = 'ask', android = false } = {}) {
+export function waSendUrl({ phone = '', text = '' } = {}) {
   const digits = String(phone || '').replace(/\D/g, '');
   const query = text ? `?text=${encodeURIComponent(text)}` : '';
-  const web = digits ? `https://wa.me/${digits}${query}` : `https://wa.me/${query}`;
-  const picked = normalizeWaChoice(choice) || 'ask';
-  if (!android || picked === 'ask') return web;
-  const pkg = picked === 'business' ? 'com.whatsapp.w4b' : 'com.whatsapp';
-  const fallback = encodeURIComponent(web);
-  const path = web.slice('https://'.length);
-  return `intent://${path}#Intent;scheme=https;package=${pkg};S.browser_fallback_url=${fallback};end`;
+  return digits ? `https://wa.me/${digits}${query}` : `https://wa.me/${query}`;
 }

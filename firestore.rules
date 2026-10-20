@@ -202,10 +202,24 @@ service cloud.firestore {
               && request.resource.data.confirmedAt is number);
     }
 
+    function phoneGone(d) {
+      return !('phone' in d) || d.phone == '';
+    }
+    function phoneKeyOk(v) {
+      return v is string && (v.size() == 0 || (v.size() == 64 && v.matches('^[0-9a-f]{64}$')));
+    }
+    function phoneMeta(d) {
+      return (!('phoneKey' in d) || phoneKeyOk(d.phoneKey))
+          && (!('hasPhone' in d) || d.hasPhone is bool)
+          && (!('phoneShared' in d) || d.phoneShared is bool)
+          && (!('phoneOwnerUid' in d) || (d.phoneOwnerUid is string && d.phoneOwnerUid.size() <= 128));
+    }
     function validPlayer(d) {
       return d.matchId is string && d.name is string
           && d.name.size() > 0 && d.name.size() <= 60
-          && d.phone is string && d.phone.size() <= 20
+          && phoneGone(d)
+          && phoneMeta(d)
+          && (!('shortCode' in d) || (d.shortCode is string && d.shortCode.matches('^[0-9A-Za-z]{8}$')))
           && validPayment(d);
     }
 
@@ -244,8 +258,10 @@ service cloud.firestore {
     }
     function validRoster(d) {
       return d.name is string && d.name.size() > 0 && d.name.size() <= 60
-          && d.phone is string && d.phone.size() <= 20
+          && phoneGone(d)
+          && phoneMeta(d)
           && (!('createdBy' in d) || (d.createdBy is string && d.createdBy.size() <= 40))
+          && (!('createdByUid' in d) || (d.createdByUid is string && d.createdByUid.size() <= 128))
           && (!('createdAt' in d) || d.createdAt is number)
           && (!('updatedAt' in d) || d.updatedAt is number)
           && (!('level' in d) || (d.level is int && d.level >= 1 && d.level <= 10))
@@ -381,6 +397,123 @@ service cloud.firestore {
       allow update: if token.size() >= 16 && token.size() <= 80
           && validConfirmation(request.resource.data)
           && anonymousConfirm();
+      allow delete: if isActiveStaff();
+    }
+
+    function contactPhoneOk(d) {
+      return d.phone is string && d.phone.size() > 0 && d.phone.size() <= 20
+          && d.ownerUid is string && d.ownerUid.size() > 0 && d.ownerUid.size() <= 128
+          && d.visibleToAll is bool
+          && d.phoneKey is string && d.phoneKey.size() == 64 && d.phoneKey.matches('^[0-9a-f]{64}$');
+    }
+    function validPlayerContact(d) {
+      return contactPhoneOk(d)
+          && d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30;
+    }
+    function validRosterContact(d) {
+      return contactPhoneOk(d);
+    }
+    function playerPath(playerId) {
+      return /databases/$(database)/documents/players/$(playerId);
+    }
+    function rosterPath(rosterId) {
+      return /databases/$(database)/documents/roster/$(rosterId);
+    }
+    function contactViewersFollow(playerId) {
+      return request.resource.data.viewers == get(playerPath(playerId)).data.get('viewers', ['*']);
+    }
+    // El teléfono no está en players ni en roster. Estas dos colecciones
+    // lo guardan. Sin visibleToAll solo lo lee ownerUid. El admin no entra.
+    match /playerContacts/{playerId} {
+      allow get: if isActiveStaff() && (
+        resource.data.ownerUid == request.auth.uid
+        || (resource.data.visibleToAll == true && canReadListed(resource.data))
+      );
+      allow list: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+      allow list: if isActiveStaff() && resource.data.visibleToAll == true
+          && resource.data.viewers.hasAny([request.auth.uid, '*']);
+      allow create: if isActiveStaff() && validPlayerContact(request.resource.data)
+          && exists(playerPath(playerId))
+          && contactViewersFollow(playerId)
+          && request.resource.data.ownerUid == request.auth.uid
+          && get(playerPath(playerId)).data.get('addedByUid', '') == request.auth.uid;
+      allow create: if isActiveStaff() && validPlayerContact(request.resource.data)
+          && exists(playerPath(playerId))
+          && contactViewersFollow(playerId)
+          && request.resource.data.visibleToAll == false
+          && get(playerPath(playerId)).data.get('phone', '') == request.resource.data.phone
+          && get(playerPath(playerId)).data.get('phone', '').size() > 0
+          && (
+            request.resource.data.ownerUid == get(playerPath(playerId)).data.get('addedByUid', '')
+            || (
+              get(playerPath(playerId)).data.get('addedByUid', '') == ''
+              && request.resource.data.ownerUid == request.auth.uid
+              && get(playerPath(playerId)).data.addedBy is string
+              && userData().name is string
+              && get(playerPath(playerId)).data.addedBy.lower() == userData().name.lower()
+            )
+          );
+      allow update: if isActiveStaff() && validPlayerContact(request.resource.data)
+          && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && contactViewersFollow(playerId);
+      allow update: if isActiveStaff() && validPlayerContact(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewers'])
+          && exists(playerPath(playerId))
+          && contactViewersFollow(playerId)
+          && isAdder(matchData(get(playerPath(playerId)).data.matchId));
+      allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+      allow delete: if isActiveStaff() && !exists(playerPath(playerId));
+      allow delete: if isActiveStaff() && exists(playerPath(playerId))
+          && isAdder(matchData(get(playerPath(playerId)).data.matchId));
+    }
+
+    match /rosterContacts/{rosterId} {
+      allow get: if isActiveStaff() && (
+        resource.data.ownerUid == request.auth.uid
+        || resource.data.visibleToAll == true
+      );
+      allow list: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+      allow list: if isActiveStaff() && resource.data.visibleToAll == true;
+      allow create: if isActiveStaff() && validRosterContact(request.resource.data)
+          && exists(rosterPath(rosterId))
+          && request.resource.data.ownerUid == request.auth.uid
+          && (
+            get(rosterPath(rosterId)).data.get('createdByUid', '') == request.auth.uid
+            || get(rosterPath(rosterId)).data.get('phoneOwnerUid', '') == request.auth.uid
+          );
+      allow create: if isActiveStaff() && validRosterContact(request.resource.data)
+          && exists(rosterPath(rosterId))
+          && request.resource.data.visibleToAll == false
+          && get(rosterPath(rosterId)).data.get('phone', '') == request.resource.data.phone
+          && get(rosterPath(rosterId)).data.get('phone', '').size() > 0
+          && (
+            request.resource.data.ownerUid == get(rosterPath(rosterId)).data.get('createdByUid', '')
+            || (
+              get(rosterPath(rosterId)).data.get('createdByUid', '') == ''
+              && request.resource.data.ownerUid == request.auth.uid
+              && get(rosterPath(rosterId)).data.createdBy is string
+              && userData().name is string
+              && get(rosterPath(rosterId)).data.createdBy.lower() == userData().name.lower()
+            )
+          );
+      allow update: if isActiveStaff() && validRosterContact(request.resource.data)
+          && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if isActiveStaff();
+    }
+
+    // El id es el código corto (8, base62). Apunta al mismo m, p y t del link largo.
+    // Se lee un documento si se conoce el id. No se lista.
+    function validShortLink(d) {
+      return d.m is string && d.m.size() > 0 && d.m.size() <= 80
+          && d.p is string && d.p.size() > 0 && d.p.size() <= 80
+          && d.t is string && d.t.size() >= 16 && d.t.size() <= 80;
+    }
+    match /links/{code} {
+      allow get: if code.size() == 8 && code.matches('^[0-9A-Za-z]{8}$');
+      allow create, update: if isActiveStaff() && validShortLink(request.resource.data)
+          && code.size() == 8 && code.matches('^[0-9A-Za-z]{8}$');
       allow delete: if isActiveStaff();
     }
 
