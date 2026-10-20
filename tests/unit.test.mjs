@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMatchesFromText as p } from '../js/parser.js';
-import { normalizePhone } from '../js/phone.js';
+import { isAndroidUa, normalizePhone, normalizeWaChoice, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
 import { playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
-import { matchSignupState, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
+import { keptSignupIds, matchSignupState, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -76,6 +76,24 @@ test('teléfonos argentinos', () => {
   assert.equal(normalizePhone('123').ok, false);
   assert.equal(normalizePhone('+34 612 345 678').wa, '34612345678');
   assert.equal(normalizePhone('11 1234-5678').display, '+54 9 11 1234-5678');
+});
+
+test('WhatsApp: wa.me por defecto y package en Android', () => {
+  assert.equal(waLink('5491112345678', 'Hola'), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: false }), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'ask', android: true }), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', android: true }), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ text: 'Lista', choice: 'whatsapp', android: false }), 'https://wa.me/?text=Lista');
+  const business = waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'business', android: true });
+  assert.equal(business, `intent://wa.me/5491112345678?text=Hola%20Juan#Intent;scheme=https;package=com.whatsapp.w4b;S.browser_fallback_url=${encodeURIComponent('https://wa.me/5491112345678?text=Hola%20Juan')};end`);
+  const plain = waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'whatsapp', android: true });
+  assert.match(plain, /package=com\.whatsapp;/);
+  assert.doesNotMatch(plain, /package=com\.whatsapp\.w4b/);
+  assert.equal(isAndroidUa('Mozilla/5.0 (Linux; Android 14; Pixel 7)'), true);
+  assert.equal(isAndroidUa('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'), false);
+  assert.equal(normalizeWaChoice('business'), 'business');
+  assert.equal(normalizeWaChoice('ask'), 'ask');
+  assert.equal(normalizeWaChoice('otro'), null);
 });
 
 test('montos en pesos', () => {
@@ -358,6 +376,9 @@ test('recordatorio: token, link y mensaje', () => {
   assert.match(msg, /\(Cancha 2\)/);
   assert.ok(msg.includes(url));
   assert.ok(waReminderUrl('5491112345678', msg).startsWith('https://wa.me/5491112345678?text='));
+  const forced = waReminderUrl('5491112345678', msg, { choice: 'whatsapp', android: true });
+  assert.match(forced, /package=com\.whatsapp;/);
+  assert.equal(decodeURIComponent(forced.split('S.browser_fallback_url=')[1].replace(/;end$/, '')).startsWith('https://wa.me/5491112345678?text='), true);
   const player = { matchId: '2026-10-22_2100', confirmToken: a };
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', a), true);
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', 'otro-token-largo-falso'), false);
@@ -395,6 +416,22 @@ test('aviso al subir de la espera y lugar reservado', () => {
   assert.equal(sum.no, 1);
   assert.equal(sum.pending, 1);
   assert.equal(sum.text, 'Confirmados: 1 · A confirmar: 2 · No juegan: 1 · Sin respuesta: 1');
+  assert.equal(confirmStatus({ waiting: true }), null);
+  assert.equal(confirmStatus({ waiting: true, confirmed: 'si' }), null);
+  assert.equal(confirmStatus({ waiting: true, confirmed: 'no' }), null);
+  const waiting = confirmSummary([
+    { waiting: true },
+    { waiting: true, confirmed: 'si' },
+    { waiting: true, confirmed: 'no' },
+    { confirmed: 'si' },
+  ]);
+  assert.equal(waiting.pending, 0);
+  assert.equal(waiting.si, 1);
+  assert.equal(waiting.no, 0);
+  assert.equal(waiting.hold, 0);
+  assert.equal(waiting.text, 'Confirmados: 1 · No juegan: 0 · Sin respuesta: 0');
+  assert.equal(confirmStatus({ waiting: false }).text, '⏳ Sin respuesta');
+  assert.equal(confirmStatus({ confirmed: 'no' }).text, '❌ No juega');
 });
 
 test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
@@ -420,6 +457,9 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(links[0].name, 'Juan Pérez');
   assert.equal(links[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-19_1500&p=p1&t=${token}`);
   assert.ok(links[0].waUrl.startsWith('https://wa.me/5491112345678?text='));
+  const businessLinks = reminderLinks({ match, players, venue: 'Polideportivo Colegiales', choice: 'business', android: true });
+  assert.match(businessLinks[0].waUrl, /package=com\.whatsapp\.w4b;/);
+  assert.equal(businessLinks[0].phone, '5491112345678');
   const text = decodeURIComponent(links[0].waUrl.split('text=')[1]);
   assert.match(text, /^¡Hola Juan!/);
   assert.match(text, /lunes 19\/10 a las 15:00 hs \(Cancha 2\)/);
@@ -488,6 +528,16 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
   const record = playerRecord({ phone, players, matches });
   assert.equal(record.paidText, 'Pagó $10.000 en 2 partidos');
   assert.equal(record.confirmText, 'Confirmó 2 de 3');
+  assert.equal(playerRecord({
+    phone: '5491100001111',
+    players: [{ matchId: 'esp', phone: '5491100001111', waiting: true }],
+    matches,
+  }).confirmText, '');
+  assert.deepEqual(keptSignupIds(['libre', 'lleno', 'ya', 'fuera'], [
+    { id: 'libre', existing: false },
+    { id: 'lleno', existing: false },
+    { id: 'ya', existing: true },
+  ]), ['libre', 'lleno']);
   const ledger = paymentLedger({ phone, players, matches });
   assert.equal(ledger.totalText, 'Pagó $19.000');
   assert.equal(ledger.months[0].text, 'Oct 2026: $19.000');
