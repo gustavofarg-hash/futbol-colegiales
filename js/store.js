@@ -28,6 +28,7 @@
 //    receivedBy: string|null           (quién cobró; null o ausente = "Sin especificar")
 //    paidUpdatedBy, paidUpdatedAt
 //    waiting: bool                      (true = lista de espera)
+//    invitedBy: id del jugador que lo trajo (amigo). invitedByName: nombre de ese momento.
 //    waitOrder: number|null             (menor = más prioridad; null si es titular)
 //    rosterAt: number|null              (cuándo entró a la lista principal)
 //    confirmToken: string               (link largo de confirmar.html; se crea al anotar)
@@ -83,6 +84,7 @@ import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
+import { ALREADY_IN_MATCH, alreadyInMatch } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
@@ -145,6 +147,29 @@ export function matchIdFor(date, time, existingIds = new Set()) {
 }
 
 const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+function refuseDuplicate(mates, data) {
+  const name = String(data?.name || '').trim();
+  const invitedBy = String(data?.invitedBy || '').trim();
+  if (alreadyInMatch(mates, {
+    name,
+    phone: data?.phone || '',
+    phoneKey: data?.phoneKey || '',
+    rosterId: data?.rosterId || '',
+    hasPhone: data?.hasPhone === true,
+    invitedBy,
+    guestAuto: data?.guestAuto === true,
+  }, { roster: false })) {
+    throw Object.assign(new Error(ALREADY_IN_MATCH), { code: 'already-in-match' });
+  }
+}
+
+function guestFields(data) {
+  const invitedBy = String(data?.invitedBy || '').trim();
+  if (!invitedBy) return {};
+  const invitedByName = String(data?.invitedByName || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  return invitedByName ? { invitedBy, invitedByName } : { invitedBy };
+}
 
 function matchDoc(data, who) {
   const now = Date.now();
@@ -485,6 +510,7 @@ class LocalStore {
   async addPlayer(match, data, who, opts = {}) {
     const db = this._load(); const id = rid(); const now = Date.now();
     const mates = Object.values(db.players).filter((p) => p.matchId === match.id);
+    refuseDuplicate(mates, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
     const waiting = opts.waiting === true || mainCount >= cap;
@@ -499,6 +525,7 @@ class LocalStore {
       hasPhone: false, phoneKey: '', phoneOwnerUid: this.actor?.uid || '', phoneShared: false,
       ...playerAccess(match),
       ...(rosterId ? { rosterId } : {}),
+      ...guestFields(data),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     db.players[id] = player;
@@ -1347,6 +1374,7 @@ class FirebaseStore {
   async addPlayer(match, data, who, opts = {}) {
     const { collection, addDoc, doc, updateDoc, deleteField } = this.fs; const now = Date.now();
     const mates = this.state.players.filter((p) => p.matchId === match.id);
+    refuseDuplicate(mates, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
     const waiting = opts.waiting === true || mainCount >= cap;
@@ -1366,6 +1394,7 @@ class FirebaseStore {
       phoneOwnerUid: canon ? uid : '', phoneShared: false,
       ...playerAccess(match),
       ...(rosterId ? { rosterId } : {}),
+      ...guestFields(data),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);

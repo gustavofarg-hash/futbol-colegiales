@@ -301,8 +301,28 @@ button.team-player { color: inherit; cursor: pointer; }
   border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
   color: inherit; font: inherit;
 }
-.roster-hit b { font-size: 0.96875rem; }
-.roster-hit small { color: var(--muted); font-size: 0.8125rem; }
+.roster-hit b { font-size: 0.96875rem; overflow-wrap: anywhere; }
+.roster-hit small { color: var(--muted); font-size: 0.8125rem; overflow-wrap: anywhere; }
+.roster-hit.taken { opacity: .72; }
+.roster-hit small.taken { color: var(--warn-text); font-weight: 800; }
+.find-row { display: flex; align-items: stretch; gap: 8px; min-width: 0; }
+.find-row input { flex: 1 1 auto; min-width: 0; width: auto; }
+.find-add {
+  flex: 0 0 auto; width: 3rem; min-width: 3rem; padding: 0;
+  font-size: 1.6rem; font-weight: 800; line-height: 1;
+}
+.friend-box { margin: 0 0 14px; min-width: 0; }
+.friend-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; min-width: 0; }
+.friend-head > span { font-weight: 800; min-width: 0; }
+.friend-head .btn { flex: 0 1 auto; min-width: 0; min-height: 44px; padding: 6px 12px; white-space: normal; text-align: center; line-height: 1.15; }
+.friend-row { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; min-width: 0; }
+.friend-row input {
+  flex: 1 1 auto; min-width: 0; width: auto; min-height: 48px; padding: 10px 12px;
+  border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font: inherit; font-size: 1rem;
+}
+.friend-row input:focus { outline: 2px solid var(--green-2); outline-offset: 1px; border-color: transparent; }
+.friend-remove { flex: 0 0 auto; width: 3rem; min-width: 3rem; padding: 0; font-size: 1.4rem; line-height: 1; }
+.friend-tag { overflow-wrap: anywhere; white-space: normal; }
 .profile-phone { margin: 0 0 12px; color: var(--muted); overflow-wrap: anywhere; }
 .checkline span { min-width: 0; overflow-wrap: anywhere; }
 .profile-wa { width: 100%; margin-bottom: 16px; background: var(--wa); border-color: var(--wa); color: #fff; }

@@ -1706,6 +1706,161 @@ check('El partido que ya la usa sigue mostrando el nombre nuevo', (await page.te
 await page.click('#btn-back');
 await page.waitForSelector('#list-next');
 
+// Alta rápida, sin duplicar, y amigos del jugador
+await page.click('#btn-add-match');
+await page.fill('#match-form [name=date]', '2026-10-25');
+await page.fill('#match-form [name=time]', '19:00');
+await page.fill('#match-form [name=note]', 'Amigos');
+await page.selectOption('#match-per-team', '5');
+await page.click('#match-form button[type=submit]');
+await page.waitForSelector('.match-card:has-text("Amigos")');
+await page.click('.match-card:has-text("Amigos")');
+await page.waitForSelector('#btn-add-player');
+await page.click('#btn-add-player');
+await page.waitForSelector('#roster-find');
+check('Sin texto, el + no está', await page.locator('#roster-add-new').isHidden());
+await page.fill('#roster-find', 'ERN');
+await page.waitForSelector('#roster-hits .roster-hit');
+check('Con coincidencias, el + no está', await page.locator('#roster-add-new').isHidden() && (await page.locator('#roster-hits .roster-hit').count()) > 0);
+await page.fill('#roster-find', '  zzz nuevo  ');
+await page.waitForFunction(() => {
+  const btn = document.querySelector('#roster-add-new');
+  return btn && !btn.hidden && document.querySelectorAll('#roster-hits .roster-hit').length === 0;
+});
+check('Sin coincidencias, el botón es Agregar como nuevo', await page.getAttribute('#roster-add-new', 'aria-label') === 'Agregar como nuevo');
+await page.click('#roster-add-new');
+check('El + copia el texto recortado y enfoca Nombre', (await page.inputValue('#player-name')) === 'zzz nuevo' && await page.evaluate(() => document.activeElement?.id === 'player-name'));
+await page.click('#btn-add-friend');
+await page.click('#btn-add-friend');
+await page.locator('#friend-rows input').nth(1).fill('Pedro Tipo');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Pedro Tipo")');
+let mainNames = await page.$$eval('#slots [data-player] .name', (els) => els.map((el) => el.textContent));
+check('Los amigos quedan justo después', mainNames[0] === 'zzz nuevo' && mainNames[1] === 'Amigo 1' && mainNames[2] === 'Pedro Tipo', mainNames.slice(0, 3).join(' | '));
+check('Se ve de quién es el amigo', (await page.locator('#slots .slot', { has: page.locator('.name:text-is("Amigo 1")') }).locator('.friend-tag').innerText()).includes('amigo de zzz nuevo'));
+check('El nombre escrito también es amigo', (await page.locator('#slots .slot', { has: page.locator('.name:text-is("Pedro Tipo")') }).locator('.friend-tag').innerText()).includes('amigo de zzz nuevo'));
+await page.click('#btn-add-player');
+await page.fill('#player-name', 'ZZZ Nuevo');
+await page.click('#player-form button[type=submit]');
+check('Ese nombre ya está en el partido', (await page.textContent('#pf-err')).includes('Ya está anotado en este partido'));
+await page.fill('#roster-find', 'zzz');
+await page.waitForSelector('#roster-hits .roster-hit.taken');
+check('En guardados figura Ya anotado', (await page.locator('#roster-hits small.taken').innerText()).includes('Ya anotado') && await page.locator('#roster-hits .roster-hit').first().isDisabled());
+await page.click('#player-form [data-close]');
+await page.click('#btn-add-player');
+await page.fill('#player-name', 'Segundo');
+await page.click('#btn-add-friend');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Segundo")');
+const amigoTags = await page.locator('#slots .slot', { has: page.locator('.name:text-is("Amigo 1")') }).locator('.friend-tag').allInnerTexts();
+check('Amigo 1 de otro no se bloquea', amigoTags.some((text) => text.includes('zzz nuevo')) && amigoTags.some((text) => text.includes('Segundo')), amigoTags.join(' | '));
+await page.click('#btn-add-player');
+await page.fill('#player-name', 'Después');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Después")');
+await page.locator('#slots .slot', { has: page.locator('.name:text-is("zzz nuevo")') }).locator('[data-menu]').click();
+await page.click('#pm-friend');
+await page.waitForSelector('#friend-form');
+check('Más tarde sigue Amigo 2', (await page.textContent('#friend-form')).includes('Amigo 2'));
+await page.click('#friend-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Amigo 2")');
+mainNames = await page.$$eval('#slots [data-player] .name', (els) => els.map((el) => el.textContent));
+check('El amigo nuevo no se va al final', mainNames.indexOf('Amigo 2') === mainNames.indexOf('zzz nuevo') + 3 && mainNames.indexOf('Amigo 2') < mainNames.indexOf('Después'), mainNames.join(' | '));
+
+await page.evaluate(async () => {
+  const id = await window.__app.store.addMatch({ date: '2026-10-24', time: '11:00', note: 'Cupo amigos', perTeam: 5 }, window.__app.who);
+  const match = { id, date: '2026-10-24', capacity: 10 };
+  for (let i = 1; i <= 9; i++) await window.__app.store.addPlayer(match, { name: `Relleno ${i}` }, window.__app.who);
+});
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card:has-text("Cupo amigos")');
+await page.click('.match-card:has-text("Cupo amigos")');
+await page.waitForFunction(() => document.querySelector('#slot-count')?.textContent === '9/10');
+const cupoWarnings = [];
+const grabCupo = (dialog) => { if (/lista de espera/.test(dialog.message())) cupoWarnings.push(dialog.message()); };
+page.on('dialog', grabCupo);
+await page.click('#btn-add-player');
+await page.fill('#player-name', 'Casi Lleno');
+await page.click('#btn-add-friend');
+await page.click('#btn-add-friend');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#wait-list .name:text-is("Amigo 2")');
+check('Avisa los lugares que faltan', cupoWarnings[0] === 'Queda 1 lugar: 2 van a quedar en lista de espera', cupoWarnings.join(' | '));
+check('Entra primero quien invita', await page.locator('#slots .name:text-is("Casi Lleno")').count() === 1 && await page.locator('#slots .name:text-is("Amigo 1")').count() === 0);
+const waitTags = await page.locator('#wait-list .friend-tag').allInnerTexts();
+check('En la espera también son amigos', waitTags.length === 2 && waitTags.every((text) => text.includes('amigo de Casi Lleno')), waitTags.join(' | '));
+await page.locator('#slots .slot', { hasText: 'Relleno 1' }).locator('[data-menu]').click();
+await page.click('#pm-del');
+await page.waitForFunction(() => {
+  const names = [...document.querySelectorAll('#slots .name')].map((el) => el.textContent);
+  return names.indexOf('Amigo 1') === names.indexOf('Casi Lleno') + 1;
+});
+check('Al subir queda detrás de quien invita', true);
+check('Sigue el cartel de amigo', (await page.locator('#slots .slot', { has: page.locator('.name:text-is("Amigo 1")') }).locator('.friend-tag').innerText()).includes('amigo de Casi Lleno'));
+check('El otro amigo sigue en espera', await page.locator('#wait-list .name:text-is("Amigo 2")').count() === 1);
+await page.locator('#slots .slot', { has: page.locator('.name:text-is("Amigo 1")') }).locator('[data-pay]').click();
+await page.waitForSelector('#pay-form');
+check('El pago es de ese amigo', (await page.locator('#pay-form').innerText()).includes('Amigo 1'));
+await page.click('#pay-form [data-close]');
+await page.waitForFunction(() => document.querySelectorAll('dialog.sheet[open]').length === 0);
+
+await page.evaluate(() => { location.hash = '#/'; });
+const amigosCard = page.locator('.match-card', { has: page.locator('.match-note', { hasText: /^Amigos$/ }) });
+await amigosCard.waitFor();
+await amigosCard.click();
+await page.waitForSelector('#slots .name:text-is("zzz nuevo")');
+await page.evaluate(() => {
+  localStorage.setItem('f7c-text-size', '4');
+  document.documentElement.style.fontSize = '24px';
+  document.documentElement.dataset.textSize = 'enorme';
+});
+await page.setViewportSize({ width: 360, height: 740 });
+await page.click('#btn-add-player');
+await page.fill('#roster-find', 'nadieconestenombre');
+await page.waitForSelector('#roster-add-new:not([hidden])');
+await page.click('#btn-add-friend');
+const hugeForm = await page.evaluate(() => ({
+  overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  plus: !!document.querySelector('#roster-add-new') && !document.querySelector('#roster-add-new').hidden,
+  row: document.querySelector('.friend-row')?.getBoundingClientRect().width || 0,
+  sheet: document.querySelector('.sheet-body')?.getBoundingClientRect().width || 0,
+}));
+check('Enorme a 360: el + y el amigo entran en la hoja', hugeForm.overflow <= 1 && hugeForm.plus && hugeForm.row > 0 && hugeForm.row <= hugeForm.sheet + 1, JSON.stringify(hugeForm));
+await page.click('#player-form [data-close]');
+await page.setViewportSize({ width: 390, height: 844 });
+await page.evaluate(() => {
+  localStorage.setItem('f7c-text-size', '1');
+  document.documentElement.style.fontSize = '18px';
+  document.documentElement.dataset.textSize = 'normal';
+  window.__confirms = [];
+  window.confirm = (msg) => {
+    window.__confirms.push(msg);
+    return !String(msg).includes('sus amigos');
+  };
+});
+await page.locator('#slots .slot', { has: page.locator('.name:text-is("zzz nuevo")') }).locator('[data-menu]').click();
+await page.click('#pm-del');
+await page.waitForFunction(() => ![...document.querySelectorAll('#slots .name')].some((el) => el.textContent === 'zzz nuevo'));
+check('Pregunta si quitar a los amigos', await page.evaluate(() => window.__confirms.some((msg) => msg.includes('sus amigos'))));
+check('Si no, los amigos siguen con el nombre', (await page.locator('#slots .friend-tag', { hasText: 'amigo de zzz nuevo' }).count()) >= 2);
+await page.evaluate(() => {
+  window.confirm = (msg) => {
+    window.__confirms.push(msg);
+    return true;
+  };
+});
+await page.locator('#slots .slot', { has: page.locator('.name:text-is("Segundo")') }).locator('[data-menu]').click();
+await page.click('#pm-del');
+await page.waitForFunction(() => ![...document.querySelectorAll('.friend-tag')].some((el) => el.textContent.includes('Segundo')));
+check('Si sí, los amigos también salen', await page.locator('#slots .name:text-is("Segundo")').count() === 0);
+await page.evaluate(() => { delete window.confirm; });
+await page.evaluate(() => localStorage.setItem('f7c-text-size', '1'));
+await page.setViewportSize({ width: 390, height: 844 });
+await page.reload();
+await page.waitForFunction(() => window.__app?.who);
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card');
+
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());
 check('Manifest válido con íconos 192/512 + maskable', manifest.icons.length === 3 && manifest.display === 'standalone');
