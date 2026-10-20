@@ -260,6 +260,10 @@ https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m={matchId}&
 
 La barra del partido, de izquierda a derecha: ícono **Compartir lista**, **Anotar en lista de espera** y **Agregar jugador**. El botón de agregar no cambia de nombre cuando el partido está lleno: si no hay lugar, esa persona va a la espera.
 
+**Quién ve el partido:** al crearlo (botón **Crear**) se elige quién lo ve y quién anota. Por defecto son todos (`viewers` y `adders` con `*`), también los que se sumen después. **Solo yo: nadie más lo ve, tampoco el admin** deja las dos listas en el creador y apaga el resto. Si sacás a alguien de la lista, esa persona no lo ve: ni organizador ni admin. No hay cartel de las 2 horas. Quien lo ve pero no anota lo tiene en solo lectura. El límite, si tiene un número, cuenta titulares y espera (`addedBy` / `addedByUid`); vacío = sin límite. Lo aplica la app: las reglas no pueden contar jugadores. Después solo el creador cambia esos permisos. En un partido restringido, solo el creador lo borra. Un partido viejo, sin estos campos, sigue visible para todo el personal activo.
+
+Hay que **volver a publicar** `firestore.rules` después de abrir esta versión una vez: la app marca los partidos, jugadores y fichas viejos con `viewers: ['*']` mientras las reglas de antes sigan publicadas. Si publicás primero, esos partidos dejan de aparecer en la lista hasta ese marcado. El admin no entra a un partido Solo yo ni a sus jugadores ni al listado de fichas. El link de confirmación (con el token) sigue abriendo esa ficha.
+
 El pago va en el documento del jugador (no en una colección nueva). Hasta que se publiquen las reglas nuevas, las que están en la consola dejan pasar campos extra. Después de publicarlas, solo un admin o un organizador activo puede escribir, y el tipo de cada campo queda validado.
 
 **Colección `roster`** — jugadores guardados (pantalla Jugadores). Id automático.
