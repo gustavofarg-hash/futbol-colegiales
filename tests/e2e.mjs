@@ -1809,6 +1809,75 @@ const amigosCard = page.locator('.match-card', { has: page.locator('.match-note'
 await amigosCard.waitFor();
 await amigosCard.click();
 await page.waitForSelector('#slots .name:text-is("zzz nuevo")');
+const amigoDeZzz = page.locator('#slots .slot', { has: page.locator('.name:text-is("Amigo 1")') }).filter({ hasText: 'amigo de zzz nuevo' });
+await amigoDeZzz.locator('[data-menu]').click();
+await page.click('#pm-edit');
+await page.waitForSelector('#player-form');
+check('Editar amigo deja el vínculo y el WhatsApp privado', (await page.locator('#player-form h3').innerText()) === 'Editar amigo' && (await page.locator('#friend-stays').innerText()).includes('amigo de zzz nuevo') && !(await page.isChecked('#wa-share')) && !(await page.isChecked('#save-roster')));
+await page.fill('#player-name', 'zzz nuevo');
+await page.click('#player-form button[type=submit]');
+check('No se puede renombrar al amigo como alguien que ya está', (await page.textContent('#pf-err')).includes('Ya está anotado en este partido'));
+await page.fill('#player-name', 'Pedro Real');
+await page.fill('#player-form [name=phone]', '11 5555-0181');
+await page.check('#save-roster');
+await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/editar-amigo.png' });
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Pedro Real")');
+check('El amigo pasa a llamarse Pedro y sigue de zzz nuevo', (await page.locator('#slots .slot', { has: page.locator('.name:text-is("Pedro Real")') }).locator('.friend-tag').innerText()).includes('amigo de zzz nuevo'));
+check('Amigo 2 no se renumera', await page.locator('#slots .name:text-is("Amigo 2")').count() === 1 && await page.locator('#slots .name:text-is("Amigo 1")').count() === 1);
+const amigoGuardado = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const player = Object.values(db.players).find((row) => row.name === 'Pedro Real');
+  const id = Object.entries(db.players).find(([, row]) => row.name === 'Pedro Real')?.[0];
+  const contact = db.contacts?.players?.[id];
+  const roster = Object.values(db.roster || {}).find((row) => row.name === 'Pedro Real');
+  return {
+    invitedByName: player?.invitedByName,
+    guestAuto: player?.guestAuto,
+    addedBy: player?.addedBy,
+    visible: contact?.visibleToAll,
+    phone: contact?.phone,
+    roster: roster?.name || '',
+  };
+});
+check('El WhatsApp queda privado y se puede guardar en Jugadores', amigoGuardado.visible === false && amigoGuardado.phone === '5491155550181' && amigoGuardado.roster === 'Pedro Real' && amigoGuardado.guestAuto === false && amigoGuardado.addedBy === 'Gustavo' && amigoGuardado.invitedByName === 'zzz nuevo', JSON.stringify(amigoGuardado));
+await page.locator('#slots .slot', { has: page.locator('.name:text-is("zzz nuevo")') }).locator('[data-menu]').click();
+await page.click('#pm-friend');
+await page.waitForSelector('#friend-form');
+check('El próximo vacío sigue en Amigo 3', (await page.textContent('#friend-form')).includes('Amigo 3'));
+await page.click('#friend-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Amigo 3")');
+check('Amigo 2 sigue igual después del nuevo', await page.locator('#slots .name:text-is("Amigo 2")').count() === 1 && await page.locator('#slots .name:text-is("Amigo 3")').count() === 1);
+await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/amigo-con-nombre.png' });
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'martin@demo.local');
+await page.fill('#login-password', 'demo-martin');
+await page.click('#login-form button[type=submit]');
+await page.waitForFunction(() => window.__app?.who === 'Martín');
+await page.evaluate(() => { location.hash = '#/'; });
+const amigosOtraCuenta = page.locator('.match-card', { has: page.locator('.match-note', { hasText: /^Amigos$/ }) });
+await amigosOtraCuenta.waitFor();
+await amigosOtraCuenta.click();
+await page.waitForSelector('#slots .name:text-is("Pedro Real")');
+const pedroPrivado = (await page.locator('#slots .slot', { has: page.locator('.name:text-is("Pedro Real")') }).innerText()).replace(/\s+/g, ' ');
+check('Otro organizador no ve el WhatsApp del amigo', !pedroPrivado.includes('5555') && pedroPrivado.includes('El WhatsApp de este jugador es privado'), pedroPrivado);
+await page.locator('#slots .slot', { has: page.locator('.name:text-is("Pedro Real")') }).locator('[data-menu]').click();
+check('Solo lo edita quien lo agregó', await page.isDisabled('#pm-edit') && (await page.locator('#edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
+await page.click('dialog.sheet [data-close]');
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.fill('#login-password', 'demo-gustavo');
+await page.click('#login-form button[type=submit]');
+await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+await page.evaluate(() => { location.hash = '#/'; });
+const amigosDeNuevo = page.locator('.match-card', { has: page.locator('.match-note', { hasText: /^Amigos$/ }) });
+await amigosDeNuevo.waitFor();
+await amigosDeNuevo.click();
+await page.waitForSelector('#slots .name:text-is("Pedro Real")');
 await page.evaluate(() => {
   localStorage.setItem('f7c-text-size', '4');
   document.documentElement.style.fontSize = '24px';

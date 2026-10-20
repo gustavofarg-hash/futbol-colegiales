@@ -31,12 +31,14 @@ export function isGenericGuest(player) {
  * "Amigo N" automático no choca con otro "Amigo N": es de quien invita.
  * Un nombre escrito a mano, aunque sea "Amigo 1", sí choca.
  */
-export function alreadyInMatch(players, candidate, { roster = true } = {}) {
+export function alreadyInMatch(players, candidate, { roster = true, exceptId = '' } = {}) {
   const name = normName(candidate?.name);
   const rosterId = String(candidate?.rosterId || '').trim();
   const phone = phoneIdentity(candidate || {});
   const generic = candidate?.guestAuto === true || isGenericGuest(candidate);
+  const skip = String(exceptId || '').trim();
   for (const player of players || []) {
+    if (skip && player?.id === skip) continue;
     const otherRoster = String(player?.rosterId || '').trim();
     // El plantel junta por teléfono. Juan y Nico comparten línea y son dos
     // jugadores: el id solo cuenta si también se pide (el selector de guardados).
@@ -64,6 +66,8 @@ export function firstDuplicate(existing, people) {
 /**
  * Filas del formulario. Vacío → Amigo N, siguiendo el máximo de quien invita.
  * taken: nombres que esa persona ya trajo a este partido.
+ * Renombrar "Amigo 1" no reescribe a "Amigo 2": el próximo vacío sigue desde
+ * el número más alto que todavía figura.
  */
 export function resolveFriendNames(typed, taken = []) {
   let max = 0;

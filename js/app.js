@@ -17,7 +17,7 @@ import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
-import { ALREADY_IN_MATCH, firstDuplicate, groupByInviter, placeGroup, resolveFriendNames, waitWarning } from './guests.js';
+import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, isAutoGuestName, normName, placeGroup, resolveFriendNames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
@@ -2181,25 +2181,46 @@ function openPhoneForm(person) {
 }
 
 /* Agregar / editar jugador */
+function sameGuestLabel(player, name) {
+  const wasAuto = player?.guestAuto === true || (player?.guestAuto !== false && !!player?.invitedBy && isAutoGuestName(player?.name));
+  return wasAuto && isAutoGuestName(name) && normName(player.name) === normName(name);
+}
+
+function rosterAlreadySaved(name, phone) {
+  const wa = canonicalPhone(phone);
+  if (wa) return rosterByPhone(app.roster, wa) || rosterByIdentity(app.roster, phoneIdentity({ phone: wa }));
+  const clean = foldText(name);
+  if (!clean) return null;
+  return app.roster.find((person) => !phoneIdentity(person) && foldText(person.name) === clean) || null;
+}
+
 function openPlayerForm(m, p, opts = {}) {
   if (!p) {
     const blocked = addBlock(m);
     if (blocked) { toast(blocked); return; }
   }
   const asWait = !p && opts.waiting === true;
+  const editingFriend = !!p?.invitedBy;
+  const offerRoster = editingFriend && !p.rosterId;
   const lockPhone = phoneHidden(p);
   const locked = p && !canEditPlayer(p, actor());
+  const emptyPhoneHint = editingFriend
+    ? 'Opcional. Con el número se puede escribir. Si no lo marcás, el WhatsApp queda privado.'
+    : 'Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.';
+  const hostName = editingFriend ? friendHostName(p) : '';
   openSheet(`
     <form id="player-form" novalidate>
-      <h3>${p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
+      <h3>${editingFriend ? 'Editar amigo' : p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
+      ${editingFriend ? `<p class="hint" id="friend-stays">Sigue siendo amigo de ${esc(hostName || 'quien lo invitó')}.</p>` : ''}
       ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
       <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
-        <div class="small muted" id="pf-phone">Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.</div></label>`}
-      ${p ? '' : '<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"><span>Mostrar el WhatsApp para todos</span></label>'}
+        <div class="small muted" id="pf-phone">${esc(emptyPhoneHint)}</div></label>`}
+      ${(!p || editingFriend) && !lockPhone ? `<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"${p?.phoneShared === true ? ' checked' : ''}><span>Mostrar el WhatsApp para todos</span></label>` : ''}
+      ${offerRoster ? '<label class="checkline" id="save-roster-line"><input type="checkbox" id="save-roster" name="saveRoster"><span>Guardar en Jugadores</span></label>' : ''}
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
       ${p ? '' : `<div class="friend-box" id="friend-box">
         <div class="friend-head"><span>Amigos</span><button type="button" class="btn" id="btn-add-friend">Agregar amigo</button></div>
@@ -2218,7 +2239,7 @@ function openPlayerForm(m, p, opts = {}) {
   const hint = $('#pf-phone');
   if (form.phone) form.phone.addEventListener('input', () => {
     const v = form.phone.value.trim();
-    if (!v) { hint.className = 'small muted'; hint.textContent = 'Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.'; return; }
+    if (!v) { hint.className = 'small muted'; hint.textContent = emptyPhoneHint; return; }
     const r = normalizePhone(v);
     hint.className = r.ok ? 'ok' : 'err';
     hint.textContent = r.ok ? `✓ ${r.display}` : r.error;
@@ -2284,13 +2305,53 @@ function openPlayerForm(m, p, opts = {}) {
       phone = r.wa;
     }
     if (p) {
+      const share = $('#wa-share')?.checked === true;
+      const saveRoster = !editingFriend || !!p.rosterId || $('#save-roster')?.checked === true;
+      const stillAuto = sameGuestLabel(p, name);
+      const phoneForCheck = phoneRaw === null ? (p.phone || '') : phone;
+      const candidate = {
+        name,
+        phone: phoneForCheck,
+        phoneKey: phoneRaw === null ? (p.phoneKey || '') : '',
+        hasPhone: phoneRaw === null ? p.hasPhone === true : !!phone,
+        rosterId: p.rosterId || '',
+        invitedBy: p.invitedBy || '',
+        guestAuto: stillAuto,
+      };
+      if (alreadyInMatch(matesOf(m.id), candidate, { exceptId: p.id, roster: false })) {
+        $('#pf-err').textContent = ALREADY_IN_MATCH;
+        return;
+      }
+      const savingNewRoster = offerRoster && $('#save-roster')?.checked === true;
+      if (savingNewRoster) {
+        const known = rosterAlreadySaved(name, phoneForCheck);
+        if (known && alreadyInMatch(matesOf(m.id), { name: known.name, phone: known.phone || phoneForCheck, phoneKey: known.phoneKey, hasPhone: known.hasPhone === true, rosterId: known.id }, { exceptId: p.id })) {
+          $('#pf-err').textContent = ALREADY_IN_MATCH;
+          return;
+        }
+      }
       closeSheet();
       run((async () => {
-        const id = await linkedRosterId({ name, phone: phoneRaw === null ? '' : phone, rosterId: p.rosterId, phoneKey: p.phoneKey });
+        const id = saveRoster
+          ? await linkedRosterId({ name, phone: phoneRaw === null ? '' : phone, rosterId: p.rosterId, phoneKey: p.phoneKey, phoneShared: share })
+          : (p.rosterId || '');
+        if (savingNewRoster && id && alreadyInMatch(matesOf(m.id), { ...candidate, rosterId: id }, { exceptId: p.id })) {
+          toast(ALREADY_IN_MATCH);
+          return;
+        }
         const patch = { name, ...(id ? { rosterId: id } : {}) };
-        if (phoneRaw !== null) patch.phone = phone;
+        if (phoneRaw !== null) {
+          patch.phone = phone;
+          if ($('#wa-share')) patch.phoneShared = share;
+        }
+        if (editingFriend) {
+          patch.invitedBy = p.invitedBy;
+          const freshHost = friendHostName(p);
+          if (freshHost) patch.invitedByName = freshHost;
+          patch.guestAuto = stillAuto;
+        }
         await app.store.updatePlayer(p.id, patch);
-      })(), 'Jugador actualizado');
+      })(), editingFriend ? 'Amigo actualizado' : 'Jugador actualizado');
       return;
     }
     const result = addSignedPlayer(m, { name, phone, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
