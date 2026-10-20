@@ -9,7 +9,7 @@ import {
 import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
 import {
-  confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
+  cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
   needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress,
   reservationClearedByAnswer,
 } from './reminders.js';
@@ -236,7 +236,7 @@ function matchCard(m) {
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
       <div class="match-title">${esc(capitalize(labelDate(m.date)))}</div>
-      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}<span>${esc(m.time || '--:--')} hs</span></div>
+      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(m.time || '--:--')} hs</span></div>
       ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
       ${waitingOf(m.id).length ? `<div class="match-note">${waitingOf(m.id).length} en espera</div>` : ''}
     </div>
@@ -399,25 +399,35 @@ function renderMatch(id) {
   const mineLine = mineSummary(app.players.filter((p) => p.matchId === id), app.who).text;
   const assigned = normalizeTeams(m.teams, everyone.map((p) => p.id));
   const teamCount = assigned.bib.length + assigned.plain.length;
+  const signed = everyone.length + waitingOf(id).length;
+  const canEdit = canEditMatch(m, who.uid);
+  const notesText = String(m.notes || '').trim();
   $('#view').innerHTML = `
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
-      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
+      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
+      ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
+      <div class="match-notes" id="match-notes">
+        <div class="match-notes-head"><strong>Notas</strong>${canEdit ? '<button type="button" class="btn" id="btn-notes">Editar</button>' : ''}</div>
+        ${notesText ? `<p class="match-notes-text">${esc(m.notes)}</p>` : '<p class="hint">Sin notas.</p>'}
+      </div>
       <div class="meta"><strong id="slot-count">${everyone.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (everyone.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - everyone.length}`}</span></div>
       ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
       <div class="mine-line" id="mine-stats">${esc(mineLine)}</div>
       ${everyone.length ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary(everyone).text)}</div>` : ''}
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
-        ${canEditMatch(m, who.uid) ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
-        ${canDelete(m, who.uid) ? `<button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>` : ''}
+        ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
+        ${canDelete(m, who.uid) && signed === 0 ? `<button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>` : ''}
       </div>
+      ${canEdit && signed > 0 && !m.cancelled ? '<button type="button" class="btn danger block" id="btn-cancel-match">Cancelar partido</button>' : ''}
+      ${canEdit && m.cancelled ? '<button type="button" class="btn block" id="btn-reactivate-match">Reactivar partido</button>' : ''}
       <button type="button" class="btn block" id="btn-teams">Equipos${teamCount ? ` · ${assigned.bib.length}-${assigned.plain.length}` : ''}</button>
     </section>
     ${readOnly ? '<p class="hint" id="match-readonly">Solo lectura. No podés anotar ni cambiar este partido.</p>' : ''}
     ${reminderBanners([m])}
-    ${readOnly ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
+    ${readOnly || m.cancelled ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
@@ -467,9 +477,11 @@ function renderMatch(id) {
   $('#btn-share').onclick = () => shareText(listText(m));
   $('#btn-teams').onclick = () => { location.hash = `#/partido/${encodeURIComponent(m.id)}/equipos`; };
   if ($('#btn-edit-match')) $('#btn-edit-match').onclick = () => openMatchForm(m);
+  if ($('#btn-notes')) $('#btn-notes').onclick = () => openNotes(m);
+  if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = () => openCancel(m);
+  if ($('#btn-reactivate-match')) $('#btn-reactivate-match').onclick = () => reactivateMatch(m);
   if ($('#btn-del-match')) $('#btn-del-match').onclick = () => {
-    const n = playersOf(m.id).length + waitingOf(m.id).length;
-    if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs${n ? ` y sus ${n} jugadores` : ''}?`)) return;
+    if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs?`)) return;
     run(app.store.deleteMatch(m.id), 'Partido borrado');
     location.hash = '#/';
   };
@@ -486,6 +498,8 @@ function listText(m) {
   const cap = m.capacity || CAPACITY;
   const lines = [`⚽ Fútbol 7 · ${VENUE}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
   if (m.note) lines.push(`📝 ${m.note}`);
+  if (m.cancelled) lines.push('Cancelado');
+  if (String(m.notes || '').trim()) lines.push(String(m.notes).trim());
   lines.push('');
   for (let i = 0; i < Math.max(cap, ps.length); i++) {
     const p = ps[i];
@@ -587,6 +601,7 @@ function bindReminderBanners() {
 }
 
 async function openReminders(m) {
+  if (m?.cancelled === true) { toast('El partido está cancelado. No se mandan recordatorios.'); return; }
   const everyone = [...playersOf(m.id), ...waitingOf(m.id)];
   if (!everyone.length) { toast('No hay jugadores para avisar'); return; }
   let showAll = false;
@@ -688,6 +703,77 @@ function promoteToMatch(m, player, disabled) {
     await offerPromotionWhatsApp(player, m);
   })();
   run(job);
+}
+
+function openNotes(m) {
+  openSheet(`
+    <form id="notes-form" novalidate>
+      <h3>Notas</h3>
+      <p class="hint">Motivo de una cancelación, o algo que pasó en el partido. Lo ven quienes pueden ver este partido.</p>
+      <label class="field"><span>Notas</span><textarea name="notes" maxlength="2000" autofocus>${esc(m.notes || '')}</textarea></label>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  $('#notes-form').onsubmit = (e) => {
+    e.preventDefault();
+    const notes = String(new FormData(e.target).get('notes') || '').slice(0, 2000);
+    closeSheet();
+    run(app.store.updateMatch(m.id, { notes }, app.who), 'Notas guardadas');
+  };
+}
+
+function openCancel(m) {
+  const signed = playersOf(m.id).length + waitingOf(m.id).length;
+  openSheet(`
+    <form id="cancel-form" novalidate>
+      <h3>Cancelar partido</h3>
+      <p class="hint">Queda cancelado, con sus ${signed} jugadores. No se borra. No se mandan recordatorios y el link de confirmación deja de pedir sí o no.</p>
+      <p class="hint">Si querés, escribí el motivo en las notas.</p>
+      <label class="field"><span>Notas</span><textarea id="cancel-notes" name="notes" maxlength="2000">${esc(m.notes || '')}</textarea></label>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Volver</button><button class="btn danger" type="submit">Cancelar partido</button></div>
+    </form>`);
+  $('#cancel-form').onsubmit = (e) => {
+    e.preventDefault();
+    const notes = String(new FormData(e.target).get('notes') || '').slice(0, 2000);
+    closeSheet();
+    const next = { ...m, notes, cancelled: true };
+    const job = (async () => {
+      await app.store.updateMatch(m.id, {
+        cancelled: true,
+        cancelledAt: Date.now(),
+        cancelledBy: actor().uid,
+        notes,
+      }, app.who);
+      await offerCancelWhatsApp(next);
+    })();
+    run(job, 'Partido cancelado');
+  };
+}
+
+function reactivateMatch(m) {
+  if (!confirm('¿Volver a activar este partido?')) return;
+  run(app.store.updateMatch(m.id, { cancelled: false }, app.who), 'Partido reactivado');
+}
+
+async function offerCancelWhatsApp(match) {
+  const people = [...playersOf(match.id), ...waitingOf(match.id)];
+  const links = cancelLinks({
+    match, players: people, venue: VENUE, choice: waChoice(), android: isAndroidUa(navigator.userAgent),
+  });
+  if (!links.length) {
+    toast('Nadie tiene WhatsApp para avisar la cancelación.');
+    return;
+  }
+  if (!confirm('¿Avisar por WhatsApp a los jugadores que se canceló?')) return;
+  const rows = links.map((link) => `
+    <li class="remind-row">
+      <div class="who"><div class="name">${esc(link.name)}</div></div>
+      <a class="btn primary" href="${esc(link.waUrl)}" target="_blank" rel="noopener">Avisar</a>
+    </li>`).join('');
+  openSheet(`
+    <h3>Avisar la cancelación</h3>
+    <p class="hint">Cada Avisar abre WhatsApp con el mensaje. No se manda solo y no incluye el link para confirmar.</p>
+    <ul class="remind-list" id="cancel-links">${rows}</ul>
+    <div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
 }
 
 async function offerPromotionWhatsApp(player, match) {

@@ -61,6 +61,8 @@ export function confirmationIdentity({ playerId, player, match }) {
     date: match?.date || player?.matchDate || '',
     time: match?.time || '',
     note: match?.note || '',
+    notes: String(match?.notes || '').slice(0, 2000),
+    cancelled: match?.cancelled === true,
     viewers: playerAccess(match).viewers,
   };
 }
@@ -190,6 +192,7 @@ export function reminderProgress(players) {
 
 /** Cartel solo si el partido entra en la ventana y todavía falta avisar a alguien con WhatsApp. */
 export function needsReminderBanner(match, players, now = Date.now()) {
+  if (match?.cancelled === true) return false;
   if (!withinReminderWindow(match, now)) return false;
   const prog = reminderProgress(players);
   return prog.total > 0 && prog.pending > 0;
@@ -197,7 +200,30 @@ export function needsReminderBanner(match, players, now = Date.now()) {
 
 /** Partidos que cruzaron la marca de 2 horas entre dos instantes (la app estaba abierta). */
 export function matchesCrossingReminderWindow(matches, previousNow, now) {
-  return (matches || []).filter((m) => !withinReminderWindow(m, previousNow) && withinReminderWindow(m, now));
+  return (matches || []).filter((m) => m?.cancelled !== true && !withinReminderWindow(m, previousNow) && withinReminderWindow(m, now));
+}
+
+/** Aviso de que el partido no se juega. Sin link para confirmar. */
+export function cancelMessage({ player, match, venue }) {
+  const name = String(player?.name || '').trim() || 'hola';
+  const when = labelDate(match?.date);
+  const time = match?.time || '--:--';
+  const place = venue || 'Polideportivo Colegiales';
+  const reason = String(match?.notes || '').trim();
+  const why = reason ? ` Motivo: ${reason}` : '';
+  return `Hola ${name}, se canceló el partido de fútbol 7 en ${place} del ${when} a las ${time} hs.${why}`;
+}
+
+/** Un link por jugador con teléfono. No abre WhatsApp. */
+export function cancelLinks({ match, players, venue, choice, android } = {}) {
+  const out = [];
+  for (const p of players || []) {
+    const phone = String(p?.phone || '').trim();
+    if (!phone || !p?.id) continue;
+    const text = cancelMessage({ player: p, match, venue });
+    out.push({ id: p.id, name: p.name, phone, text, waUrl: waSendUrl({ phone, text, choice, android }) });
+  }
+  return out;
 }
 
 /**

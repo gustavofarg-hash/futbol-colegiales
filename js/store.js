@@ -36,6 +36,10 @@
 //    { bib: [playerId], plain: [playerId] }
 //    bib = con pechera, plain = sin pechera. Solo titulares.
 //    Se guarda en el mismo partido: quien puede anotar lo edita y el resto lo ve.
+//  matches.cancelled (opcional, bool), cancelledAt, cancelledBy
+//  matches.notes (texto libre, hasta 2000). Distinto de note (la nota corta de la tarjeta).
+//  matches.playerCount (int). Lo actualiza el cliente al anotar o quitar.
+//    La regla de borrado lo exige en 0. Si falta, se toma 0.
 //  roster/{rosterId}
 //    name, phone (dígitos wa.me, o vacío)
 //    createdBy, createdAt, updatedAt
@@ -62,7 +66,7 @@ import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
-import { EVERYONE, accessPatch, canView, playerAccess } from './access.js';
+import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -120,8 +124,31 @@ function matchDoc(data, who) {
     sourceText: data.sourceText || null,
     createdBy: who, updatedBy: who,
     createdAt: now, updatedAt: now,
+    playerCount: 0,
     ...(access || {}),
   };
+}
+
+function cleanMatchPatch(data) {
+  const access = data?.access ? accessPatch(data.access) : null;
+  const { access: _access, playerCount: _count, ...rest } = data || {};
+  if ('notes' in rest) rest.notes = String(rest.notes ?? '').slice(0, 2000);
+  if ('cancelled' in rest) rest.cancelled = rest.cancelled === true;
+  if (rest.cancelled === false) {
+    rest.cancelledAt = null;
+    rest.cancelledBy = null;
+  }
+  return { rest, access };
+}
+
+/** Suma o resta el contador. Si todavía no es un entero, escribe el total. */
+function countPatch(fs, match, delta, localCount) {
+  const current = match?.playerCount;
+  const fallback = Math.max(0, (Number(localCount) || 0) + delta);
+  if (typeof current === 'number' && Number.isInteger(current) && current + delta >= 0 && typeof fs?.increment === 'function') {
+    return { playerCount: fs.increment(delta) };
+  }
+  return { playerCount: fallback };
 }
 
 /* ───────────── Modo demo (localStorage) ───────────── */
@@ -165,7 +192,20 @@ class LocalStore {
     }
     return Object.keys(db.organizers).length > 0;
   }
-  _save(db) { this._touchConfirmations(db); localStorage.setItem(this.key, JSON.stringify(db)); this._emit(); }
+  _syncPlayerCounts(db) {
+    const counts = {};
+    for (const player of Object.values(db.players)) {
+      if (!player?.matchId || !db.matches[player.matchId]) continue;
+      counts[player.matchId] = (counts[player.matchId] || 0) + 1;
+    }
+    for (const [id, match] of Object.entries(db.matches)) match.playerCount = counts[id] || 0;
+  }
+  _save(db) {
+    this._syncPlayerCounts(db);
+    this._touchConfirmations(db);
+    localStorage.setItem(this.key, JSON.stringify(db));
+    this._emit();
+  }
   _visible(matches, players, cards) {
     const uid = this.actor?.uid;
     if (!uid) return { matches, players, cards };
@@ -214,8 +254,7 @@ class LocalStore {
   }
   async updateMatch(id, data, who) {
     const db = this._load(); const m = db.matches[id]; if (!m) return;
-    const access = data.access ? accessPatch(data.access) : null;
-    const { access: _drop, ...rest } = data;
+    const { rest, access } = cleanMatchPatch(data);
     Object.assign(m, rest, access || {}, { startsAt: toEpoch(data.date ?? m.date, data.time ?? m.time), updatedBy: who, updatedAt: Date.now() });
     const copied = playerAccess(m);
     for (const p of Object.values(db.players)) if (p.matchId === id) {
@@ -225,8 +264,10 @@ class LocalStore {
     this._save(db);
   }
   async deleteMatch(id) {
-    const db = this._load(); delete db.matches[id];
-    for (const [pid, p] of Object.entries(db.players)) if (p.matchId === id) delete db.players[pid];
+    const db = this._load();
+    const n = Object.values(db.players).filter((p) => p.matchId === id).length;
+    if (n > 0) throw Object.assign(new Error('Este partido tiene jugadores. Cancelalo en lugar de borrarlo.'), { code: 'has-players' });
+    delete db.matches[id];
     this._save(db);
   }
   async addPlayer(match, data, who, opts = {}) {
@@ -391,6 +432,7 @@ class FirebaseStore {
     this.actor = null;
     this._buckets = { matches: {}, players: {}, confirmations: {} };
     this._backfilled = new Set();
+    this._countTried = new Set();
     this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null };
   }
   setActor(user) {
@@ -445,6 +487,33 @@ class FirebaseStore {
     for (const list of Object.values(this._buckets[kind] || {})) for (const item of list || []) byId.set(item.id, item);
     this.state[kind] = [...byId.values()];
     this._emit();
+    if (kind === 'matches' || kind === 'players') this._reconcilePlayerCounts();
+  }
+  _reconcilePlayerCounts() {
+    if (!this.fs || !this.actor?.uid || this._counting) return;
+    const byMatch = new Map();
+    for (const player of this.state.players) {
+      if (!player.matchId) continue;
+      byMatch.set(player.matchId, (byMatch.get(player.matchId) || 0) + 1);
+    }
+    const fixes = [];
+    for (const match of this.state.matches) {
+      if (!canAdd(match, this.actor.uid)) continue;
+      const n = byMatch.get(match.id) || 0;
+      if (match.playerCount === n) continue;
+      const key = `${match.id}:${n}`;
+      if (this._countTried.has(key)) continue;
+      fixes.push([match.id, n, key]);
+      if (fixes.length >= 400) break;
+    }
+    if (!fixes.length) return;
+    for (const item of fixes) this._countTried.add(item[2]);
+    this._counting = true;
+    const { doc, writeBatch } = this.fs;
+    const batch = writeBatch(this.db);
+    const now = Date.now();
+    for (const [id, n] of fixes) batch.update(doc(this.db, 'matches', id), { playerCount: n, updatedAt: now });
+    batch.commit().catch((e) => console.error(e)).finally(() => { this._counting = false; });
   }
   async _backfillMatches(docs) {
     const { doc, updateDoc } = this.fs;
@@ -643,8 +712,7 @@ class FirebaseStore {
   async updateMatch(id, data, who) {
     const { doc, writeBatch } = this.fs;
     const cur = this.state.matches.find((m) => m.id === id) || {};
-    const access = data.access ? accessPatch(data.access) : null;
-    const { access: _drop, ...rest } = data;
+    const { rest, access } = cleanMatchPatch(data);
     const patch = { ...rest, ...(access || {}), startsAt: toEpoch(data.date ?? cur.date, data.time ?? cur.time), updatedBy: who, updatedAt: Date.now() };
     const batch = writeBatch(this.db);
     batch.update(doc(this.db, 'matches', id), patch);
@@ -669,14 +737,14 @@ class FirebaseStore {
     }
   }
   async deleteMatch(id) {
-    const { doc, writeBatch } = this.fs;
-    const batch = writeBatch(this.db);
-    this.state.players.filter((p) => p.matchId === id).forEach((p) => {
-      batch.delete(doc(this.db, 'players', p.id));
-      if (p.confirmToken) batch.delete(doc(this.db, 'confirmations', p.confirmToken));
-    });
-    batch.delete(doc(this.db, 'matches', id));
-    await batch.commit();
+    const local = this.state.players.filter((p) => p.matchId === id).length;
+    const stored = this.state.matches.find((m) => m.id === id);
+    const count = stored?.playerCount;
+    if (local > 0 || (typeof count === 'number' && count > 0)) {
+      throw Object.assign(new Error('Este partido tiene jugadores. Cancelalo en lugar de borrarlo.'), { code: 'has-players' });
+    }
+    const { doc, deleteDoc } = this.fs;
+    await deleteDoc(doc(this.db, 'matches', id));
   }
   async addPlayer(match, data, who, opts = {}) {
     const { collection, addDoc } = this.fs; const now = Date.now();
@@ -698,6 +766,9 @@ class FirebaseStore {
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);
+    const stored = this.state.matches.find((item) => item.id === match.id) || match;
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'matches', match.id), { ...countPatch(this.fs, stored, 1, mates.length), updatedAt: now });
     await this._writeConfirmation(token, ref.id, player, match);
     return ref.id;
   }
@@ -768,10 +839,15 @@ class FirebaseStore {
     const player = this.state.players.find((item) => item.id === id);
     const match = this.state.matches.find((item) => item.id === player?.matchId);
     const nextTeams = dropPlayer(match?.teams, id);
+    const localCount = this.state.players.filter((item) => item.matchId === player?.matchId).length;
     const batch = writeBatch(this.db);
     batch.delete(doc(this.db, 'players', id));
     if (player?.confirmToken) batch.delete(doc(this.db, 'confirmations', player.confirmToken));
-    if (nextTeams.changed) batch.update(doc(this.db, 'matches', player.matchId), { teams: nextTeams.teams, updatedAt: Date.now() });
+    if (match) {
+      const patch = { ...countPatch(this.fs, match, -1, localCount), updatedAt: Date.now() };
+      if (nextTeams.changed) patch.teams = nextTeams.teams;
+      batch.update(doc(this.db, 'matches', match.id), patch);
+    }
     await batch.commit();
   }
   async addRoster(data, who) {

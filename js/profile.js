@@ -129,7 +129,7 @@ export function pastMatches(matches, now = Date.now()) {
 export function upcomingMatches(matches, now = Date.now()) {
   const today = todayISO(new Date(now));
   return [...(matches || [])]
-    .filter((match) => match?.date >= today && startsAtOf(match) > now - 2 * 3600e3)
+    .filter((match) => match?.date >= today && match?.cancelled !== true && startsAtOf(match) > now - 2 * 3600e3)
     .sort((a, b) => startsAtOf(a) - startsAtOf(b) || String(a.id).localeCompare(String(b.id)));
 }
 

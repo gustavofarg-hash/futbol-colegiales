@@ -517,11 +517,66 @@ check('Sin teléfono muestra un cartel y no abre WhatsApp', (await noPhonePopup)
 await page.click('#btn-back');
 await page.waitForSelector('.match-card');
 
-// Borrar partido
+// Con jugadores se cancela. Sin jugadores se borra.
 await page.click('.match-card:has-text("Lunes 26/10")');
+await page.waitForSelector('#btn-cancel-match');
+check('Con jugadores no aparece Borrar', await page.locator('#btn-del-match').count() === 0);
+await page.click('#btn-cancel-match');
+await page.waitForSelector('#cancel-notes');
+check('Al cancelar se sugiere el motivo en las notas', (await page.textContent('#cancel-form')).includes('motivo'));
+await page.fill('#cancel-notes', 'Se inundó la cancha');
+await page.click('#cancel-form button[type=submit]');
+await page.waitForSelector('#cancel-links a');
+const cancelHref = await page.locator('#cancel-links a').first().getAttribute('href');
+const cancelText = decodeURIComponent(cancelHref || '');
+check('Pregunta y arma el aviso de WhatsApp sin link de confirmación',
+  /wa\.me\/549/.test(cancelHref || '') && cancelText.includes('se canceló') && cancelText.includes('Se inundó la cancha') && !cancelText.includes('confirmar.html'),
+  cancelText.slice(0, 180));
+await page.click('dialog.sheet [data-close]');
+await page.waitForSelector('#match-cancelled');
+await page.waitForSelector('#match-notes');
+check('El detalle muestra Cancelado y las notas', (await page.textContent('#match-notes')).includes('Se inundó la cancha') && await page.locator('.badge.bad').count() >= 1);
+check('Un partido cancelado no ofrece recordatorios', await page.locator('#btn-remind').count() === 0 && await page.locator('.remind-banner').count() === 0);
+const cancelState = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const entry = Object.entries(db.matches).find(([, m]) => m.date === '2026-10-26');
+  const players = Object.values(db.players).filter((p) => p.matchId === entry[0]);
+  const card = Object.values(db.confirmations).find((item) => item.matchId === entry[0]);
+  return { id: entry[0], count: entry[1].playerCount, players: players.length, notes: entry[1].notes, cancelled: entry[1].cancelled, card: card?.cancelled === true };
+});
+check('El contador y la ficha quedan cancelados', cancelState.count === cancelState.players && cancelState.players > 0 && cancelState.cancelled === true && cancelState.card && cancelState.notes.includes('inundó'), JSON.stringify(cancelState));
+const refused = await page.evaluate(async (id) => {
+  try { await window.__app.store.deleteMatch(id); return 'deleted'; }
+  catch (e) { return e.code || ''; }
+}, cancelState.id);
+check('El store rechaza borrar si hay jugadores', refused === 'has-players', refused);
+const confirmWho = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const entry = Object.entries(db.matches).find(([, m]) => m.date === '2026-10-26');
+  const player = Object.entries(db.players).find(([, p]) => p.matchId === entry[0] && p.confirmToken);
+  return { matchId: entry[0], id: player[0], token: player[1].confirmToken };
+});
+const cancelledPage = await ctx.newPage();
+await cancelledPage.goto(`${BASE}confirmar.html?m=${encodeURIComponent(confirmWho.matchId)}&p=${encodeURIComponent(confirmWho.id)}&t=${encodeURIComponent(confirmWho.token)}`);
+await cancelledPage.waitForSelector('#confirm-cancelled');
+check('La confirmación de un partido cancelado no ofrece sí o no', await cancelledPage.locator('#btn-si').count() === 0 && (await cancelledPage.textContent('#confirm-cancelled')).includes('se canceló'));
+await cancelledPage.close();
+await page.click('#btn-back');
+await page.waitForSelector('.match-card:has-text("Lunes 26/10")');
+check('La lista muestra el badge Cancelado', (await page.textContent('.match-card:has-text("Lunes 26/10")')).includes('Cancelado'));
+check('El partido cancelado sigue en la lista', await page.locator('.match-card:has-text("Lunes 26/10")').count() === 1);
+
+await page.click('#btn-add-match');
+await page.fill('#match-form [name=date]', '2026-11-02');
+await page.fill('#match-form [name=time]', '18:00');
+await page.click('#match-form button[type=submit]');
+await page.waitForSelector('.match-card:has-text("2/11")');
+await page.click('.match-card:has-text("2/11")');
+await page.waitForSelector('#btn-del-match');
+check('Sin jugadores se puede borrar', await page.locator('#btn-cancel-match').count() === 0);
 await page.click('#btn-del-match');
-await page.waitForFunction(() => document.querySelectorAll('.match-card').length === 4);
-check('Borrar partido', true);
+await page.waitForFunction(() => !document.body.innerText.includes('2/11'));
+check('Borrar un partido vacío', true);
 
 // Cartel de 2 horas. El reloj está fijo en lunes 19/10 13:00.
 check('Un partido a varios días no muestra el cartel', (await page.locator('.remind-banner').count()) === 0);
@@ -891,7 +946,12 @@ await page.waitForSelector('#roster-list .name:text-is("Juan Pérez")');
 await page.locator('#roster-list .who', { hasText: 'Juan Pérez' }).click();
 await page.waitForSelector('#signup-list .signup-row:has-text("30/10") input');
 check('Cerrar el perfil suelta la selección', !(await page.locator('#signup-list .signup-row', { hasText: '30/10' }).locator('input').isChecked()) && !(await page.isChecked('#signup-tentative')));
-await page.evaluate((id) => window.__app.store.deleteMatch(id), pickIds.tight);
+await page.evaluate(async (id) => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const pids = Object.entries(db.players).filter(([, p]) => p.matchId === id).map(([pid]) => pid);
+  for (const pid of pids) await window.__app.store.deletePlayer(pid);
+  await window.__app.store.deleteMatch(id);
+}, pickIds.tight);
 await page.waitForFunction(() => !document.querySelector('#signup-list')?.innerText.includes('30/10'));
 
 // Precios y promo del mismo día. Gustavo sigue logueado. Al final vuelven los precios de siempre.
@@ -952,8 +1012,12 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoIds.b);
 await page.waitForSelector('.promo-badge');
 check('El otro partido del día también muestra la promo', (await page.textContent('.promo-badge')).includes('Promo 2 partidos por $9.000'));
 await page.evaluate(async (ids) => {
-  await window.__app.store.deleteMatch(ids.a);
-  await window.__app.store.deleteMatch(ids.b);
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  for (const id of [ids.a, ids.b]) {
+    const pids = Object.entries(db.players).filter(([, p]) => p.matchId === id).map(([pid]) => pid);
+    for (const pid of pids) await window.__app.store.deletePlayer(pid);
+    await window.__app.store.deleteMatch(id);
+  }
 }, promoIds);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('#btn-add-match');
@@ -1005,7 +1069,11 @@ await page.waitForSelector('.match-card:has-text("4/11")');
 await page.evaluate(async () => {
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
   const ids = Object.entries(db.matches).filter(([, m]) => m.date === '2026-11-03' || m.date === '2026-11-04').map(([id]) => id);
-  for (const id of ids) await window.__app.store.deleteMatch(id);
+  for (const id of ids) {
+    const pids = Object.entries(db.players).filter(([, p]) => p.matchId === id).map(([pid]) => pid);
+    for (const pid of pids) await window.__app.store.deletePlayer(pid);
+    await window.__app.store.deleteMatch(id);
+  }
 });
 await page.waitForFunction(() => !document.body.innerText.includes('4/11') && !document.body.innerText.includes('3/11'));
 
@@ -1189,6 +1257,28 @@ await page.waitForSelector('#btn-who');
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
 
+await page.evaluate(async () => {
+  const who = window.__app.who;
+  const id = await window.__app.store.addMatch({ date: '2026-10-11', time: '19:00', note: 'Viejo cancelable', capacity: 14 }, who);
+  const match = window.__app.matches.find((m) => m.id === id);
+  await window.__app.store.addPlayer(match, { name: 'Cancel Viejo', phone: '5491188887777' }, who);
+});
+await page.evaluate(() => { location.hash = '#/historial'; });
+await page.waitForSelector('#list-history .match-card:has-text("Viejo cancelable")');
+await page.click('#list-history .match-card:has-text("Viejo cancelable")');
+await page.waitForSelector('#btn-cancel-match');
+await page.click('#btn-cancel-match');
+await page.fill('#cancel-notes', 'Se suspendió');
+await page.click('#cancel-form button[type=submit]');
+await page.waitForSelector('#cancel-links');
+await page.click('dialog.sheet [data-close]');
+await page.waitForSelector('#match-cancelled');
+await page.click('#btn-back');
+await page.waitForSelector('#list-history .match-card:has-text("Viejo cancelable")');
+check('El historial muestra Cancelado', (await page.textContent('#list-history .match-card:has-text("Viejo cancelable")')).includes('Cancelado'));
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card:has-text("Hoy temprano")');
+
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());
 check('Manifest válido con íconos 192/512 + maskable', manifest.icons.length === 3 && manifest.display === 'standalone');
@@ -1212,10 +1302,25 @@ await page.waitForSelector('.match-card');
 await page.setViewportSize({ width: 360, height: 740 });
 const overflowHome = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en un teléfono de 360px no desborda el inicio', overflowHome <= 1, String(overflowHome));
+await page.click('.match-card:has-text("Lunes 26/10")');
+await page.waitForSelector('#match-cancelled');
+const overflowCancelled = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+check('Enorme en 360px no desborda un partido cancelado', overflowCancelled <= 1, String(overflowCancelled));
+await page.click('#btn-back');
+await page.waitForSelector('#list-next');
 await page.evaluate(() => { location.hash = '#/historial'; });
 await page.waitForSelector('#list-history');
 const overflowHistory = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en 360px no desborda el historial', overflowHistory <= 1, String(overflowHistory));
+await page.click('#list-history .match-card:has-text("Viejo cancelable")');
+await page.waitForSelector('#btn-reactivate-match');
+check('En el historial se leen las notas', (await page.textContent('#match-notes')).includes('Se suspendió'));
+await page.click('#btn-reactivate-match');
+await page.waitForFunction(() => !document.querySelector('#match-cancelled') && !!document.querySelector('#btn-cancel-match'));
+check('Reactivar conserva las notas', (await page.textContent('#match-notes')).includes('Se suspendió'));
+await page.click('#btn-back');
+await page.waitForSelector('#list-history');
+check('Al reactivar sale el badge del historial', !(await page.textContent('#list-history .match-card:has-text("Viejo cancelable")')).includes('Cancelado'));
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('#list-next .match-card');
 await page.click('#list-next .match-card:has-text("22/10")');

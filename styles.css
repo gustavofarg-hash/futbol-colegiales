@@ -110,7 +110,13 @@ h2.section:first-child { margin-top: 4px; }
 .match-time { color: var(--muted); font-size: 0.9375rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .match-note { color: var(--muted); font-size: 0.84375rem; overflow-wrap: anywhere; }
 .badge { display: inline-block; font-size: 0.71875rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--green); color: #fff; }
-@media (prefers-color-scheme: dark) { .badge { color: #06210f; } }
+.badge.bad { background: var(--warn-bg); color: var(--warn-text); }
+@media (prefers-color-scheme: dark) { .badge { color: #06210f; } .badge.bad { color: var(--warn-text); } }
+.match-cancelled { margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-text); font-weight: 700; overflow-wrap: anywhere; }
+.match-notes { margin: 10px 0 0; min-width: 0; }
+.match-notes-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.match-notes-head .btn { min-height: 36px; padding: 0 12px; }
+.match-notes-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .count { flex: none; text-align: center; min-width: 56px; }
 .count .num { font-size: 1.25rem; font-weight: 800; font-variant-numeric: tabular-nums; }
 .count .num small { font-size: 0.8125rem; color: var(--muted); font-weight: 700; }

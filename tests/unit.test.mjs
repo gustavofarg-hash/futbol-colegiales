@@ -12,7 +12,7 @@ import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { toEpoch } from '../js/dates.js';
 import {
-  confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
+  cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
@@ -449,6 +449,7 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(withinReminderWindow(match, start - twoH - 1), false);
   assert.equal(withinReminderWindow(match, start), true);
   assert.equal(withinReminderWindow(match, start + 1), false);
+  assert.equal(needsReminderBanner({ ...match, cancelled: true }, players, start - 60_000), false);
   assert.equal(needsReminderBanner(match, players, start - 60_000), true);
   assert.equal(needsReminderBanner(match, players.map((p) => (p.phone ? { ...p, reminderSentAt: 1 } : p)), start - 60_000), false);
   assert.equal(needsReminderBanner(match, players.map((p) => (p.id === 'p1' ? { ...p, reminderSentAt: 1 } : p)), start - 60_000), true);
@@ -683,6 +684,16 @@ test('el organizador no reescribe la respuesta al actualizar la ficha', () => {
   assert.equal(idn.name, 'Juan Pérez');
   assert.equal(idn.date, '2026-10-20');
   assert.equal(idn.note, '');
+  assert.equal(idn.cancelled, false);
+  assert.equal(idn.notes, '');
+  const cancelled = confirmationIdentity({
+    playerId: 'p1',
+    player: { matchId: 'm', name: 'Juan Pérez' },
+    match: { id: 'm', date: '2026-10-20', time: '20:00', cancelled: true, notes: 'Lluvia' },
+  });
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(cancelled.notes, 'Lluvia');
+  assert.equal('confirmed' in cancelled, false);
 });
 
 test('el sí de la ficha gana y un sí viejo no se borra si la ficha no contestó', () => {
@@ -970,9 +981,10 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
     { id: 'ayer', date: '2026-10-18', time: '21:00' },
     { id: 'hoy-temprano', date: '2026-10-19', time: '10:00' },
     { id: 'hoy-noche', date: '2026-10-19', time: '21:00' },
+    { id: 'cancelado', date: '2026-10-20', time: '18:00', cancelled: true },
     { id: 'manana', date: '2026-10-20', time: '19:00' },
   ];
-  assert.deepEqual(currentMatches(matches, now).map((match) => match.id), ['hoy-temprano', 'hoy-noche', 'manana']);
+  assert.deepEqual(currentMatches(matches, now).map((match) => match.id), ['hoy-temprano', 'hoy-noche', 'cancelado', 'manana']);
   assert.deepEqual(pastMatches(matches, now).map((match) => match.id), ['ayer', 'viejo']);
   assert.deepEqual(upcomingMatches(matches, now).map((match) => match.id), ['hoy-noche', 'manana']);
 });
@@ -1005,4 +1017,60 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.match(msg, /Sin pechera \(1\)/);
   assert.match(msg, /1\. Beto/);
   assert.deepEqual(teamsRecord({ bib: ['ana'], plain: ['ana'] }).teams, { bib: ['ana'], plain: [] });
+});
+
+test('cancelar no arma recordatorio y el mensaje no lleva link', () => {
+  const match = { id: 'm', date: '2026-10-26', time: '21:00', cancelled: true, notes: 'Lluvia' };
+  const start = toEpoch(match.date, match.time);
+  const players = [{ id: 'p1', name: 'Teo', phone: '5491166662222' }];
+  assert.equal(needsReminderBanner(match, players, start - 60_000), false);
+  assert.deepEqual(matchesCrossingReminderWindow([match], start - 3 * 3600e3, start - 60_000), []);
+  const text = cancelMessage({ player: players[0], match, venue: 'Polideportivo Colegiales' });
+  assert.match(text, /Hola Teo, se canceló/);
+  assert.match(text, /Motivo: Lluvia/);
+  assert.equal(text.includes('confirmar.html'), false);
+  const links = cancelLinks({ match, players: [...players, { id: 'p2', name: 'Sin', phone: '' }], venue: 'Polideportivo Colegiales' });
+  assert.equal(links.length, 1);
+  assert.match(links[0].waUrl, /^https:\/\/wa\.me\/5491166662222\?text=/);
+  assert.equal(decodeURIComponent(links[0].waUrl).includes('confirmar.html'), false);
+});
+
+test('con jugadores no se borra, el contador sigue y las notas quedan en la ficha', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-cancel';
+  await store.init();
+  const empty = await store.addMatch({ date: '2026-11-02', time: '18:00', note: '' }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get('f7c-test-cancel')).matches[empty].playerCount, 0);
+  await store.deleteMatch(empty);
+  assert.equal(JSON.parse(mem.get('f7c-test-cancel')).matches[empty], undefined);
+  const mid = await store.addMatch({ date: '2026-10-26', time: '21:00', note: '' }, 'Gustavo');
+  const main = await store.addPlayer({ id: mid, date: '2026-10-26', capacity: 14 }, { name: 'Teo', phone: '5491166662222' }, 'Gustavo');
+  await store.addPlayer({ id: mid, date: '2026-10-26', capacity: 14 }, { name: 'Espera', phone: '' }, 'Gustavo', { waiting: true });
+  let db = JSON.parse(mem.get('f7c-test-cancel'));
+  assert.equal(db.matches[mid].playerCount, 2);
+  await assert.rejects(() => store.deleteMatch(mid), (err) => err.code === 'has-players');
+  await store.deletePlayer(main);
+  assert.equal(JSON.parse(mem.get('f7c-test-cancel')).matches[mid].playerCount, 1);
+  const long = 'x'.repeat(2500);
+  await store.updateMatch(mid, { cancelled: true, cancelledAt: 5, cancelledBy: 'gustavo', notes: long }, 'Gustavo');
+  db = JSON.parse(mem.get('f7c-test-cancel'));
+  assert.equal(db.matches[mid].cancelled, true);
+  assert.equal(db.matches[mid].notes.length, 2000);
+  assert.equal(db.matches[mid].playerCount, 1);
+  const card = Object.values(db.confirmations).find((item) => item.matchId === mid);
+  assert.equal(card.cancelled, true);
+  assert.equal(card.notes.length, 2000);
+  assert.equal('phone' in card, false);
+  await store.updateMatch(mid, { cancelled: false }, 'Gustavo');
+  db = JSON.parse(mem.get('f7c-test-cancel'));
+  assert.equal(db.matches[mid].cancelled, false);
+  assert.equal(db.matches[mid].cancelledAt, null);
+  assert.equal(db.matches[mid].notes.length, 2000);
+  assert.equal(Object.values(db.confirmations).find((item) => item.matchId === mid).cancelled, false);
 });

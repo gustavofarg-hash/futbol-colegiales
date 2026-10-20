@@ -52,6 +52,11 @@ service cloud.firestore {
       return d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
           && d.time is string && d.time.matches('^\\d{2}:\\d{2}$')
           && (!('note' in d) || (d.note is string && d.note.size() <= 300))
+          && (!('notes' in d) || (d.notes is string && d.notes.size() <= 2000))
+          && (!('cancelled' in d) || d.cancelled is bool)
+          && (!('cancelledAt' in d) || d.cancelledAt == null || d.cancelledAt is number)
+          && (!('cancelledBy' in d) || d.cancelledBy == null || (d.cancelledBy is string && d.cancelledBy.size() <= 128))
+          && (!('playerCount' in d) || (d.playerCount is int && d.playerCount >= 0 && d.playerCount <= 500))
           && accessShape(d);
     }
     function accessShape(d) {
@@ -267,11 +272,14 @@ service cloud.firestore {
           && d.time is string && d.time.matches('^\\d{2}:\\d{2}$')
           && (!('note' in d) || (d.note is string && d.note.size() <= 300))
           && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
-          && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number);
+          && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number)
+          && (!('cancelled' in d) || d.cancelled is bool)
+          && (!('notes' in d) || (d.notes is string && d.notes.size() <= 2000));
     }
     function anonymousConfirm() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return changed.hasOnly(['confirmed', 'confirmedAt'])
+          && resource.data.get('cancelled', false) != true
           && request.resource.data.playerId == resource.data.playerId
           && request.resource.data.matchId == resource.data.matchId
           && request.resource.data.name == resource.data.name
@@ -321,7 +329,13 @@ service cloud.firestore {
       allow create: if isActiveStaff() && validMatch(request.resource.data);
       allow update: if isActiveStaff() && validMatch(request.resource.data) && isViewer(resource.data)
           && (isCreator() || (accessSame() && isAdder(resource.data)) || legacyStamp());
-      allow delete: if isActiveStaff() && ((isPublic(resource.data) && isAdder(resource.data)) || isCreator());
+      // playerCount lo mantiene quien anota o quita jugadores. Si el campo no
+      // está, vale 0 y un partido viejo se puede borrar. La regla no puede
+      // contar los documentos de players: quien edita el partido podría
+      // poner el contador en 0 y después borrarlo.
+      allow delete: if isActiveStaff()
+          && ((isPublic(resource.data) && isAdder(resource.data)) || isCreator())
+          && resource.data.get('playerCount', 0) == 0;
     }
 
     match /players/{playerId} {
