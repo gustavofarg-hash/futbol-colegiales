@@ -56,29 +56,20 @@ await page.waitForFunction(() => (document.querySelector('#login-err')?.textCont
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
-check('Al entrar no obliga a elegir WhatsApp', (await page.locator('#wa-choice').count()) === 0);
+await page.waitForFunction(() => window.__app?.who);
+await page.evaluate(() => localStorage.setItem('f7c-wa-from', 'business'));
+await page.reload();
+await page.waitForFunction(() => window.__app?.who);
+check('Ajustes no pregunta desde qué WhatsApp', (await page.locator('#wa-choice, #wa-choice-ask, #wa-choice-business').count()) === 0);
 await page.click('#btn-settings');
-await page.waitForSelector('#wa-choice');
-check('En Ajustes se elige el WhatsApp', (await page.textContent('#wa-choice')).includes('¿Desde qué WhatsApp querés mandar los mensajes?'));
-check('Avisa que Dual Messenger deja elegir', (await page.textContent('#wa-choice-note')).includes('Si tenés dos WhatsApp (Dual Messenger), el celular te va a dejar elegir'));
-check('Por defecto pregunta cada vez', (await page.locator('#wa-choice-ask').getAttribute('aria-pressed')) === 'true' && await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
-check('Las apps forzadas no distinguen el dual', (await page.textContent('#wa-choice-force')).includes('No distinguen el WhatsApp dual'));
-await page.click('#wa-choice-business');
-check('Guarda WhatsApp Business en este dispositivo', await page.evaluate(() => localStorage.getItem('f7c-wa-from') === 'business'));
-const androidLink = await page.evaluate(async () => {
+const settingsText = await page.locator('#sheet').innerText();
+check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
+check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
+const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
-  const ask = waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'ask', android: true });
-  const business = waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'business', android: true });
-  return { ask, business };
+  return waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'business', android: true });
 });
-const androidFallback = decodeURIComponent(androidLink.business.split('S.browser_fallback_url=')[1].replace(/;end$/, ''));
-check('Preguntar cada vez es un wa.me plano, sin package', androidLink.ask === 'https://wa.me/5491112345678?text=Hola%20Juan' && !androidLink.ask.includes('package='), androidLink.ask);
-check('En Android el intent apunta a WhatsApp Business y cae a wa.me',
-  androidLink.business.startsWith('intent://wa.me/5491112345678?text=Hola%20Juan#Intent;scheme=https;package=com.whatsapp.w4b;')
-  && androidFallback === 'https://wa.me/5491112345678?text=Hola%20Juan', androidLink.business.slice(0, 120));
-await page.click('#wa-choice-ask');
-check('Se puede volver a que el celular pregunte', await page.evaluate(() => localStorage.getItem('f7c-wa-from') === 'ask'));
+check('Todos los envíos son wa.me, sin package', plainLink === 'https://wa.me/5491112345678?text=Hola%20Juan', plainLink);
 await page.click('dialog.sheet [data-close]');
 await page.waitForSelector('text=No hay partidos en los próximos 7 días');
 check('Banner de modo demo visible', await page.isVisible('#demo-banner'));
@@ -86,7 +77,31 @@ const demoMode = await page.evaluate(() => window.__app?.store?.mode);
 check('Modo demo (no escribe en Firestore)', demoMode === 'demo', String(demoMode));
 if (demoMode !== 'demo') { await browser.close(); process.exit(1); }
 check('Arranca sin partidos', await page.isVisible('text=No hay partidos en los próximos 7 días'));
-check('Chip de organizador', (await page.textContent('#btn-who')).includes('Gustavo'));
+check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
+const tabLabels = await page.$$eval('#tabbar a', (els) => els.map((el) => el.textContent.trim()));
+check('Tres pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial']), tabLabels.join(' | '));
+check('Próximos partidos queda activo', await page.getAttribute('#tab-proximos', 'aria-current') === 'page');
+await page.click('#btn-settings');
+check('Ajustes dice quién entró', (await page.textContent('#set-who')).includes('Entraste como Gustavo'));
+check('El filtro de lo propio arranca apagado', !(await page.isChecked('#set-mine')));
+const settingsBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const body = document.querySelector('.sheet-body').getBoundingClientRect();
+  const labels = [...document.querySelectorAll('#tabbar a')].map((el) => el.textContent.trim());
+  return {
+    labels,
+    tabsInView: tabs.top >= 0 && tabs.bottom <= window.innerHeight && tabs.height >= 44,
+    sheetBelow: body.top >= tabs.bottom - 1,
+    inDialog: document.querySelector('#tabbar').parentElement?.id === 'sheet',
+  };
+});
+check('En Ajustes las tres pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial']), JSON.stringify(settingsBars));
+check('La hoja de Ajustes no queda debajo de las pestañas', settingsBars.sheetBelow, JSON.stringify(settingsBars));
+await page.click('#btn-historial');
+await page.waitForSelector('#history-filter');
+check('Desde Ajustes, Historial abre esa sección', (await page.evaluate(() => location.hash)) === '#/historial' && await page.locator('dialog.sheet[open]').count() === 0 && await page.getAttribute('#btn-historial', 'aria-current') === 'page');
+await page.click('#tab-proximos');
+await page.waitForSelector('text=No hay partidos en los próximos 7 días');
 
 // Agregar partido
 await page.click('#btn-add-match');
@@ -97,6 +112,30 @@ await page.click('#match-form button[type=submit]');
 await page.waitForSelector('.match-card');
 let cardText = (await page.textContent('.match-card')).replace(/\s+/g, ' ');
 check('Partido agregado aparece en la lista', /Jueves 22\/10/.test(cardText) && /21:00 hs/.test(cardText) && /0\/14/.test(cardText), cardText.trim());
+await page.click('.match-card');
+await page.waitForSelector('#btn-add-player');
+await page.evaluate(() => window.scrollTo(0, 600));
+const matchBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const bar = document.querySelector('.actionbar').getBoundingClientRect();
+  const share = document.querySelector('#btn-share').getBoundingClientRect();
+  const add = document.querySelector('#btn-add-player').getBoundingClientRect();
+  const inside = (el, box) => el.top >= box.top - 1 && el.bottom <= box.bottom + 1 && el.left >= box.left - 1 && el.right <= box.right + 1;
+  return {
+    tabsStuck: tabs.top >= 0 && tabs.bottom < window.innerHeight / 2 && tabs.bottom <= window.innerHeight,
+    apart: bar.top >= tabs.bottom + 8,
+    barInView: bar.top >= 0 && bar.bottom <= window.innerHeight + 1,
+    share: inside(share, bar) && share.width > 20,
+    add: inside(add, bar) && add.bottom <= window.innerHeight + 1,
+  };
+});
+check('Al bajar el partido las pestañas siguen arriba', matchBars.tabsStuck, JSON.stringify(matchBars));
+check('La barra de compartir y agregar no queda tapada', matchBars.apart && matchBars.barInView && matchBars.share && matchBars.add, JSON.stringify(matchBars));
+await page.click('#btn-roster');
+await page.waitForSelector('#roster-section');
+check('Desde el partido, Jugadores abre el listado', (await page.evaluate(() => location.hash)) === '#/jugadores' && await page.getAttribute('#btn-roster', 'aria-current') === 'page');
+await page.click('#tab-proximos');
+await page.waitForSelector('.match-card');
 
 // Importar desde texto
 await page.click('#btn-import');
@@ -119,7 +158,18 @@ await page.click('#imp-save');
 await page.waitForFunction(() => document.querySelectorAll('.match-card').length === 5);
 const order = await page.$$eval('.match-card .match-title', (els) => els.map((e) => e.textContent));
 check('Lista ordenada cronológicamente', JSON.stringify(order) === JSON.stringify(['Martes 20/10', 'Miércoles 21/10', 'Jueves 22/10', 'Sábado 24/10', 'Lunes 26/10']), order.join(', '));
-check('Partido a más de 7 días va a "Más adelante"', (await page.$$('#list-later .match-card')).length === 1 && (await page.$$('#list-next .match-card')).length === 4);
+check('El lunes 26/10 entra en los próximos 7 días', await page.locator('#list-next .match-card:has-text("26/10")').count() === 1 && await page.locator('#btn-later').count() === 0);
+await page.evaluate(async () => {
+  await window.__app.store.addMatch({ date: '2026-10-28', time: '21:00', note: 'Lejos', capacity: 14 }, window.__app.who);
+});
+await page.waitForSelector('#btn-later');
+check('Ver más adelante muestra la cantidad', (await page.textContent('#btn-later')).replace(/\s+/g, ' ').trim() === 'Ver más adelante (1)');
+check('Más adelante arranca cerrado', await page.locator('#list-later').count() === 0 && await page.locator('#list-next .match-card:has-text("28/10")').count() === 0);
+await page.click('#btn-later');
+await page.waitForSelector('#list-later .match-card:has-text("28/10")');
+check('Ver más adelante despliega los que siguen', await page.locator('#list-next .match-card').count() === 5 && await page.locator('#list-later .match-card').count() === 1);
+await page.click('#btn-later');
+await page.waitForFunction(() => !document.querySelector('#list-later') && document.querySelector('#btn-later')?.textContent.includes('Ver más adelante'));
 check('Badge "Mañana" en el partido del martes', (await page.textContent('#list-next .match-card >> nth=0')).includes('Mañana'));
 
 // Detalle y jugadores
@@ -141,8 +191,24 @@ for (const [name, phone] of players) {
 check('Contador 3/14', (await page.textContent('#slot-count')) === '3/14');
 check('Siguen 14 lugares (3 ocupados + 11 libres)', (await page.$$('#slots > li')).length === 14 && (await page.$$('.slot.free')).length === 11);
 const hrefs = await page.$$eval('.wa-btn', (els) => els.map((e) => e.getAttribute('href')));
-const msg = encodeURIComponent('¡Hola Juan! Te anoté para el fútbol 7 en Polideportivo Colegiales el jueves 22/10 a las 21:00 hs. (Cancha 2) ¿Confirmás? ⚽');
-check('Link wa.me Juan correcto', hrefs[0] === `https://wa.me/5491112345678?text=${msg}`, hrefs[0]);
+const juanHrefText = decodeURIComponent(new URL(hrefs[0]).searchParams.get('text') || '');
+const juanShort = juanHrefText.match(/\/c\/\?k=([0-9A-Za-z]{8})/)?.[1] || '';
+const juanLink = await page.evaluate((code) => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez');
+  return { id: found[0], player: found[1], link: db.links?.[code] || null };
+}, juanShort);
+check('Link wa.me Juan correcto',
+  hrefs[0].startsWith('https://wa.me/5491112345678?text=')
+  && juanHrefText.includes('¡Hola Juan!')
+  && juanHrefText.includes('¿Confirmás?')
+  && juanShort.length === 8
+  && juanLink.player.shortCode === juanShort
+  && juanLink.link?.m === juanLink.player.matchId
+  && juanLink.link?.p === juanLink.id
+  && juanLink.link?.t === juanLink.player.confirmToken
+  && juanHrefText.includes(juanLink.player.confirmToken) === false,
+  juanHrefText.slice(0, 180));
 players.forEach(([n, , wa], i) => check(`Número normalizado ${n} → ${wa}`, hrefs[i]?.startsWith(`https://wa.me/${wa}?text=`)));
 check('Cada jugador muestra "Agregó: Gustavo"', (await page.$$('.tag.g')).length === 3);
 check('Todos figuran sin respuesta', (await page.textContent('#confirm-sum')).includes('Sin respuesta: 3'));
@@ -150,7 +216,14 @@ const juanAtAdd = await page.evaluate(() => {
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
   return Object.values(db.players).find((p) => p.name === 'Juan Pérez');
 });
+const juanContact = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez');
+  return { player: found[1], contact: db.contacts.players[found[0]] };
+});
 check('El token se crea al anotar, sin abrir el recordatorio', juanAtAdd?.confirmToken?.length >= 16 && !juanAtAdd.reminderSentAt);
+check('El teléfono de Juan no queda en el jugador', (juanContact.player.phone == null || juanContact.player.phone === '') && juanContact.player.hasPhone === true);
+check('El teléfono de Juan está en playerContacts, privado y de Gustavo', juanContact.contact.phone === '5491112345678' && juanContact.contact.ownerUid === 'gustavo' && juanContact.contact.visibleToAll === false);
 
 // Recordatorio y página de confirmación (mismo origen, modo demo)
 await page.click('#btn-remind');
@@ -159,10 +232,10 @@ const remindLink = page.locator('#remind-list .remind-row', { hasText: 'Juan Pé
 const remindHref = await remindLink.getAttribute('href');
 const remindText = decodeURIComponent(remindHref.split('text=')[1]);
 check('Recordatorio abre wa.me de Juan', remindHref.startsWith('https://wa.me/5491112345678?text='), remindHref.slice(0, 80));
-check('El mensaje saluda, da día, hora, lugar, nota y link',
+check('El mensaje saluda, da día, hora, lugar, nota y link corto',
   remindText.includes('¡Hola Juan!') && remindText.includes('jueves 22/10 a las 21:00 hs')
   && remindText.includes('Polideportivo Colegiales') && remindText.includes('(Cancha 2)')
-  && remindText.includes('confirmar.html?m='));
+  && remindText.includes('/c/?k='));
 const [popup] = await Promise.all([page.waitForEvent('popup'), remindLink.click()]);
 await popup.close();
 await page.waitForFunction(() => [...document.querySelectorAll('#remind-list .remind-row')].some((r) => r.textContent.includes('Juan') && r.textContent.includes('Enviado')));
@@ -172,7 +245,7 @@ const juan = await page.evaluate(() => {
   const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez');
   return { id: found[0], ...found[1] };
 });
-check('Token del link guardado en el jugador', juan.confirmToken && juan.confirmToken.length >= 16 && remindText.includes(`t=${juan.confirmToken}`) && juan.reminderSentAt > 0);
+check('Token del link guardado en el jugador', juan.confirmToken && juan.confirmToken.length >= 16 && juan.reminderSentAt > 0 && remindText.includes(`/c/?k=${juan.shortCode}`) && remindText.includes(juan.confirmToken) === false);
 const publicCard = await page.evaluate((token) => JSON.parse(localStorage.getItem('f7c-demo-db')).confirmations[token], juan.confirmToken);
 check('La ficha pública no tiene teléfono', publicCard && publicCard.name === 'Juan Pérez' && publicCard.phone == null && !JSON.stringify(publicCard).includes('549'));
 await page.click('dialog.sheet [data-close]');
@@ -182,6 +255,17 @@ await bad.goto(`${BASE}confirmar.html?m=${encodeURIComponent(juan.matchId)}&p=${
 await bad.waitForSelector('text=Este link no es válido');
 check('Token incorrecto no confirma', (await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).players[id].confirmed, juan.id)) == null);
 await bad.close();
+
+const shortPage = await ctx.newPage();
+await shortPage.goto(`${BASE}c/?k=${encodeURIComponent(juan.shortCode)}`);
+await shortPage.waitForSelector('#btn-si');
+check('El link corto abre la misma confirmación', (await shortPage.locator('body').innerText()).includes('Juan Pérez') && shortPage.url().includes('confirmar.html') && shortPage.url().includes(`t=${encodeURIComponent(juan.confirmToken)}`));
+const badShort = await ctx.newPage();
+await badShort.goto(`${BASE}c/?k=zzzzzzzz`);
+await badShort.waitForSelector('text=Este link no es válido');
+check('Un código corto inexistente no confirma', true);
+await badShort.close();
+await shortPage.close();
 
 const confirmPage = await ctx.newPage();
 await confirmPage.goto(`${BASE}confirmar.html?m=${encodeURIComponent(juan.matchId)}&p=${encodeURIComponent(juan.id)}&t=${encodeURIComponent(juan.confirmToken)}`);
@@ -215,9 +299,9 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.waitForSelector('#btn-add-player');
-check('Sesión de Martín', (await page.textContent('#btn-who')).includes('Martín'));
+check('Sesión de Martín', (await page.evaluate(() => window.__app.who)) === 'Martín');
 check('La sesión queda en el navegador', (await page.evaluate(() => JSON.parse(localStorage.getItem('f7c-demo-auth')).session.name)) === 'Martín');
 await page.click('#btn-add-player');
 await page.fill('#player-form [name=name]', 'Nico Ruiz');
@@ -225,6 +309,9 @@ await page.fill('#player-form [name=phone]', '1234-5678');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('.slot .name:text-is("Nico Ruiz")');
 check('Jugador agregado por Martín muestra "Agregó: Martín"', (await page.textContent('.slot:has-text("Nico Ruiz") .tag')).includes('Martín'));
+const juanHidden = (await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).innerText()).replace(/\s+/g, ' ');
+check('Martín no ve el WhatsApp de Juan', !juanHidden.includes('1234') && !juanHidden.includes('549') && juanHidden.includes('El WhatsApp de este jugador es privado'), juanHidden);
+check('El botón de WhatsApp de Juan está deshabilitado', await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).locator('.wa-btn').isDisabled());
 await page.click('#btn-remind');
 await page.waitForSelector('#remind-list .name');
 let remindNames = await page.$$eval('#remind-list .name', (els) => els.map((e) => e.textContent));
@@ -234,7 +321,8 @@ check('Enviar recordatorios arranca en mis jugadores',
 await page.click('[data-remind-scope="all"]');
 await page.waitForFunction(() => [...document.querySelectorAll('#remind-list .name')].some((e) => e.textContent === 'Juan Pérez'));
 const allReminders = await page.textContent('#remind-list');
-check('Todos muestra quién ya fue recordado', allReminders.includes('Juan Pérez') && allReminders.includes('Enviado') && allReminders.includes('Nico Ruiz'));
+const juanRemind = (await page.locator('#remind-list .remind-row', { hasText: 'Juan Pérez' }).innerText()).replace(/\s+/g, ' ');
+check('Todos no abre el WhatsApp privado de Juan', juanRemind.includes('El WhatsApp de este jugador es privado') && (await page.locator('#remind-list .remind-row', { hasText: 'Juan Pérez' }).locator('a').count()) === 0 && allReminders.includes('Nico Ruiz'), juanRemind);
 await page.click('dialog.sheet [data-close]');
 
 // Editar y quitar
@@ -313,8 +401,9 @@ await page2.waitForFunction(() => document.body.innerText.includes('Efectivo') &
 check('La otra pestaña se actualiza sola', (await page2.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500'));
 await page2.close();
 
-await page.click('#btn-mine');
-await page.waitForFunction(() => document.querySelector('#btn-mine')?.textContent === 'Todos');
+await page.click('#btn-settings');
+await page.check('#set-mine');
+await page.waitForFunction(() => document.querySelector('#mine-filter') && ![...document.querySelectorAll('#slots .name')].some((el) => el.textContent === 'Pedro G.'));
 check('Mis oculta a quien no anoté ni cobré', (await page.locator('#slots .name', { hasText: 'Pedro G.' }).count()) === 0);
 check('Mis muestra a quien anoté y a quien le cobré',
   (await page.locator('#slots .name', { hasText: 'Nico Ruiz' }).count()) === 1
@@ -322,8 +411,9 @@ check('Mis muestra a quien anoté y a quien le cobré',
 check('El cupo sigue siendo el del partido', (await page.textContent('#slot-count')) === '3/14');
 const mineText = (await page.textContent('#mine-stats')).replace(/\s+/g, ' ');
 check('Estadística propia del partido', mineText.includes('Anotaste 1') && mineText.includes('Cobraste $4.500'), mineText);
-await page.click('#btn-mine');
+await page.uncheck('#set-mine');
 await page.waitForSelector('#slots .name:text-is("Pedro G.")');
+await page.click('dialog.sheet [data-close]');
 
 // Lista de espera con lugares libres: queda al final, no ocupa un cupo
 await page.click('#btn-add-wait');
@@ -501,9 +591,9 @@ check('El mensaje usa el nombre, el día, la hora y el link',
   && teoText.includes('Polideportivo Colegiales')
   && teoText.includes('lunes 26/10')
   && teoText.includes('21:00')
-  && teoText.includes('confirmar.html?m=')
+  && teoText.includes('/c/?k=')
   && teoText.includes(luisStored.token) === false
-  && teoText.includes('t='), teoText.slice(0, 180));
+  && /\/c\/\?k=[0-9A-Za-z]{8}/.test(teoText), teoText.slice(0, 180));
 await teoPopup.close();
 await page.click('#btn-add-wait');
 await page.fill('#player-form [name=name]', 'Sin Fono');
@@ -517,11 +607,66 @@ check('Sin teléfono muestra un cartel y no abre WhatsApp', (await noPhonePopup)
 await page.click('#btn-back');
 await page.waitForSelector('.match-card');
 
-// Borrar partido
+// Con jugadores se cancela. Sin jugadores se borra.
 await page.click('.match-card:has-text("Lunes 26/10")');
+await page.waitForSelector('#btn-cancel-match');
+check('Con jugadores no aparece Borrar', await page.locator('#btn-del-match').count() === 0);
+await page.click('#btn-cancel-match');
+await page.waitForSelector('#cancel-notes');
+check('Al cancelar se sugiere el motivo en las notas', (await page.textContent('#cancel-form')).includes('motivo'));
+await page.fill('#cancel-notes', 'Se inundó la cancha');
+await page.click('#cancel-form button[type=submit]');
+await page.waitForSelector('#cancel-links a');
+const cancelHref = await page.locator('#cancel-links a').first().getAttribute('href');
+const cancelText = decodeURIComponent(cancelHref || '');
+check('Pregunta y arma el aviso de WhatsApp sin link de confirmación',
+  /wa\.me\/549/.test(cancelHref || '') && cancelText.includes('se canceló') && cancelText.includes('Se inundó la cancha') && !cancelText.includes('confirmar.html') && !cancelText.includes('/c/?k='),
+  cancelText.slice(0, 180));
+await page.click('dialog.sheet [data-close]');
+await page.waitForSelector('#match-cancelled');
+await page.waitForSelector('#match-notes');
+check('El detalle muestra Cancelado y las notas', (await page.textContent('#match-notes')).includes('Se inundó la cancha') && await page.locator('.badge.bad').count() >= 1);
+check('Un partido cancelado no ofrece recordatorios', await page.locator('#btn-remind').count() === 0 && await page.locator('.remind-banner').count() === 0);
+const cancelState = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const entry = Object.entries(db.matches).find(([, m]) => m.date === '2026-10-26');
+  const players = Object.values(db.players).filter((p) => p.matchId === entry[0]);
+  const card = Object.values(db.confirmations).find((item) => item.matchId === entry[0]);
+  return { id: entry[0], count: entry[1].playerCount, players: players.length, notes: entry[1].notes, cancelled: entry[1].cancelled, card: card?.cancelled === true };
+});
+check('El contador y la ficha quedan cancelados', cancelState.count === cancelState.players && cancelState.players > 0 && cancelState.cancelled === true && cancelState.card && cancelState.notes.includes('inundó'), JSON.stringify(cancelState));
+const refused = await page.evaluate(async (id) => {
+  try { await window.__app.store.deleteMatch(id); return 'deleted'; }
+  catch (e) { return e.code || ''; }
+}, cancelState.id);
+check('El store rechaza borrar si hay jugadores', refused === 'has-players', refused);
+const confirmWho = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const entry = Object.entries(db.matches).find(([, m]) => m.date === '2026-10-26');
+  const player = Object.entries(db.players).find(([, p]) => p.matchId === entry[0] && p.confirmToken);
+  return { matchId: entry[0], id: player[0], token: player[1].confirmToken };
+});
+const cancelledPage = await ctx.newPage();
+await cancelledPage.goto(`${BASE}confirmar.html?m=${encodeURIComponent(confirmWho.matchId)}&p=${encodeURIComponent(confirmWho.id)}&t=${encodeURIComponent(confirmWho.token)}`);
+await cancelledPage.waitForSelector('#confirm-cancelled');
+check('La confirmación de un partido cancelado no ofrece sí o no', await cancelledPage.locator('#btn-si').count() === 0 && (await cancelledPage.textContent('#confirm-cancelled')).includes('se canceló'));
+await cancelledPage.close();
+await page.click('#btn-back');
+await page.waitForSelector('.match-card:has-text("Lunes 26/10")');
+check('La lista muestra el badge Cancelado', (await page.textContent('.match-card:has-text("Lunes 26/10")')).includes('Cancelado'));
+check('El partido cancelado sigue en la lista', await page.locator('.match-card:has-text("Lunes 26/10")').count() === 1);
+
+await page.click('#btn-add-match');
+await page.fill('#match-form [name=date]', '2026-11-02');
+await page.fill('#match-form [name=time]', '18:00');
+await page.click('#match-form button[type=submit]');
+await page.waitForSelector('.match-card:has-text("2/11")');
+await page.click('.match-card:has-text("2/11")');
+await page.waitForSelector('#btn-del-match');
+check('Sin jugadores se puede borrar', await page.locator('#btn-cancel-match').count() === 0);
 await page.click('#btn-del-match');
-await page.waitForFunction(() => document.querySelectorAll('.match-card').length === 4);
-check('Borrar partido', true);
+await page.waitForFunction(() => !document.body.innerText.includes('2/11'));
+check('Borrar un partido vacío', true);
 
 // Cartel de 2 horas. El reloj está fijo en lunes 19/10 13:00.
 check('Un partido a varios días no muestra el cartel', (await page.locator('.remind-banner').count()) === 0);
@@ -591,7 +736,7 @@ await page.waitForFunction(() => {
   return names.length === 1 && names[0] === 'José Pérez';
 });
 check('Buscar jose encuentra a José Pérez', true);
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('.match-card');
 await page.click('.match-card:has-text("Martes 20/10")');
 await page.click('#btn-add-player');
@@ -630,7 +775,7 @@ await page.fill('#roster-form [name=phone]', '11 4444-5555');
 await page.click('#roster-form button[type=submit]');
 check('No duplica el mismo WhatsApp', (await page.textContent('#rf-err')).includes('ya tiene ese WhatsApp'));
 await page.click('#roster-form [data-close]');
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('.match-card');
 
 // Perfil: tocar al jugador, nivel, posiciones, nota y estadística de un partido ya jugado
@@ -643,6 +788,7 @@ await page.waitForFunction(() => document.querySelector('h1')?.textContent.inclu
 await page.locator('#slots .who', { hasText: 'Ernesto Pereira' }).click();
 await page.waitForSelector('#profile');
 check('Tocarlo abre el perfil con WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491122223333'));
+check('Mostrar el WhatsApp a los demás arranca desactivado', (await page.locator('#phone-share').count()) === 1 && !(await page.isChecked('#phone-share')) && (await page.textContent('#phone-share-line')).includes('Mostrar mi WhatsApp a los demás organizadores'));
 check('Cuenta el partido pasado en la lista principal', (await page.textContent('#stat-times')).includes('Jugó 1 vez'));
 check('Mayormente jueves · 21:00', (await page.textContent('#stat-summary')).includes('Mayormente jueves · 21:00'));
 for (let i = 0; i < 8; i++) await page.click('#level-up');
@@ -662,7 +808,9 @@ await page.locator('#roster-list .who', { hasText: 'Ernesto P.' }).click();
 await page.waitForSelector('#profile');
 check('Desde Jugadores es el mismo perfil', (await page.textContent('#level-val')) === '8' && (await page.textContent('#notes')).includes('Hizo un gol'));
 await page.click('#btn-back');
-await page.waitForSelector('#btn-roster');
+await page.waitForSelector('#roster-list');
+await page.click('#tab-proximos');
+await page.waitForSelector('.match-card');
 
 await page.click('.match-card:has-text("Miércoles 21/10")');
 await page.click('#btn-add-player');
@@ -680,9 +828,7 @@ await page.click('#phone-form button[type=submit]');
 await page.waitForSelector('#profile-wa');
 check('Desde el perfil se carga el WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491177778888'));
 await page.click('#btn-back');
-await page.waitForSelector('#btn-roster');
-
-// Resumen de pagos (sigue la sesión de Martín) y alta de usuarios (solo el admin)
+await page.click('#btn-roster');
 await page.click('#btn-pagos');
 await page.waitForSelector('#pay-summary');
 const orgTotals = (await page.textContent('#org-totals')).replace(/\s+/g, ' ');
@@ -712,6 +858,7 @@ await page.evaluate(() => { location.hash = '#/usuarios'; });
 await page.waitForFunction(() => (document.body.innerText || '').includes('Solo el administrador puede crear o desactivar organizadores'));
 check('Martín no crea ni borra organizadores', (await page.locator('#user-form').count()) === 0 && (await page.locator('[data-user-del]').count()) === 0);
 await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.waitForSelector('#btn-add-match');
 check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-match'));
 
@@ -722,7 +869,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.waitForSelector('#btn-add-match');
 await page.click('#btn-settings');
 await page.click('#set-users');
@@ -781,7 +928,7 @@ await page.evaluate(() => { location.hash = '#/pagos'; });
 await page.waitForSelector('#pending-list');
 const pendingScreen = (await page.locator('#pending-list').innerText()).replace(/\s+/g, ' ');
 check('Pagos lista a quien transfiere después', pendingScreen.includes('Ana Hoy') && pendingScreen.includes('Transfiere después $1.500') && (await page.textContent('#pending-total')).includes('$1.500'), pendingScreen);
-await page.click('#btn-back');
+await page.click('#tab-proximos');
 await page.click('.match-card:has-text("Lunes 19/10")');
 await page.click('.slot:has-text("Ana Hoy") .pay-btn');
 await page.click('#btn-receive-pending');
@@ -812,8 +959,13 @@ await page.waitForFunction(() => {
   const row = [...document.querySelectorAll('#signup-list .signup-row')].find((el) => el.innerText.includes('Sábado'));
   return row && row.innerText.includes('Anotado');
 });
-const sabadoPlayers = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((p) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24'));
-check('El sábado usa la misma alta: Gustavo, token y sin duplicar el teléfono', sabadoPlayers.length === 1 && sabadoPlayers[0].addedBy === 'Gustavo' && sabadoPlayers[0].phone === '5491112345678' && sabadoPlayers[0].confirmToken.length >= 16 && sabadoPlayers[0].waiting !== true && sabadoPlayers[0].tentative === true);
+const sabadoPack = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24');
+  return found ? { player: found[1], contact: db.contacts.players[found[0]] } : null;
+});
+const sabadoPlayers = sabadoPack ? [sabadoPack.player] : [];
+check('El sábado usa la misma alta: Gustavo, token y teléfono aparte', sabadoPlayers.length === 1 && sabadoPlayers[0].addedBy === 'Gustavo' && (sabadoPlayers[0].phone == null || sabadoPlayers[0].phone === '') && sabadoPack.contact.phone === '5491112345678' && sabadoPack.contact.ownerUid === 'gustavo' && sabadoPack.contact.visibleToAll === false && sabadoPlayers[0].confirmToken.length >= 16 && sabadoPlayers[0].waiting !== true && sabadoPlayers[0].tentative === true);
 const sabadoCard = await page.evaluate((token) => JSON.parse(localStorage.getItem('f7c-demo-db')).confirmations[token], sabadoPlayers[0].confirmToken);
 check('La ficha del sábado no tiene teléfono', sabadoCard && sabadoCard.name === 'Juan Pérez' && sabadoCard.phone == null && !JSON.stringify(sabadoCard).includes('549'));
 await page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' }).locator('[data-open-match]').click();
@@ -891,7 +1043,12 @@ await page.waitForSelector('#roster-list .name:text-is("Juan Pérez")');
 await page.locator('#roster-list .who', { hasText: 'Juan Pérez' }).click();
 await page.waitForSelector('#signup-list .signup-row:has-text("30/10") input');
 check('Cerrar el perfil suelta la selección', !(await page.locator('#signup-list .signup-row', { hasText: '30/10' }).locator('input').isChecked()) && !(await page.isChecked('#signup-tentative')));
-await page.evaluate((id) => window.__app.store.deleteMatch(id), pickIds.tight);
+await page.evaluate(async (id) => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const pids = Object.entries(db.players).filter(([, p]) => p.matchId === id).map(([pid]) => pid);
+  for (const pid of pids) await window.__app.store.deletePlayer(pid);
+  await window.__app.store.deleteMatch(id);
+}, pickIds.tight);
 await page.waitForFunction(() => !document.querySelector('#signup-list')?.innerText.includes('30/10'));
 
 // Precios y promo del mismo día. Gustavo sigue logueado. Al final vuelven los precios de siempre.
@@ -952,8 +1109,12 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoIds.b);
 await page.waitForSelector('.promo-badge');
 check('El otro partido del día también muestra la promo', (await page.textContent('.promo-badge')).includes('Promo 2 partidos por $9.000'));
 await page.evaluate(async (ids) => {
-  await window.__app.store.deleteMatch(ids.a);
-  await window.__app.store.deleteMatch(ids.b);
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  for (const id of [ids.a, ids.b]) {
+    const pids = Object.entries(db.players).filter(([, p]) => p.matchId === id).map(([pid]) => pid);
+    for (const pid of pids) await window.__app.store.deletePlayer(pid);
+    await window.__app.store.deleteMatch(id);
+  }
 }, promoIds);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('#btn-add-match');
@@ -992,7 +1153,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.waitForSelector('.match-card');
 check('Martín no ve el Solo yo de Gustavo', !(await page.locator('.match-card:has-text("4/11")').count()) && (await page.locator('.match-card:has-text("3/11")').count()) === 1);
 await page.click('#btn-settings');
@@ -1005,7 +1166,11 @@ await page.waitForSelector('.match-card:has-text("4/11")');
 await page.evaluate(async () => {
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
   const ids = Object.entries(db.matches).filter(([, m]) => m.date === '2026-11-03' || m.date === '2026-11-04').map(([id]) => id);
-  for (const id of ids) await window.__app.store.deleteMatch(id);
+  for (const id of ids) {
+    const pids = Object.entries(db.players).filter(([, p]) => p.matchId === id).map(([pid]) => pid);
+    for (const pid of pids) await window.__app.store.deletePlayer(pid);
+    await window.__app.store.deleteMatch(id);
+  }
 });
 await page.waitForFunction(() => !document.body.innerText.includes('4/11') && !document.body.innerText.includes('3/11'));
 
@@ -1046,6 +1211,23 @@ const i18 = historyOrder.indexOf('Domingo 18/10');
 const i15 = historyOrder.indexOf('Jueves 15/10');
 const i12 = historyOrder.indexOf('Lunes 12/10');
 check('El historial lista lo pasado, más reciente primero', i18 !== -1 && i15 !== -1 && i12 !== -1 && i18 < i15 && i15 < i12, historyOrder.join(', '));
+await page.fill('#hist-day', '2026-10-18');
+await page.click('#hist-apply');
+await page.waitForFunction(() => [...document.querySelectorAll('#list-history .match-title')].map((el) => el.textContent).join('|') === 'Domingo 18/10');
+check('Filtrar por una fecha deja ese día', (await page.textContent('#hist-caption')).includes('Domingo 18/10'));
+await page.click('#hist-clear');
+await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+await page.fill('#hist-from', '2026-10-12');
+await page.fill('#hist-to', '2026-10-15');
+await page.click('#hist-apply');
+await page.waitForFunction(() => {
+  const titles = [...document.querySelectorAll('#list-history .match-title')].map((el) => el.textContent);
+  return titles.includes('Jueves 15/10') && titles.includes('Lunes 12/10') && !titles.includes('Domingo 18/10');
+});
+check('Filtrar por rango desde-hasta', true);
+await page.click('#hist-clear');
+await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+check('Limpiar vuelve a los últimos partidos', await page.locator('#hist-clear').isHidden() && (await page.textContent('#hist-caption')).includes('más recientes primero'));
 const ayerCard = (await page.textContent('#list-history .match-card:has-text("Ayer")')).replace(/\s+/g, ' ');
 check('La tarjeta trae hora y cantidad de jugadores', /21:00 hs/.test(ayerCard) && /1\/14/.test(ayerCard) && /1 en espera/.test(ayerCard), ayerCard.trim());
 check('Hoy no entra al historial', await page.locator('#list-history .match-card:has-text("Hoy temprano")').count() === 0);
@@ -1066,13 +1248,14 @@ check('En el historial se puede registrar un pago tardío', true);
 await page.click('#btn-back');
 await page.waitForSelector('#list-history');
 check('Volver desde un partido pasado vuelve al historial', await page.locator('#list-history').count() === 1);
+check('La pestaña Historial sigue activa al volver', await page.getAttribute('#btn-historial', 'aria-current') === 'page' && await page.getAttribute('#tab-proximos', 'aria-current') !== 'page');
 await page.click('#btn-settings');
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('#list-next');
 check('Martín ve el de hoy en el inicio', await page.locator('#list-next .match-card:has-text("Hoy temprano")').count() === 1);
@@ -1086,7 +1269,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
 
@@ -1170,7 +1353,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Solo anota Gustavo")');
 await page.click('.match-card:has-text("Solo anota Gustavo")');
@@ -1185,7 +1368,29 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card:has-text("Hoy temprano")');
+
+await page.evaluate(async () => {
+  const who = window.__app.who;
+  const id = await window.__app.store.addMatch({ date: '2026-10-11', time: '19:00', note: 'Viejo cancelable', capacity: 14 }, who);
+  const match = window.__app.matches.find((m) => m.id === id);
+  await window.__app.store.addPlayer(match, { name: 'Cancel Viejo', phone: '5491188887777' }, who);
+});
+await page.evaluate(() => { location.hash = '#/historial'; });
+await page.waitForSelector('#list-history .match-card:has-text("Viejo cancelable")');
+await page.click('#list-history .match-card:has-text("Viejo cancelable")');
+await page.waitForSelector('#btn-cancel-match');
+await page.click('#btn-cancel-match');
+await page.fill('#cancel-notes', 'Se suspendió');
+await page.click('#cancel-form button[type=submit]');
+await page.waitForSelector('#cancel-links');
+await page.click('dialog.sheet [data-close]');
+await page.waitForSelector('#match-cancelled');
+await page.click('#btn-back');
+await page.waitForSelector('#list-history .match-card:has-text("Viejo cancelable")');
+check('El historial muestra Cancelado', (await page.textContent('#list-history .match-card:has-text("Viejo cancelable")')).includes('Cancelado'));
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
 
@@ -1212,16 +1417,42 @@ await page.waitForSelector('.match-card');
 await page.setViewportSize({ width: 360, height: 740 });
 const overflowHome = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en un teléfono de 360px no desborda el inicio', overflowHome <= 1, String(overflowHome));
+await page.click('.match-card:has-text("Lunes 26/10")');
+await page.waitForSelector('#match-cancelled');
+const overflowCancelled = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+check('Enorme en 360px no desborda un partido cancelado', overflowCancelled <= 1, String(overflowCancelled));
+await page.click('#btn-back');
+await page.waitForSelector('#list-next');
 await page.evaluate(() => { location.hash = '#/historial'; });
 await page.waitForSelector('#list-history');
 const overflowHistory = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en 360px no desborda el historial', overflowHistory <= 1, String(overflowHistory));
+await page.click('#list-history .match-card:has-text("Viejo cancelable")');
+await page.waitForSelector('#btn-reactivate-match');
+check('En el historial se leen las notas', (await page.textContent('#match-notes')).includes('Se suspendió'));
+await page.click('#btn-reactivate-match');
+await page.waitForFunction(() => !document.querySelector('#match-cancelled') && !!document.querySelector('#btn-cancel-match'));
+check('Reactivar conserva las notas', (await page.textContent('#match-notes')).includes('Se suspendió'));
+await page.click('#btn-back');
+await page.waitForSelector('#list-history');
+check('Al reactivar sale el badge del historial', !(await page.textContent('#list-history .match-card:has-text("Viejo cancelable")')).includes('Cancelado'));
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('#list-next .match-card');
 await page.click('#list-next .match-card:has-text("22/10")');
 await page.waitForSelector('#btn-add-player');
 const overflowMatch = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en 360px no desborda el partido', overflowMatch <= 1, String(overflowMatch));
+const hugeBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const bar = document.querySelector('.actionbar').getBoundingClientRect();
+  const add = document.querySelector('#btn-add-player').getBoundingClientRect();
+  return {
+    apart: bar.top >= tabs.bottom + 4,
+    addVisible: add.top >= bar.top - 1 && add.bottom <= window.innerHeight + 1 && add.height >= 32,
+    tabsVisible: tabs.top >= 0 && tabs.bottom <= window.innerHeight && tabs.width <= window.innerWidth + 1,
+  };
+});
+check('Con letra Enorme las pestañas no tapan agregar jugador', hugeBars.apart && hugeBars.addVisible && hugeBars.tabsVisible, JSON.stringify(hugeBars));
 await page.click('#btn-teams');
 await page.waitForSelector('#team-board');
 const overflowTeams = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -1245,6 +1476,12 @@ const moneyRow = await page.evaluate(() => {
   };
 });
 check('En 360px el monto y el desplegable van en una fila', moneyRow.sameTop && moneyRow.inside && moneyRow.wide, JSON.stringify(moneyRow));
+const paySheet = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const body = document.querySelector('.sheet-body').getBoundingClientRect();
+  return body.top >= tabs.bottom - 1 && tabs.bottom <= window.innerHeight && body.bottom <= window.innerHeight + 1;
+});
+check('Con letra Enorme la hoja de pago queda debajo de las pestañas', paySheet);
 await page.click('#pay-form [data-close]');
 const confirmSize = await ctx.newPage();
 await confirmSize.setViewportSize({ width: 360, height: 740 });
@@ -1254,6 +1491,14 @@ check('confirmar.html usa el tamaño guardado', await confirmSize.evaluate(() =>
 const overflowConfirm = await confirmSize.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('confirmar.html en 360px no desborda', overflowConfirm <= 1, String(overflowConfirm));
 await confirmSize.close();
+
+const fresh = await ctx.newPage();
+fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+await fresh.clock.install({ time: NOW });
+await fresh.goto(`${BASE}#/historial`);
+await fresh.waitForFunction(() => document.querySelector('#tab-proximos')?.getAttribute('aria-current') === 'page' && location.hash !== '#/historial');
+check('Al abrir la app arranca en Próximos partidos', await fresh.evaluate(() => location.hash === '#/' || location.hash === '' || location.hash === '#'));
+await fresh.close();
 
 check('Sin errores de JS', errors.length === 0, errors.join(' | '));
 await browser.close();

@@ -1,7 +1,7 @@
 // Perfil del jugador. Puro: las pruebas calculan las estadísticas sin Firebase.
 // El perfil es un documento de roster. Con WhatsApp se agrupa por teléfono;
 // sin número, por el id del plantel o por el nombre.
-import { DIAS, capitalize, labelDate, todayISO, toEpoch, weekdayOf } from './dates.js';
+import { DIAS, addDays, capitalize, labelDate, todayISO, toEpoch, weekdayOf } from './dates.js';
 import { formatARS } from './payments.js';
 import { playerMatchesPerson } from './roster.js';
 
@@ -15,23 +15,34 @@ export function startsAtOf(match) {
   return NaN;
 }
 
-function asPerson({ phone, rosterId, name } = {}) {
-  return { id: rosterId || '', phone: phone || '', name: name || '' };
+function asPerson({ phone, phoneKey, rosterId, name } = {}) {
+  return { id: rosterId || '', phone: phone || '', phoneKey: phoneKey || '', name: name || '' };
+}
+
+function matchOfPlayer(player, byId) {
+  const found = player?.matchId ? byId.get(player.matchId) : null;
+  if (found) return found;
+  // El historial no baja todos los partidos. La fecha copiada en el jugador
+  // alcanza para contarlo; el horario entra cuando el partido está cargado.
+  const date = player?.matchDate;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return null;
+  const time = /^\d{2}:\d{2}$/.test(player?.matchTime || '') ? player.matchTime : '';
+  return { id: player.matchId || '', date, time, startsAt: toEpoch(date, time || '00:00') };
 }
 
 function mainAppearances(who, players, matches) {
   const person = asPerson(who);
-  if (!person.phone && !person.id && !person.name) return [];
+  if (!person.phone && !person.phoneKey && !person.id && !person.name) return [];
   const byId = new Map((matches || []).map((m) => [m.id, m]));
   return (players || [])
     .filter((p) => playerMatchesPerson(p, person) && p.waiting !== true)
-    .map((player) => ({ player, match: byId.get(player.matchId) }))
+    .map((player) => ({ player, match: matchOfPlayer(player, byId) }))
     .filter((row) => row.match && Number.isFinite(startsAtOf(row.match)));
 }
 
 /** Partidos ya jugados, lista principal, la misma persona. El más reciente primero. */
-export function playedMatches({ phone, rosterId, name, players, matches, now = Date.now() }) {
-  return mainAppearances({ phone, rosterId, name }, players, matches)
+export function playedMatches({ phone, phoneKey, rosterId, name, players, matches, now = Date.now() }) {
+  return mainAppearances({ phone, phoneKey, rosterId, name }, players, matches)
     .filter((row) => startsAtOf(row.match) < now)
     .sort((a, b) => startsAtOf(b.match) - startsAtOf(a.match) || String(b.match.id).localeCompare(String(a.match.id)));
 }
@@ -61,8 +72,8 @@ function whenLabel(match) {
  * Estadísticas de partidos pasados en la lista principal.
  * summary: "Mayormente jueves · 21:00", o "" si todavía no jugó.
  */
-export function playerStats({ phone, rosterId, name, players, matches, now = Date.now() }) {
-  const played = playedMatches({ phone, rosterId, name, players, matches, now });
+export function playerStats({ phone, phoneKey, rosterId, name, players, matches, now = Date.now() }) {
+  const played = playedMatches({ phone, phoneKey, rosterId, name, players, matches, now });
   const dates = played.map(({ match }) => ({
     date: match.date,
     time: match.time || '',
@@ -79,8 +90,8 @@ export function playerStats({ phone, rosterId, name, players, matches, now = Dat
 }
 
 /** Pagos y confirmaciones de la lista principal, pasados y futuros. */
-export function playerRecord({ phone, rosterId, name, players, matches }) {
-  const rows = mainAppearances({ phone, rosterId, name }, players, matches).map((row) => row.player);
+export function playerRecord({ phone, phoneKey, rosterId, name, players, matches }) {
+  const rows = mainAppearances({ phone, phoneKey, rosterId, name }, players, matches).map((row) => row.player);
   const paid = rows.filter((p) => p.paid === true);
   const paidTotal = paid.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   const confirmed = rows.filter((p) => p.confirmed === 'si').length;
@@ -111,6 +122,20 @@ export function currentMatches(matches, now = Date.now()) {
     .sort((a, b) => startsAtOf(a) - startsAtOf(b) || String(a.id).localeCompare(String(b.id)));
 }
 
+/** Próximos partidos: hoy inclusive hasta hoy + 7, en el calendario de Buenos Aires. */
+export const NEAR_DAYS = 7;
+
+export function splitNear(matches, now = Date.now()) {
+  const today = todayISO(new Date(now));
+  const limit = addDays(today, NEAR_DAYS);
+  const rows = (matches || []).filter((match) => match?.date >= today);
+  return {
+    limit,
+    next: rows.filter((match) => match.date <= limit),
+    later: rows.filter((match) => match.date > limit),
+  };
+}
+
 /**
  * Historial: la fecha de calendario ya pasó. El más reciente primero.
  * No borra nada: es el mismo partido, con jugadores y pagos.
@@ -122,6 +147,102 @@ export function pastMatches(matches, now = Date.now()) {
     .sort((a, b) => startsAtOf(b) - startsAtOf(a) || String(b.id).localeCompare(String(a.id)));
 }
 
+/** Cuántos partidos pasados muestra el historial si no hay filtro. */
+export const HISTORY_PAGE = 30;
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+function cleanDay(value) {
+  return ISO_DAY.test(value || '') ? value : '';
+}
+
+/**
+ * Qué pedir del historial.
+ * recent: fecha < hoy, los últimos 30.
+ * day: esa fecha, si ya pasó.
+ * range: desde-hasta, recortado a días anteriores a hoy.
+ */
+export function historyBounds(filter, now = Date.now()) {
+  const today = todayISO(new Date(now));
+  const day = cleanDay(filter?.day);
+  if (day) return { mode: 'day', day, empty: day >= today, before: today };
+  let from = cleanDay(filter?.from);
+  let to = cleanDay(filter?.to);
+  if (from || to) {
+    if (from && to && from > to) [from, to] = [to, from];
+    const yesterday = addDays(today, -1);
+    const end = to ? (to < today ? to : yesterday) : yesterday;
+    if (from && from > end) return { mode: 'range', from, to: end, empty: true, before: today };
+    return { mode: 'range', from, to: end, empty: false, before: today };
+  }
+  return { mode: 'recent', before: today, limit: HISTORY_PAGE, empty: false };
+}
+
+export function historyCaption(bounds, count) {
+  if (bounds?.mode === 'day') {
+    if (bounds.empty) return 'Esa fecha todavía no pasó. El historial muestra partidos anteriores a hoy.';
+    const when = capitalize(labelDate(bounds.day));
+    return count ? `Partidos del ${when}.` : `No hay partidos el ${when}.`;
+  }
+  if (bounds?.mode === 'range') {
+    if (bounds.empty) return 'Ese rango no tiene partidos pasados.';
+    const from = bounds.from ? capitalize(labelDate(bounds.from)) : '';
+    const to = bounds.to ? capitalize(labelDate(bounds.to)) : '';
+    const span = from && to ? `Del ${from} al ${to}` : (from ? `Desde el ${from}` : `Hasta el ${to}`);
+    return count ? `${span}.` : `${span}: no hay partidos.`;
+  }
+  if (count >= (bounds?.limit || HISTORY_PAGE)) return `Últimos ${bounds?.limit || HISTORY_PAGE}, los más recientes primero.`;
+  return 'Partidos pasados, los más recientes primero.';
+}
+
+function historySort(rows) {
+  return [...rows].sort((a, b) => startsAtOf(b) - startsAtOf(a) || String(b.id).localeCompare(String(a.id)));
+}
+
+/** Recorte local (modo demo) con la misma regla que la consulta de Firestore. */
+export function historyWindow(matches, filter, now = Date.now()) {
+  const bounds = historyBounds(filter, now);
+  const past = (matches || []).filter((match) => match?.date && match.date < bounds.before);
+  if (bounds.empty) return { matches: [], ...bounds, caption: historyCaption(bounds, 0) };
+  let rows = past;
+  if (bounds.mode === 'day') rows = past.filter((match) => match.date === bounds.day);
+  else if (bounds.mode === 'range') {
+    rows = past.filter((match) => (!bounds.from || match.date >= bounds.from) && (!bounds.to || match.date <= bounds.to));
+  }
+  rows = historySort(rows);
+  if (bounds.limit) rows = rows.slice(0, bounds.limit);
+  return { matches: rows, ...bounds, caption: historyCaption(bounds, rows.length) };
+}
+
+/**
+ * Consulta de partidos. Siempre filtra por viewers (el permiso del partido).
+ * Próximos: date >= hoy, sin tope. Historial: date < hoy, límite 30, o el rango.
+ */
+export function matchQueryPlan(which, bounds, today) {
+  const viewers = { field: 'viewers', op: 'array-contains-any' };
+  if (which === 'upcoming') {
+    return {
+      filters: [viewers, { field: 'date', op: '>=', value: today }],
+      orderBy: ['date', 'asc'],
+      limit: null,
+    };
+  }
+  if (!bounds || bounds.empty) return { empty: true, filters: [viewers], orderBy: [], limit: null };
+  if (bounds.mode === 'day') {
+    return { filters: [viewers, { field: 'date', op: '==', value: bounds.day }], orderBy: ['date', 'desc'], limit: null };
+  }
+  if (bounds.mode === 'range') {
+    const filters = [viewers];
+    if (bounds.from) filters.push({ field: 'date', op: '>=', value: bounds.from });
+    if (bounds.to) filters.push({ field: 'date', op: '<=', value: bounds.to });
+    return { filters, orderBy: ['date', 'desc'], limit: null };
+  }
+  return {
+    filters: [viewers, { field: 'date', op: '<', value: bounds.before || today }],
+    orderBy: ['date', 'desc'],
+    limit: HISTORY_PAGE,
+  };
+}
+
 /**
  * Partidos que todavía se ofrecen para anotar desde el perfil:
  * fecha de hoy en adelante, y que no hayan empezado hace más de 2 horas.
@@ -129,7 +250,7 @@ export function pastMatches(matches, now = Date.now()) {
 export function upcomingMatches(matches, now = Date.now()) {
   const today = todayISO(new Date(now));
   return [...(matches || [])]
-    .filter((match) => match?.date >= today && startsAtOf(match) > now - 2 * 3600e3)
+    .filter((match) => match?.date >= today && match?.cancelled !== true && startsAtOf(match) > now - 2 * 3600e3)
     .sort((a, b) => startsAtOf(a) - startsAtOf(b) || String(a.id).localeCompare(String(b.id)));
 }
 
@@ -139,10 +260,10 @@ export function upcomingMatches(matches, now = Date.now()) {
  * Si ya está (teléfono, id del plantel o, sin número, el mismo nombre), no se vuelve a anotar.
  * Si no quedan lugares en la lista principal, va a la espera.
  */
-export function matchSignupState({ phone, rosterId, name, match, players }) {
+export function matchSignupState({ phone, phoneKey, rosterId, name, match, players }) {
   const cap = match?.capacity || 14;
   const mates = (players || []).filter((player) => player.matchId === match?.id);
-  const person = asPerson({ phone, rosterId, name });
+  const person = asPerson({ phone, phoneKey, rosterId, name });
   const same = mates.filter((player) => playerMatchesPerson(player, person));
   const mainCount = mates.filter((player) => player.waiting !== true).length;
   const spots = Math.max(0, cap - mainCount);
