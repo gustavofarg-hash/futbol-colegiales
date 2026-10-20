@@ -294,6 +294,9 @@ test('no se anota dos veces y Amigo N es de quien invita', () => {
   assert.equal(alreadyInMatch(mates, { name: 'Otra', phone: '5491112345678', rosterId: 'r-otra' }), null);
   assert.equal(alreadyInMatch(mates, { name: 'Amigo 1', guestAuto: true, invitedBy: 'nuevo' }), null);
   assert.equal(alreadyInMatch(mates, { name: 'Amigo 1' })?.id, 'a1');
+  assert.equal(alreadyInMatch(mates, { name: 'Pedro', phone: '5491155550181' }, { exceptId: 'a1' }), null);
+  assert.equal(alreadyInMatch(mates, { name: 'Juan Pérez' }, { exceptId: 'a1' })?.id, 'juan');
+  assert.deepEqual(resolveFriendNames([''], ['Pedro', 'Amigo 2']), [{ name: 'Amigo 3', guestAuto: true }]);
   assert.equal(isAutoGuestName('Amigo 2'), true);
   assert.equal(isAutoGuestName('Pedro'), false);
   assert.deepEqual(resolveFriendNames(['Pedro', '', ''], ['Amigo 1']), [
@@ -336,6 +339,54 @@ test('el partido rechaza al mismo jugador y guarda al amigo', async () => {
   assert.equal(db.players[amigo].paid, true);
   assert.equal(db.players[otro].waiting, true);
   assert.equal(db.players[otro].invitedBy, 'otro');
+});
+
+test('editar un amigo guarda nombre y WhatsApp sin soltar a quien invita', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-edit-friend';
+  const gustavo = { uid: 'gustavo', name: 'Gustavo' };
+  store.setActor(gustavo);
+  const mid = await store.addMatch({ date: '2026-10-25', time: '19:00', capacity: 10 }, 'Gustavo');
+  const match = { id: mid, date: '2026-10-25', capacity: 10 };
+  const juan = await store.addPlayer(match, { name: 'Juan Pérez', phone: '' }, 'Gustavo');
+  const amigo = await store.addPlayer(match, { name: 'Amigo 1', invitedBy: juan, invitedByName: 'Juan Pérez', guestAuto: true }, 'Gustavo');
+  const sigue = await store.addPlayer(match, { name: 'Amigo 2', invitedBy: juan, invitedByName: 'Juan Pérez', guestAuto: true }, 'Gustavo');
+  await store.updatePlayer(juan, { name: 'Juan P.' });
+  await store.updatePlayer(amigo, {
+    name: 'Pedro',
+    phone: '5491155550181',
+    phoneShared: false,
+    invitedBy: juan,
+    invitedByName: 'Juan P.',
+    guestAuto: false,
+  });
+  const db = JSON.parse(mem.get('f7c-test-edit-friend'));
+  assert.equal(db.players[amigo].name, 'Pedro');
+  assert.equal(db.players[amigo].invitedBy, juan);
+  assert.equal(db.players[amigo].invitedByName, 'Juan P.');
+  assert.equal(db.players[amigo].guestAuto, false);
+  assert.equal(db.players[amigo].addedBy, 'Gustavo');
+  assert.equal(db.players[amigo].addedByUid, 'gustavo');
+  assert.equal(db.contacts.players[amigo].visibleToAll, false);
+  assert.equal(db.contacts.players[amigo].ownerUid, 'gustavo');
+  assert.equal(db.contacts.players[amigo].phone, '5491155550181');
+  assert.equal(db.players[sigue].name, 'Amigo 2');
+  assert.equal(db.players[sigue].guestAuto, true);
+  await assert.rejects(
+    () => store.updatePlayer(sigue, { name: 'Pedro', guestAuto: false, invitedBy: juan, invitedByName: 'Juan P.' }),
+    (error) => error.code === 'already-in-match',
+  );
+  store.setActor({ uid: 'martin', name: 'Martín' });
+  await assert.rejects(() => store.updatePlayer(amigo, { name: 'Otro', phone: '5491155550181' }), /Solo lo puede editar/);
+  const after = JSON.parse(mem.get('f7c-test-edit-friend'));
+  assert.equal(after.players[amigo].name, 'Pedro');
+  assert.equal(after.players[sigue].name, 'Amigo 2');
 });
 
 test('modo demo guarda el pago en el jugador y lo emite', async () => {

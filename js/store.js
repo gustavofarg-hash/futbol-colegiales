@@ -84,7 +84,7 @@ import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
-import { ALREADY_IN_MATCH, alreadyInMatch } from './guests.js';
+import { ALREADY_IN_MATCH, alreadyInMatch, isAutoGuestName } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
@@ -148,7 +148,7 @@ export function matchIdFor(date, time, existingIds = new Set()) {
 
 const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-function refuseDuplicate(mates, data) {
+function refuseDuplicate(mates, data, exceptId = '') {
   const name = String(data?.name || '').trim();
   const invitedBy = String(data?.invitedBy || '').trim();
   if (alreadyInMatch(mates, {
@@ -159,16 +159,38 @@ function refuseDuplicate(mates, data) {
     hasPhone: data?.hasPhone === true,
     invitedBy,
     guestAuto: data?.guestAuto === true,
-  }, { roster: false })) {
+  }, { roster: false, exceptId })) {
     throw Object.assign(new Error(ALREADY_IN_MATCH), { code: 'already-in-match' });
   }
+}
+
+/** Nombre y teléfono que quedarían después del cambio, sin contar al mismo jugador. */
+function identityAfterEdit(player, data) {
+  const phoneIn = data && 'phone' in data;
+  return {
+    name: data && 'name' in data ? data.name : player?.name,
+    phone: phoneIn ? (data.phone || '') : (player?.phone || ''),
+    phoneKey: phoneIn ? '' : (player?.phoneKey || ''),
+    hasPhone: phoneIn ? !!canonicalWa(data.phone || '') : player?.hasPhone === true,
+    rosterId: data && 'rosterId' in data ? data.rosterId : (player?.rosterId || ''),
+    invitedBy: data && 'invitedBy' in data ? data.invitedBy : (player?.invitedBy || ''),
+    guestAuto: data && 'guestAuto' in data ? data.guestAuto === true : storedGuestAuto(player),
+  };
+}
+
+function storedGuestAuto(player) {
+  if (player?.guestAuto === true) return true;
+  if (player?.guestAuto === false) return false;
+  return !!player?.invitedBy && isAutoGuestName(player?.name);
 }
 
 function guestFields(data) {
   const invitedBy = String(data?.invitedBy || '').trim();
   if (!invitedBy) return {};
   const invitedByName = String(data?.invitedByName || '').trim().replace(/\s+/g, ' ').slice(0, 60);
-  return invitedByName ? { invitedBy, invitedByName } : { invitedBy };
+  const base = invitedByName ? { invitedBy, invitedByName } : { invitedBy };
+  if (data?.guestAuto === true) base.guestAuto = true;
+  return base;
 }
 
 function matchDoc(data, who) {
@@ -559,10 +581,19 @@ class LocalStore {
     const db = this._load(); if (!db.players[id]) return;
     const player = db.players[id];
     if (playerPatchEditsIdentity(data, player) && !canEditPlayer(player, this.actor)) throw editLockedError();
+    if (playerPatchEditsIdentity(data, player)) {
+      const mates = Object.entries(db.players)
+        .filter(([, row]) => row.matchId === player.matchId)
+        .map(([pid, row]) => ({ id: pid, ...row }));
+      refuseDuplicate(mates, identityAfterEdit(player, data), id);
+    }
     const { phone, ...rest } = data || {};
     Object.assign(player, rest, { updatedAt: Date.now() });
     delete player.phone;
-    if ('phone' in (data || {})) writeContact(db, 'players', id, phone, player, player.addedByUid || this.actor?.uid || '');
+    if ('phone' in (data || {})) {
+      const visible = typeof data.phoneShared === 'boolean' ? data.phoneShared : undefined;
+      writeContact(db, 'players', id, phone, player, player.addedByUid || this.actor?.uid || '', visible);
+    }
     if (data?.waiting === true) this._dropFromTeams(db, player.matchId, id);
     this._save(db);
   }
@@ -1425,11 +1456,16 @@ class FirebaseStore {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;
     const cur = this.state.players.find((player) => player.id === id) || {};
     if (cur.id && playerPatchEditsIdentity(data, cur) && !canEditPlayer(cur, this.actor)) throw editLockedError();
+    if (cur.id && playerPatchEditsIdentity(data, cur)) {
+      const mates = this.state.players.filter((row) => row.matchId === cur.matchId);
+      refuseDuplicate(mates, identityAfterEdit(cur, data), id);
+    }
     const { phone, ...rest } = data || {};
     const patch = { ...rest, updatedAt: Date.now() };
     if ('phone' in (data || {})) {
       try {
-        const wrote = await this._writeContactDoc('players', id, phone, { ...cur, ...rest });
+        const contactOpts = typeof data.phoneShared === 'boolean' ? { visibleToAll: data.phoneShared } : {};
+        const wrote = await this._writeContactDoc('players', id, phone, { ...cur, ...rest }, contactOpts);
         if (wrote.cleared) {
           patch.phone = deleteField();
           patch.hasPhone = !!wrote.phoneKey;
