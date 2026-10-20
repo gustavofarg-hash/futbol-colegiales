@@ -82,6 +82,7 @@ test('WhatsApp: wa.me por defecto y package en Android', () => {
   assert.equal(waLink('5491112345678', 'Hola'), 'https://wa.me/5491112345678?text=Hola');
   assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: false }), 'https://wa.me/5491112345678?text=Hola');
   assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'ask', android: true }), 'https://wa.me/5491112345678?text=Hola');
+  assert.equal(waSendUrl({ phone: '5491112345678', text: 'Hola', android: true }), 'https://wa.me/5491112345678?text=Hola');
   assert.equal(waSendUrl({ text: 'Lista', choice: 'whatsapp', android: false }), 'https://wa.me/?text=Lista');
   const business = waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'business', android: true });
   assert.equal(business, `intent://wa.me/5491112345678?text=Hola%20Juan#Intent;scheme=https;package=com.whatsapp.w4b;S.browser_fallback_url=${encodeURIComponent('https://wa.me/5491112345678?text=Hola%20Juan')};end`);

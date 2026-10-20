@@ -79,9 +79,12 @@ export function isAndroidUa(ua) {
 
 /**
  * Único armado de links de WhatsApp.
- * En Android, WhatsApp y WhatsApp Business salen por intent con package
+ * Por defecto (`ask`) es un wa.me plano, sin package: el celular pregunta
+ * y Dual Messenger puede ofrecer los dos WhatsApp.
+ * WhatsApp y WhatsApp Business, solo en Android, salen por intent con package
  * (com.whatsapp / com.whatsapp.w4b) y caen a wa.me si la app no está.
- * En iPhone o escritorio siempre es wa.me: no hay forma confiable de forzar la app.
+ * Ese package no distingue el WhatsApp clonado. En iPhone o escritorio
+ * siempre es wa.me: no hay forma confiable de forzar la app.
  */
 export function waSendUrl({ phone = '', text = '', choice = 'ask', android = false } = {}) {
   const digits = String(phone || '').replace(/\D/g, '');

@@ -67,16 +67,16 @@ function saveWaChoice(choice) {
   if (!clean) return;
   try { localStorage.setItem(WA_CHOICE_KEY, clean); } catch { /* modo privado */ }
 }
+function waChoice() {
+  return readWaChoice() || 'ask';
+}
 function waHref(phone, text) {
   return waSendUrl({
     phone: phone || '',
     text: text || '',
-    choice: readWaChoice() || 'ask',
+    choice: waChoice(),
     android: isAndroidUa(navigator.userAgent),
   });
-}
-function waData(phone, text) {
-  return `data-wa="1" data-wa-phone="${esc(phone || '')}" data-wa-text="${esc(encodeURIComponent(text || ''))}"`;
 }
 
 /* ───────── toast ───────── */
@@ -305,7 +305,7 @@ function renderMatch(id) {
         </button>
         ${readOnly ? '' : confirmSpotButton(p)}
         ${readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>`}
-        ${p.phone ? `<a class="wa-btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" ${waData(p.phone, waMessage(m, p))} aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
+        ${p.phone ? `<a class="wa-btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
         ${readOnly ? '' : `<button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>`}
       </li>`);
   }
@@ -442,7 +442,7 @@ function waitingSection(m, full, readOnly) {
           ${payMarkup(p)}
         </button>
         ${readOnly ? '' : `<button type="button" class="btn promote-btn" data-promote="${esc(p.id)}" ${full ? 'disabled' : ''} aria-label="Subir a ${esc(p.name)} al partido">Subir al partido</button>`}
-        ${p.phone ? `<a class="wa-btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" ${waData(p.phone, waMessage(m, p))} aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
+        ${p.phone ? `<a class="wa-btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
         <button type="button" class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
       </li>`;
   }).join('');
@@ -516,7 +516,7 @@ async function openReminders(m) {
   }
   const fresh = everyone.map((p) => ({ ...p, confirmToken: tokens.get(p.id) || p.confirmToken }));
   const linkById = new Map(reminderLinks({
-    match: m, players: fresh, venue: VENUE, choice: readWaChoice() || 'ask', android: isAndroidUa(navigator.userAgent),
+    match: m, players: fresh, venue: VENUE, choice: waChoice(), android: isAndroidUa(navigator.userAgent),
   }).map((row) => [new URL(row.confirmUrl).searchParams.get('p'), row]));
   const paint = () => {
     const visible = showAll ? fresh : playersForOrganizer(fresh, app.who);
@@ -529,7 +529,7 @@ async function openReminders(m) {
       const sent = !!p.reminderSentAt;
       return `<li class="remind-row" data-remind="${esc(p.id)}">
         <div class="who"><div class="name">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
-        <a class="btn primary" href="${esc(link.waUrl)}" target="_blank" rel="noopener" data-send="${esc(p.id)}" ${waData(link.phone, link.text)}>${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
+        <a class="btn primary" href="${esc(link.waUrl)}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
       </li>`;
     }).join('');
     openSheet(`
@@ -653,26 +653,22 @@ sheet.addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) closeSheet();
 });
 
-function waChoiceNote() {
-  return isAndroidUa(navigator.userAgent)
-    ? 'En Android se abre la app que elijas. Si no está instalada, se usa el link común.'
-    : 'En iPhone o en la compu no se puede forzar la app: el celular elige. En Android sí se abre la que marques.';
-}
 function waChoiceBlock() {
-  const current = readWaChoice();
+  const current = waChoice();
   const btn = (id, label) => `<button type="button" class="btn${current === id ? ' primary' : ''}" id="wa-choice-${id}" aria-pressed="${current === id ? 'true' : 'false'}">${label}</button>`;
   return `<div id="wa-choice">
     <h3>¿Desde qué WhatsApp querés mandar los mensajes?</h3>
-    <p class="hint" id="wa-choice-note">${esc(waChoiceNote())}</p>
+    <p class="hint" id="wa-choice-note">Si tenés dos WhatsApp (Dual Messenger), el celular te va a dejar elegir.</p>
     <div class="menu">
+      ${btn('ask', 'Que el celular pregunte cada vez')}
       ${btn('whatsapp', 'WhatsApp')}
       ${btn('business', 'WhatsApp Business')}
-      ${btn('ask', 'Que el celular pregunte cada vez')}
     </div>
+    <p class="hint" id="wa-choice-force">WhatsApp y WhatsApp Business son para quien tiene Business y quiere salir siempre por una. No distinguen el WhatsApp dual. En iPhone o en la compu el celular elige igual.</p>
   </div>`;
 }
 function paintWaChoice() {
-  const current = readWaChoice();
+  const current = waChoice();
   for (const id of ['whatsapp', 'business', 'ask']) {
     const btn = $(`#wa-choice-${id}`);
     if (!btn) continue;
@@ -687,45 +683,11 @@ function bindWaChoice(onPick) {
     btn.onclick = () => onPick(id);
   }
 }
-function askWaChoice({ onPick } = {}) {
-  const saved = readWaChoice();
-  if (saved) return Promise.resolve(saved);
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (choice) => {
-      if (settled) return;
-      settled = true;
-      resolve(choice || null);
-    };
-    openSheet(`${waChoiceBlock()}<div class="sheet-actions"><button type="button" class="btn ghost" data-close>Ahora no</button></div>`);
-    bindWaChoice((choice) => {
-      saveWaChoice(choice);
-      if (onPick) onPick(choice);
-      closeSheet();
-      finish(choice);
-    });
-    sheet.addEventListener('close', () => finish(readWaChoice()), { once: true });
-  });
-}
 function openWa({ phone = '', text = '' } = {}) {
-  const launch = (choice) => {
-    window.open(waSendUrl({
-      phone, text, choice, android: isAndroidUa(navigator.userAgent),
-    }), '_blank', 'noopener');
-  };
-  const choice = readWaChoice();
-  if (choice) { launch(choice); return; }
-  askWaChoice({ onPick: launch });
+  window.open(waSendUrl({
+    phone, text, choice: waChoice(), android: isAndroidUa(navigator.userAgent),
+  }), '_blank', 'noopener');
 }
-document.addEventListener('click', (event) => {
-  const link = event.target.closest('a[data-wa]');
-  if (!link || readWaChoice()) return;
-  event.preventDefault();
-  const raw = link.dataset.waText || '';
-  let text = '';
-  try { text = raw ? decodeURIComponent(raw) : ''; } catch { text = raw; }
-  openWa({ phone: link.dataset.waPhone || '', text });
-});
 
 /* Ajustes */
 function openSettings() {
@@ -954,7 +916,7 @@ function renderRoster() {
         <div class="name">${esc(person.name)}</div>
         <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</div>
       </button>
-      ${person.phone ? `<a class="wa-btn" href="${esc(waHref(person.phone))}" target="_blank" rel="noopener" ${waData(person.phone, '')} aria-label="WhatsApp a ${esc(person.name)}">${ICON.wa}</a>` : ''}
+      ${person.phone ? `<a class="wa-btn" href="${esc(waHref(person.phone))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(person.name)}">${ICON.wa}</a>` : ''}
       <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}">${ICON.edit}</button>
       <button type="button" class="more-btn" data-roster-del="${esc(person.id)}" aria-label="Borrar ${esc(person.name)}">${ICON.trash}</button>
     </li>`).join('');
@@ -1255,7 +1217,7 @@ function renderProfile(id) {
       <h2 class="section">${esc(person.name)}</h2>
       <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</p>
       ${person.phone
-        ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waHref(person.phone))}" target="_blank" rel="noopener" ${waData(person.phone, '')}>${ICON.wa}WhatsApp</a>`
+        ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waHref(person.phone))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>`
         : '<button type="button" class="btn profile-add-phone" id="profile-add-phone">Cargar WhatsApp</button>'}
       ${partidosSection(person)}
       <section class="profile-block">
@@ -1844,7 +1806,7 @@ function openPlayerMenu(m, p) {
     <h3>${esc(p.name)}</h3>
     <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu">
-      ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" ${waData(p.phone, waMessage(m, p))}>${ICON.wa}Mandar WhatsApp</a>` : '<button class="btn" id="pm-phone">Cargar WhatsApp</button>'}
+      ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : '<button class="btn" id="pm-phone">Cargar WhatsApp</button>'}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
@@ -2021,7 +1983,6 @@ async function boot() {
   });
   render();
   armReminderTimer();
-  if (!readWaChoice()) askWaChoice();
   // refrescar etiquetas "Hoy/Mañana" y ocultar partidos pasados
   setInterval(() => { if (!sheet.open || !sheet.querySelector('input, textarea')) render(); }, 60_000);
 }
