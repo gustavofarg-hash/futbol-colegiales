@@ -191,8 +191,10 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `confirmed` | `"si"` \| `"no"` — respuesta del jugador |
 | `confirmedAt` | número (epoch ms) |
 | `reminderSentAt` | número (epoch ms) — cuándo se abrió el WhatsApp del recordatorio |
+| `tentative` | bool o null — lugar reservado, a confirmar. Ocupa un cupo y no es un sí |
+| `tentativeAt` | número (epoch ms) o null — cuándo se reservó |
 
-Hay que **volver a publicar** `firestore.rules`. Los campos nuevos del jugador (`cashTo`, `transferTo`, `pendingTo`, `transferParts`) las reglas ya publicadas los dejan pasar, porque `validPayment` no cierra la lista de campos. `settings/prices` es otra colección: el cierre `match /{document=**}` la niega hasta republicar. Mientras tanto la app usa 5000, 9000 y 12000 y avisa en castellano. Después de publicar, un precio negativo o con centavos queda rechazado, y cualquier organizador activo puede leer y guardar los tres precios.
+Hay que **volver a publicar** `firestore.rules` para que `tentative` (bool o null) y `tentativeAt` (número o null) queden validados. Las reglas ya publicadas igual dejan escribir esos campos, porque `validPayment` no cierra la lista. Republicar rechaza un texto en lugar de bool o número. `settings/prices` ya es una colección aparte: el cierre `match /{document=**}` la niega hasta republicar. Mientras tanto la app usa 5000, 9000 y 12000 y avisa en castellano. Después de publicar, un precio negativo o con centavos queda rechazado, y cualquier organizador activo puede leer y guardar los tres precios.
 
 **Recordatorio:** en el partido, **Enviar recordatorios** arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. Arranca en **Mis jugadores** (los que anotó quien está logueado; «Gustavo» y «Martín» viejos cuentan para esas cuentas). **Todos** muestra el partido entero. La página de confirmación no pide cuenta. Lee la ficha pública `confirmations/{token}` (sin teléfono) y, si el token coincide, guarda solo `confirmed` y `confirmedAt`.
 
@@ -252,7 +254,15 @@ https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m={matchId}&
 
 `waUrl` es `https://wa.me/{phone}?text={mensaje}` con el mensaje en `encodeURIComponent`. Un script puede copiar esa fórmula o importar `reminderLinks`.
 
-**Lista de espera:** se puede anotar a alguien aunque el partido no esté lleno. Si ya hay 14, el alta normal también cae en la espera (al final). Las flechas ↑ ↓ cambian `waitOrder` y los dos organizadores ven el mismo orden al toque. «Subir al partido» (o al quitar un titular) pasa al primero de la lista.
+**Lista de espera:** se puede anotar a alguien aunque el partido no esté lleno. Si ya hay 14, el alta normal también cae en la espera (al final). Las flechas ↑ ↓ cambian `waitOrder` y los dos organizadores ven el mismo orden al toque. En cada fila, **Subir al partido** sube a esa persona (queda deshabilitado si ya hay 14). Al quitar un titular, se ofrece subir al primero. Después de cualquier subida, si tiene WhatsApp pregunta si avisarle: **Sí** abre `wa.me` con el mensaje y su link de confirmación; hay que tocar enviar. Sin número, solo un cartel.
+
+**Lugar reservado:** al anotar en el partido (formulario, búsqueda o varios partidos desde el perfil) se puede marcar **Lugar reservado (a confirmar)**. Ocupa cupo, no va a la espera, y el badge dice **Reservado · a confirmar**. **Confirmar lugar** lo suelta. Si responde **Sí** en el link, también se suelta. Si responde **No**, el badge sigue y dice que se puede liberar el lugar.
+
+La barra del partido, de izquierda a derecha: ícono **Compartir lista**, **Anotar en lista de espera** y **Agregar jugador**. El botón de agregar no cambia de nombre cuando el partido está lleno: si no hay lugar, esa persona va a la espera.
+
+**Quién ve el partido:** al crearlo (botón **Crear**) se elige quién lo ve y quién anota. Por defecto son todos (`viewers` y `adders` con `*`), también los que se sumen después. **Solo yo: nadie más lo ve, tampoco el admin** deja las dos listas en el creador y apaga el resto. Si sacás a alguien de la lista, esa persona no lo ve: ni organizador ni admin. No hay cartel de las 2 horas. Quien lo ve pero no anota lo tiene en solo lectura. El límite, si tiene un número, cuenta titulares y espera (`addedBy` / `addedByUid`); vacío = sin límite. Lo aplica la app: las reglas no pueden contar jugadores. Después solo el creador cambia esos permisos. En un partido restringido, solo el creador lo borra. Un partido viejo, sin estos campos, sigue visible para todo el personal activo.
+
+Hay que **volver a publicar** `firestore.rules` después de abrir esta versión una vez: la app marca los partidos, jugadores y fichas viejos con `viewers: ['*']` mientras las reglas de antes sigan publicadas. Si publicás primero, esos partidos dejan de aparecer en la lista hasta ese marcado. El admin no entra a un partido Solo yo ni a sus jugadores ni al listado de fichas. El link de confirmación (con el token) sigue abriendo esa ficha.
 
 El pago va en el documento del jugador (no en una colección nueva). Hasta que se publiquen las reglas nuevas, las que están en la consola dejan pasar campos extra. Después de publicarlas, solo un admin o un organizador activo puede escribir, y el tipo de cada campo queda validado.
 

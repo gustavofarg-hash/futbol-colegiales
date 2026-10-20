@@ -30,6 +30,8 @@
 //    confirmToken: string               (link de confirmar.html; se crea al anotar al jugador)
 //    confirmed: "si"|"no"               (respuesta del jugador)
 //    confirmedAt, reminderSentAt: number
+//    tentative: bool|null               (lugar reservado, a confirmar; ocupa cupo)
+//    tentativeAt: number|null
 //  roster/{rosterId}
 //    name, phone (dígitos wa.me, o vacío)
 //    createdBy, createdAt, updatedAt
@@ -55,6 +57,7 @@ import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
+import { EVERYONE, accessPatch, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -100,6 +103,7 @@ const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 
 function matchDoc(data, who) {
   const now = Date.now();
+  const access = data?.access ? accessPatch(data.access) : null;
   return {
     date: data.date,
     time: data.time,
@@ -111,12 +115,17 @@ function matchDoc(data, who) {
     sourceText: data.sourceText || null,
     createdBy: who, updatedBy: who,
     createdAt: now, updatedAt: now,
+    ...(access || {}),
   };
 }
 
 /* ───────────── Modo demo (localStorage) ───────────── */
 class LocalStore {
-  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); }
+  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; }
+  setActor(user) {
+    this.actor = { uid: user?.uid || '', name: user?.name || '' };
+    if (this.listeners.size) this._emit();
+  }
   _load() {
     try {
       const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {} };
@@ -152,14 +161,26 @@ class LocalStore {
     return Object.keys(db.organizers).length > 0;
   }
   _save(db) { this._touchConfirmations(db); localStorage.setItem(this.key, JSON.stringify(db)); this._emit(); }
+  _visible(matches, players, cards) {
+    const uid = this.actor?.uid;
+    if (!uid) return { matches, players, cards };
+    const visible = matches.filter((match) => canView(match, uid));
+    const ids = new Set(visible.map((match) => match.id));
+    return {
+      matches: visible,
+      players: players.filter((player) => ids.has(player.matchId)),
+      cards: cards.filter((card) => ids.has(card.matchId)),
+    };
+  }
   _emit() {
     const db = this._load();
-    const matches = Object.entries(db.matches).map(([id, m]) => ({ id, ...m }));
-    const cards = Object.entries(db.confirmations || {}).map(([id, card]) => ({ id, ...card }));
-    const players = overlayConfirmations(
-      Object.entries(db.players).map(([id, p]) => ({ id, ...p })),
-      cards,
-    );
+    const loadedMatches = Object.entries(db.matches).map(([id, m]) => ({ id, ...m }));
+    const loadedCards = Object.entries(db.confirmations || {}).map(([id, card]) => ({ id, ...card }));
+    const loadedPlayers = Object.entries(db.players).map(([id, p]) => ({ id, ...p }));
+    const visible = this._visible(loadedMatches, loadedPlayers, loadedCards);
+    const matches = visible.matches;
+    const cards = visible.cards;
+    const players = overlayConfirmations(visible.players, cards);
     const roster = Object.entries(db.roster).map(([id, r]) => ({ id, ...r }));
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
     const prices = db.settings?.prices || null;
@@ -188,8 +209,14 @@ class LocalStore {
   }
   async updateMatch(id, data, who) {
     const db = this._load(); const m = db.matches[id]; if (!m) return;
-    Object.assign(m, data, { startsAt: toEpoch(data.date ?? m.date, data.time ?? m.time), updatedBy: who, updatedAt: Date.now() });
-    if (data.date) for (const p of Object.values(db.players)) if (p.matchId === id) p.matchDate = data.date;
+    const access = data.access ? accessPatch(data.access) : null;
+    const { access: _drop, ...rest } = data;
+    Object.assign(m, rest, access || {}, { startsAt: toEpoch(data.date ?? m.date, data.time ?? m.time), updatedBy: who, updatedAt: Date.now() });
+    const copied = playerAccess(m);
+    for (const p of Object.values(db.players)) if (p.matchId === id) {
+      if (data.date) p.matchDate = data.date;
+      if (access) Object.assign(p, copied);
+    }
     this._save(db);
   }
   async deleteMatch(id) {
@@ -204,13 +231,16 @@ class LocalStore {
     const mainCount = mates.filter((p) => p.waiting !== true).length;
     const waiting = opts.waiting === true || mainCount >= cap;
     const rosterId = String(data.rosterId || '').trim();
+    const hold = opts.tentative === true && !waiting;
     db.players[id] = {
       matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
-      addedBy: who, createdAt: now, updatedAt: now,
+      addedBy: who, addedByUid: this.actor?.uid || '', createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: newConfirmToken(),
+      ...playerAccess(match),
       ...(rosterId ? { rosterId } : {}),
+      ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     this._save(db); return id;
   }
@@ -241,6 +271,9 @@ class LocalStore {
   }
   async promoteFromWaiting(id) {
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+  }
+  async clearTentative(id) {
+    await this.updatePlayer(id, { tentative: null, tentativeAt: null });
   }
   async ensureConfirmToken(id) {
     const p = this._load().players[id];
@@ -322,7 +355,20 @@ class LocalStore {
 
 /* ───────────── Firebase / Firestore ───────────── */
 class FirebaseStore {
-  constructor() { this.mode = 'firebase'; this.listeners = new Set(); this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null }; }
+  constructor() {
+    this.mode = 'firebase';
+    this.listeners = new Set();
+    this.actor = null;
+    this._buckets = { matches: {}, players: {}, confirmations: {} };
+    this._backfilled = new Set();
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null };
+  }
+  setActor(user) {
+    const next = { uid: user?.uid || '', name: user?.name || '' };
+    if (this.actor?.uid === next.uid && this.actor?.name === next.name) return;
+    this.actor = next;
+    if (this.fs) this._listen();
+  }
   async init(onError) {
     const ready = await initFirebase();
     this.fs = ready.fs;
@@ -364,8 +410,55 @@ class FirebaseStore {
     }
     this._unsubs = [];
   }
+  _rebuild(kind) {
+    const byId = new Map();
+    for (const list of Object.values(this._buckets[kind] || {})) for (const item of list || []) byId.set(item.id, item);
+    this.state[kind] = [...byId.values()];
+    this._emit();
+  }
+  async _backfillMatches(docs) {
+    const { doc, updateDoc } = this.fs;
+    for (const item of docs) {
+      const data = item.data();
+      if (Array.isArray(data.viewers) && data.viewers.length) continue;
+      const key = `m:${item.id}`;
+      if (this._backfilled.has(key)) continue;
+      this._backfilled.add(key);
+      try { await updateDoc(doc(this.db, 'matches', item.id), { viewers: [EVERYONE], adders: [EVERYONE], solo: false }); }
+      catch (e) { this._backfilled.delete(key); console.error(e); }
+    }
+  }
+  async _backfillPlayers(docs) {
+    const { doc, updateDoc } = this.fs;
+    for (const item of docs) {
+      const data = item.data();
+      if (Array.isArray(data.viewers) && data.viewers.length) continue;
+      const key = `p:${item.id}`;
+      if (this._backfilled.has(key)) continue;
+      this._backfilled.add(key);
+      const match = this.state.matches.find((row) => row.id === data.matchId);
+      if (!match) { this._backfilled.delete(key); continue; }
+      try { await updateDoc(doc(this.db, 'players', item.id), playerAccess(match)); }
+      catch (e) { this._backfilled.delete(key); console.error(e); }
+    }
+  }
+  async _backfillConfirmations(docs) {
+    const { doc, updateDoc } = this.fs;
+    for (const item of docs) {
+      const data = item.data();
+      if (Array.isArray(data.viewers) && data.viewers.length) continue;
+      const key = `c:${item.id}`;
+      if (this._backfilled.has(key)) continue;
+      this._backfilled.add(key);
+      const match = this.state.matches.find((row) => row.id === data.matchId);
+      if (!match) { this._backfilled.delete(key); continue; }
+      try { await updateDoc(doc(this.db, 'confirmations', item.id), { viewers: playerAccess(match).viewers }); }
+      catch (e) { this._backfilled.delete(key); console.error(e); }
+    }
+  }
   _listen() {
     this._stop();
+    this._buckets = { matches: {}, players: {}, confirmations: {} };
     const from = addDays(todayISO(), -1);
     const { collection, doc, query, where, onSnapshot } = this.fs;
     const watch = (ref, opts, onNext, onErr) => {
@@ -375,15 +468,37 @@ class FirebaseStore {
         : onSnapshot(ref, next, (e) => this._onListenError(e, onErr));
       this._unsubs.push(un);
     };
+    const accessIds = [EVERYONE];
+    if (this.actor?.uid) accessIds.unshift(this.actor.uid);
+    const take = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const legacyDenied = (kind) => (e) => {
+      if (e?.code === 'permission-denied') {
+        this._buckets[kind].broad = [];
+        this._rebuild(kind);
+        return;
+      }
+      this._fail(e);
+    };
     watch(query(collection(this.db, 'matches'), where('date', '>=', from)), { includeMetadataChanges: true }, (snap) => {
       if (!snap.metadata.fromCache) this.serverOk = true;
-      this.state.matches = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.pending = snap.metadata.hasPendingWrites;
-      this._emit();
+      this._buckets.matches.broad = take(snap);
+      this._rebuild('matches');
+      this._backfillMatches(snap.docs);
+    }, legacyDenied('matches'));
+    watch(query(collection(this.db, 'matches'), where('viewers', 'array-contains-any', accessIds)), { includeMetadataChanges: true }, (snap) => {
+      if (!snap.metadata.fromCache) this.serverOk = true;
+      this._buckets.matches.narrow = take(snap);
+      this._rebuild('matches');
     });
     watch(query(collection(this.db, 'players'), where('matchDate', '>=', from)), null, (snap) => {
-      this.state.players = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      this._emit();
+      this._buckets.players.broad = take(snap);
+      this._rebuild('players');
+      this._backfillPlayers(snap.docs);
+    }, legacyDenied('players'));
+    watch(query(collection(this.db, 'players'), where('viewers', 'array-contains-any', accessIds)), null, (snap) => {
+      this._buckets.players.narrow = take(snap);
+      this._rebuild('players');
     });
     watch(collection(this.db, 'roster'), null, (snap) => {
       this.state.roster = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -394,8 +509,13 @@ class FirebaseStore {
       this._emit();
     });
     watch(collection(this.db, 'confirmations'), null, (snap) => {
-      this.state.confirmations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      this._emit();
+      this._buckets.confirmations.broad = take(snap);
+      this._rebuild('confirmations');
+      this._backfillConfirmations(snap.docs);
+    }, legacyDenied('confirmations'));
+    watch(query(collection(this.db, 'confirmations'), where('viewers', 'array-contains-any', accessIds)), null, (snap) => {
+      this._buckets.confirmations.narrow = take(snap);
+      this._rebuild('confirmations');
     });
     watch(collection(this.db, 'organizers'), null, (snap) => {
       this.state.organizers = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -446,9 +566,20 @@ class FirebaseStore {
     }
   }
   _view() {
+    let { matches, players, confirmations } = this.state;
+    const uid = this.actor?.uid;
+    if (uid) {
+      matches = matches.filter((match) => canView(match, uid));
+      const ids = new Set(matches.map((match) => match.id));
+      const known = new Set(this.state.matches.map((match) => match.id));
+      players = players.filter((player) => ids.has(player.matchId) || (!known.has(player.matchId) && canView({ viewers: player.viewers }, uid)));
+      confirmations = confirmations.filter((card) => ids.has(card.matchId) || (!known.has(card.matchId) && canView({ viewers: card.viewers }, uid)));
+    }
     return {
       ...this.state,
-      players: overlayConfirmations(this.state.players, this.state.confirmations),
+      matches,
+      confirmations,
+      players: overlayConfirmations(players, confirmations),
     };
   }
   _emit() {
@@ -480,25 +611,37 @@ class FirebaseStore {
   async updateMatch(id, data, who) {
     const { doc, writeBatch } = this.fs;
     const cur = this.state.matches.find((m) => m.id === id) || {};
+    const access = data.access ? accessPatch(data.access) : null;
+    const { access: _drop, ...rest } = data;
+    const patch = { ...rest, ...(access || {}), startsAt: toEpoch(data.date ?? cur.date, data.time ?? cur.time), updatedBy: who, updatedAt: Date.now() };
     const batch = writeBatch(this.db);
-    batch.update(doc(this.db, 'matches', id), { ...data, startsAt: toEpoch(data.date ?? cur.date, data.time ?? cur.time), updatedBy: who, updatedAt: Date.now() });
-    if (data.date && data.date !== cur.date) {
-      this.state.players.filter((p) => p.matchId === id).forEach((p) => batch.update(doc(this.db, 'players', p.id), { matchDate: data.date }));
-    }
+    batch.update(doc(this.db, 'matches', id), patch);
+    const next = { ...cur, ...patch, id };
+    const copied = playerAccess(next);
+    const playerPatches = [];
+    this.state.players.filter((p) => p.matchId === id).forEach((p) => {
+      const playerPatch = {};
+      if (data.date && data.date !== cur.date) playerPatch.matchDate = data.date;
+      if (access) Object.assign(playerPatch, copied);
+      if (Object.keys(playerPatch).length) playerPatches.push([p.id, playerPatch]);
+    });
+    // El partido primero: la regla del jugador compara con el partido ya guardado.
     await batch.commit();
-    const next = { ...cur, ...data, id };
+    if (playerPatches.length) {
+      const playersBatch = writeBatch(this.db);
+      for (const [playerId, playerPatch] of playerPatches) playersBatch.update(doc(this.db, 'players', playerId), playerPatch);
+      await playersBatch.commit();
+    }
     for (const player of this.state.players.filter((p) => p.matchId === id && p.confirmToken)) {
-      await this._writeConfirmation(player.confirmToken, player.id, player, next);
+      await this._writeConfirmation(player.confirmToken, player.id, { ...player, ...copied }, next);
     }
   }
   async deleteMatch(id) {
-    const { doc, writeBatch, collection, query, where, getDocs } = this.fs;
+    const { doc, writeBatch } = this.fs;
     const batch = writeBatch(this.db);
-    const ps = await getDocs(query(collection(this.db, 'players'), where('matchId', '==', id)));
-    ps.forEach((d) => {
-      batch.delete(d.ref);
-      const token = d.data().confirmToken;
-      if (token) batch.delete(doc(this.db, 'confirmations', token));
+    this.state.players.filter((p) => p.matchId === id).forEach((p) => {
+      batch.delete(doc(this.db, 'players', p.id));
+      if (p.confirmToken) batch.delete(doc(this.db, 'confirmations', p.confirmToken));
     });
     batch.delete(doc(this.db, 'matches', id));
     await batch.commit();
@@ -511,13 +654,16 @@ class FirebaseStore {
     const waiting = opts.waiting === true || mainCount >= cap;
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
+    const hold = opts.tentative === true && !waiting;
     const player = {
       matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
-      addedBy: who, createdAt: now, updatedAt: now,
+      addedBy: who, addedByUid: this.actor?.uid || '', createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: token,
+      ...playerAccess(match),
       ...(rosterId ? { rosterId } : {}),
+      ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);
     await this._writeConfirmation(token, ref.id, player, match);
@@ -552,6 +698,9 @@ class FirebaseStore {
   }
   async promoteFromWaiting(id) {
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+  }
+  async clearTentative(id) {
+    await this.updatePlayer(id, { tentative: null, tentativeAt: null });
   }
   async ensureConfirmToken(id) {
     const p = this.state.players.find((x) => x.id === id);
