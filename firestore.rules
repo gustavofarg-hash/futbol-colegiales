@@ -606,10 +606,30 @@ service cloud.firestore {
           && d.p is string && d.p.size() > 0 && d.p.size() <= 80
           && d.t is string && d.t.size() >= 16 && d.t.size() <= 80;
     }
+    function validExternalShort(d) {
+      return d.shortAt is number
+          && d.shortUrl is string
+          && d.shortUrl.size() <= 80
+          && (
+            (d.shortProvider == 'spoo' && d.shortUrl.matches('^https://spoo\\.me/[A-Za-z0-9_]+$'))
+            || (d.shortProvider == 'dagd' && d.shortUrl.matches('^https://da\\.gd/[A-Za-z0-9_]+$'))
+          );
+    }
     match /links/{code} {
       allow get: if code.size() == 8 && code.matches('^[0-9A-Za-z]{8}$');
-      allow create, update: if isActiveStaff() && validShortLink(request.resource.data)
-          && code.size() == 8 && code.matches('^[0-9A-Za-z]{8}$');
+      // El alta sigue siendo solo m, p y t. El acortador se guarda después.
+      allow create: if isActiveStaff() && validShortLink(request.resource.data)
+          && code.size() == 8 && code.matches('^[0-9A-Za-z]{8}$')
+          && request.resource.data.keys().hasOnly(['m', 'p', 't']);
+      // Solo se pueden tocar shortUrl, shortProvider y shortAt. m, p y t quedan iguales.
+      allow update: if isActiveStaff()
+          && code.size() == 8 && code.matches('^[0-9A-Za-z]{8}$')
+          && validShortLink(request.resource.data)
+          && validExternalShort(request.resource.data)
+          && request.resource.data.m == resource.data.m
+          && request.resource.data.p == resource.data.p
+          && request.resource.data.t == resource.data.t
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shortUrl', 'shortProvider', 'shortAt']);
       allow delete: if isActiveStaff();
     }
 

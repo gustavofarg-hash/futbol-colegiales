@@ -20,6 +20,7 @@ import {
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
 import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
+import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
 import { cyclePlayer, dropPlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
@@ -353,6 +354,84 @@ test('lista de espera: al final, flechas y subir al primero', async () => {
   ], 2);
   assert.deepEqual(overflow, [{ id: 'c', waiting: true, waitOrder: 2, rosterAt: null }]);
   assert.equal(nextWaitOrder([{ waitOrder: 2 }, { waitOrder: 5 }]), 6);
+});
+
+test('acortar: spoo.me, da.gd, basura y tiempo', async () => {
+  const longUrl = 'https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=Ab3x9Zk2';
+  const spooOnly = async (url, init) => {
+    assert.equal(String(url), 'https://spoo.me/api/v1/shorten');
+    assert.equal(init.method, 'POST');
+    assert.equal(init.headers['Content-Type'], 'application/json');
+    assert.deepEqual(JSON.parse(init.body), { long_url: longUrl });
+    return { json: async () => ({ short_url: 'https://spoo.me/ZXwB0uF' }), text: async () => '' };
+  };
+  assert.deepEqual(await shortenExternal(longUrl, { fetchImpl: spooOnly, timeoutMs: 40 }), {
+    shortUrl: 'https://spoo.me/ZXwB0uF', shortProvider: 'spoo',
+  });
+
+  const garbageThenDagd = async (url) => {
+    if (String(url).includes('spoo.me')) {
+      return { status: 201, json: async () => ({ short_url: 'https://evil.example/phish' }), text: async () => '' };
+    }
+    assert.match(String(url), /^https:\/\/da\.gd\/s\?url=/);
+    return { status: 200, json: async () => ({}), text: async () => 'https://da.gd/jjXrP\n' };
+  };
+  assert.deepEqual(await shortenExternal(longUrl, { fetchImpl: garbageThenDagd, timeoutMs: 40 }), {
+    shortUrl: 'https://da.gd/jjXrP', shortProvider: 'dagd',
+  });
+
+  const bothBad = async (url) => {
+    if (String(url).includes('spoo.me')) return { json: async () => ({ short_url: 'http://spoo.me/Abc' }), text: async () => '' };
+    return { json: async () => ({}), text: async () => 'hola no es un link' };
+  };
+  assert.equal(await shortenExternal(longUrl, { fetchImpl: bothBad, timeoutMs: 40 }), null);
+
+  const timeoutThenDagd = async (url, init) => {
+    if (String(url).includes('spoo.me')) {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 500);
+        init.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    }
+    return { text: async () => 'https://da.gd/jjXrP', json: async () => ({}) };
+  };
+  const timed = await shortenExternal(longUrl, { fetchImpl: timeoutThenDagd, timeoutMs: 30 });
+  assert.equal(timed.shortProvider, 'dagd');
+  assert.equal(timed.shortUrl, 'https://da.gd/jjXrP');
+  assert.equal(acceptedExternalShort({ shortUrl: 'https://spoo.me/ZXwB0uF', shortProvider: 'dagd' }), null);
+  assert.equal(acceptedExternalShort({ shortUrl: 'https://spoo.me/ZXwB0uF/extra', shortProvider: 'spoo' }), null);
+  assert.deepEqual(acceptedExternalShort({ shortUrl: 'https://da.gd/jjXrP', shortProvider: 'dagd' }), {
+    shortUrl: 'https://da.gd/jjXrP', shortProvider: 'dagd',
+  });
+});
+
+test('el acortador queda en el link y sobrevive a un guardado', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  const mid = await store.addMatch({ date: '2026-10-23', time: '18:00', note: 'Acortar' }, 'Gustavo');
+  const pid = await store.addPlayer({ id: mid, date: '2026-10-23' }, { name: 'Corto Uno', phone: '5491199990001' }, 'Gustavo');
+  await store.ensureConfirmToken(pid);
+  const code = await store.ensureShortLink(pid);
+  assert.equal(isShortCode(code), true);
+  assert.equal(await store.readExternalShort(code), null);
+  await store.saveExternalShort(code, { shortUrl: 'https://evil.example/x', shortProvider: 'spoo' });
+  assert.equal(await store.readExternalShort(code), null);
+  await store.saveExternalShort(code, { shortUrl: 'https://spoo.me/ZXwB0uF', shortProvider: 'spoo' });
+  const saved = await store.readExternalShort(code);
+  assert.equal(saved.shortUrl, 'https://spoo.me/ZXwB0uF');
+  assert.equal(saved.shortProvider, 'spoo');
+  assert.equal(typeof saved.shortAt, 'number');
+  await store.updateMatch(mid, { note: 'otra' }, 'Gustavo');
+  assert.equal((await store.readExternalShort(code)).shortUrl, 'https://spoo.me/ZXwB0uF');
+  assert.equal(shortConfirmUrl(code).includes(`/c/?k=${code}`), true);
 });
 
 test('link corto: código, url y el mismo destino', () => {

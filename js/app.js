@@ -14,6 +14,7 @@ import {
   reservationClearedByAnswer,
 } from './reminders.js';
 import { isShortCode, shortConfirmUrl } from './short.js';
+import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
@@ -41,7 +42,11 @@ function phoneSub(p) {
   return '<span>Sin número</span>';
 }
 function waButton(p, text) {
-  if (p?.phone) return `<a class="wa-btn" href="${esc(waHref(p.phone, text || ''))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>`;
+  if (p?.phone) {
+    const code = isShortCode(p?.shortCode) ? p.shortCode : '';
+    const shorten = code ? ` data-short-code="${esc(code)}" data-wa-phone="${esc(p.phone)}" data-wa-text="${esc(text || '')}"` : '';
+    return `<a class="wa-btn" href="${esc(waHref(p.phone, text || ''))}"${shorten} target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>`;
+  }
   if (phoneHidden(p)) return `<button type="button" class="wa-btn" disabled aria-label="${esc(PRIVATE_WA_TEXT)}">${ICON.wa}</button>`;
   return '';
 }
@@ -805,6 +810,22 @@ async function openReminders(m) {
   const linkById = new Map(reminderLinks({
     match: m, players: fresh, venue: placeOf(m),
   }).map((row) => [row.id, row]));
+  const externalById = new Map();
+  const hrefFor = (link) => {
+    const external = link ? externalById.get(link.id) : '';
+    if (!link || !external) return link?.waUrl || '';
+    return waSendUrl({ phone: link.phone, text: link.text.split(link.confirmUrl).join(external) });
+  };
+  for (const p of fresh) {
+    if (!isShortCode(p.shortCode)) continue;
+    void resolveExternalShort(p.shortCode).then((url) => {
+      if (!url) return;
+      externalById.set(p.id, url);
+      const link = linkById.get(p.id);
+      const a = document.querySelector(`#remind-list a[data-send="${CSS.escape(p.id)}"]`);
+      if (a && link) a.href = hrefFor(link);
+    });
+  }
   const paint = () => {
     const visible = showAll ? fresh : playersForOrganizer(fresh, app.who);
     const prog = reminderProgress(visible);
@@ -819,7 +840,7 @@ async function openReminders(m) {
       const sent = !!p.reminderSentAt;
       return `<li class="remind-row" data-remind="${esc(p.id)}">
         <div class="who"><div class="name">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
-        <a class="btn primary" href="${esc(link.waUrl)}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
+        <a class="btn primary" href="${esc(hrefFor(link))}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
       </li>`;
     }).join('');
     openSheet(`
@@ -970,12 +991,14 @@ async function offerPromotionWhatsApp(player, match) {
   }
   const token = await app.store.ensureConfirmToken(player.id);
   if (!confirm(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`)) return;
+  const pending = window.open('about:blank', '_blank');
   const code = await app.store.ensureShortLink(player.id);
-  const confirmUrl = isShortCode(code)
+  const external = isShortCode(code) ? await resolveExternalShort(code) : '';
+  const confirmUrl = external || (isShortCode(code)
     ? shortConfirmUrl(code)
-    : confirmPageUrl({ matchId: match.id, playerId: player.id, token });
+    : confirmPageUrl({ matchId: match.id, playerId: player.id, token }));
   const text = promotionMessage({ player, match, venue: placeOf(match), confirmUrl });
-  openWa({ phone, text });
+  placeWa(pending, waSendUrl({ phone, text }));
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch {
@@ -1039,6 +1062,50 @@ sheet.addEventListener('click', (e) => {
 
 function openWa({ phone = '', text = '' } = {}) {
   window.open(waSendUrl({ phone, text }), '_blank', 'noopener');
+}
+
+const externalShortJobs = new Map();
+function resolveExternalShort(code) {
+  if (!isShortCode(code)) return Promise.resolve('');
+  const pending = externalShortJobs.get(code);
+  if (pending) return pending;
+  const job = (async () => {
+    const cached = await app.store.readExternalShort(code);
+    if (cached?.shortUrl) return cached.shortUrl;
+    const got = await shortenExternal(shortConfirmUrl(code));
+    if (!got?.shortUrl) return '';
+    await app.store.saveExternalShort(code, got);
+    return got.shortUrl;
+  })();
+  externalShortJobs.set(code, job);
+  job.then((url) => { if (!url) externalShortJobs.delete(code); }, () => externalShortJobs.delete(code));
+  return job;
+}
+
+function placeWa(win, url) {
+  if (win && !win.closed) {
+    win.location.replace(url);
+    return;
+  }
+  window.location.href = url;
+}
+
+function bindExternalShortClicks() {
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a.wa-btn[data-short-code]');
+    if (!a) return;
+    const code = a.dataset.shortCode || '';
+    if (!isShortCode(code)) return;
+    e.preventDefault();
+    const pending = window.open('about:blank', '_blank');
+    const phone = a.dataset.waPhone || '';
+    const text = a.dataset.waText || '';
+    const house = shortConfirmUrl(code);
+    void resolveExternalShort(code).then((external) => {
+      const next = external ? text.split(house).join(external) : text;
+      placeWa(pending, waSendUrl({ phone, text: next }));
+    });
+  });
 }
 
 /* Ajustes */
@@ -2465,6 +2532,7 @@ async function boot() {
   $('#btn-text-bigger').onclick = () => { stepTextSize(1); syncTextSize(); };
   syncTextSize();
   $('#btn-settings').onclick = openSettings;
+  bindExternalShortClicks();
   $('#brand').onclick = () => { location.hash = '#/'; };
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
