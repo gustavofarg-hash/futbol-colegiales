@@ -340,7 +340,7 @@ service cloud.firestore {
           && (!('createdByUid' in d) || (d.createdByUid is string && d.createdByUid.size() <= 128))
           && (!('createdAt' in d) || d.createdAt is number)
           && (!('updatedAt' in d) || d.updatedAt is number)
-          && (!('level' in d) || (d.level is int && d.level >= 1 && d.level <= 10))
+          && (!('level' in d) || (d.level is number && d.level >= 1 && d.level <= 10))
           && (!('positions' in d) || positionsOk(d.positions))
           && (!('notes' in d) || notesOk(d.notes));
     }

@@ -13,6 +13,12 @@
   --warn-text: #6b5200;
   --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 14px rgba(15,122,61,.08);
   --radius: 16px;
+  --accent-0: #1d4ed8;
+  --accent-1: #b45309;
+  --accent-2: #7c3aed;
+  --accent-3: #0f766e;
+  --accent-4: #be123c;
+  --accent-5: #0369a1;
   --safe-b: env(safe-area-inset-bottom, 0px);
   color-scheme: light dark;
 }
@@ -30,6 +36,12 @@
     --warn-bg: #3a3112;
     --warn-text: #f5dc85;
     --shadow: 0 1px 2px rgba(0,0,0,.4);
+    --accent-0: #93c5fd;
+    --accent-1: #fdba74;
+    --accent-2: #d8b4fe;
+    --accent-3: #5eead4;
+    --accent-4: #fda4af;
+    --accent-5: #7dd3fc;
   }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -177,7 +189,18 @@ h2.section:first-child { margin-top: 4px; }
 .slot .n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 0.8125rem; font-weight: 800; background: var(--green-soft); color: var(--green); flex: none; }
 .slot .who { flex: 1; min-width: 0; }
 button.who { text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
-.slot .name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.slot .name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.level-badge {
+  flex: none; font-size: 0.75rem; font-weight: 800; line-height: 1;
+  padding: 3px 6px; border-radius: 999px;
+  background: var(--green-soft); color: var(--green);
+}
+.stepper input {
+  width: 5.5rem; min-height: 48px; text-align: center; font-weight: 800; font-size: 1.25rem;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg); padding: 4px 8px;
+}
+.stepper input:disabled { opacity: .7; }
 .slot .sub { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
 .private-wa { overflow-wrap: anywhere; min-width: 0; }
 .edit-lock { overflow-wrap: anywhere; min-width: 0; }
@@ -323,6 +346,23 @@ button.team-player { color: inherit; cursor: pointer; }
 .friend-row input:focus { outline: 2px solid var(--green-2); outline-offset: 1px; border-color: transparent; }
 .friend-remove { flex: 0 0 auto; width: 3rem; min-width: 3rem; padding: 0; font-size: 1.4rem; line-height: 1; }
 .friend-tag { overflow-wrap: anywhere; white-space: normal; }
+.slot.host-row,
+.slot.guest-row {
+  border-left-width: 4px;
+  border-left-style: solid;
+  border-left-color: var(--invite, var(--line));
+  background: color-mix(in srgb, var(--invite, transparent) 14%, var(--card));
+}
+.slot.guest-row { margin-left: 12px; }
+.slot.invite-0 { --invite: var(--accent-0); }
+.slot.invite-1 { --invite: var(--accent-1); }
+.slot.invite-2 { --invite: var(--accent-2); }
+.slot.invite-3 { --invite: var(--accent-3); }
+.slot.invite-4 { --invite: var(--accent-4); }
+.slot.invite-5 { --invite: var(--accent-5); }
+.history-venues { margin: 0 0 12px; }
+.history-venues .chip { min-height: 44px; max-width: 100%; white-space: normal; text-align: center; line-height: 1.15; }
+.profile-name { margin-top: 4px; }
 .profile-phone { margin: 0 0 12px; color: var(--muted); overflow-wrap: anywhere; }
 .checkline span { min-width: 0; overflow-wrap: anywhere; }
 .profile-wa { width: 100%; margin-bottom: 16px; background: var(--wa); border-color: var(--wa); color: #fff; }

@@ -71,6 +71,34 @@ export function defaultVenueId(stored, opts) {
   return (choices.find((item) => item.id === DEFAULT_VENUE_ID) || choices[0]).id;
 }
 
+/** Un partido sin sede cuenta como Colegiales. */
+export function matchVenueId(match) {
+  const id = String(match?.venueId || '').trim();
+  return id || DEFAULT_VENUE_ID;
+}
+
+/**
+ * Sedes del filtro de Historial. Incluye las inactivas para poder
+ * encontrar partidos viejos. Si la colección no tiene a Colegiales, entra igual.
+ */
+export function historyVenueOptions(stored) {
+  const list = sortedVenues(stored);
+  if (!list.some((item) => item.id === DEFAULT_VENUE_ID)) return [defaultVenue(), ...list];
+  return list.length ? list : [defaultVenue()];
+}
+
+/**
+ * selected null: todas. Una lista de ids deja solo esas sedes.
+ * La lista vacía no muestra partidos.
+ */
+export function filterHistoryByVenues(matches, selected) {
+  const rows = [...(matches || [])];
+  if (selected == null) return rows;
+  const ids = new Set((Array.isArray(selected) ? selected : []).map((id) => String(id || '').trim()).filter(Boolean));
+  if (!ids.size) return [];
+  return rows.filter((match) => ids.has(matchVenueId(match)));
+}
+
 /** Nombre que se muestra. Si la sede se renombra, gana el nombre nuevo de la colección. */
 export function venueLabel(match, stored) {
   const id = String(match?.venueId || '');

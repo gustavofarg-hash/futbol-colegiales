@@ -8,13 +8,13 @@ import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/
 import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
 import { alreadyInMatch, firstDuplicate, groupByInviter, isAutoGuestName, placeGroup, resolveFriendNames, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { HISTORY_PAGE, currentMatches, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from '../js/profile.js';
+import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, toEpoch } from '../js/dates.js';
-import { capacityFor, defaultVenueId, matchCapacity, matchSize, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
+import { capacityFor, defaultVenueId, filterHistoryByVenues, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
@@ -282,6 +282,30 @@ test('anotar desde el perfil: ya anotado, libre y completo a la espera', () => {
   assert.equal(otherPhone.existing, false);
 });
 
+test('el nivel acepta un solo decimal y lo muestra con coma', () => {
+  assert.equal(filterLevelTyping('6,85'), '6,8');
+  assert.equal(filterLevelTyping('6.84'), '6.8');
+  assert.equal(filterLevelTyping('5,45'), '5,4');
+  assert.equal(filterLevelTyping('10,55'), '10,5');
+  assert.equal(filterLevelTyping('abc'), '');
+  assert.deepEqual(parseLevel('6,8'), { ok: true, level: 6.8 });
+  assert.deepEqual(parseLevel('6.7'), { ok: true, level: 6.7 });
+  assert.equal(parseLevel('6,85').ok, false);
+  assert.equal(parseLevel('0,5').ok, false);
+  assert.equal(parseLevel('11').ok, false);
+  assert.equal(parseLevel('10').level, 10);
+  assert.equal(parseLevel('10,0').level, 10);
+  assert.equal(storedLevel(6.85), null);
+  assert.equal(storedLevel(6.8), 6.8);
+  assert.equal(formatLevel(6.8), '6,8');
+  assert.equal(formatLevel(8), '8,0');
+  assert.equal(formatLevel(6.85), '');
+  assert.equal(stepLevel(null, 1), 1);
+  assert.equal(stepLevel(6.8, 1), 7.8);
+  assert.equal(stepLevel(10, 1), null);
+  assert.equal(stepLevel(1, -1), null);
+});
+
 test('no se anota dos veces y Amigo N es de quien invita', () => {
   const mates = [
     { id: 'juan', name: 'Juan Pérez', phone: '5491112345678', rosterId: 'r-juan' },
@@ -296,13 +320,14 @@ test('no se anota dos veces y Amigo N es de quien invita', () => {
   assert.equal(alreadyInMatch(mates, { name: 'Amigo 1' })?.id, 'a1');
   assert.equal(alreadyInMatch(mates, { name: 'Pedro', phone: '5491155550181' }, { exceptId: 'a1' }), null);
   assert.equal(alreadyInMatch(mates, { name: 'Juan Pérez' }, { exceptId: 'a1' })?.id, 'juan');
-  assert.deepEqual(resolveFriendNames([''], ['Pedro', 'Amigo 2']), [{ name: 'Amigo 3', guestAuto: true }]);
+  assert.deepEqual(resolveFriendNames([''], ['Pedro', 'Amigo 2']), [{ name: 'Invitado 3', guestAuto: true }]);
   assert.equal(isAutoGuestName('Amigo 2'), true);
+  assert.equal(isAutoGuestName('Invitado 1'), true);
   assert.equal(isAutoGuestName('Pedro'), false);
   assert.deepEqual(resolveFriendNames(['Pedro', '', ''], ['Amigo 1']), [
     { name: 'Pedro', guestAuto: false },
-    { name: 'Amigo 2', guestAuto: true },
-    { name: 'Amigo 3', guestAuto: true },
+    { name: 'Invitado 2', guestAuto: true },
+    { name: 'Invitado 3', guestAuto: true },
   ]);
   assert.equal(firstDuplicate(mates, [{ name: 'Pedro' }, { name: 'pedro' }])?.person.name, 'pedro');
   assert.deepEqual(placeGroup({ mainCount: 9, capacity: 10, count: 3 }), { main: 1, wait: 2, spots: 1 });
@@ -387,6 +412,46 @@ test('editar un amigo guarda nombre y WhatsApp sin soltar a quien invita', async
   const after = JSON.parse(mem.get('f7c-test-edit-friend'));
   assert.equal(after.players[amigo].name, 'Pedro');
   assert.equal(after.players[sigue].name, 'Amigo 2');
+});
+
+test('renombrar en Jugadores cambia el partido y no reescribe al otro invitado', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-roster-rename';
+  const gustavo = { uid: 'gustavo', name: 'Gustavo' };
+  const martin = { uid: 'martin', name: 'Martín' };
+  store.setActor(gustavo);
+  const mid = await store.addMatch({ date: '2026-10-25', time: '19:00', capacity: 10 }, 'Gustavo');
+  const match = { id: mid, date: '2026-10-25', capacity: 10 };
+  const juan = await store.addPlayer(match, { name: 'Juan Pérez', phone: '' }, 'Gustavo');
+  const rosterId = await store.addRoster({ name: 'Amigo 1', phone: '' }, 'Gustavo');
+  const amigo = await store.addPlayer(match, { name: 'Amigo 1', rosterId, invitedBy: juan, invitedByName: 'Juan Pérez', guestAuto: true }, 'Gustavo');
+  const sigue = await store.addPlayer(match, { name: 'Amigo 2', invitedBy: juan, invitedByName: 'Juan Pérez', guestAuto: true }, 'Gustavo');
+  store.setActor(martin);
+  const ajeno = await store.addPlayer(match, { name: 'Amigo 1', rosterId, invitedBy: juan, invitedByName: 'Juan Pérez', guestAuto: true }, 'Martín');
+  store.setActor(gustavo);
+  await store.addPlayer(match, { name: 'Pedro Real', phone: '' }, 'Gustavo');
+  await assert.rejects(() => store.updateRoster(rosterId, { name: 'Pedro Real' }), (error) => error.code === 'already-in-match');
+  assert.equal(JSON.parse(mem.get('f7c-test-roster-rename')).players[amigo].name, 'Amigo 1');
+  await store.updateRoster(rosterId, { name: 'Pedro Invitado' });
+  const db = JSON.parse(mem.get('f7c-test-roster-rename'));
+  assert.equal(db.roster[rosterId].name, 'Pedro Invitado');
+  assert.equal(db.players[amigo].name, 'Pedro Invitado');
+  assert.equal(db.players[amigo].invitedBy, juan);
+  assert.equal(db.players[amigo].guestAuto, false);
+  assert.equal(db.players[sigue].name, 'Amigo 2');
+  assert.equal(db.players[ajeno].name, 'Amigo 1');
+  await store.setPayment(amigo, { paid: true, amount: 1000, method: 'efectivo' }, 'Gustavo');
+  await store.updatePlayer(amigo, { waiting: true, waitOrder: 1, rosterAt: null });
+  const waited = JSON.parse(mem.get('f7c-test-roster-rename')).players[amigo];
+  assert.equal(waited.waiting, true);
+  assert.equal(waited.paid, true);
+  assert.equal(waited.name, 'Pedro Invitado');
 });
 
 test('modo demo guarda el pago en el jugador y lo emite', async () => {
@@ -1524,6 +1589,18 @@ test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegi
   assert.equal(matchCapacity({ capacity: 1 }), 1);
   assert.equal(capacityFor(11), 22);
   assert.equal(venueLabel({}, []), 'Polideportivo Colegiales');
+  assert.equal(matchVenueId({}), 'colegiales');
+  assert.equal(matchVenueId({ venueId: 'norte' }), 'norte');
+  const venues = [
+    { id: 'colegiales', name: 'Polideportivo Colegiales', active: true, order: 0 },
+    { id: 'norte', name: 'Club Norte', active: false, order: 2 },
+  ];
+  assert.deepEqual(historyVenueOptions(venues).map((item) => item.id), ['colegiales', 'norte']);
+  assert.deepEqual(historyVenueOptions([]).map((item) => item.id), ['colegiales']);
+  const past = [{ id: 'a' }, { id: 'b', venueId: 'norte' }, { id: 'c', venueId: 'colegiales' }];
+  assert.deepEqual(filterHistoryByVenues(past, null).map((item) => item.id), ['a', 'b', 'c']);
+  assert.deepEqual(filterHistoryByVenues(past, ['colegiales']).map((item) => item.id), ['a', 'c']);
+  assert.deepEqual(filterHistoryByVenues(past, []).map((item) => item.id), []);
   assert.equal(venueLabel({ venueId: 'norte', venueName: 'Nombre viejo' }, [{ id: 'norte', name: 'Club Norte', active: true, order: 1 }]), 'Club Norte');
   assert.equal(defaultVenueId([], { unreadable: true }), 'colegiales');
   const choices = venueChoices([{ id: 'norte', name: 'Club Norte', active: false, order: 2 }, { id: 'colegiales', name: 'Polideportivo Colegiales', active: true, order: 0 }], { currentId: 'norte' });

@@ -58,7 +58,7 @@
 //  roster/{rosterId}
 //    name (el teléfono está en rosterContacts)
 //    createdBy, createdAt, updatedAt
-//    level: 1..10
+//    level: número de 1 a 10, con un decimal (6.8). En pantalla va con coma.
 //    positions: ["Arquero"|"Defensa"|"Mediocampo"|"Ataque"]
 //    notes: [{ id, matchId, matchDate, matchTime, text, createdAt, updatedAt }]
 //    Misma persona = mismo phone. La colección es nueva: las reglas publicadas
@@ -76,7 +76,7 @@
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { toEpoch, todayISO } from './dates.js';
-import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan } from './profile.js';
+import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
@@ -190,7 +190,61 @@ function guestFields(data) {
   const invitedByName = String(data?.invitedByName || '').trim().replace(/\s+/g, ' ').slice(0, 60);
   const base = invitedByName ? { invitedBy, invitedByName } : { invitedBy };
   if (data?.guestAuto === true) base.guestAuto = true;
+  else if (data?.guestAuto === false) base.guestAuto = false;
   return base;
+}
+
+function cleanPersonName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function rosterPlayers(db) {
+  const contacts = db.contacts?.players || {};
+  return Object.entries(db.players || {}).map(([id, row]) => ({
+    id,
+    ...row,
+    phone: row.phone || contacts[id]?.phone || '',
+  }));
+}
+
+/**
+ * Al cambiar el nombre en Jugadores, los jugadores del partido con ese
+ * rosterId pasan a llamarse igual. Un solo lote, después de chequear
+ * duplicados. Si quien está logueado no creó a ese jugador, no lo toca.
+ */
+function rosterNamePatches(players, rosterId, newName, actor) {
+  const id = String(rosterId || '').trim();
+  const name = cleanPersonName(newName);
+  if (!id || !name) return [];
+  const rows = (players || []).filter((row) => row?.id);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const patches = [];
+  for (const player of rows) {
+    if (String(player.rosterId || '') !== id) continue;
+    if (cleanPersonName(player.name) === name) continue;
+    if (!canEditPlayer(player, actor)) continue;
+    const invitedBy = String(player.invitedBy || '').trim();
+    const host = invitedBy ? byId.get(invitedBy) : null;
+    const hostName = cleanPersonName(host?.name || player.invitedByName || '');
+    const patch = { name };
+    if (invitedBy || player.guestAuto === true || isAutoGuestName(player.name)) patch.guestAuto = false;
+    if (invitedBy) {
+      patch.invitedBy = invitedBy;
+      if (hostName) patch.invitedByName = hostName;
+    }
+    const mates = rows.filter((row) => row.matchId === player.matchId);
+    refuseDuplicate(mates, identityAfterEdit(player, patch), player.id);
+    patches.push({ id: player.id, patch });
+  }
+  return patches;
+}
+
+function applyRosterNamePatches(db, patches, now) {
+  for (const item of patches) {
+    const player = db.players[item.id];
+    if (!player) continue;
+    Object.assign(player, item.patch, { updatedAt: now });
+  }
 }
 
 function matchDoc(data, who) {
@@ -665,17 +719,32 @@ class LocalStore {
       const dup = phoneDup(db, 'roster', id, phone);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
-    Object.assign(cur, { name: data.name.trim(), updatedAt: Date.now() });
+    const nextName = cleanPersonName(data?.name);
+    if (!nextName) throw Object.assign(new Error('Poné el nombre.'), { code: 'invalid-name' });
+    const patches = nextName !== cleanPersonName(cur.name)
+      ? rosterNamePatches(rosterPlayers(db), id, nextName, this.actor)
+      : [];
+    const now = Date.now();
+    Object.assign(cur, { name: nextName, updatedAt: now });
     delete cur.phone;
     if ('phone' in (data || {})) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
+    applyRosterNamePatches(db, patches, now);
     this._save(db);
   }
   async patchRoster(id, patch) {
     const db = this._load(); const cur = db.roster[id]; if (!cur) return;
     if (!canEditRoster(cur, this.actor)) throw editLockedError();
     const next = {};
-    if ('name' in patch) next.name = String(patch.name || '').trim();
-    if ('level' in patch) next.level = patch.level;
+    let namePatches = [];
+    if ('name' in patch) {
+      next.name = cleanPersonName(patch.name);
+      if (next.name && next.name !== cleanPersonName(cur.name)) namePatches = rosterNamePatches(rosterPlayers(db), id, next.name, this.actor);
+    }
+    if ('level' in patch) {
+      const level = storedLevel(patch.level);
+      if (level == null) throw Object.assign(new Error('El nivel va de 1 a 10, con un solo decimal.'), { code: 'invalid-level' });
+      next.level = level;
+    }
     if ('positions' in patch) next.positions = patch.positions || [];
     if ('notes' in patch) next.notes = patch.notes || [];
     const phone = 'phone' in patch ? (patch.phone || '') : this._rosterPhone(db, id);
@@ -683,9 +752,11 @@ class LocalStore {
       const dup = phoneDup(db, 'roster', id, phone);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
-    Object.assign(cur, next, { updatedAt: Date.now() });
+    const now = Date.now();
+    Object.assign(cur, next, { updatedAt: now });
     delete cur.phone;
     if ('phone' in patch) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
+    applyRosterNamePatches(db, namePatches, now);
     this._save(db);
   }
   async deleteRoster(id) {
@@ -1680,8 +1751,13 @@ class FirebaseStore {
       const dup = this._rosterDup(phone, id);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
-    const { doc, updateDoc, deleteField } = this.fs;
-    const next = { name: data.name.trim(), updatedAt: Date.now() };
+    const { doc, updateDoc, deleteField, writeBatch } = this.fs;
+    const nextName = cleanPersonName(data?.name);
+    if (!nextName) throw Object.assign(new Error('Poné el nombre.'), { code: 'invalid-name' });
+    const namePatches = nextName !== cleanPersonName(cur.name)
+      ? rosterNamePatches(this.state.players || [], id, nextName, this.actor)
+      : [];
+    const next = { name: nextName, updatedAt: Date.now() };
     if ('phone' in (data || {})) {
       try {
         const wrote = await this._writeContactDoc('roster', id, phone, cur);
@@ -1699,22 +1775,41 @@ class FirebaseStore {
         if (canonicalWa(phone)) next.phone = canonicalWa(phone);
       }
     } else if (this._contactsLive) next.phone = deleteField();
-    await updateDoc(doc(this.db, 'roster', id), next);
+    await this._commitRosterName(id, next, namePatches, { doc, updateDoc, writeBatch });
+  }
+  async _commitRosterName(id, next, namePatches, fs) {
+    if (!namePatches?.length) {
+      await fs.updateDoc(fs.doc(this.db, 'roster', id), next);
+      return;
+    }
+    const batch = fs.writeBatch(this.db);
+    const now = next.updatedAt || Date.now();
+    batch.update(fs.doc(this.db, 'roster', id), next);
+    for (const item of namePatches) batch.update(fs.doc(this.db, 'players', item.id), { ...item.patch, updatedAt: now });
+    await batch.commit();
   }
   async patchRoster(id, patch) {
     const cur = this.state.roster.find((r) => r.id === id);
     if (!cur) throw new Error('Jugador inexistente');
     if (!canEditRoster(cur, this.actor)) throw editLockedError();
     const next = { updatedAt: Date.now() };
-    if ('name' in patch) next.name = String(patch.name || '').trim();
-    if ('level' in patch) next.level = patch.level;
+    let namePatches = [];
+    if ('name' in patch) {
+      next.name = cleanPersonName(patch.name);
+      if (next.name && next.name !== cleanPersonName(cur.name)) namePatches = rosterNamePatches(this.state.players || [], id, next.name, this.actor);
+    }
+    if ('level' in patch) {
+      const level = storedLevel(patch.level);
+      if (level == null) throw Object.assign(new Error('El nivel va de 1 a 10, con un solo decimal.'), { code: 'invalid-level' });
+      next.level = level;
+    }
     if ('positions' in patch) next.positions = patch.positions || [];
     if ('notes' in patch) next.notes = patch.notes || [];
     if ('phone' in patch && canonicalWa(patch.phone)) {
       const dup = this._rosterDup(patch.phone, id);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
-    const { doc, updateDoc, deleteField } = this.fs;
+    const { doc, updateDoc, deleteField, writeBatch } = this.fs;
     if ('phone' in patch) {
       try {
         const wrote = await this._writeContactDoc('roster', id, patch.phone, cur);
@@ -1748,7 +1843,7 @@ class FirebaseStore {
         this._contactsLive = false;
       }
     } else if (this._contactsLive) next.phone = deleteField();
-    await updateDoc(doc(this.db, 'roster', id), next);
+    await this._commitRosterName(id, next, namePatches, { doc, updateDoc, writeBatch });
   }
   async deleteRoster(id) {
     const { doc, writeBatch } = this.fs;

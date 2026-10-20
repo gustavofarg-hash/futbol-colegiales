@@ -9,13 +9,13 @@ export function normName(value) {
   return foldText(value).replace(/\s+/g, ' ').trim();
 }
 
-/** "Amigo 1", "Amigo 2", … El número es por quien invita, no del partido. */
+/** "Invitado 1" o el viejo "Amigo 1". El número es de quien invita, no del partido. */
 export function isAutoGuestName(name) {
-  return /^amigo \d+$/.test(normName(name));
+  return /^(?:amigo|invitado) \d+$/.test(normName(name));
 }
 
 function guestNumber(name) {
-  const match = normName(name).match(/^amigo (\d+)$/);
+  const match = normName(name).match(/^(?:amigo|invitado) (\d+)$/);
   return match ? Number(match[1]) : 0;
 }
 
@@ -28,7 +28,7 @@ export function isGenericGuest(player) {
  * Manda el id del plantel. Si no, el nombre normalizado.
  * Con teléfono en los dos, un número distinto es otra persona
  * (Juan y Nico comparten línea a propósito: el teléfono solo no alcanza).
- * "Amigo N" automático no choca con otro "Amigo N": es de quien invita.
+ * "Invitado N" (o "Amigo N") automático no choca con otro igual: es de quien invita.
  * Un nombre escrito a mano, aunque sea "Amigo 1", sí choca.
  */
 export function alreadyInMatch(players, candidate, { roster = true, exceptId = '' } = {}) {
@@ -64,10 +64,10 @@ export function firstDuplicate(existing, people) {
 }
 
 /**
- * Filas del formulario. Vacío → Amigo N, siguiendo el máximo de quien invita.
+ * Filas del formulario. Vacío → Invitado N, siguiendo el máximo de quien invita.
  * taken: nombres que esa persona ya trajo a este partido.
- * Renombrar "Amigo 1" no reescribe a "Amigo 2": el próximo vacío sigue desde
- * el número más alto que todavía figura.
+ * "Amigo N" viejo cuenta para el máximo. Renombrar "Amigo 1" no reescribe
+ * a "Amigo 2": el próximo vacío sigue desde el número más alto que figura.
  */
 export function resolveFriendNames(typed, taken = []) {
   let max = 0;
@@ -76,7 +76,7 @@ export function resolveFriendNames(typed, taken = []) {
     const name = String(raw ?? '').trim().replace(/\s+/g, ' ');
     if (name) return { name, guestAuto: false };
     max += 1;
-    return { name: `Amigo ${max}`, guestAuto: true };
+    return { name: `Invitado ${max}`, guestAuto: true };
   });
 }
 
