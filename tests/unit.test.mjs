@@ -5,7 +5,8 @@ import { isAndroidUa, normalizePhone, normalizeWaChoice, waLink, waSendUrl } fro
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
-import { playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
+import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
+import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { currentMatches, keptSignupIds, matchSignupState, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
@@ -600,7 +601,7 @@ test('pagos por organizador: mes, cobrador y veces anotado', () => {
     organizer: 'Martín',
   });
   const juan = summary.find((row) => row.name === 'Juan Pérez');
-  const otro = summary.find((row) => row.key === '5491100000000');
+  const otro = summary.find((row) => row.key === `p:${phoneKey('5491100000000')}`);
   assert.equal(juan.paidTotal, 5000);
   assert.equal(juan.signupTotal, 1);
   assert.equal(otro.paid[0].amount, 9000);
@@ -1073,4 +1074,53 @@ test('con jugadores no se borra, el contador sigue y las notas quedan en la fich
   assert.equal(db.matches[mid].cancelledAt, null);
   assert.equal(db.matches[mid].notes.length, 2000);
   assert.equal(Object.values(db.confirmations).find((item) => item.matchId === mid).cancelled, false);
+});
+
+test('sha256 y privacidad del WhatsApp: el otro organizador no ve el número', async () => {
+  assert.equal(sha256Hex('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  assert.equal(phoneKey(''), '');
+  assert.equal(phoneKey('11 1234-5678'), phoneKey('5491112345678'));
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-privacy';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo' });
+  const mid = await store.addMatch({ date: '2026-10-22', time: '21:00', note: '' }, 'Gustavo');
+  const pid = await store.addPlayer({ id: mid, date: '2026-10-22', capacity: 14 }, { name: 'Juan Pérez', phone: '5491112345678' }, 'Gustavo');
+  const raw = JSON.parse(mem.get('f7c-test-privacy'));
+  assert.equal(raw.players[pid].phone, undefined);
+  assert.equal(raw.players[pid].hasPhone, true);
+  assert.equal(raw.contacts.players[pid].phone, '5491112345678');
+  assert.equal(raw.contacts.players[pid].ownerUid, 'gustavo');
+  assert.equal(raw.contacts.players[pid].visibleToAll, false);
+  assert.equal(raw.players[pid].phoneKey, phoneKey('5491112345678'));
+  let seen = null;
+  store.subscribe((snap) => { seen = snap; });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(seen.players.find((p) => p.id === pid).phone, '5491112345678');
+  store.setActor({ uid: 'martin', name: 'Martín' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const hidden = seen.players.find((p) => p.id === pid);
+  assert.equal(hidden.phone, '');
+  assert.equal(hidden.phonePrivate, true);
+  assert.equal(hidden.hasPhone, true);
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const rosterId = await store.addRoster({ name: 'Juan Pérez', phone: '5491112345678' }, 'Gustavo');
+  await store.setPhoneShared({ rosterId }, true);
+  store.setActor({ uid: 'martin', name: 'Martín' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(seen.players.find((p) => p.id === pid).phone, '5491112345678');
+  assert.equal(seen.roster.find((r) => r.id === rosterId).phone, '5491112345678');
+  const withKey = { phoneKey: phoneKey('5491112345678'), phone: '' };
+  const withPhone = { phone: '5491112345678' };
+  assert.equal(playerMatchesPerson(withKey, { id: 'ros', phone: '11 1234-5678', name: 'Juan' }), true);
+  assert.equal(playerPromoKey(withKey), playerPromoKey(withPhone));
+  assert.equal(playerPromoKey({ phone: '', rosterId: 'ros1' }), 'r:ros1');
+  assert.equal(playerPromoKey({ phone: '', name: 'Solo' }), 'n:solo');
+  assert.equal(phoneIdentity(withKey), phoneIdentity(withPhone));
+  assert.equal(rosterHit({ name: 'Juan', phone: '', phoneKey: phoneKey('5491112345678') }, '1234'), false);
 });

@@ -150,7 +150,14 @@ const juanAtAdd = await page.evaluate(() => {
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
   return Object.values(db.players).find((p) => p.name === 'Juan Pérez');
 });
+const juanContact = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez');
+  return { player: found[1], contact: db.contacts.players[found[0]] };
+});
 check('El token se crea al anotar, sin abrir el recordatorio', juanAtAdd?.confirmToken?.length >= 16 && !juanAtAdd.reminderSentAt);
+check('El teléfono de Juan no queda en el jugador', (juanContact.player.phone == null || juanContact.player.phone === '') && juanContact.player.hasPhone === true);
+check('El teléfono de Juan está en playerContacts, privado y de Gustavo', juanContact.contact.phone === '5491112345678' && juanContact.contact.ownerUid === 'gustavo' && juanContact.contact.visibleToAll === false);
 
 // Recordatorio y página de confirmación (mismo origen, modo demo)
 await page.click('#btn-remind');
@@ -225,6 +232,9 @@ await page.fill('#player-form [name=phone]', '1234-5678');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('.slot .name:text-is("Nico Ruiz")');
 check('Jugador agregado por Martín muestra "Agregó: Martín"', (await page.textContent('.slot:has-text("Nico Ruiz") .tag')).includes('Martín'));
+const juanHidden = (await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).innerText()).replace(/\s+/g, ' ');
+check('Martín no ve el WhatsApp de Juan', !juanHidden.includes('1234') && !juanHidden.includes('549') && juanHidden.includes('El WhatsApp de este jugador es privado'), juanHidden);
+check('El botón de WhatsApp de Juan está deshabilitado', await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).locator('.wa-btn').isDisabled());
 await page.click('#btn-remind');
 await page.waitForSelector('#remind-list .name');
 let remindNames = await page.$$eval('#remind-list .name', (els) => els.map((e) => e.textContent));
@@ -234,7 +244,8 @@ check('Enviar recordatorios arranca en mis jugadores',
 await page.click('[data-remind-scope="all"]');
 await page.waitForFunction(() => [...document.querySelectorAll('#remind-list .name')].some((e) => e.textContent === 'Juan Pérez'));
 const allReminders = await page.textContent('#remind-list');
-check('Todos muestra quién ya fue recordado', allReminders.includes('Juan Pérez') && allReminders.includes('Enviado') && allReminders.includes('Nico Ruiz'));
+const juanRemind = (await page.locator('#remind-list .remind-row', { hasText: 'Juan Pérez' }).innerText()).replace(/\s+/g, ' ');
+check('Todos no abre el WhatsApp privado de Juan', juanRemind.includes('El WhatsApp de este jugador es privado') && (await page.locator('#remind-list .remind-row', { hasText: 'Juan Pérez' }).locator('a').count()) === 0 && allReminders.includes('Nico Ruiz'), juanRemind);
 await page.click('dialog.sheet [data-close]');
 
 // Editar y quitar
@@ -698,6 +709,7 @@ await page.waitForFunction(() => document.querySelector('h1')?.textContent.inclu
 await page.locator('#slots .who', { hasText: 'Ernesto Pereira' }).click();
 await page.waitForSelector('#profile');
 check('Tocarlo abre el perfil con WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491122223333'));
+check('Mostrar el WhatsApp a los demás arranca desactivado', (await page.locator('#phone-share').count()) === 1 && !(await page.isChecked('#phone-share')) && (await page.textContent('#phone-share-line')).includes('Mostrar mi WhatsApp a los demás organizadores'));
 check('Cuenta el partido pasado en la lista principal', (await page.textContent('#stat-times')).includes('Jugó 1 vez'));
 check('Mayormente jueves · 21:00', (await page.textContent('#stat-summary')).includes('Mayormente jueves · 21:00'));
 for (let i = 0; i < 8; i++) await page.click('#level-up');
@@ -867,8 +879,13 @@ await page.waitForFunction(() => {
   const row = [...document.querySelectorAll('#signup-list .signup-row')].find((el) => el.innerText.includes('Sábado'));
   return row && row.innerText.includes('Anotado');
 });
-const sabadoPlayers = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((p) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24'));
-check('El sábado usa la misma alta: Gustavo, token y sin duplicar el teléfono', sabadoPlayers.length === 1 && sabadoPlayers[0].addedBy === 'Gustavo' && sabadoPlayers[0].phone === '5491112345678' && sabadoPlayers[0].confirmToken.length >= 16 && sabadoPlayers[0].waiting !== true && sabadoPlayers[0].tentative === true);
+const sabadoPack = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez' && p.matchDate === '2026-10-24');
+  return found ? { player: found[1], contact: db.contacts.players[found[0]] } : null;
+});
+const sabadoPlayers = sabadoPack ? [sabadoPack.player] : [];
+check('El sábado usa la misma alta: Gustavo, token y teléfono aparte', sabadoPlayers.length === 1 && sabadoPlayers[0].addedBy === 'Gustavo' && (sabadoPlayers[0].phone == null || sabadoPlayers[0].phone === '') && sabadoPack.contact.phone === '5491112345678' && sabadoPack.contact.ownerUid === 'gustavo' && sabadoPack.contact.visibleToAll === false && sabadoPlayers[0].confirmToken.length >= 16 && sabadoPlayers[0].waiting !== true && sabadoPlayers[0].tentative === true);
 const sabadoCard = await page.evaluate((token) => JSON.parse(localStorage.getItem('f7c-demo-db')).confirmations[token], sabadoPlayers[0].confirmToken);
 check('La ficha del sábado no tiene teléfono', sabadoCard && sabadoCard.name === 'Juan Pérez' && sabadoCard.phone == null && !JSON.stringify(sabadoCard).includes('549'));
 await page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' }).locator('[data-open-match]').click();

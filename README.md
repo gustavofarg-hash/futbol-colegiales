@@ -168,6 +168,20 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 
 Hay que **volver a publicar** `firestore.rules` para que el borrado falle cuando `playerCount` es mayor a 0, y para que `notes`, `cancelled` y el `cancelled` de la ficha de confirmación queden validados. Sin republicar, la app igual guarda esos campos (las reglas viejas no cierran la lista), pero un partido con jugadores se podría borrar directo en Firestore. Si `playerCount` no está, la regla nueva lo toma como 0. Quien puede editar el partido podría poner el contador en 0 y después borrarlo: la regla no cuenta los documentos de `players`.
 
+**WhatsApp privado.** En el perfil, «Mostrar mi WhatsApp a los demás organizadores» arranca desactivado. Con eso apagado, el número lo ve solo quien agregó a ese jugador. El administrador no es excepción. Los demás ven «El WhatsApp de este jugador es privado» y no pueden abrir el chat, ni en el partido, ni en Jugadores, ni en la búsqueda, ni en recordatorios, ni al subir de la espera, ni al avisar una cancelación. El teléfono no se copia al compartir la lista.
+
+El número no va más en `players` ni en `roster` (ahí cualquiera que puede leer el partido lo vería en la red). Vive en `playerContacts/{id}` y `rosterContacts/{id}`: `phone`, `ownerUid`, `visibleToAll`, `phoneKey` y, en el partido, `viewers`. Las reglas dejan leer si `ownerUid` es la cuenta o si `visibleToAll` es true (y, en el partido, si `viewers` incluye a esa cuenta o `*`).
+
+`phoneKey` es el SHA-256 del teléfono normalizado. Sirve para saber que es la misma persona (promos, perfil, no duplicar el plantel) sin mostrar el número. En el plan Spark no hay Cloud Functions: el hash lo calcula el navegador y no lleva una clave secreta. Quien ya sospecha el número puede probarlo contra el hash. Eso no devuelve el número en la respuesta de Firestore; el número en claro sale solo del documento de contacto, y solo a quien la regla se lo permite.
+
+Orden para publicar, en este orden:
+
+1. Primero esta versión de la app (service worker `f7c-v26`). Mientras sigan las reglas viejas, el intento de escribir el contacto falla y la app vuelve a guardar el teléfono en el jugador. Sigue andando, pero la privacidad todavía no es real.
+2. Enseguida, con la app nueva ya publicada, publicar `firestore.rules`. Ahí se abren `playerContacts` y `rosterContacts`, y un teléfono con dígitos en `players` o `roster` queda rechazado.
+3. Abrir la app una vez para que migre. Copia el teléfono al contacto (`visibleToAll: false`, dueño = quien lo agregó) y lo borra del jugador. Hasta que esa copia termina, el campo viejo sigue en el documento y quien puede leerlo lo ve en la red: la regla no puede esconder un campo que ya está.
+
+Si se publican las reglas antes que la app, la versión vieja no puede anotar con teléfono hasta que se refresque.
+
 **Colección `players`** — id automático
 
 | campo | tipo |
@@ -175,7 +189,10 @@ Hay que **volver a publicar** `firestore.rules` para que el borrado falle cuando
 | `matchId` | id del partido |
 | `matchDate` | copia de `date` (para consultar por fecha) |
 | `name` | string |
-| `phone` | solo dígitos, formato wa.me (ej. `5491112345678`) o vacío |
+| `phoneKey` | SHA-256 hex del teléfono canónico, o vacío. No es el número |
+| `hasPhone` | bool. Hay número en `playerContacts`, aunque este organizador no lo vea |
+| `phoneOwnerUid` | uid de quien lo agregó |
+| `phoneShared` | bool. Copia de `visibleToAll` |
 | `addedBy` | quién lo anotó (Gustavo, Martín u otro de la lista) |
 | `createdAt`, `updatedAt` | número (epoch ms) |
 | `paid` | bool, opcional — si ya se cobró algo (efectivo + transferencia). Solo pendiente queda en false |
@@ -281,14 +298,14 @@ El pago va en el documento del jugador (no en una colección nueva). Hasta que s
 | campo | tipo |
 |---|---|
 | `name` | string, 1 a 60 |
-| `phone` | solo dígitos, formato wa.me, o vacío |
+| `phoneKey`, `hasPhone`, `phoneOwnerUid`, `phoneShared` | igual que en `players`. El número está en `rosterContacts` |
 | `createdBy` | quién lo guardó |
 | `createdAt`, `updatedAt` | número (epoch ms) |
 | `level` | número 1 a 10, el nivel de juego |
 | `positions` | lista: `Arquero`, `Defensa`, `Mediocampo`, `Ataque` |
 | `notes` | lista de notas `{ id, matchId, matchDate, matchTime, text, createdAt, updatedAt }`, la más nueva primero |
 
-Misma persona = mismo `phone`. Al anotar en un partido (o en la espera) con WhatsApp, si ese número no está, se guarda solo. En el formulario de alta, «Buscar guardados» encuentra por las primeras letras del nombre o del apellido (sin importar mayúsculas ni acentos: `ERN` → Ernesto Pereira, `perez` → José Pérez) o por cualquier tramo del teléfono (solo dígitos, se ignoran espacios, guiones y `+54 9`). Tocar un resultado lo anota en ese partido; si ya hay 14, va a la espera. También se puede escribir uno nuevo.
+Misma persona = mismo `phoneKey` (el hash del teléfono). Al anotar en un partido (o en la espera) con WhatsApp, si ese número no está, se guarda solo. En el formulario de alta, «Buscar guardados» encuentra por las primeras letras del nombre o del apellido (sin importar mayúsculas ni acentos: `ERN` → Ernesto Pereira, `perez` → José Pérez) o por un tramo del teléfono que ese organizador puede ver. Un número privado no aparece en la búsqueda. Tocar un resultado lo anota en ese partido; si ya hay 14, va a la espera. También se puede escribir uno nuevo.
 
 Tocá un jugador en un partido o en Jugadores para abrir el perfil (el mismo teléfono). Ahí se editan el nivel, las posiciones y las notas de un partido. «Jugó N veces» y «Mayormente jueves · 21:00» salen solos de los partidos ya pasados en la lista principal (la espera y los que todavía no se jugaron no cuentan).
 

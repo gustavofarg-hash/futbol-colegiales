@@ -174,7 +174,8 @@ h2.section:first-child { margin-top: 4px; }
 .slot .who { flex: 1; min-width: 0; }
 button.who { text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
 .slot .name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.slot .sub { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.slot .sub { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
+.private-wa { overflow-wrap: anywhere; min-width: 0; }
 .tag { font-size: 0.71875rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
 .tag.g { color: #1d4ed8; border-color: rgba(29,78,216,.3); background: rgba(29,78,216,.07); }
 .tag.m { color: #b45309; border-color: rgba(180,83,9,.3); background: rgba(180,83,9,.07); }
@@ -280,7 +281,8 @@ button.team-player { color: inherit; cursor: pointer; }
 }
 .roster-hit b { font-size: 0.96875rem; }
 .roster-hit small { color: var(--muted); font-size: 0.8125rem; }
-.profile-phone { margin: 0 0 12px; color: var(--muted); }
+.profile-phone { margin: 0 0 12px; color: var(--muted); overflow-wrap: anywhere; }
+.checkline span { min-width: 0; overflow-wrap: anywhere; }
 .profile-wa { width: 100%; margin-bottom: 16px; background: var(--wa); border-color: var(--wa); color: #fff; }
 .profile-add-phone { width: 100%; margin-bottom: 16px; }
 .profile-block { margin: 0 0 18px; }
@@ -325,6 +327,8 @@ button.team-player { color: inherit; cursor: pointer; }
   width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; flex: none;
   background: var(--wa); color: #fff; text-decoration: none;
 }
+button.wa-btn { border: 0; padding: 0; }
+button.wa-btn:disabled { opacity: .45; }
 .wa-btn svg { fill: currentColor; stroke: none; width: 24px; height: 24px; }
 .more-btn { width: 40px; height: 46px; border: 0; background: transparent; color: var(--muted); border-radius: 10px; display: grid; place-items: center; flex: none; }
 

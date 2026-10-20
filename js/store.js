@@ -16,7 +16,10 @@
 //    createdAt, updatedAt: number (epoch ms)
 //  players/{playerId}
 //    matchId, matchDate ("YYYY-MM-DD", copia para consultar por fecha)
-//    name, phone (solo dígitos, formato wa.me, ej 5491112345678)
+//    name
+//    phoneKey (SHA-256 del teléfono canónico; no es el número)
+//    hasPhone, phoneOwnerUid, phoneShared
+//    El número está en playerContacts/{playerId}, no acá.
 //    addedBy: "Gustavo" | "Martín"
 //    createdAt, updatedAt
 //    paid: bool                         (opcional)
@@ -40,8 +43,14 @@
 //  matches.notes (texto libre, hasta 2000). Distinto de note (la nota corta de la tarjeta).
 //  matches.playerCount (int). Lo actualiza el cliente al anotar o quitar.
 //    La regla de borrado lo exige en 0. Si falta, se toma 0.
+//  playerContacts/{playerId}
+//    phone, ownerUid, visibleToAll (default false), phoneKey, viewers
+//    Lo lee el dueño, o cualquiera que pueda ver el partido si visibleToAll.
+//    El admin no es excepción.
+//  rosterContacts/{rosterId}
+//    phone, ownerUid, visibleToAll (default false), phoneKey
 //  roster/{rosterId}
-//    name, phone (dígitos wa.me, o vacío)
+//    name (el teléfono está en rosterContacts)
 //    createdBy, createdAt, updatedAt
 //    level: 1..10
 //    positions: ["Arquero"|"Defensa"|"Mediocampo"|"Ataque"]
@@ -67,7 +76,8 @@ import { nextWaitOrder } from './waiting.js';
 import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, isRosterDenied, rosterByPhone } from './roster.js';
+import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
+import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
 } from './organizers.js';
@@ -141,6 +151,80 @@ function cleanMatchPatch(data) {
   return { rest, access };
 }
 
+function ensureContacts(db) {
+  db.contacts ||= { players: {}, roster: {} };
+  db.contacts.players ||= {};
+  db.contacts.roster ||= {};
+  return db.contacts;
+}
+
+function phoneDup(db, kind, id, phone) {
+  const key = phoneKey(canonicalWa(phone));
+  if (!key) return null;
+  const contacts = ensureContacts(db)[kind];
+  for (const [oid, row] of Object.entries(db[kind] || {})) {
+    if (oid === id) continue;
+    const raw = row.phone || contacts[oid]?.phone || '';
+    const rowKey = row.phoneKey || contacts[oid]?.phoneKey || phoneKey(canonicalWa(raw));
+    if (rowKey && rowKey === key) return row;
+  }
+  return null;
+}
+
+function writeContact(db, kind, id, phone, entity, ownerUid) {
+  const contacts = ensureContacts(db);
+  const canon = canonicalWa(phone);
+  if (!canon) {
+    delete contacts[kind][id];
+    entity.hasPhone = false;
+    entity.phoneKey = '';
+    entity.phoneShared = false;
+    entity.phoneOwnerUid = '';
+    delete entity.phone;
+    return;
+  }
+  const key = phoneKey(canon);
+  const prev = contacts[kind][id];
+  const owner = prev?.ownerUid || entity.phoneOwnerUid || ownerUid || '';
+  const visible = prev ? prev.visibleToAll === true : false;
+  const contact = { phone: canon, ownerUid: owner, visibleToAll: visible, phoneKey: key };
+  if (kind === 'players') contact.viewers = Array.isArray(entity.viewers) && entity.viewers.length ? [...entity.viewers] : ['*'];
+  contacts[kind][id] = contact;
+  entity.phoneKey = key;
+  entity.hasPhone = true;
+  entity.phoneOwnerUid = owner;
+  entity.phoneShared = visible;
+  delete entity.phone;
+}
+
+function migratePhones(db) {
+  const contacts = ensureContacts(db);
+  let changed = false;
+  for (const [id, player] of Object.entries(db.players || {})) {
+    const raw = String(player?.phone || '').trim();
+    if (!raw) {
+      if (player && 'phone' in player) { delete player.phone; changed = true; }
+      continue;
+    }
+    writeContact(db, 'players', id, raw, player, player.addedByUid || player.phoneOwnerUid || '');
+    changed = true;
+  }
+  for (const [id, person] of Object.entries(db.roster || {})) {
+    const raw = String(person?.phone || '').trim();
+    if (!raw) {
+      if (person && 'phone' in person) { delete person.phone; changed = true; }
+      continue;
+    }
+    writeContact(db, 'roster', id, raw, person, person.createdByUid || person.phoneOwnerUid || '');
+    changed = true;
+  }
+  return changed;
+}
+
+function presentRows(rows, contacts, uid) {
+  return rows.map(([id, entity]) => attachPhone({ id, ...entity }, contacts?.[id], uid));
+}
+
 /** Suma o resta el contador. Si todavía no es un entero, escribe el total. */
 function countPatch(fs, match, delta, localCount) {
   const current = match?.playerCount;
@@ -160,10 +244,12 @@ class LocalStore {
   }
   _load() {
     try {
-      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {} };
+      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } };
       db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.confirmations ||= {}; db.settings ||= {};
+      ensureContacts(db);
+      migratePhones(db);
       return db;
-    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {} }; }
+    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } }; }
   }
   _touchConfirmations(db) {
     db.confirmations ||= {};
@@ -201,6 +287,8 @@ class LocalStore {
     for (const [id, match] of Object.entries(db.matches)) match.playerCount = counts[id] || 0;
   }
   _save(db) {
+    ensureContacts(db);
+    migratePhones(db);
     this._syncPlayerCounts(db);
     this._touchConfirmations(db);
     localStorage.setItem(this.key, JSON.stringify(db));
@@ -223,10 +311,11 @@ class LocalStore {
     const loadedCards = Object.entries(db.confirmations || {}).map(([id, card]) => ({ id, ...card }));
     const loadedPlayers = Object.entries(db.players).map(([id, p]) => ({ id, ...p }));
     const visible = this._visible(loadedMatches, loadedPlayers, loadedCards);
+    const uid = this.actor?.uid || '';
     const matches = visible.matches;
     const cards = visible.cards;
-    const players = overlayConfirmations(visible.players, cards);
-    const roster = Object.entries(db.roster).map(([id, r]) => ({ id, ...r }));
+    const players = overlayConfirmations(presentRows(visible.players.map((p) => [p.id, p]), db.contacts.players, uid).map(({ id, ...rest }) => ({ id, ...rest })), cards);
+    const roster = presentRows(Object.entries(db.roster), db.contacts.roster, uid);
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
     const prices = db.settings?.prices || null;
     this.listeners.forEach((fn) => fn({ matches, players, roster, rosterError: null, organizers, organizersError: null, prices, pricesError: null }));
@@ -257,9 +346,13 @@ class LocalStore {
     const { rest, access } = cleanMatchPatch(data);
     Object.assign(m, rest, access || {}, { startsAt: toEpoch(data.date ?? m.date, data.time ?? m.time), updatedBy: who, updatedAt: Date.now() });
     const copied = playerAccess(m);
-    for (const p of Object.values(db.players)) if (p.matchId === id) {
+    ensureContacts(db);
+    for (const [pid, p] of Object.entries(db.players)) if (p.matchId === id) {
       if (data.date) p.matchDate = data.date;
-      if (access) Object.assign(p, copied);
+      if (access) {
+        Object.assign(p, copied);
+        if (db.contacts.players[pid]) db.contacts.players[pid].viewers = copied.viewers;
+      }
     }
     this._save(db);
   }
@@ -278,16 +371,25 @@ class LocalStore {
     const waiting = opts.waiting === true || mainCount >= cap;
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
-    db.players[id] = {
-      matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
+    const player = {
+      matchId: match.id, matchDate: match.date, name: data.name.trim(),
       addedBy: who, addedByUid: this.actor?.uid || '', createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: newConfirmToken(),
+      hasPhone: false, phoneKey: '', phoneOwnerUid: this.actor?.uid || '', phoneShared: false,
       ...playerAccess(match),
       ...(rosterId ? { rosterId } : {}),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
+    db.players[id] = player;
+    if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '');
+    else if (data.hasPhone && /^[0-9a-f]{64}$/.test(String(data.phoneKey || ''))) {
+      player.phoneKey = data.phoneKey;
+      player.hasPhone = true;
+      player.phoneOwnerUid = '';
+      player.phoneShared = false;
+    }
     this._save(db); return id;
   }
   _dropFromTeams(db, matchId, playerId) {
@@ -310,8 +412,11 @@ class LocalStore {
   async updatePlayer(id, data) {
     const db = this._load(); if (!db.players[id]) return;
     const player = db.players[id];
-    Object.assign(player, data, { updatedAt: Date.now() });
-    if (data.waiting === true) this._dropFromTeams(db, player.matchId, id);
+    const { phone, ...rest } = data || {};
+    Object.assign(player, rest, { updatedAt: Date.now() });
+    delete player.phone;
+    if ('phone' in (data || {})) writeContact(db, 'players', id, phone, player, player.addedByUid || this.actor?.uid || '');
+    if (data?.waiting === true) this._dropFromTeams(db, player.matchId, id);
     this._save(db);
   }
   async setPayment(id, input, who) {
@@ -356,44 +461,85 @@ class LocalStore {
     const db = this._load();
     if (db.players[id]) this._dropFromTeams(db, db.players[id].matchId, id);
     delete db.players[id];
+    ensureContacts(db);
+    delete db.contacts.players[id];
     this._save(db);
+  }
+  _rosterPhone(db, id) {
+    return db.contacts?.roster?.[id]?.phone || db.roster?.[id]?.phone || '';
   }
   async addRoster(data, who) {
     const db = this._load();
     const phone = data.phone || '';
-    const existing = phone ? Object.entries(db.roster).find(([, r]) => r.phone === phone) : null;
-    if (existing) throw Object.assign(new Error(`${existing[1].name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    const existing = phoneDup(db, 'roster', '', phone);
+    if (existing) throw Object.assign(new Error(`${existing.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     const id = rid(); const now = Date.now();
-    db.roster[id] = { name: data.name.trim(), phone, createdBy: who || '', createdAt: now, updatedAt: now };
+    const person = { name: data.name.trim(), createdBy: who || '', createdByUid: this.actor?.uid || '', createdAt: now, updatedAt: now, hasPhone: false, phoneKey: '', phoneOwnerUid: this.actor?.uid || '', phoneShared: false };
+    db.roster[id] = person;
+    if (phone) writeContact(db, 'roster', id, phone, person, this.actor?.uid || '');
     this._save(db); return id;
   }
   async updateRoster(id, data) {
     const db = this._load(); const cur = db.roster[id]; if (!cur) return;
-    const phone = data.phone ?? cur.phone;
+    const phone = 'phone' in (data || {}) ? (data.phone || '') : this._rosterPhone(db, id);
     if (phone) {
-      const dup = Object.entries(db.roster).find(([oid, r]) => oid !== id && r.phone === phone);
-      if (dup) throw Object.assign(new Error(`${dup[1].name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+      const dup = phoneDup(db, 'roster', id, phone);
+      if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
-    Object.assign(cur, { name: data.name.trim(), phone, updatedAt: Date.now() });
+    Object.assign(cur, { name: data.name.trim(), updatedAt: Date.now() });
+    delete cur.phone;
+    if ('phone' in (data || {})) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
     this._save(db);
   }
   async patchRoster(id, patch) {
     const db = this._load(); const cur = db.roster[id]; if (!cur) return;
     const next = {};
     if ('name' in patch) next.name = String(patch.name || '').trim();
-    if ('phone' in patch) next.phone = patch.phone || '';
     if ('level' in patch) next.level = patch.level;
     if ('positions' in patch) next.positions = patch.positions || [];
     if ('notes' in patch) next.notes = patch.notes || [];
-    const phone = 'phone' in next ? next.phone : cur.phone;
-    if (phone) {
-      const dup = Object.entries(db.roster).find(([oid, r]) => oid !== id && r.phone === phone);
-      if (dup) throw Object.assign(new Error(`${dup[1].name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    const phone = 'phone' in patch ? (patch.phone || '') : this._rosterPhone(db, id);
+    if ('phone' in patch && phone) {
+      const dup = phoneDup(db, 'roster', id, phone);
+      if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
     Object.assign(cur, next, { updatedAt: Date.now() });
+    delete cur.phone;
+    if ('phone' in patch) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
     this._save(db);
   }
-  async deleteRoster(id) { const db = this._load(); delete db.roster[id]; this._save(db); }
+  async deleteRoster(id) {
+    const db = this._load();
+    delete db.roster[id];
+    ensureContacts(db);
+    delete db.contacts.roster[id];
+    this._save(db);
+  }
+  async setPhoneShared(target, visible) {
+    const db = this._load();
+    const uid = this.actor?.uid || '';
+    if (!uid) throw Object.assign(new Error('No hay sesión'), { code: 'permission-denied' });
+    ensureContacts(db);
+    const want = visible === true;
+    const rosterId = target?.rosterId || '';
+    const playerId = target?.playerId || '';
+    const contact = rosterId ? db.contacts.roster[rosterId] : db.contacts.players[playerId];
+    if (!contact || contact.ownerUid !== uid) throw Object.assign(new Error('El WhatsApp de este jugador es privado'), { code: 'permission-denied' });
+    const key = contact.phoneKey;
+    for (const [id, item] of Object.entries(db.contacts.roster)) {
+      if (item.ownerUid === uid && item.phoneKey === key) {
+        item.visibleToAll = want;
+        if (db.roster[id]) db.roster[id].phoneShared = want;
+      }
+    }
+    for (const [id, item] of Object.entries(db.contacts.players)) {
+      if (item.ownerUid === uid && item.phoneKey === key) {
+        item.visibleToAll = want;
+        if (db.players[id]) db.players[id].phoneShared = want;
+      }
+    }
+    this._save(db);
+  }
   async setPrices(input) {
     const rec = priceRecord(input);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-price' });
@@ -431,9 +577,13 @@ class FirebaseStore {
     this.listeners = new Set();
     this.actor = null;
     this._buckets = { matches: {}, players: {}, confirmations: {} };
+    this._contactBuckets = { playerOwner: [], playerShared: [], rosterOwner: [], rosterShared: [] };
     this._backfilled = new Set();
     this._countTried = new Set();
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null };
+    this._migrated = new Set();
+    this._migrating = false;
+    this._contactsLive = false;
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {} };
   }
   setActor(user) {
     const next = { uid: user?.uid || '', name: user?.name || '' };
@@ -488,6 +638,7 @@ class FirebaseStore {
     this.state[kind] = [...byId.values()];
     this._emit();
     if (kind === 'matches' || kind === 'players') this._reconcilePlayerCounts();
+    if (kind === 'players') this._migrateContacts();
   }
   _reconcilePlayerCounts() {
     if (!this.fs || !this.actor?.uid || this._counting) return;
@@ -558,6 +709,7 @@ class FirebaseStore {
   _listen() {
     this._stop();
     this._buckets = { matches: {}, players: {}, confirmations: {} };
+    this._contactBuckets = { playerOwner: [], playerShared: [], rosterOwner: [], rosterShared: [] };
     // Sin ventana de fechas: un partido viejo, sus jugadores y las confirmaciones
     // se quedan. Nadie los borra solo. La lista ancha (sin viewers) la rechazan
     // las reglas y queda vacía; la consulta por viewers trae todas las fechas.
@@ -605,6 +757,7 @@ class FirebaseStore {
       this.state.roster = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.rosterError = null;
       this._emit();
+      this._migrateContacts();
     }, (e) => {
       this.state.rosterError = isRosterDenied(e) ? ROSTER_DENIED_READ : ('No se pudo leer Jugadores: ' + (e?.message || e?.code || e));
       this._emit();
@@ -635,6 +788,46 @@ class FirebaseStore {
       this.state.pricesError = e?.code === 'permission-denied' ? PRICES_DENIED_READ : ('No se pudieron leer los precios: ' + (e?.message || e?.code || e));
       this._emit();
     });
+    const takeMap = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const mergeContacts = () => {
+      const players = {};
+      for (const item of this._contactBuckets.playerOwner) players[item.id] = item;
+      for (const item of this._contactBuckets.playerShared) if (!players[item.id]) players[item.id] = item;
+      const roster = {};
+      for (const item of this._contactBuckets.rosterOwner) roster[item.id] = item;
+      for (const item of this._contactBuckets.rosterShared) if (!roster[item.id]) roster[item.id] = item;
+      this.state.playerContacts = players;
+      this.state.rosterContacts = roster;
+      this._contactsLive = true;
+      this._emit();
+    };
+    const contactErr = (e) => {
+      if (e?.code === 'permission-denied') { this._contactsLive = false; return; }
+      console.error(e);
+    };
+    const uid = this.actor?.uid;
+    if (uid) {
+      const ownerPlayers = onSnapshot(query(collection(this.db, 'playerContacts'), where('ownerUid', '==', uid)), (snap) => {
+        this._contactBuckets.playerOwner = takeMap(snap);
+        mergeContacts();
+      }, contactErr);
+      const ownerRoster = onSnapshot(query(collection(this.db, 'rosterContacts'), where('ownerUid', '==', uid)), (snap) => {
+        this._contactBuckets.rosterOwner = takeMap(snap);
+        mergeContacts();
+      }, contactErr);
+      this._unsubs.push(ownerPlayers, ownerRoster);
+    }
+    const sharedPlayers = onSnapshot(
+      query(collection(this.db, 'playerContacts'), where('visibleToAll', '==', true), where('viewers', 'array-contains-any', accessIds)),
+      (snap) => { this._contactBuckets.playerShared = takeMap(snap); mergeContacts(); },
+      contactErr,
+    );
+    const sharedRoster = onSnapshot(
+      query(collection(this.db, 'rosterContacts'), where('visibleToAll', '==', true)),
+      (snap) => { this._contactBuckets.rosterShared = takeMap(snap); mergeContacts(); },
+      contactErr,
+    );
+    this._unsubs.push(sharedPlayers, sharedRoster);
   }
   _onListenError(e, extra) {
     if (e?.code === 'permission-denied' && !this._retrying && (this._deniedRetries || 0) < 2) {
@@ -676,11 +869,16 @@ class FirebaseStore {
       players = players.filter((player) => ids.has(player.matchId) || (!known.has(player.matchId) && canView({ viewers: player.viewers }, uid)));
       confirmations = confirmations.filter((card) => ids.has(card.matchId) || (!known.has(card.matchId) && canView({ viewers: card.viewers }, uid)));
     }
+    const uidView = uid || '';
+    const shown = players.map((player) => attachPhone(player, this.state.playerContacts?.[player.id], uidView));
+    const roster = (this.state.roster || []).map((person) => attachPhone(person, this.state.rosterContacts?.[person.id], uidView));
+    const { playerContacts: _playerContacts, rosterContacts: _rosterContacts, ...rest } = this.state;
     return {
-      ...this.state,
+      ...rest,
       matches,
       confirmations,
-      players: overlayConfirmations(players, confirmations),
+      roster,
+      players: overlayConfirmations(shown, confirmations),
     };
   }
   _emit() {
@@ -735,6 +933,13 @@ class FirebaseStore {
     for (const player of this.state.players.filter((p) => p.matchId === id && p.confirmToken)) {
       await this._writeConfirmation(player.confirmToken, player.id, { ...player, ...copied }, next);
     }
+    if (access && this._contactsLive) {
+      const { doc: docRef, updateDoc } = this.fs;
+      for (const player of this.state.players.filter((p) => p.matchId === id)) {
+        try { await updateDoc(docRef(this.db, 'playerContacts', player.id), { viewers: copied.viewers }); }
+        catch (e) { if (e?.code !== 'not-found' && e?.code !== 'permission-denied') console.error(e); }
+      }
+    }
   }
   async deleteMatch(id) {
     const local = this.state.players.filter((p) => p.matchId === id).length;
@@ -746,8 +951,96 @@ class FirebaseStore {
     const { doc, deleteDoc } = this.fs;
     await deleteDoc(doc(this.db, 'matches', id));
   }
+  _viewersOf(entity) {
+    return Array.isArray(entity?.viewers) && entity.viewers.length ? entity.viewers : ['*'];
+  }
+  _ownerUidFor(entity, kind) {
+    const uid = this.actor?.uid || '';
+    if (kind === 'players') {
+      if (entity?.addedByUid) return entity.addedByUid;
+      if (entity?.phoneOwnerUid) return entity.phoneOwnerUid;
+      if (sameOrganizer(entity?.addedBy, this.actor?.name)) return uid;
+      return '';
+    }
+    if (entity?.createdByUid) return entity.createdByUid;
+    if (entity?.phoneOwnerUid) return entity.phoneOwnerUid;
+    if (sameOrganizer(entity?.createdBy, this.actor?.name)) return uid;
+    return '';
+  }
+  async _writeContactDoc(kind, id, phone, entity, opts = {}) {
+    const { doc, setDoc, deleteDoc } = this.fs;
+    const col = kind === 'players' ? 'playerContacts' : 'rosterContacts';
+    const ref = doc(this.db, col, id);
+    const canon = canonicalWa(phone);
+    if (!canon) {
+      await deleteDoc(ref);
+      return { cleared: true };
+    }
+    const uid = this.actor?.uid || '';
+    const existing = (kind === 'players' ? this.state.playerContacts : this.state.rosterContacts)?.[id];
+    const ownerUid = opts.ownerUid || existing?.ownerUid || entity?.phoneOwnerUid || (kind === 'players' ? entity?.addedByUid : entity?.createdByUid) || uid;
+    if (!opts.migrating && ownerUid !== uid) return { cleared: false, denied: true };
+    if (!ownerUid) return { cleared: false };
+    const body = {
+      phone: canon,
+      ownerUid,
+      visibleToAll: opts.migrating ? false : existing?.visibleToAll === true,
+      phoneKey: phoneKey(canon),
+    };
+    if (kind === 'players') body.viewers = this._viewersOf(entity);
+    await setDoc(ref, body);
+    return { cleared: true, phoneKey: body.phoneKey, ownerUid, visibleToAll: body.visibleToAll };
+  }
+  async _migrateContacts() {
+    if (!this.fs || !this.actor?.uid || this._migrating) return;
+    const jobs = [];
+    for (const player of this.state.players || []) {
+      if (!String(player.phone || '').trim() || this._migrated.has(`p:${player.id}`)) continue;
+      const owner = this._ownerUidFor(player, 'players');
+      if (!owner) continue;
+      const match = this.state.matches.find((item) => item.id === player.matchId);
+      const can = player.addedByUid === this.actor.uid || sameOrganizer(player.addedBy, this.actor.name) || (match && canAdd(match, this.actor.uid));
+      if (!can) continue;
+      jobs.push(['players', player, owner]);
+    }
+    for (const person of this.state.roster || []) {
+      if (!String(person.phone || '').trim() || this._migrated.has(`r:${person.id}`)) continue;
+      const owner = this._ownerUidFor(person, 'roster');
+      if (!owner) continue;
+      jobs.push(['roster', person, owner]);
+    }
+    if (!jobs.length) return;
+    this._migrating = true;
+    try {
+      for (const [kind, entity, owner] of jobs) {
+        const tag = `${kind === 'players' ? 'p' : 'r'}:${entity.id}`;
+        this._migrated.add(tag);
+        try {
+          const wrote = await this._writeContactDoc(kind, entity.id, entity.phone, entity, { migrating: true, ownerUid: owner });
+          if (!wrote.cleared) { this._migrated.delete(tag); continue; }
+          const { doc, updateDoc, deleteField } = this.fs;
+          const col = kind === 'players' ? 'players' : 'roster';
+          await updateDoc(doc(this.db, col, entity.id), {
+            phone: deleteField(),
+            phoneKey: wrote.phoneKey,
+            hasPhone: true,
+            phoneOwnerUid: owner,
+            phoneShared: false,
+            updatedAt: Date.now(),
+          });
+          this._contactsLive = true;
+        } catch (e) {
+          this._migrated.delete(tag);
+          if (e?.code === 'permission-denied') { this._contactsLive = false; return; }
+          console.error(e);
+        }
+      }
+    } finally {
+      this._migrating = false;
+    }
+  }
   async addPlayer(match, data, who, opts = {}) {
-    const { collection, addDoc } = this.fs; const now = Date.now();
+    const { collection, addDoc, doc, updateDoc, deleteField } = this.fs; const now = Date.now();
     const mates = this.state.players.filter((p) => p.matchId === match.id);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
@@ -755,20 +1048,35 @@ class FirebaseStore {
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
+    const canon = canonicalWa(data.phone || '');
+    const uid = this.actor?.uid || '';
     const player = {
-      matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: data.phone || '',
-      addedBy: who, addedByUid: this.actor?.uid || '', createdAt: now, updatedAt: now,
+      matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: '',
+      addedBy: who, addedByUid: uid, createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: token,
+      hasPhone: !canon && data.hasPhone === true && /^[0-9a-f]{64}$/.test(String(data.phoneKey || '')),
+      phoneKey: canon ? phoneKey(canon) : (/^[0-9a-f]{64}$/.test(String(data.phoneKey || '')) ? data.phoneKey : ''),
+      phoneOwnerUid: canon ? uid : '', phoneShared: false,
       ...playerAccess(match),
       ...(rosterId ? { rosterId } : {}),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);
     const stored = this.state.matches.find((item) => item.id === match.id) || match;
-    const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'matches', match.id), { ...countPatch(this.fs, stored, 1, mates.length), updatedAt: now });
+    if (canon) {
+      try {
+        await this._writeContactDoc('players', ref.id, canon, player);
+        await updateDoc(doc(this.db, 'players', ref.id), { hasPhone: true, phone: deleteField() });
+        this._contactsLive = true;
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+        this._contactsLive = false;
+        await updateDoc(doc(this.db, 'players', ref.id), { phone: canon, hasPhone: true });
+      }
+    }
     await this._writeConfirmation(token, ref.id, player, match);
     return ref.id;
   }
@@ -779,11 +1087,47 @@ class FirebaseStore {
     await updateDoc(doc(this.db, 'matches', id), { teams: rec.teams, updatedBy: who || '', updatedAt: Date.now() });
   }
   async updatePlayer(id, data) {
-    const { doc, updateDoc, writeBatch } = this.fs;
-    const cur = this.state.players.find((player) => player.id === id);
-    const patch = { ...data, updatedAt: Date.now() };
+    const { doc, updateDoc, writeBatch, deleteField } = this.fs;
+    const cur = this.state.players.find((player) => player.id === id) || {};
+    const { phone, ...rest } = data || {};
+    const patch = { ...rest, updatedAt: Date.now() };
+    if ('phone' in (data || {})) {
+      try {
+        const wrote = await this._writeContactDoc('players', id, phone, { ...cur, ...rest });
+        if (wrote.cleared) {
+          patch.phone = deleteField();
+          patch.hasPhone = !!wrote.phoneKey;
+          patch.phoneKey = wrote.phoneKey || '';
+          patch.phoneOwnerUid = wrote.ownerUid || cur.phoneOwnerUid || this.actor?.uid || '';
+          patch.phoneShared = wrote.visibleToAll === true;
+          this._contactsLive = true;
+        } else if (wrote.denied && canonicalWa(phone)) patch.phone = canonicalWa(phone);
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+        this._contactsLive = false;
+        if (canonicalWa(phone)) patch.phone = canonicalWa(phone);
+      }
+    } else if (String(cur.phone || '').trim()) {
+      try {
+        const owner = this._ownerUidFor(cur, 'players');
+        const wrote = await this._writeContactDoc('players', id, cur.phone, cur, { migrating: true, ownerUid: owner });
+        if (wrote.cleared) {
+          patch.phone = deleteField();
+          patch.hasPhone = true;
+          patch.phoneKey = wrote.phoneKey;
+          patch.phoneOwnerUid = wrote.ownerUid;
+          patch.phoneShared = false;
+          this._contactsLive = true;
+        }
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+        this._contactsLive = false;
+      }
+    } else if (this._contactsLive) {
+      patch.phone = deleteField();
+    }
     const match = this.state.matches.find((item) => item.id === cur?.matchId);
-    const nextTeams = data.waiting === true && cur ? dropPlayer(match?.teams, cur.id) : { changed: false };
+    const nextTeams = data?.waiting === true && cur?.id ? dropPlayer(match?.teams, cur.id) : { changed: false };
     if (nextTeams.changed) {
       const batch = writeBatch(this.db);
       batch.update(doc(this.db, 'players', id), patch);
@@ -848,43 +1192,151 @@ class FirebaseStore {
       if (nextTeams.changed) patch.teams = nextTeams.teams;
       batch.update(doc(this.db, 'matches', match.id), patch);
     }
+    if (this._contactsLive) batch.delete(doc(this.db, 'playerContacts', id));
     await batch.commit();
   }
+  _rosterDup(phone, id) {
+    const key = phoneKey(canonicalWa(phone));
+    if (!key) return null;
+    return (this.state.roster || []).find((row) => row.id !== id && phoneIdentity(row) === key) || null;
+  }
   async addRoster(data, who) {
-    const phone = data.phone || '';
-    const existing = rosterByPhone(this.state.roster, phone);
+    const phone = canonicalWa(data.phone || '');
+    const existing = this._rosterDup(phone, '');
     if (existing) throw Object.assign(new Error(`${existing.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
-    const { collection, addDoc } = this.fs; const now = Date.now();
-    const ref = await addDoc(collection(this.db, 'roster'), {
-      name: data.name.trim(), phone, createdBy: who || '', createdAt: now, updatedAt: now,
-    });
+    const { collection, addDoc, doc, updateDoc, deleteField } = this.fs; const now = Date.now();
+    const uid = this.actor?.uid || '';
+    const person = {
+      name: data.name.trim(), phone: '', createdBy: who || '', createdByUid: uid, createdAt: now, updatedAt: now,
+      hasPhone: false, phoneKey: phone ? phoneKey(phone) : '', phoneOwnerUid: uid, phoneShared: false,
+    };
+    const ref = await addDoc(collection(this.db, 'roster'), person);
+    if (phone) {
+      try {
+        await this._writeContactDoc('roster', ref.id, phone, person);
+        await updateDoc(doc(this.db, 'roster', ref.id), { hasPhone: true, phone: deleteField() });
+        this._contactsLive = true;
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+        this._contactsLive = false;
+        await updateDoc(doc(this.db, 'roster', ref.id), { phone, hasPhone: true });
+      }
+    }
     return ref.id;
   }
   async updateRoster(id, data) {
-    const phone = data.phone || '';
-    const dup = phone && this.state.roster.find((r) => r.id !== id && r.phone === phone);
-    if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
-    const { doc, updateDoc } = this.fs;
-    await updateDoc(doc(this.db, 'roster', id), { name: data.name.trim(), phone, updatedAt: Date.now() });
+    const cur = this.state.roster.find((r) => r.id === id) || {};
+    const phone = 'phone' in (data || {}) ? (data.phone || '') : (cur.phone || this.state.rosterContacts?.[id]?.phone || '');
+    if ('phone' in (data || {}) && canonicalWa(phone)) {
+      const dup = this._rosterDup(phone, id);
+      if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
+    }
+    const { doc, updateDoc, deleteField } = this.fs;
+    const next = { name: data.name.trim(), updatedAt: Date.now() };
+    if ('phone' in (data || {})) {
+      try {
+        const wrote = await this._writeContactDoc('roster', id, phone, cur);
+        if (wrote.cleared) {
+          next.phone = deleteField();
+          next.hasPhone = !!wrote.phoneKey;
+          next.phoneKey = wrote.phoneKey || '';
+          next.phoneOwnerUid = wrote.ownerUid || cur.phoneOwnerUid || this.actor?.uid || '';
+          next.phoneShared = wrote.visibleToAll === true;
+          this._contactsLive = true;
+        } else if (canonicalWa(phone)) next.phone = canonicalWa(phone);
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+        this._contactsLive = false;
+        if (canonicalWa(phone)) next.phone = canonicalWa(phone);
+      }
+    } else if (this._contactsLive) next.phone = deleteField();
+    await updateDoc(doc(this.db, 'roster', id), next);
   }
   async patchRoster(id, patch) {
     const cur = this.state.roster.find((r) => r.id === id);
     if (!cur) throw new Error('Jugador inexistente');
     const next = { updatedAt: Date.now() };
     if ('name' in patch) next.name = String(patch.name || '').trim();
-    if ('phone' in patch) next.phone = patch.phone || '';
     if ('level' in patch) next.level = patch.level;
     if ('positions' in patch) next.positions = patch.positions || [];
     if ('notes' in patch) next.notes = patch.notes || [];
-    const phone = 'phone' in next ? next.phone : cur.phone;
-    if (phone) {
-      const dup = this.state.roster.find((r) => r.id !== id && r.phone === phone);
+    if ('phone' in patch && canonicalWa(patch.phone)) {
+      const dup = this._rosterDup(patch.phone, id);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
-    const { doc, updateDoc } = this.fs;
+    const { doc, updateDoc, deleteField } = this.fs;
+    if ('phone' in patch) {
+      try {
+        const wrote = await this._writeContactDoc('roster', id, patch.phone, cur);
+        if (wrote.cleared) {
+          next.phone = deleteField();
+          next.hasPhone = !!wrote.phoneKey;
+          next.phoneKey = wrote.phoneKey || '';
+          next.phoneOwnerUid = wrote.ownerUid || cur.phoneOwnerUid || this.actor?.uid || '';
+          next.phoneShared = wrote.visibleToAll === true;
+          this._contactsLive = true;
+        } else if (canonicalWa(patch.phone)) next.phone = canonicalWa(patch.phone);
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+        this._contactsLive = false;
+        if (canonicalWa(patch.phone)) next.phone = canonicalWa(patch.phone);
+      }
+    } else if (String(cur.phone || '').trim()) {
+      try {
+        const owner = this._ownerUidFor(cur, 'roster');
+        const wrote = await this._writeContactDoc('roster', id, cur.phone, cur, { migrating: true, ownerUid: owner });
+        if (wrote.cleared) {
+          next.phone = deleteField();
+          next.hasPhone = true;
+          next.phoneKey = wrote.phoneKey;
+          next.phoneOwnerUid = wrote.ownerUid;
+          next.phoneShared = false;
+          this._contactsLive = true;
+        }
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+        this._contactsLive = false;
+      }
+    } else if (this._contactsLive) next.phone = deleteField();
     await updateDoc(doc(this.db, 'roster', id), next);
   }
-  async deleteRoster(id) { const { doc, deleteDoc } = this.fs; await deleteDoc(doc(this.db, 'roster', id)); }
+  async deleteRoster(id) {
+    const { doc, writeBatch } = this.fs;
+    const batch = writeBatch(this.db);
+    batch.delete(doc(this.db, 'roster', id));
+    if (this._contactsLive) batch.delete(doc(this.db, 'rosterContacts', id));
+    await batch.commit();
+  }
+  async setPhoneShared(target, visible) {
+    const uid = this.actor?.uid || '';
+    if (!uid) throw Object.assign(new Error('No hay sesión'), { code: 'permission-denied' });
+    const want = visible === true;
+    const rosterId = target?.rosterId || '';
+    const playerId = target?.playerId || '';
+    const contact = rosterId ? this.state.rosterContacts?.[rosterId] : this.state.playerContacts?.[playerId];
+    if (!contact || contact.ownerUid !== uid) throw Object.assign(new Error(PRIVATE_WA_TEXT), { code: 'permission-denied' });
+    const key = contact.phoneKey;
+    const { doc, writeBatch } = this.fs;
+    const batch = writeBatch(this.db);
+    const now = Date.now();
+    let n = 0;
+    for (const [id, item] of Object.entries(this.state.rosterContacts || {})) {
+      if (item.ownerUid === uid && item.phoneKey === key) {
+        batch.update(doc(this.db, 'rosterContacts', id), { visibleToAll: want });
+        batch.update(doc(this.db, 'roster', id), { phoneShared: want, updatedAt: now });
+        n += 1;
+      }
+    }
+    for (const [id, item] of Object.entries(this.state.playerContacts || {})) {
+      if (item.ownerUid === uid && item.phoneKey === key) {
+        batch.update(doc(this.db, 'playerContacts', id), { visibleToAll: want });
+        batch.update(doc(this.db, 'players', id), { phoneShared: want, updatedAt: now });
+        n += 1;
+      }
+    }
+    if (!n) throw Object.assign(new Error('No se pudo cambiar la privacidad'), { code: 'permission-denied' });
+    await batch.commit();
+  }
   async setPrices(input) {
     const rec = priceRecord(input);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-price' });

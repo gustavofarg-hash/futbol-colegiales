@@ -15,13 +15,13 @@ export function startsAtOf(match) {
   return NaN;
 }
 
-function asPerson({ phone, rosterId, name } = {}) {
-  return { id: rosterId || '', phone: phone || '', name: name || '' };
+function asPerson({ phone, phoneKey, rosterId, name } = {}) {
+  return { id: rosterId || '', phone: phone || '', phoneKey: phoneKey || '', name: name || '' };
 }
 
 function mainAppearances(who, players, matches) {
   const person = asPerson(who);
-  if (!person.phone && !person.id && !person.name) return [];
+  if (!person.phone && !person.phoneKey && !person.id && !person.name) return [];
   const byId = new Map((matches || []).map((m) => [m.id, m]));
   return (players || [])
     .filter((p) => playerMatchesPerson(p, person) && p.waiting !== true)
@@ -30,8 +30,8 @@ function mainAppearances(who, players, matches) {
 }
 
 /** Partidos ya jugados, lista principal, la misma persona. El más reciente primero. */
-export function playedMatches({ phone, rosterId, name, players, matches, now = Date.now() }) {
-  return mainAppearances({ phone, rosterId, name }, players, matches)
+export function playedMatches({ phone, phoneKey, rosterId, name, players, matches, now = Date.now() }) {
+  return mainAppearances({ phone, phoneKey, rosterId, name }, players, matches)
     .filter((row) => startsAtOf(row.match) < now)
     .sort((a, b) => startsAtOf(b.match) - startsAtOf(a.match) || String(b.match.id).localeCompare(String(a.match.id)));
 }
@@ -61,8 +61,8 @@ function whenLabel(match) {
  * Estadísticas de partidos pasados en la lista principal.
  * summary: "Mayormente jueves · 21:00", o "" si todavía no jugó.
  */
-export function playerStats({ phone, rosterId, name, players, matches, now = Date.now() }) {
-  const played = playedMatches({ phone, rosterId, name, players, matches, now });
+export function playerStats({ phone, phoneKey, rosterId, name, players, matches, now = Date.now() }) {
+  const played = playedMatches({ phone, phoneKey, rosterId, name, players, matches, now });
   const dates = played.map(({ match }) => ({
     date: match.date,
     time: match.time || '',
@@ -79,8 +79,8 @@ export function playerStats({ phone, rosterId, name, players, matches, now = Dat
 }
 
 /** Pagos y confirmaciones de la lista principal, pasados y futuros. */
-export function playerRecord({ phone, rosterId, name, players, matches }) {
-  const rows = mainAppearances({ phone, rosterId, name }, players, matches).map((row) => row.player);
+export function playerRecord({ phone, phoneKey, rosterId, name, players, matches }) {
+  const rows = mainAppearances({ phone, phoneKey, rosterId, name }, players, matches).map((row) => row.player);
   const paid = rows.filter((p) => p.paid === true);
   const paidTotal = paid.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   const confirmed = rows.filter((p) => p.confirmed === 'si').length;
@@ -139,10 +139,10 @@ export function upcomingMatches(matches, now = Date.now()) {
  * Si ya está (teléfono, id del plantel o, sin número, el mismo nombre), no se vuelve a anotar.
  * Si no quedan lugares en la lista principal, va a la espera.
  */
-export function matchSignupState({ phone, rosterId, name, match, players }) {
+export function matchSignupState({ phone, phoneKey, rosterId, name, match, players }) {
   const cap = match?.capacity || 14;
   const mates = (players || []).filter((player) => player.matchId === match?.id);
-  const person = asPerson({ phone, rosterId, name });
+  const person = asPerson({ phone, phoneKey, rosterId, name });
   const same = mates.filter((player) => playerMatchesPerson(player, person));
   const mainCount = mates.filter((player) => player.waiting !== true).length;
   const spots = Math.max(0, cap - mainCount);
