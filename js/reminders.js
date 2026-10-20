@@ -2,6 +2,7 @@
 // confirmar.html y las pruebas. No abre WhatsApp ni escribe en Firestore.
 import { labelDate, toEpoch } from './dates.js';
 import { sameOrganizer } from './organizers.js';
+import { playerAccess } from './access.js';
 
 export const CONFIRM_ORIGIN = 'https://gustavofarg-hash.github.io/futbol-colegiales';
 
@@ -59,6 +60,7 @@ export function confirmationIdentity({ playerId, player, match }) {
     date: match?.date || player?.matchDate || '',
     time: match?.time || '',
     note: match?.note || '',
+    viewers: playerAccess(match).viewers,
   };
 }
 

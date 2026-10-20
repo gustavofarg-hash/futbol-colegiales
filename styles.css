@@ -223,6 +223,12 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
   font-size: 0.72rem; line-height: 1.1; white-space: normal; text-align: center;
 }
 .checkline { display: flex; align-items: flex-start; gap: 10px; margin: 4px 0 12px; font-weight: 700; }
+.access-box { border: 1px solid var(--line); border-radius: 14px; margin: 12px 0; padding: 8px 12px 12px; min-width: 0; }
+.access-box legend { font-weight: 800; padding: 0 6px; }
+.access-person { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); min-width: 0; }
+.access-person .who { flex: 1 1 100%; font-weight: 800; min-width: 0; }
+.access-person label { display: flex; align-items: center; gap: 6px; font-weight: 700; min-width: 0; }
+.access-person .limit input { width: 4.2rem; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); padding: 4px 8px; }
 .checkline input { width: 1.25rem; height: 1.25rem; margin-top: 2px; flex: none; }
 .home-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 14px; }
 .roster-nav { width: 100%; margin: 0 0 14px; }

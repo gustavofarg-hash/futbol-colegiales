@@ -17,6 +17,7 @@ import {
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
+import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -812,4 +813,62 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(four.shares.reduce((sum, n) => sum + n, 0), 17000);
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).label, 'Promo 3 partidos por $10.000');
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).total, 10000);
+});
+
+test('permisos del partido: todos, solo yo, límite y sin excepción de admin', () => {
+  const staff = [
+    { uid: 'gustavo', name: 'Gustavo', role: 'admin' },
+    { uid: 'martin', name: 'Martín', role: 'organizer' },
+  ];
+  const open = publicAccess({ uid: 'gustavo', name: 'Gustavo' });
+  assert.deepEqual(open.viewers, ['*']);
+  assert.equal(isRestricted({ viewers: open.viewers }), false);
+  assert.equal(canView({ viewers: ['*'] }, 'martin'), true);
+  assert.equal(canView({}, 'martin'), true);
+  const solo = buildAccess({
+    solo: true,
+    viewerIds: ['gustavo', 'martin'],
+    adderIds: ['gustavo', 'martin'],
+    staff,
+    creator: { uid: 'gustavo', name: 'Gustavo' },
+  });
+  assert.deepEqual(solo.viewers, ['gustavo']);
+  assert.deepEqual(solo.adders, ['gustavo']);
+  assert.equal(canView(solo, 'gustavo'), true);
+  assert.equal(canView(solo, 'admin-uid'), false);
+  assert.equal(canAdd(solo, 'martin'), false);
+  assert.equal(canDelete(solo, 'admin-uid'), false);
+  assert.equal(canDelete(solo, 'gustavo'), true);
+  assert.equal(canEditAccess(solo, 'gustavo'), true);
+  assert.equal(canEditAccess(solo, 'admin-uid'), false);
+  const picked = buildAccess({
+    solo: false,
+    viewerIds: ['gustavo', 'martin'],
+    adderIds: ['gustavo'],
+    limits: [{ uid: 'gustavo', max: 2 }, { uid: 'martin', max: 4 }],
+    staff,
+    creator: { uid: 'gustavo', name: 'Gustavo' },
+  });
+  assert.deepEqual(picked.viewers, ['*']);
+  assert.deepEqual(picked.adders, ['gustavo']);
+  assert.equal(canView(picked, 'martin'), true);
+  assert.equal(canAdd(picked, 'martin'), false);
+  assert.equal(limitFor(picked, 'gustavo'), 2);
+  assert.equal(limitFor(picked, 'martin'), null);
+  const players = [
+    { addedBy: 'Gustavo', addedByUid: 'gustavo', waiting: false },
+    { addedBy: 'Gustavo', waiting: true },
+  ];
+  assert.equal(addedCount(players, { uid: 'gustavo', name: 'Gustavo' }), 2);
+  assert.equal(limitMessage(2), 'Llegaste a tu límite de 2 jugadores en este partido');
+  const openLimits = buildAccess({
+    solo: false,
+    viewerIds: ['gustavo', 'martin'],
+    adderIds: ['gustavo', 'martin'],
+    limits: [{ uid: 'gustavo', max: null }, { uid: 'martin', max: '' }],
+    staff,
+    creator: { uid: 'gustavo', name: 'Gustavo' },
+  });
+  assert.deepEqual(openLimits.limits, []);
+  assert.equal(limitFor(openLimits, 'gustavo'), null);
 });

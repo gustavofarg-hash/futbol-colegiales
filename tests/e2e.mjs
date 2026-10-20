@@ -834,6 +834,59 @@ await page.evaluate(async (ids) => {
   await window.__app.store.deleteMatch(ids.a);
   await window.__app.store.deleteMatch(ids.b);
 }, promoIds);
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('#btn-add-match');
+
+// Permisos: Solo yo no lo ve ni el admin (en demo, Gustavo es el admin).
+await page.click('#btn-add-match');
+await page.waitForSelector('#match-solo');
+check('Crear partido ofrece Solo yo', (await page.textContent('#match-solo').catch?.(() => '') ) || (await page.locator('label:has(#match-solo)').innerText()).includes('tampoco el admin'));
+check('Por defecto se puede elegir quién ve y quién anota', await page.isVisible('[data-view="martin"]') && await page.isVisible('[data-add="martin"]'));
+await page.fill('#match-form [name=date]', '2026-11-03');
+await page.fill('#match-form [name=time]', '21:00');
+await page.fill('#match-form [data-limit="gustavo"]', '1');
+await page.click('#match-form button[type=submit]');
+await page.waitForSelector('.match-card:has-text("3/11")');
+await page.click('.match-card:has-text("3/11")');
+await page.waitForSelector('#btn-add-player');
+await page.click('#btn-add-player');
+await page.fill('#player-form [name=name]', 'Limite Uno');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Limite Uno")');
+check('Al llegar al límite el botón lo explica', (await page.textContent('#btn-add-player')).includes('Llegaste a tu límite de 1 jugadores'));
+await page.click('#btn-back');
+await page.waitForSelector('.match-card');
+await page.click('#btn-add-match');
+await page.fill('#match-form [name=date]', '2026-11-04');
+await page.fill('#match-form [name=time]', '18:00');
+await page.fill('#match-form [name=note]', 'Privado');
+await page.check('#match-solo');
+check('Solo yo apaga los selectores', await page.locator('#match-access-fields').isHidden());
+await page.click('#match-form button[type=submit]');
+await page.waitForSelector('.match-card:has-text("4/11")');
+check('El creador ve su partido Solo yo', (await page.textContent('body')).includes('Privado'));
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'martin@demo.local');
+await page.fill('#login-password', 'demo-martin');
+await page.click('#login-form button[type=submit]');
+await page.waitForSelector('#btn-who');
+await page.waitForSelector('.match-card');
+check('Martín no ve el Solo yo de Gustavo', !(await page.locator('.match-card:has-text("4/11")').count()) && (await page.locator('.match-card:has-text("3/11")').count()) === 1);
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.fill('#login-password', 'demo-gustavo');
+await page.click('#login-form button[type=submit]');
+await page.waitForSelector('.match-card:has-text("4/11")');
+await page.evaluate(async () => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const ids = Object.entries(db.matches).filter(([, m]) => m.date === '2026-11-03' || m.date === '2026-11-04').map(([id]) => id);
+  for (const id of ids) await window.__app.store.deleteMatch(id);
+});
+await page.waitForFunction(() => !document.body.innerText.includes('4/11') && !document.body.innerText.includes('3/11'));
 
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());

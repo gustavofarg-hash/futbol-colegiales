@@ -8,9 +8,10 @@ rules_version = '2';
 // admin (con las reglas viejas todavía publicadas, o con estas: el alta del
 // admin sigue permitida) y recién ahí publicar. Publicar esto no borra datos.
 //
-// La única diferencia entre admin y organizador es la colección users:
-// el admin crea, desactiva (active) y borra organizadores. Nadie cambia el rol.
-// Partidos, jugadores, plantel, perfiles y confirmaciones: los dos igual.
+// La única diferencia de rol en users: el admin crea, desactiva y borra
+// organizadores. Nadie cambia el rol. En partidos no hay excepción de admin:
+// si el partido tiene viewers, solo esas cuentas lo ven, lo leen y anotan.
+// Sin viewers (los partidos de antes) lo ven todos los que están activos.
 // Sin sesión no hay escrituras, salvo confirmed/confirmedAt con el token.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -49,7 +50,84 @@ service cloud.firestore {
     function validMatch(d) {
       return d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
           && d.time is string && d.time.matches('^\\d{2}:\\d{2}$')
-          && (!('note' in d) || (d.note is string && d.note.size() <= 300));
+          && (!('note' in d) || (d.note is string && d.note.size() <= 300))
+          && accessShape(d);
+    }
+    function accessShape(d) {
+      return (!('viewers' in d) || (d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30))
+          && (!('adders' in d) || (d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30))
+          && (!('solo' in d) || d.solo is bool)
+          && (!('createdByUid' in d) || (d.createdByUid is string && d.createdByUid.size() <= 128))
+          && (!('limits' in d) || (d.limits is list && d.limits.size() <= 30))
+          && (!('viewerNames' in d) || d.viewerNames is list)
+          && (!('adderNames' in d) || d.adderNames is list);
+    }
+    function isPublic(d) {
+      return !('viewers' in d) || d.viewers == null || (d.viewers is list && d.viewers.hasAny(['*']));
+    }
+    function isViewer(d) {
+      return isPublic(d) || (d.viewers is list && (d.viewers.hasAny([request.auth.uid]) || d.createdByUid == request.auth.uid));
+    }
+    function isAdder(d) {
+      return isViewer(d) && (
+        !('adders' in d) || d.adders == null
+        || (d.adders is list && (d.adders.hasAny(['*']) || d.adders.hasAny([request.auth.uid]) || d.createdByUid == request.auth.uid))
+      );
+    }
+    function accessSame() {
+      return request.resource.data.get('viewers', null) == resource.data.get('viewers', null)
+          && request.resource.data.get('adders', null) == resource.data.get('adders', null)
+          && request.resource.data.get('solo', null) == resource.data.get('solo', null)
+          && request.resource.data.get('createdByUid', null) == resource.data.get('createdByUid', null)
+          && request.resource.data.get('limits', null) == resource.data.get('limits', null);
+    }
+    function isCreator() {
+      return resource.data.createdByUid == request.auth.uid;
+    }
+    function legacyStamp() {
+      return !('viewers' in resource.data)
+          && request.resource.data.viewers is list
+          && request.resource.data.viewers.hasAny(['*'])
+          && request.resource.data.solo != true;
+    }
+    function matchData(matchId) {
+      return get(/databases/$(database)/documents/matches/$(matchId)).data;
+    }
+    function playerListsOk(matchId) {
+      let m = matchData(matchId);
+      return isPublic(m) || (
+        request.resource.data.viewers is list
+        && !request.resource.data.viewers.hasAny(['*'])
+        && m.viewers is list
+        && request.resource.data.viewers.hasAll(m.viewers)
+        && m.viewers.hasAll(request.resource.data.viewers)
+      );
+    }
+    function canReadListed(d) {
+      return !('viewers' in d) || d.viewers == null || (d.viewers is list && d.viewers.hasAny([request.auth.uid, '*']));
+    }
+    function playerAccessUnchanged() {
+      return request.resource.data.get('viewers', null) == resource.data.get('viewers', null)
+          && request.resource.data.get('adders', null) == resource.data.get('adders', null);
+    }
+    function playerFollowsMatch() {
+      let m = matchData(resource.data.matchId);
+      return isAdder(m)
+          && request.resource.data.get('viewers', null) == m.get('viewers', null)
+          && request.resource.data.get('adders', null) == m.get('adders', null);
+    }
+    function confirmationViewersOk() {
+      return request.resource.data.get('viewers', null) == resource.data.get('viewers', null)
+          || (
+            !('viewers' in resource.data)
+            && request.resource.data.viewers is list
+            && request.resource.data.viewers.size() == 1
+            && request.resource.data.viewers.hasAny(['*'])
+          )
+          || (
+            request.resource.data.viewers == matchData(resource.data.matchId).get('viewers', null)
+            && isAdder(matchData(resource.data.matchId))
+          );
     }
 
     function validPayment(d) {
@@ -76,7 +154,10 @@ service cloud.firestore {
           && (!('pendingTo' in d) || d.pendingTo == null || (d.pendingTo is string && d.pendingTo.size() > 0 && d.pendingTo.size() <= 40))
           && (!('transferParts' in d) || d.transferParts == null || transferPartsOk(d.transferParts))
           && (!('tentative' in d) || d.tentative == null || d.tentative is bool)
-          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number);
+          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number)
+          && (!('viewers' in d) || (d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30))
+          && (!('adders' in d) || (d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30))
+          && (!('addedByUid' in d) || (d.addedByUid is string && d.addedByUid.size() <= 128));
     }
 
     function transferPartOk(p) {
@@ -232,14 +313,31 @@ service cloud.firestore {
     }
 
     match /matches/{matchId} {
-      allow read, delete: if isActiveStaff();
-      allow create, update: if isActiveStaff() && validMatch(request.resource.data);
+      // get acepta partidos viejos sin viewers. list solo la consulta
+      // array-contains-any [uid, '*']: si no, Firestore rechaza la lista.
+      allow get: if isActiveStaff() && canReadListed(resource.data);
+      allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
+      allow create: if isActiveStaff() && validMatch(request.resource.data);
+      allow update: if isActiveStaff() && validMatch(request.resource.data) && isViewer(resource.data)
+          && (isCreator() || (accessSame() && isAdder(resource.data)) || legacyStamp());
+      allow delete: if isActiveStaff() && ((isPublic(resource.data) && isAdder(resource.data)) || isCreator());
     }
 
     match /players/{playerId} {
-      allow read, delete: if isActiveStaff();
-      allow create: if isActiveStaff() && validPlayer(request.resource.data);
-      allow update: if isActiveStaff() && validPlayer(request.resource.data) && confirmationWriteOk();
+      allow get: if isActiveStaff() && canReadListed(resource.data);
+      allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
+      allow create: if isActiveStaff() && validPlayer(request.resource.data)
+          && isAdder(matchData(request.resource.data.matchId))
+          && playerListsOk(request.resource.data.matchId);
+      allow update: if isActiveStaff() && validPlayer(request.resource.data) && confirmationWriteOk()
+          && (
+            (
+              (!('adders' in resource.data) || resource.data.adders.hasAny([request.auth.uid, '*']))
+              && playerAccessUnchanged()
+            )
+            || playerFollowsMatch()
+          );
+      allow delete: if isActiveStaff() && (!('adders' in resource.data) || resource.data.adders.hasAny([request.auth.uid, '*']));
     }
 
     match /roster/{rosterId} {
@@ -262,9 +360,9 @@ service cloud.firestore {
     // id; no se puede listar la colección. No tiene teléfonos.
     match /confirmations/{token} {
       allow get: if token.size() >= 16 && token.size() <= 80;
-      allow list: if isActiveStaff();
+      allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
       allow create: if isActiveStaff() && validConfirmation(request.resource.data);
-      allow update: if isActiveStaff() && validConfirmation(request.resource.data);
+      allow update: if isActiveStaff() && validConfirmation(request.resource.data) && confirmationViewersOk();
       allow update: if token.size() >= 16 && token.size() <= 80
           && validConfirmation(request.resource.data)
           && anonymousConfirm();
