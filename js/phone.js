@@ -62,5 +62,35 @@ export function displayFromWa(wa) {
 }
 
 export function waLink(wa, text) {
-  return `https://wa.me/${wa}` + (text ? `?text=${encodeURIComponent(text)}` : '');
+  return waSendUrl({ phone: wa, text });
+}
+
+/** Elección guardada en el dispositivo. `ask` es el wa.me de siempre. */
+export const WA_CHOICE_KEY = 'f7c-wa-from';
+
+export function normalizeWaChoice(value) {
+  return value === 'whatsapp' || value === 'business' || value === 'ask' ? value : null;
+}
+
+/** Solo Android puede abrir un package concreto. En iPhone el scheme no es confiable. */
+export function isAndroidUa(ua) {
+  return /Android/i.test(String(ua || ''));
+}
+
+/**
+ * Único armado de links de WhatsApp.
+ * En Android, WhatsApp y WhatsApp Business salen por intent con package
+ * (com.whatsapp / com.whatsapp.w4b) y caen a wa.me si la app no está.
+ * En iPhone o escritorio siempre es wa.me: no hay forma confiable de forzar la app.
+ */
+export function waSendUrl({ phone = '', text = '', choice = 'ask', android = false } = {}) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  const query = text ? `?text=${encodeURIComponent(text)}` : '';
+  const web = digits ? `https://wa.me/${digits}${query}` : `https://wa.me/${query}`;
+  const picked = normalizeWaChoice(choice) || 'ask';
+  if (!android || picked === 'ask') return web;
+  const pkg = picked === 'business' ? 'com.whatsapp.w4b' : 'com.whatsapp';
+  const fallback = encodeURIComponent(web);
+  const path = web.slice('https://'.length);
+  return `intent://${path}#Intent;scheme=https;package=${pkg};S.browser_fallback_url=${fallback};end`;
 }

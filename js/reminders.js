@@ -3,6 +3,7 @@
 import { labelDate, toEpoch } from './dates.js';
 import { sameOrganizer } from './organizers.js';
 import { playerAccess } from './access.js';
+import { waSendUrl } from './phone.js';
 
 export const CONFIRM_ORIGIN = 'https://gustavofarg-hash.github.io/futbol-colegiales';
 
@@ -31,8 +32,8 @@ export function reminderMessage({ player, match, venue, confirmUrl }) {
   return `¡Hola ${first}! Te escribo por el fútbol 7 en ${venue} el ${when}${note}. ¿Confirmás que jugás? Respondé en este link: ${confirmUrl}`;
 }
 
-export function waReminderUrl(phone, text) {
-  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+export function waReminderUrl(phone, text, opts = {}) {
+  return waSendUrl({ phone, text, ...opts });
 }
 
 /**
@@ -204,7 +205,7 @@ export function matchesCrossingReminderWindow(matches, previousNow, now) {
  * Omite a quien no tenga teléfono o confirmToken: el token tiene que estar ya
  * guardado en el jugador (se crea al anotarlo).
  */
-export function reminderLinks({ match, players, venue, origin } = {}) {
+export function reminderLinks({ match, players, venue, origin, choice, android } = {}) {
   const out = [];
   if (!match?.id) return out;
   for (const p of players || []) {
@@ -213,7 +214,7 @@ export function reminderLinks({ match, players, venue, origin } = {}) {
     if (!phone || !token || !p.id) continue;
     const confirmUrl = confirmPageUrl({ matchId: match.id, playerId: p.id, token, origin });
     const text = reminderMessage({ player: p, match, venue: venue || 'Polideportivo Colegiales', confirmUrl });
-    out.push({ name: p.name, waUrl: waReminderUrl(phone, text), confirmUrl });
+    out.push({ name: p.name, phone, text, waUrl: waSendUrl({ phone, text, choice, android }), confirmUrl });
   }
   return out;
 }

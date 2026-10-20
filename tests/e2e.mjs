@@ -57,6 +57,25 @@ await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
 await page.waitForSelector('#btn-who');
+await page.waitForSelector('#wa-choice');
+check('Al entrar pregunta desde qué WhatsApp mandar', (await page.textContent('#wa-choice')).includes('¿Desde qué WhatsApp querés mandar los mensajes?'));
+check('Aclara que en iPhone elige el celular', (await page.textContent('#wa-choice-note')).includes('iPhone'));
+await page.click('#wa-choice-business');
+check('Guarda WhatsApp Business en este dispositivo', await page.evaluate(() => localStorage.getItem('f7c-wa-from') === 'business'));
+const androidLink = await page.evaluate(async () => {
+  const { waSendUrl } = await import('./js/phone.js');
+  return waSendUrl({ phone: '5491112345678', text: 'Hola Juan', choice: 'business', android: true });
+});
+const androidFallback = decodeURIComponent(androidLink.split('S.browser_fallback_url=')[1].replace(/;end$/, ''));
+check('En Android el intent apunta a WhatsApp Business y cae a wa.me',
+  androidLink.startsWith('intent://wa.me/5491112345678?text=Hola%20Juan#Intent;scheme=https;package=com.whatsapp.w4b;')
+  && androidFallback === 'https://wa.me/5491112345678?text=Hola%20Juan', androidLink.slice(0, 120));
+await page.click('#btn-settings');
+await page.waitForSelector('#wa-choice-ask');
+check('Ajustes deja cambiar el WhatsApp', (await page.textContent('#wa-choice')).includes('WhatsApp Business') && (await page.locator('#wa-choice-business').getAttribute('aria-pressed')) === 'true');
+await page.click('#wa-choice-ask');
+check('Se puede volver a que el celular pregunte', await page.evaluate(() => localStorage.getItem('f7c-wa-from') === 'ask'));
+await page.click('dialog.sheet [data-close]');
 await page.waitForSelector('text=No hay partidos en los próximos 7 días');
 check('Banner de modo demo visible', await page.isVisible('#demo-banner'));
 const demoMode = await page.evaluate(() => window.__app?.store?.mode);
