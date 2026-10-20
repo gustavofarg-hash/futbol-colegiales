@@ -177,11 +177,13 @@ El número no va más en `players` ni en `roster` (ahí cualquiera que puede lee
 
 Orden para publicar, en este orden:
 
-1. Primero esta versión de la app (service worker `f7c-v33`). Mientras sigan las reglas viejas, el intento de escribir el contacto falla y la app vuelve a guardar el teléfono en el jugador. Sigue andando, pero la privacidad todavía no es real.
+1. Primero esta versión de la app (service worker `f7c-v37`). Mientras sigan las reglas viejas, el intento de escribir el contacto falla y la app vuelve a guardar el teléfono en el jugador. Sigue andando, pero la privacidad todavía no es real.
 2. Enseguida, con la app nueva ya publicada, publicar `firestore.rules`. Ahí se abren `playerContacts` y `rosterContacts`, y un teléfono con dígitos en `players` o `roster` queda rechazado.
 3. Abrir la app una vez para que migre. Copia el teléfono al contacto (`visibleToAll: false`, dueño = quien lo agregó) y lo borra del jugador. Hasta que esa copia termina, el campo viejo sigue en el documento y quien puede leerlo lo ve en la red: la regla no puede esconder un campo que ya está.
 
 Si se publican las reglas antes que la app, la versión vieja no puede anotar con teléfono hasta que se refresque.
+
+**Quién edita a un jugador.** El nombre, el WhatsApp, el nivel, las posiciones y las notas los cambia solo el organizador que lo agregó (`addedByUid` en el partido, `createdByUid` en Jugadores). Si ese uid no está (jugador viejo), alcanza con que `addedBy` o `createdBy` coincida con el nombre de la cuenta. Sin uid y sin nombre, nadie lo edita. El administrador no es excepción. Pagar, confirmar, la espera, los equipos y quitar del partido siguen abiertos para quien ya podía anotar. Hay que **volver a publicar** `firestore.rules` para que el nombre no se pueda cambiar directo en Firestore.
 
 **Colección `players`** — id automático
 
