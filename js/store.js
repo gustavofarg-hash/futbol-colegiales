@@ -74,7 +74,7 @@
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { toEpoch, todayISO } from './dates.js';
-import { historyBounds, historyCaption, historyWindow, matchQueryPlan } from './profile.js';
+import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
@@ -87,6 +87,10 @@ import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.j
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
 } from './organizers.js';
+import { canEditPlayer, canEditRoster, editLockedError, playerPatchEditsIdentity } from './edit-lock.js';
+import {
+  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
+} from './venues.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
@@ -118,6 +122,20 @@ export function isFirebaseConfigured(cfg = firebaseConfig) {
   return !Object.values(cfg).some((v) => typeof v === 'string' && /^TU_|TU_PROYECTO|^$/.test(v));
 }
 
+/**
+ * Una consulta vieja (toda la colección, sin el filtro de viewers) falla con
+ * permission-denied cuando las reglas ya piden ese filtro. Eso se atiende en
+ * su propio manejador y no reinicia el resto. Si no hay manejador, se reintenta
+ * una sola vez: el token a veces no estaba listo. Un snapshot que sí llega no
+ * vuelve el contador a cero, porque si no el reintento no termina nunca.
+ */
+export function listenDeniedPlan({ code, hasHandler, retrying, deniedRetries }) {
+  if (code !== 'permission-denied' && code !== 'permission_denied') return 'fail';
+  if (hasHandler) return 'handler';
+  if (!retrying && (deniedRetries || 0) < 1) return 'retry';
+  return 'fail';
+}
+
 export function matchIdFor(date, time, existingIds = new Set()) {
   const base = `${date}_${(time || '0000').replace(':', '')}`;
   if (!existingIds.has(base)) return base;
@@ -129,12 +147,16 @@ const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 function matchDoc(data, who) {
   const now = Date.now();
   const access = data?.access ? accessPatch(data.access) : null;
+  const size = matchSize(data);
   return {
     date: data.date,
     time: data.time,
     startsAt: toEpoch(data.date, data.time),
     note: (data.note || '').trim(),
-    capacity: data.capacity || 14,
+    venueId: String(data.venueId || DEFAULT_VENUE_ID),
+    venueName: String(data.venueName || DEFAULT_VENUE_NAME).trim() || DEFAULT_VENUE_NAME,
+    capacity: size.capacity,
+    ...(size.perTeam ? { perTeam: size.perTeam } : {}),
     source: data.source || 'manual',
     sourceRef: data.sourceRef || null,
     sourceText: data.sourceText || null,
@@ -143,6 +165,14 @@ function matchDoc(data, who) {
     playerCount: 0,
     ...(access || {}),
   };
+}
+
+function refusePlayedCancel(match, data) {
+  if (data?.cancelled !== true || match?.cancelled === true) return;
+  const date = data.date || match?.date;
+  if (matchAlreadyPlayed({ date })) {
+    throw Object.assign(new Error('Este partido ya se jugó. No se puede cancelar.'), { code: 'already-played' });
+  }
 }
 
 function cleanMatchPatch(data) {
@@ -243,25 +273,32 @@ function countPatch(fs, match, delta, localCount) {
 
 /* ───────────── Modo demo (localStorage) ───────────── */
 class LocalStore {
-  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; this._historyFilter = null; }
+  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; this._historyFilter = null; this._queryDay = todayISO(); }
   setActor(user) {
-    this.actor = { uid: user?.uid || '', name: user?.name || '' };
+    const next = { uid: user?.uid || '', name: user?.name || '' };
+    if (this.actor?.uid === next.uid && this.actor?.name === next.name) return;
+    this.actor = next;
     if (this.listeners.size) this._emit();
   }
   setHistoryFilter(filter) {
     this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
     this._emit();
   }
-  syncDay() { this._emit(); }
+  syncDay(now = Date.now()) {
+    const today = todayISO(new Date(now));
+    if (today === this._queryDay) return;
+    this._queryDay = today;
+    if (this.listeners.size) this._emit();
+  }
   async ensureMatch() {}
   _load() {
     try {
-      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } };
-      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.confirmations ||= {}; db.settings ||= {};
+      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } };
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {};
       ensureContacts(db);
       migratePhones(db);
       return db;
-    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } }; }
+    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } }; }
   }
   _touchConfirmations(db) {
     db.confirmations ||= {};
@@ -315,6 +352,12 @@ class LocalStore {
     }
     return Object.keys(db.organizers).length > 0;
   }
+  _seedVenues(db) {
+    db.venues ||= {};
+    if (db.venues[DEFAULT_VENUE_ID]) return false;
+    db.venues[DEFAULT_VENUE_ID] = { name: DEFAULT_VENUE_NAME, active: true, order: 0, createdAt: Date.now() };
+    return true;
+  }
   _syncPlayerCounts(db) {
     const counts = {};
     for (const player of Object.values(db.players)) {
@@ -355,19 +398,21 @@ class LocalStore {
     const players = overlayConfirmations(presentRows(visible.players.map((p) => [p.id, p]), db.contacts.players, uid).map(({ id, ...rest }) => ({ id, ...rest })), cards);
     const roster = presentRows(Object.entries(db.roster), db.contacts.roster, uid);
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
+    const venues = Object.entries(db.venues || {}).map(([id, venue]) => ({ id, ...venue }));
     const prices = db.settings?.prices || null;
     const windowed = historyWindow(matches, this._historyFilter);
     const history = windowed.matches;
     const { matches: _rows, ...historyMeta } = windowed;
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
-      players, roster, rosterError: null, organizers, organizersError: null, prices, pricesError: null,
+      players, roster, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
     }));
   }
   async init() {
     if (typeof window !== 'undefined') window.addEventListener('storage', (e) => { if (e.key === this.key) this._emit(); });
     const db = this._load();
     this._seedOrganizers(db);
+    this._seedVenues(db);
     this._touchConfirmations(db);
     this._touchLinks(db);
     localStorage.setItem(this.key, JSON.stringify(db));
@@ -388,6 +433,7 @@ class LocalStore {
   }
   async updateMatch(id, data, who) {
     const db = this._load(); const m = db.matches[id]; if (!m) return;
+    refusePlayedCancel(m, data);
     const { rest, access } = cleanMatchPatch(data);
     Object.assign(m, rest, access || {}, { startsAt: toEpoch(data.date ?? m.date, data.time ?? m.time), updatedBy: who, updatedAt: Date.now() });
     const copied = playerAccess(m);
@@ -457,6 +503,7 @@ class LocalStore {
   async updatePlayer(id, data) {
     const db = this._load(); if (!db.players[id]) return;
     const player = db.players[id];
+    if (playerPatchEditsIdentity(data, player) && !canEditPlayer(player, this.actor)) throw editLockedError();
     const { phone, ...rest } = data || {};
     Object.assign(player, rest, { updatedAt: Date.now() });
     delete player.phone;
@@ -526,6 +573,7 @@ class LocalStore {
   }
   async updateRoster(id, data) {
     const db = this._load(); const cur = db.roster[id]; if (!cur) return;
+    if (!canEditRoster(cur, this.actor)) throw editLockedError();
     const phone = 'phone' in (data || {}) ? (data.phone || '') : this._rosterPhone(db, id);
     if (phone) {
       const dup = phoneDup(db, 'roster', id, phone);
@@ -538,6 +586,7 @@ class LocalStore {
   }
   async patchRoster(id, patch) {
     const db = this._load(); const cur = db.roster[id]; if (!cur) return;
+    if (!canEditRoster(cur, this.actor)) throw editLockedError();
     const next = {};
     if ('name' in patch) next.name = String(patch.name || '').trim();
     if ('level' in patch) next.level = patch.level;
@@ -606,10 +655,42 @@ class LocalStore {
     this._save(db);
     return id;
   }
+  async addVenue(name) {
+    const clean = cleanVenueName(name);
+    if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-venue' });
+    const db = this._load();
+    db.venues ||= {};
+    if (Object.values(db.venues).some((item) => sameVenueName(item.name, clean.name))) {
+      throw Object.assign(new Error(`${clean.name} ya está en las sedes`), { code: 'venue-duplicate' });
+    }
+    let id = venueSlug(clean.name);
+    let n = 2;
+    while (db.venues[id]) id = `${venueSlug(clean.name)}-${n++}`;
+    const order = Object.values(db.venues).reduce((max, item) => Math.max(max, Number(item.order) || 0), 0) + 1;
+    db.venues[id] = { name: clean.name, active: true, order, createdAt: Date.now() };
+    this._save(db);
+    return id;
+  }
+  async updateVenue(id, patch) {
+    const db = this._load();
+    const cur = db.venues?.[id];
+    if (!cur) throw Object.assign(new Error('No está esa sede'), { code: 'venue-missing' });
+    if ('name' in (patch || {})) {
+      const clean = cleanVenueName(patch.name);
+      if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-venue' });
+      if (Object.entries(db.venues).some(([oid, item]) => oid !== id && sameVenueName(item.name, clean.name))) {
+        throw Object.assign(new Error(`${clean.name} ya está en las sedes`), { code: 'venue-duplicate' });
+      }
+      cur.name = clean.name;
+    }
+    if ('active' in (patch || {})) cur.active = patch.active !== false;
+    this._save(db);
+  }
   async clearAll() {
     localStorage.removeItem(this.key);
     const db = this._load();
     this._seedOrganizers(db);
+    this._seedVenues(db);
     localStorage.setItem(this.key, JSON.stringify(db));
     this._emit();
   }
@@ -633,7 +714,7 @@ class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {}, historyError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {}, historyError: '' };
   }
   setHistoryFilter(filter) {
     this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
@@ -650,20 +731,23 @@ class FirebaseStore {
     }
   }
   async ensureMatch(id) {
-    if (!id || !this.fs) return;
-    if (this.state.matches.some((match) => match.id === id)) return;
+    if (!id || !this.fs) return 'missing';
+    if (this.state.matches.some((match) => match.id === id)) return 'ok';
     const { doc, getDoc } = this.fs;
     try {
       const snap = await getDoc(doc(this.db, 'matches', id));
-      if (!snap.exists()) return;
+      if (!snap.exists()) return 'missing';
       const match = { id: snap.id, ...snap.data() };
-      if (this.actor?.uid && !canView(match, this.actor.uid)) return;
+      if (this.actor?.uid && !canView(match, this.actor.uid)) return 'hidden';
       const opened = (this._buckets.matches.opened || []).filter((row) => row.id !== match.id);
       opened.push(match);
       this._buckets.matches.opened = opened;
       this._rebuild('matches');
+      return 'ok';
     } catch (e) {
-      if (e?.code !== 'permission-denied') console.error(e);
+      if (e?.code === 'permission-denied' || e?.code === 'permission_denied') return 'denied';
+      console.error(e);
+      return 'missing';
     }
   }
   setActor(user) {
@@ -685,10 +769,13 @@ class FirebaseStore {
     // nunca se entera del «Sí, juego».
     await this._refreshIdToken();
     this._listen();
+    this._seedVenues();
     // Si Firestore no existe o la API está deshabilitada, el SDK reintenta en silencio:
     // avisamos si en 15 s no llegó ninguna respuesta del servidor.
     setTimeout(() => {
-      if (!this.serverOk && navigator.onLine !== false) this._fail({ code: 'no-server', message: 'sin respuesta del servidor' });
+      if (this.serverOk || navigator.onLine === false) return;
+      if (this._sawDenied) this._fail({ code: 'permission-denied', message: 'reglas' });
+      else this._fail({ code: 'no-server', message: 'sin respuesta del servidor' });
     }, 15000);
   }
   async _refreshIdToken(force = false) {
@@ -870,7 +957,7 @@ class FirebaseStore {
     this._queryDay = todayISO();
     const { collection, doc, query, where, onSnapshot } = this.fs;
     const watch = (ref, opts, onNext, onErr) => {
-      const next = (snap) => { this._deniedRetries = 0; onNext(snap); };
+      const next = (snap) => { onNext(snap); };
       const un = opts
         ? onSnapshot(ref, opts, next, (e) => this._onListenError(e, onErr))
         : onSnapshot(ref, next, (e) => this._onListenError(e, onErr));
@@ -924,6 +1011,15 @@ class FirebaseStore {
       this.state.organizersError = isOrganizerDenied(e) ? ORGANIZERS_DENIED_READ : ('No se pudo leer organizadores: ' + (e?.message || e?.code || e));
       this._emit();
     });
+    watch(collection(this.db, 'venues'), null, (snap) => {
+      this.state.venues = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this.state.venuesError = null;
+      this._emit();
+    }, (e) => {
+      this.state.venues = [];
+      this.state.venuesError = isVenueDenied(e) ? VENUES_DENIED_READ : ('No se pudieron leer las sedes: ' + (e?.message || e?.code || e));
+      this._emit();
+    });
     watch(doc(this.db, 'settings', 'prices'), null, (snap) => {
       this.state.prices = snap.exists() ? snap.data() : null;
       this.state.pricesError = null;
@@ -975,7 +1071,19 @@ class FirebaseStore {
     this._unsubs.push(sharedPlayers, sharedRoster);
   }
   _onListenError(e, extra) {
-    if (e?.code === 'permission-denied' && !this._retrying && (this._deniedRetries || 0) < 2) {
+    const plan = listenDeniedPlan({
+      code: e?.code,
+      hasHandler: typeof extra === 'function',
+      retrying: !!this._retrying,
+      deniedRetries: this._deniedRetries || 0,
+    });
+    if (plan === 'handler') {
+      this._sawDenied = true;
+      extra(e);
+      return;
+    }
+    if (plan === 'retry') {
+      this._sawDenied = true;
       this._deniedRetries += 1;
       this._retrying = true;
       this._stop();
@@ -991,6 +1099,23 @@ class FirebaseStore {
     finally {
       this._retrying = false;
       this._listen();
+    }
+  }
+  async _seedVenues() {
+    const { doc, getDoc, setDoc } = this.fs;
+    try {
+      const ref = doc(this.db, 'venues', DEFAULT_VENUE_ID);
+      const cur = await getDoc(ref);
+      if (!cur.exists()) {
+        await setDoc(ref, { name: DEFAULT_VENUE_NAME, active: true, order: 0, createdAt: Date.now() });
+      }
+    } catch (e) {
+      if (isVenueDenied(e)) {
+        this.state.venuesError = VENUES_DENIED_READ;
+        this._emit();
+        return;
+      }
+      console.error(e);
     }
   }
   async _seedOrganizers() {
@@ -1061,6 +1186,7 @@ class FirebaseStore {
   async updateMatch(id, data, who) {
     const { doc, writeBatch } = this.fs;
     const cur = this.state.matches.find((m) => m.id === id) || {};
+    refusePlayedCancel(cur, data);
     const { rest, access } = cleanMatchPatch(data);
     const patch = { ...rest, ...(access || {}), startsAt: toEpoch(data.date ?? cur.date, data.time ?? cur.time), updatedBy: who, updatedAt: Date.now() };
     const batch = writeBatch(this.db);
@@ -1241,6 +1367,7 @@ class FirebaseStore {
   async updatePlayer(id, data) {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;
     const cur = this.state.players.find((player) => player.id === id) || {};
+    if (cur.id && playerPatchEditsIdentity(data, cur) && !canEditPlayer(cur, this.actor)) throw editLockedError();
     const { phone, ...rest } = data || {};
     const patch = { ...rest, updatedAt: Date.now() };
     if ('phone' in (data || {})) {
@@ -1426,6 +1553,7 @@ class FirebaseStore {
   }
   async updateRoster(id, data) {
     const cur = this.state.roster.find((r) => r.id === id) || {};
+    if (cur.id && !canEditRoster(cur, this.actor)) throw editLockedError();
     const phone = 'phone' in (data || {}) ? (data.phone || '') : (cur.phone || this.state.rosterContacts?.[id]?.phone || '');
     if ('phone' in (data || {}) && canonicalWa(phone)) {
       const dup = this._rosterDup(phone, id);
@@ -1455,6 +1583,7 @@ class FirebaseStore {
   async patchRoster(id, patch) {
     const cur = this.state.roster.find((r) => r.id === id);
     if (!cur) throw new Error('Jugador inexistente');
+    if (!canEditRoster(cur, this.actor)) throw editLockedError();
     const next = { updatedAt: Date.now() };
     if ('name' in patch) next.name = String(patch.name || '').trim();
     if ('level' in patch) next.level = patch.level;
@@ -1553,6 +1682,36 @@ class FirebaseStore {
     const { doc, setDoc } = this.fs;
     await setDoc(doc(this.db, 'organizers', id), { name: clean.name, createdAt: Date.now() });
     return id;
+  }
+  async addVenue(name) {
+    const clean = cleanVenueName(name);
+    if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-venue' });
+    if ((this.state.venues || []).some((item) => sameVenueName(item.name, clean.name))) {
+      throw Object.assign(new Error(`${clean.name} ya está en las sedes`), { code: 'venue-duplicate' });
+    }
+    let id = venueSlug(clean.name);
+    let n = 2;
+    while ((this.state.venues || []).some((item) => item.id === id)) id = `${venueSlug(clean.name)}-${n++}`;
+    const order = (this.state.venues || []).reduce((max, item) => Math.max(max, Number(item.order) || 0), 0) + 1;
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'venues', id), { name: clean.name, active: true, order, createdAt: Date.now() });
+    return id;
+  }
+  async updateVenue(id, patch) {
+    const cur = (this.state.venues || []).find((item) => item.id === id);
+    if (!cur) throw Object.assign(new Error('No está esa sede'), { code: 'venue-missing' });
+    const next = {};
+    if ('name' in (patch || {})) {
+      const clean = cleanVenueName(patch.name);
+      if (!clean.ok) throw Object.assign(new Error(clean.error), { code: 'invalid-venue' });
+      if ((this.state.venues || []).some((item) => item.id !== id && sameVenueName(item.name, clean.name))) {
+        throw Object.assign(new Error(`${clean.name} ya está en las sedes`), { code: 'venue-duplicate' });
+      }
+      next.name = clean.name;
+    }
+    if ('active' in (patch || {})) next.active = patch.active !== false;
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'venues', id), next);
   }
 }
 

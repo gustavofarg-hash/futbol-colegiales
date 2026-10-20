@@ -147,6 +147,11 @@ export function pastMatches(matches, now = Date.now()) {
     .sort((a, b) => startsAtOf(b) - startsAtOf(a) || String(b.id).localeCompare(String(a.id)));
 }
 
+/** Ya se jugó: el día calendario es anterior a hoy, el mismo corte que el historial. */
+export function matchAlreadyPlayed(match, now = Date.now()) {
+  return !!(match?.date && match.date < todayISO(new Date(now)));
+}
+
 /** Cuántos partidos pasados muestra el historial si no hay filtro. */
 export const HISTORY_PAGE = 30;
 
