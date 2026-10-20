@@ -222,15 +222,6 @@ window.addEventListener('hashchange', render);
 function render() {
   const r = route();
   $('#btn-back').hidden = r.name === 'home';
-  const who = $('#btn-who');
-  who.hidden = !app.who; who.textContent = app.who || '';
-  const mine = $('#btn-mine');
-  if (mine) {
-    mine.hidden = !app.who;
-    mine.textContent = app.mine ? 'Todos' : 'Mis';
-    mine.classList.toggle('mine-on', app.mine);
-    mine.setAttribute('aria-pressed', app.mine ? 'true' : 'false');
-  }
   if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
   if (r.name === 'match') renderMatch(r.id);
@@ -285,6 +276,7 @@ function renderHome() {
   $('#view').innerHTML = `
     ${reminderBanners(next)}
     ${homeNav()}
+    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
       <div class="empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
@@ -445,6 +437,7 @@ function renderMatch(id) {
     ${readOnly ? '<p class="hint" id="match-readonly">Solo lectura. No podés anotar ni cambiar este partido.</p>' : ''}
     ${reminderBanners([m])}
     ${readOnly || m.cancelled ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
+    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
@@ -891,7 +884,9 @@ function openSettings() {
   openSheet(`
     <h3>Ajustes</h3>
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
-    <p class="hint">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
+    <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
+    <label class="checkline" id="set-mine-line"><input type="checkbox" id="set-mine"${app.mine ? ' checked' : ''}><span>Solo lo que anoté y lo que cobré</span></label>
+    <p class="hint">Oculta en el inicio, el partido y Pagos lo de los demás organizadores. El cupo del partido no cambia.</p>
     <form id="price-form" novalidate>
       <p class="hint">Precios. Los ven todos al toque.</p>
       ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
@@ -952,6 +947,8 @@ function openSettings() {
   const forget = $('#set-forget');
   if (forget) forget.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
   $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
+  const mine = $('#set-mine');
+  if (mine) mine.onchange = () => { app.mine = mine.checked; render(); };
 }
 
 function accessEditor(m) {
@@ -1391,7 +1388,7 @@ function renderPagos() {
     <p class="mine-line" id="mine-stats">${esc(mineSummary(app.players, app.who).text)}</p>
     <p class="hint" id="org-totals">${orgLine}</p>
     <p class="hint" id="pending-total">Transfiere después: ${esc(formatARS(pending.total))}</p>
-    ${app.mine ? '<p class="hint">Filtro Mis: solo lo que anotaste y lo que cobraste.</p>' : payFilterChips(null)}
+    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : payFilterChips(null)}
     ${body}
     <h2 class="section">Transfiere después</h2>
     ${pendingBody}`;
@@ -2151,8 +2148,6 @@ async function boot() {
   $('#btn-text-bigger').onclick = () => { stepTextSize(1); syncTextSize(); };
   syncTextSize();
   $('#btn-settings').onclick = openSettings;
-  $('#btn-who').onclick = openSettings;
-  $('#btn-mine').onclick = () => { app.mine = !app.mine; render(); };
   $('#brand').onclick = () => { location.hash = '#/'; };
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {

@@ -56,7 +56,7 @@ await page.waitForFunction(() => (document.querySelector('#login-err')?.textCont
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 check('Al entrar no obliga a elegir WhatsApp', (await page.locator('#wa-choice').count()) === 0);
 await page.click('#btn-settings');
 await page.waitForSelector('#wa-choice');
@@ -86,7 +86,11 @@ const demoMode = await page.evaluate(() => window.__app?.store?.mode);
 check('Modo demo (no escribe en Firestore)', demoMode === 'demo', String(demoMode));
 if (demoMode !== 'demo') { await browser.close(); process.exit(1); }
 check('Arranca sin partidos', await page.isVisible('text=No hay partidos en los próximos 7 días'));
-check('Chip de organizador', (await page.textContent('#btn-who')).includes('Gustavo'));
+check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
+await page.click('#btn-settings');
+check('Ajustes dice quién entró', (await page.textContent('#set-who')).includes('Entraste como Gustavo'));
+check('El filtro de lo propio arranca apagado', !(await page.isChecked('#set-mine')));
+await page.click('dialog.sheet [data-close]');
 
 // Agregar partido
 await page.click('#btn-add-match');
@@ -222,9 +226,9 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.waitForSelector('#btn-add-player');
-check('Sesión de Martín', (await page.textContent('#btn-who')).includes('Martín'));
+check('Sesión de Martín', (await page.evaluate(() => window.__app.who)) === 'Martín');
 check('La sesión queda en el navegador', (await page.evaluate(() => JSON.parse(localStorage.getItem('f7c-demo-auth')).session.name)) === 'Martín');
 await page.click('#btn-add-player');
 await page.fill('#player-form [name=name]', 'Nico Ruiz');
@@ -324,8 +328,9 @@ await page2.waitForFunction(() => document.body.innerText.includes('Efectivo') &
 check('La otra pestaña se actualiza sola', (await page2.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500'));
 await page2.close();
 
-await page.click('#btn-mine');
-await page.waitForFunction(() => document.querySelector('#btn-mine')?.textContent === 'Todos');
+await page.click('#btn-settings');
+await page.check('#set-mine');
+await page.waitForFunction(() => document.querySelector('#mine-filter') && ![...document.querySelectorAll('#slots .name')].some((el) => el.textContent === 'Pedro G.'));
 check('Mis oculta a quien no anoté ni cobré', (await page.locator('#slots .name', { hasText: 'Pedro G.' }).count()) === 0);
 check('Mis muestra a quien anoté y a quien le cobré',
   (await page.locator('#slots .name', { hasText: 'Nico Ruiz' }).count()) === 1
@@ -333,8 +338,9 @@ check('Mis muestra a quien anoté y a quien le cobré',
 check('El cupo sigue siendo el del partido', (await page.textContent('#slot-count')) === '3/14');
 const mineText = (await page.textContent('#mine-stats')).replace(/\s+/g, ' ');
 check('Estadística propia del partido', mineText.includes('Anotaste 1') && mineText.includes('Cobraste $4.500'), mineText);
-await page.click('#btn-mine');
+await page.uncheck('#set-mine');
 await page.waitForSelector('#slots .name:text-is("Pedro G.")');
+await page.click('dialog.sheet [data-close]');
 
 // Lista de espera con lugares libres: queda al final, no ocupa un cupo
 await page.click('#btn-add-wait');
@@ -789,7 +795,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.waitForSelector('#btn-add-match');
 await page.click('#btn-settings');
 await page.click('#set-users');
@@ -1073,7 +1079,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.waitForSelector('.match-card');
 check('Martín no ve el Solo yo de Gustavo', !(await page.locator('.match-card:has-text("4/11")').count()) && (await page.locator('.match-card:has-text("3/11")').count()) === 1);
 await page.click('#btn-settings');
@@ -1157,7 +1163,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('#list-next');
 check('Martín ve el de hoy en el inicio', await page.locator('#list-next .match-card:has-text("Hoy temprano")').count() === 1);
@@ -1171,7 +1177,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
 
@@ -1255,7 +1261,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Solo anota Gustavo")');
 await page.click('.match-card:has-text("Solo anota Gustavo")');
@@ -1270,7 +1276,7 @@ await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.fill('#login-password', 'demo-gustavo');
 await page.click('#login-form button[type=submit]');
-await page.waitForSelector('#btn-who');
+await page.waitForFunction(() => window.__app?.who);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
 

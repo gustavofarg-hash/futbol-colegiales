@@ -74,11 +74,6 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   display: grid; place-items: center; flex: none;
 }
 .icon-btn:active { background: rgba(255,255,255,.15); }
-.who-chip {
-  border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.12); color: #fff;
-  border-radius: 999px; padding: 6px 12px; font-size: 0.875rem; font-weight: 600; min-height: 36px;
-}
-
 /* Banners */
 .banner { padding: 10px 16px; font-size: 0.875rem; }
 .banner.demo { background: var(--warn-bg); color: var(--warn-text); border-bottom: 1px solid rgba(0,0,0,.05); }
@@ -416,9 +411,6 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 /* ajustes */
 [hidden] { display: none !important; }
 .brand > div { min-width: 0; }
-.who-chip { padding: 5px 10px; font-size: 0.8125rem; white-space: nowrap; max-width: 6.2rem; overflow: hidden; text-overflow: ellipsis; }
-#btn-mine { max-width: none; flex: none; }
-.who-chip.mine-on { background: var(--green); color: #fff; border-color: transparent; }
 .mine-line { margin-top: 6px; font-size: 0.84375rem; font-weight: 700; color: var(--muted); }
 .user-form { margin-top: 14px; }
 .actionbar .btn { white-space: normal; text-align: center; line-height: 1.15; font-size: 0.875rem; padding: 0 10px; gap: 6px; min-height: 50px; }
@@ -428,7 +420,6 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
   .topbar { gap: 4px; padding-left: 8px; padding-right: 8px; }
   .brand { gap: 6px; }
   .brand img { width: 26px; height: 26px; }
-  .who-chip { max-width: 4.6rem; padding: 4px 6px; }
   .icon-btn { width: 36px; height: 36px; }
   .text-step { width: 32px; height: 32px; }
 }
