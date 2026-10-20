@@ -4,8 +4,12 @@ App web (PWA, se instala en el celular) para organizar los partidos de **fútbol
 
 ## Qué hace (v1)
 
-- **Inicio:** partidos de hoy y de los próximos 7 días (hoy se queda en esta lista todo el día), con día, fecha, hora y anotados (ej. `9/14`). Los que están más lejos aparecen en “Más adelante”.
-- **Historial de partidos:** cuando la fecha ya pasó, el partido sale del inicio y queda en Historial (menú del inicio y de Ajustes). El más reciente primero, con fecha, hora y cantidad de jugadores. Abrirlo es la misma pantalla del partido: se pueden anotar pagos tarde, editar jugadores y ver la espera. No se borra solo. Quién lo ve sigue siendo el permiso del partido (Solo yo incluido).
+- **Inicio:** la pestaña Próximos partidos muestra hoy y los 7 días que siguen (hoy inclusive hasta hoy + 7, hora de Argentina). Hoy se queda en esta lista todo el día. Con día, fecha, hora y anotados (ej. `9/14`). Si no hay ninguno en esa ventana, un mensaje vacío. Los que están más lejos no se listan solos: al pie hay **Ver más adelante (N)** y ahí se despliegan.
+- **Tres pestañas fijas:** Próximos partidos, Jugadores y Historial. Quedan arriba, justo bajo el encabezado, en todas las pantallas (partido, perfil, equipos, ajustes). No se van al bajar. Tocar una desde adentro abre esa sección. La barra de compartir / espera / agregar y las hojas de abajo quedan libres. Al abrir la app entra en Próximos partidos. En la misma sesión, la pestaña se recuerda al volver de un partido, de un perfil o al recargar. El resumen de **Pagos** (saldos por organizador y transferencias pendientes) está dentro de Jugadores, en el filtro Pagos.
+- **Historial de partidos:** cuando la fecha ya pasó, el partido sale de Próximos partidos y queda en la pestaña Historial. Por defecto se ven los últimos 30, el más reciente primero. Se puede filtrar por una fecha o por un desde-hasta, y Limpiar vuelve a los últimos 30. Firestore no baja todo el historial: `where` de `viewers` (el permiso del partido) + `where` de `date` + `orderBy date` + `limit 30`, o el rango en vez del límite. Abrirlo es la misma pantalla del partido: se pueden anotar pagos tarde, editar jugadores y ver la espera. No se borra solo. Quién lo ve sigue siendo el permiso del partido (Solo yo incluido). Hace falta un índice compuesto de `matches`: `viewers` Arrays + `date` Ascending. Con ese índice salen Próximos (`date` ascendente) y el historial (`date` descendente, o el rango). Crearlo: [índice viewers + date](https://console.firebase.google.com/v1/r/project/futbol-partidos/firestore/indexes?create_composite=Ck9wcm9qZWN0cy9mdXRib2wtcGFydGlkb3MvZGF0YWJhc2VzLyhkZWZhdWx0KS9jb2xsZWN0aW9uR3JvdXBzL21hdGNoZXMvaW5kZXhlcy9fEAIaCwoHdmlld2VycxgBGggKBGRhdGUQAQ==). Si la consola pidiera el descendente aparte: [viewers + date desc](https://console.firebase.google.com/v1/r/project/futbol-partidos/firestore/indexes?create_composite=Ck9wcm9qZWN0cy9mdXRib2wtcGFydGlkb3MvZGF0YWJhc2VzLyhkZWZhdWx0KS9jb2xsZWN0aW9uR3JvdXBzL21hdGNoZXMvaW5kZXhlcy9fEAIaCwoHdmlld2VycxgBGggKBGRhdGUQAg==).
+- **Equipos:** en cada partido, Equipos reparte a los anotados (no a la lista de espera) entre Con pechera y Sin pechera. Un toque los mueve. Se ve el conteo (por ejemplo 7 y 7) y un aviso si quedó desbalanceado. Mezclar al azar y Limpiar. Se guarda en el partido (`teams.bib` y `teams.plain`) y lo ven al toque los que pueden ver ese partido; lo cambian los que pueden anotar. Si alguien se baja, sale del equipo. Compartir por WhatsApp arma el mensaje con el mismo link de siempre. También se consulta desde el Historial.
+- **Cancelar partido:** si hay jugadores (titulares o lista de espera), no se puede borrar. En ese lugar está **Cancelar partido**: queda `cancelled`, se ve el badge Cancelado en el inicio, en el detalle y en el Historial, y se puede reactivar. Sin jugadores, Borrar sigue igual. Al cancelar se puede escribir el motivo en Notas y la app pregunta si avisar por WhatsApp (un link por jugador, sin el link de confirmación). No salen recordatorios y la página de confirmación no pide sí o no.
+- **Notas:** texto libre del partido (`notes`, hasta 2000 caracteres), distinto de la nota corta de la tarjeta. Se edita al abrir el partido, también desde el Historial, y se guarda al toque. Lo cambian quienes pueden anotar.
 - **Agregar partido:** fecha, hora y nota opcional.
 - **Importar desde texto:** pegás un mensaje del grupo de WhatsApp y la app detecta expresiones como `jueves 22/10 21hs`, `miércoles 20:00`, `mañana 19 hs`, `sábado 24 de octubre a las 18`, `hoy a las 21 y media`, `jueves 20 y 21hs`. Muestra una **vista previa** para corregir y confirmar. Si pegás el mensaje con encabezado de WhatsApp (`[19/10/26, 12:40] Martín: …`), usa esa fecha como referencia para “mañana”, “jueves”, etc.
 - **Detalle del partido:** 14 lugares. Agregás jugador con nombre y WhatsApp (el número se normaliza: `11 1234-5678` → `5491112345678`; acepta `011 15…`, `15…`, `+54 9…`, otras características como `0351 15…`). Botón de **WhatsApp** por jugador que abre `https://wa.me/<número>?text=…` con un mensaje con día, fecha y hora. Editar y quitar jugadores. **Copiar / compartir** la lista como texto.
@@ -158,6 +162,26 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `sourceText` | string o null — texto original | `"jueves 22/10 21hs"` |
 | `createdBy`, `updatedBy` | `"Gustavo"` \| `"Martín"` \| `"bot"` | |
 | `createdAt`, `updatedAt` | número (epoch ms) | |
+| `notes` | string, hasta 2000. Texto libre (motivo de cancelación u otra cosa). Distinto de `note` | |
+| `cancelled` | bool. Si es true, el partido sigue en la lista con badge y no se borra | |
+| `cancelledAt`, `cancelledBy` | número o null, y uid o null | |
+| `playerCount` | int ≥ 0. Lo escribe el cliente al anotar o quitar. El borrado exige 0 | |
+
+Hay que **volver a publicar** `firestore.rules` para que el borrado falle cuando `playerCount` es mayor a 0, y para que `notes`, `cancelled` y el `cancelled` de la ficha de confirmación queden validados. Sin republicar, la app igual guarda esos campos (las reglas viejas no cierran la lista), pero un partido con jugadores se podría borrar directo en Firestore. Si `playerCount` no está, la regla nueva lo toma como 0. Quien puede editar el partido podría poner el contador en 0 y después borrarlo: la regla no cuenta los documentos de `players`.
+
+**WhatsApp privado.** En el perfil, «Mostrar mi WhatsApp a los demás organizadores» arranca desactivado. Con eso apagado, el número lo ve solo quien agregó a ese jugador. El administrador no es excepción. Los demás ven «El WhatsApp de este jugador es privado» y no pueden abrir el chat, ni en el partido, ni en Jugadores, ni en la búsqueda, ni en recordatorios, ni al subir de la espera, ni al avisar una cancelación. El teléfono no se copia al compartir la lista.
+
+El número no va más en `players` ni en `roster` (ahí cualquiera que puede leer el partido lo vería en la red). Vive en `playerContacts/{id}` y `rosterContacts/{id}`: `phone`, `ownerUid`, `visibleToAll`, `phoneKey` y, en el partido, `viewers`. Las reglas dejan leer si `ownerUid` es la cuenta o si `visibleToAll` es true (y, en el partido, si `viewers` incluye a esa cuenta o `*`).
+
+`phoneKey` es el SHA-256 del teléfono normalizado. Sirve para saber que es la misma persona (promos, perfil, no duplicar el plantel) sin mostrar el número. En el plan Spark no hay Cloud Functions: el hash lo calcula el navegador y no lleva una clave secreta. Quien ya sospecha el número puede probarlo contra el hash. Eso no devuelve el número en la respuesta de Firestore; el número en claro sale solo del documento de contacto, y solo a quien la regla se lo permite.
+
+Orden para publicar, en este orden:
+
+1. Primero esta versión de la app (service worker `f7c-v33`). Mientras sigan las reglas viejas, el intento de escribir el contacto falla y la app vuelve a guardar el teléfono en el jugador. Sigue andando, pero la privacidad todavía no es real.
+2. Enseguida, con la app nueva ya publicada, publicar `firestore.rules`. Ahí se abren `playerContacts` y `rosterContacts`, y un teléfono con dígitos en `players` o `roster` queda rechazado.
+3. Abrir la app una vez para que migre. Copia el teléfono al contacto (`visibleToAll: false`, dueño = quien lo agregó) y lo borra del jugador. Hasta que esa copia termina, el campo viejo sigue en el documento y quien puede leerlo lo ve en la red: la regla no puede esconder un campo que ya está.
+
+Si se publican las reglas antes que la app, la versión vieja no puede anotar con teléfono hasta que se refresque.
 
 **Colección `players`** — id automático
 
@@ -166,7 +190,10 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `matchId` | id del partido |
 | `matchDate` | copia de `date` (para consultar por fecha) |
 | `name` | string |
-| `phone` | solo dígitos, formato wa.me (ej. `5491112345678`) o vacío |
+| `phoneKey` | SHA-256 hex del teléfono canónico, o vacío. No es el número |
+| `hasPhone` | bool. Hay número en `playerContacts`, aunque este organizador no lo vea |
+| `phoneOwnerUid` | uid de quien lo agregó |
+| `phoneShared` | bool. Copia de `visibleToAll` |
 | `addedBy` | quién lo anotó (Gustavo, Martín u otro de la lista) |
 | `createdAt`, `updatedAt` | número (epoch ms) |
 | `paid` | bool, opcional — si ya se cobró algo (efectivo + transferencia). Solo pendiente queda en false |
@@ -188,7 +215,8 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 | `waiting` | bool — `true` si está en la lista de espera |
 | `waitOrder` | número o null — menor = más arriba en la espera. Los nuevos van al final |
 | `rosterAt` | número o null — cuándo pasó a la lista principal |
-| `confirmToken` | string — token del link de confirmación. Se crea al anotar al jugador. Si un jugador viejo no lo tiene, la app lo escribe la primera vez que lo ve (sin abrir el flujo de envío) |
+| `confirmToken` | string — token del link largo de confirmación. Se crea al anotar al jugador. Si un jugador viejo no lo tiene, la app lo escribe la primera vez que lo ve (sin abrir el flujo de envío) |
+| `shortCode` | string de 8 caracteres base62. Apunta a `links/{shortCode}`. El WhatsApp usa `/c/?k=` |
 | `confirmed` | `"si"` \| `"no"` — respuesta del jugador |
 | `confirmedAt` | número (epoch ms) |
 | `reminderSentAt` | número (epoch ms) — cuándo se abrió el WhatsApp del recordatorio |
@@ -197,7 +225,11 @@ Pensado para que más adelante un importador automático (bot de WhatsApp, scrip
 
 Hay que **volver a publicar** `firestore.rules` para que `tentative` (bool o null) y `tentativeAt` (número o null) queden validados. Las reglas ya publicadas igual dejan escribir esos campos, porque `validPayment` no cierra la lista. Republicar rechaza un texto en lugar de bool o número. `settings/prices` ya es una colección aparte: el cierre `match /{document=**}` la niega hasta republicar. Mientras tanto la app usa 5000, 9000 y 12000 y avisa en castellano. Después de publicar, un precio negativo o con centavos queda rechazado, y cualquier organizador activo puede leer y guardar los tres precios.
 
-**Recordatorio:** en el partido, **Enviar recordatorios** arma un mensaje por jugador con WhatsApp y un link único `confirmar.html?m=<partido>&p=<jugador>&t=<token>`. Arranca en **Mis jugadores** (los que anotó quien está logueado; «Gustavo» y «Martín» viejos cuentan para esas cuentas). **Todos** muestra el partido entero. La página de confirmación no pide cuenta. Lee la ficha pública `confirmations/{token}` (sin teléfono) y, si el token coincide, guarda solo `confirmed` y `confirmedAt`.
+**Recordatorio:** un partido cancelado no muestra el cartel ni arma recordatorios. En el partido, **Enviar recordatorios** arma un mensaje por jugador con WhatsApp y un link corto `c/?k=<código>`. Arranca en **Mis jugadores** (los que anotó quien está logueado; «Gustavo» y «Martín» viejos cuentan para esas cuentas). **Todos** muestra el partido entero. La página de confirmación no pide cuenta. El link corto lee `links/{código}` y abre la misma `confirmar.html?m=&p=&t=`. Esa página lee la ficha pública `confirmations/{token}` (sin teléfono) y, si el token coincide, guarda solo `confirmed` y `confirmedAt`. El link largo viejo sigue abriendo esa página directo.
+
+**Link corto.** El mensaje de WhatsApp (recordatorio, aviso al subir de la espera, y el «¿Confirmás?» del botón del partido) lleva `https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=` más 8 caracteres. `c/index.html` lee `links/{código}` (`m`, `p`, `t`) y redirige a `confirmar.html` con esos tres datos. No hay acortador externo. Si escribir `links` tarda más de 2 segundos o las reglas todavía no lo permiten, el mensaje usa el link largo. El botón de WhatsApp del perfil (sin un partido elegido) sigue abriendo el chat sin link de confirmación. El aviso de cancelación tampoco lleva link.
+
+Hay que **volver a publicar** `firestore.rules` para abrir `links`. Se puede publicar la app antes: sin esa regla los mensajes siguen con el link largo. El mismo archivo trae las reglas de contactos y de `phone` vacío. Si esas todavía no están publicadas, el orden de los tres pasos de arriba sigue valiendo: app, después reglas, después abrir la app para migrar. Si los contactos ya están publicados, republicar este archivo solo suma `links` y el `shortCode` opcional del jugador.
 
 La lista del organizador muestra esa ficha, no el campo `confirmed` del jugador. Al anotar, al cobrar o al abrir la app, el organizador actualiza nombre, fecha y hora de la ficha y **no vuelve a escribir** `confirmed` ni `confirmedAt`. Así un «Sí, juego» no se borra. Si el jugador ya tenía token pero no ficha, **Enviar recordatorios** (y la primera carga) crea la ficha igual.
 
@@ -209,7 +241,7 @@ Si el partido empieza en **2 horas o menos** y a quien está logueado todavía l
 
 ### Armar los links desde afuera (sin abrir la app)
 
-`js/reminders.js` exporta `reminderLinks({ match, players, venue })`. Devuelve `[{ name, waUrl, confirmUrl }]` para cada jugador que tenga `phone` y `confirmToken`. El lugar por defecto es `Polideportivo Colegiales`. El origen del link es `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html`.
+`js/reminders.js` exporta `reminderLinks({ match, players, venue })`. Devuelve `[{ id, name, waUrl, confirmUrl }]` para cada jugador que tenga `phone` y `confirmToken`. El lugar por defecto es `Polideportivo Colegiales`. Si el jugador tiene `shortCode`, `confirmUrl` es `https://gustavofarg-hash.github.io/futbol-colegiales/c/?k={shortCode}`. Si no, sigue siendo `confirmar.html`.
 
 Con las reglas de este repo, `players` y `matches` **no** se leen sin una cuenta de organizador. Un script anónimo ya no puede armar los links por REST: el teléfono vive solo en `players`. La ficha pública es `confirmations/{token}` y no trae teléfonos. La app, con la sesión iniciada, crea esa ficha al anotar y también la primera vez que ve un jugador viejo.
 
@@ -250,6 +282,12 @@ El mensaje, igual que en la app:
 `{día}` es el día de la semana en español y minúsculas (domingo … sábado) de esa fecha de calendario. La nota, si hay, se agrega entre paréntesis justo antes del punto, con un espacio: ` hs (Cancha 2).`. El link:
 
 ```
+https://gustavofarg-hash.github.io/futbol-colegiales/c/?k={shortCode}
+```
+
+Ese link abre el mismo destino que el largo, que sigue funcionando:
+
+```
 https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m={matchId}&p={playerId}&t={confirmToken}
 ```
 
@@ -272,14 +310,14 @@ El pago va en el documento del jugador (no en una colección nueva). Hasta que s
 | campo | tipo |
 |---|---|
 | `name` | string, 1 a 60 |
-| `phone` | solo dígitos, formato wa.me, o vacío |
+| `phoneKey`, `hasPhone`, `phoneOwnerUid`, `phoneShared` | igual que en `players`. El número está en `rosterContacts` |
 | `createdBy` | quién lo guardó |
 | `createdAt`, `updatedAt` | número (epoch ms) |
 | `level` | número 1 a 10, el nivel de juego |
 | `positions` | lista: `Arquero`, `Defensa`, `Mediocampo`, `Ataque` |
 | `notes` | lista de notas `{ id, matchId, matchDate, matchTime, text, createdAt, updatedAt }`, la más nueva primero |
 
-Misma persona = mismo `phone`. Al anotar en un partido (o en la espera) con WhatsApp, si ese número no está, se guarda solo. En el formulario de alta, «Buscar guardados» encuentra por las primeras letras del nombre o del apellido (sin importar mayúsculas ni acentos: `ERN` → Ernesto Pereira, `perez` → José Pérez) o por cualquier tramo del teléfono (solo dígitos, se ignoran espacios, guiones y `+54 9`). Tocar un resultado lo anota en ese partido; si ya hay 14, va a la espera. También se puede escribir uno nuevo.
+Misma persona = mismo `phoneKey` (el hash del teléfono). Al anotar en un partido (o en la espera) con WhatsApp, si ese número no está, se guarda solo. En el formulario de alta, «Buscar guardados» encuentra por las primeras letras del nombre o del apellido (sin importar mayúsculas ni acentos: `ERN` → Ernesto Pereira, `perez` → José Pérez) o por un tramo del teléfono que ese organizador puede ver. Un número privado no aparece en la búsqueda. Tocar un resultado lo anota en ese partido; si ya hay 14, va a la espera. También se puede escribir uno nuevo.
 
 Tocá un jugador en un partido o en Jugadores para abrir el perfil (el mismo teléfono). Ahí se editan el nivel, las posiciones y las notas de un partido. «Jugó N veces» y «Mayormente jueves · 21:00» salen solos de los partidos ya pasados en la lista principal (la espera y los que todavía no se jugaron no cuentan).
 

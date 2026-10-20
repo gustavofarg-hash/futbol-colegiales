@@ -36,7 +36,13 @@ function viewOf(dbMatch, dbPlayer) {
 function cardView(card) {
   if (!card || card.matchId !== matchId || card.playerId !== playerId) return null;
   return {
-    match: { date: card.date, time: card.time, note: card.note || '' },
+    match: {
+      date: card.date,
+      time: card.time,
+      note: card.note || '',
+      notes: card.notes || '',
+      cancelled: card.cancelled === true,
+    },
     player: {
       id: playerId,
       name: card.name,
@@ -90,6 +96,8 @@ function saveDemo(answer) {
     ? card.matchId === matchId && card.playerId === playerId
     : confirmationAllowed(player, matchId, token);
   if (!allowed) return false;
+  const match = db.matches?.[matchId];
+  if (match?.cancelled === true || card?.cancelled === true) return false;
   const now = Date.now();
   if (card) {
     card.confirmed = answer;
@@ -112,6 +120,19 @@ function render(state) {
     return;
   }
   const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
+  if (match.cancelled === true) {
+    const reason = String(match.notes || '').trim();
+    root.innerHTML = `
+      <section class="detail-head confirm-card">
+        <h1>${esc(player.name)}</h1>
+        <div class="when">${esc(when)}</div>
+        <div class="note">${esc(VENUE)}</div>
+        <p class="match-cancelled" id="confirm-cancelled">Este partido se canceló.</p>
+        ${reason ? `<p class="match-notes-text">${esc(reason)}</p>` : ''}
+        <p class="hint">No hace falta confirmar si jugás.</p>
+      </section>`;
+    return;
+  }
   const answered = player.confirmed === 'si' || player.confirmed === 'no';
   const thanks = player.confirmed === 'si'
     ? '¡Gracias! Quedó anotado que jugás.'
@@ -135,6 +156,7 @@ function render(state) {
 }
 
 async function choose(state, answer) {
+  if (state.match?.cancelled === true) return;
   if (!confirmationAllowed(state.player, matchId, token)) return;
   try {
     if (state.firebase) await saveFirebase(state.fs, state.db, answer);

@@ -89,11 +89,14 @@ try {
   await G.page.waitForFunction(() => !document.body.innerText.includes('Jugador Editado'), null, { timeout: T });
   check('Quitar jugador se refleja en Gustavo', (await G.page.textContent('#slot-count')) === '0/14');
 
-  // Gustavo agrega otro jugador y borra el partido (debe borrar también sus jugadores)
+  // Con un jugador anotado no se borra: se quita y el partido vacío sí se borra.
   await G.page.click('#btn-add-player');
   await G.page.fill('#player-form [name=name]', 'Jugador Dos');
   await G.page.click('#player-form button[type=submit]');
   await M.page.waitForSelector('.slot:has-text("Jugador Dos")', { timeout: T });
+  await G.page.click('.slot:has-text("Jugador Dos") .more-btn');
+  await G.page.click('#pm-del');
+  await G.page.waitForFunction(() => !document.body.innerText.includes('Jugador Dos'), null, { timeout: T });
   await G.page.click('#btn-del-match');
   await M.page.waitForSelector('text=No encontramos este partido', { timeout: T });
   check('Borrar partido se refleja en Martín', true);
@@ -107,13 +110,18 @@ let leftover = null;
 try {
   leftover = await Promise.race([new Promise((r) => setTimeout(() => r('timeout (Firestore no responde)'), 20000)), G.page.evaluate(async (note) => {
     const s = window.__app.store; if (s?.mode !== 'firebase') return 'no-firebase';
-    const { collection, getDocs, deleteDoc } = s.fs;
+    const { collection, getDocs, deleteDoc, updateDoc } = s.fs;
     const out = { matchesDeleted: 0, playersDeleted: 0 };
     const ms = await getDocs(collection(s.db, 'matches'));
     const testIds = new Set();
-    for (const d of ms.docs) if ((d.data().note || '').startsWith(note)) { testIds.add(d.id); await deleteDoc(d.ref); out.matchesDeleted++; }
+    for (const d of ms.docs) if ((d.data().note || '').startsWith(note)) testIds.add(d.id);
     const ps = await getDocs(collection(s.db, 'players'));
     for (const d of ps.docs) if (testIds.has(d.data().matchId) || /^Jugador (Prueba|Editado|Dos)$/.test(d.data().name)) { await deleteDoc(d.ref); out.playersDeleted++; }
+    for (const d of ms.docs) if (testIds.has(d.id)) {
+      if ((d.data().playerCount || 0) > 0) await updateDoc(d.ref, { playerCount: 0 });
+      await deleteDoc(d.ref);
+      out.matchesDeleted++;
+    }
     out.matchesRemaining = (await getDocs(collection(s.db, 'matches'))).size;
     out.playersRemaining = (await getDocs(collection(s.db, 'players'))).size;
     return out;

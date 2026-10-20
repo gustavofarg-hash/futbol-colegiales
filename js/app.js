@@ -1,30 +1,49 @@
 import { ACCESS_CODE, CAPACITY, VENUE } from '../config.js';
 import { createStore } from './store.js';
 import { parseMatchesFromText } from './parser.js';
-import { normalizePhone, displayFromWa, isAndroidUa, normalizeWaChoice, WA_CHOICE_KEY, waSendUrl } from './phone.js';
+import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
 import { moveWaiting, overflowPatches, sortWaiting } from './waiting.js';
 import {
-  confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
+  cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
   needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress,
   reservationClearedByAnswer,
 } from './reminders.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, playerMatchesPerson, rosterByPhone, searchRoster } from './roster.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, pastMatches, playerRecord, playerStats, sortedNotes, upcomingMatches } from './profile.js';
+import { isShortCode, shortConfirmUrl } from './short.js';
+import { PRIVATE_WA_TEXT } from './privacy.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, keptSignupIds, matchSignupState, noteWhen, playerRecord, playerStats, sortedNotes, splitNear, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
+import { cyclePlayer, emptyTeams, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 
 /* ───────── utilidades ───────── */
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function phoneHidden(p) {
+  return !!(p && !String(p.phone || '').trim() && (p.phonePrivate || p.hasPhone));
+}
+function phoneSub(p) {
+  if (p?.phone) return `<span>${esc(displayFromWa(p.phone))}</span>`;
+  if (phoneHidden(p)) return `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>`;
+  return '<span>Sin número</span>';
+}
+function waButton(p, text) {
+  if (p?.phone) return `<a class="wa-btn" href="${esc(waHref(p.phone, text || ''))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>`;
+  if (phoneHidden(p)) return `<button type="button" class="wa-btn" disabled aria-label="${esc(PRIVATE_WA_TEXT)}">${ICON.wa}</button>`;
+  return '';
+}
+function rosterIdentity(person) {
+  return { phone: person?.phone || '', phoneKey: person?.phoneKey || '', rosterId: person?.id || '', name: person?.name || '' };
+}
 const CODE_KEY = 'f7c-code';
 const ICON = {
   wa: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2l-.4-.2z"/></svg>',
@@ -55,28 +74,20 @@ const app = {
   signupDraft: null,
   who: '',
   loaded: false,
+  history: [],
+  historyFilter: null,
+  historyMeta: null,
+  historyError: '',
+  matchMiss: {},
+  showLater: false,
 };
 window.__app = app; // útil para depurar / tests
 
-function readWaChoice() {
-  try { return normalizeWaChoice(localStorage.getItem(WA_CHOICE_KEY)); }
-  catch { return null; }
-}
-function saveWaChoice(choice) {
-  const clean = normalizeWaChoice(choice);
-  if (!clean) return;
-  try { localStorage.setItem(WA_CHOICE_KEY, clean); } catch { /* modo privado */ }
-}
-function waChoice() {
-  return readWaChoice() || 'ask';
+function clearWaChoice() {
+  try { localStorage.removeItem(WA_CHOICE_KEY); } catch { /* modo privado */ }
 }
 function waHref(phone, text) {
-  return waSendUrl({
-    phone: phone || '',
-    text: text || '',
-    choice: waChoice(),
-    android: isAndroidUa(navigator.userAgent),
-  });
+  return waSendUrl({ phone: phone || '', text: text || '' });
 }
 
 /* ───────── toast ───────── */
@@ -188,39 +199,117 @@ function sortedMatches() {
 /* ───────── router ───────── */
 function route() {
   const h = location.hash.replace(/^#\/?/, '');
-  const [name, id] = h.split('/');
+  const [name, id, extra] = h.split('/');
+  if (name === 'partido' && id && extra === 'equipos') return { name: 'teams', id: decodeURIComponent(id) };
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'historial') return { name: 'history' };
-  if (name === 'jugadores') return { name: 'roster' };
-  if (name === 'pagos') return { name: 'pagos' };
+  if (name === 'jugadores') return { name: 'roster', pay: id === 'pagos' };
+  if (name === 'pagos') return { name: 'roster', pay: true };
   if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
 }
 window.addEventListener('hashchange', render);
 
+/* Al abrir la app (sesión nueva) siempre entra Próximos partidos, con “más adelante” cerrado.
+   Recargar o volver atrás, en la misma sesión, deja la pestaña y el desplegable como estaban. */
+function rememberLater(open) {
+  app.showLater = !!open;
+  try {
+    if (app.showLater) sessionStorage.setItem('f7c-later', '1');
+    else sessionStorage.removeItem('f7c-later');
+  } catch { /* modo privado */ }
+}
+function openOnUpcoming() {
+  try {
+    if (sessionStorage.getItem('f7c-session')) {
+      app.showLater = sessionStorage.getItem('f7c-later') === '1';
+      return;
+    }
+    sessionStorage.setItem('f7c-session', '1');
+    sessionStorage.removeItem('f7c-tab');
+    sessionStorage.removeItem('f7c-later');
+    const name = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || '';
+    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial';
+    if (section && location.hash && location.hash !== '#/' && location.hash !== '#') {
+      history.replaceState(null, '', `${location.pathname}${location.search}#/`);
+    }
+  } catch { /* modo privado */ }
+}
+openOnUpcoming();
+
 /* ───────── render ───────── */
+function savedTab() {
+  try {
+    const value = sessionStorage.getItem('f7c-tab');
+    if (value === 'roster' || value === 'history' || value === 'home') return value;
+  } catch {}
+  return 'home';
+}
+function hashForTab(tab) {
+  if (tab === 'history') return '#/historial';
+  if (tab === 'roster') return '#/jugadores';
+  return '#/';
+}
+function tabFor(r) {
+  if (r.name === 'history') return 'history';
+  if (r.name === 'roster') return 'roster';
+  if (r.name === 'home') return 'home';
+  if (r.name === 'match' || r.name === 'teams') {
+    const match = matchById(r.id);
+    return match?.date && match.date < todayISO() ? 'history' : 'home';
+  }
+  if (r.name === 'profile') {
+    if (app.profileMatchId) {
+      const match = matchById(app.profileMatchId);
+      return match?.date && match.date < todayISO() ? 'history' : 'home';
+    }
+    return 'roster';
+  }
+  return savedTab();
+}
+function paintTabs(r) {
+  const tab = tabFor(r);
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'history') {
+    try { sessionStorage.setItem('f7c-tab', tab); } catch {}
+  }
+  document.querySelectorAll('#tabbar a').forEach((link) => {
+    const on = link.dataset.tab === tab;
+    if (on) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  });
+  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history';
+  $('#btn-back').hidden = root || !app.loaded;
+  requestAnimationFrame(placeBars);
+}
+function placeBars() {
+  const header = document.querySelector('.topbar');
+  const bar = document.getElementById('tabbar');
+  const slot = document.getElementById('tab-slot');
+  const action = document.querySelector('#view .actionbar');
+  if (header) document.documentElement.style.setProperty('--header-h', `${header.offsetHeight}px`);
+  if (bar) {
+    document.documentElement.style.setProperty('--tabbar-h', `${bar.offsetHeight}px`);
+    if (slot && bar.parentElement === document.getElementById('sheet')) slot.style.minHeight = `${bar.offsetHeight}px`;
+  }
+  document.documentElement.style.setProperty('--actionbar-h', `${action ? action.offsetHeight : 0}px`);
+}
 function render() {
   const r = route();
-  $('#btn-back').hidden = r.name === 'home';
-  const who = $('#btn-who');
-  who.hidden = !app.who; who.textContent = app.who || '';
-  const mine = $('#btn-mine');
-  if (mine) {
-    mine.hidden = !app.who;
-    mine.textContent = app.mine ? 'Todos' : 'Mis';
-    mine.classList.toggle('mine-on', app.mine);
-    mine.setAttribute('aria-pressed', app.mine ? 'true' : 'false');
-  }
+  paintTabs(r);
   if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
   if (r.name === 'match') renderMatch(r.id);
+  else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
-  else if (r.name === 'roster') renderRoster();
+  else if (r.name === 'roster') {
+    if (r.pay) renderPagos();
+    else renderRoster();
+  }
   else if (r.name === 'profile') renderProfile(r.id);
-  else if (r.name === 'pagos') renderPagos();
   else if (r.name === 'users') renderUsers();
   else renderHome();
+  requestAnimationFrame(placeBars);
 }
 
 function matchCard(m) {
@@ -233,7 +322,7 @@ function matchCard(m) {
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
       <div class="match-title">${esc(capitalize(labelDate(m.date)))}</div>
-      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}<span>${esc(m.time || '--:--')} hs</span></div>
+      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(m.time || '--:--')} hs</span></div>
       ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
       ${waitingOf(m.id).length ? `<div class="match-note">${waitingOf(m.id).length} en espera</div>` : ''}
     </div>
@@ -244,32 +333,30 @@ function matchCard(m) {
   </a></li>`;
 }
 
-function homeNav(current) {
-  const n = pastMatches(app.matches).length;
-  const item = (id, href, label, name, wide) =>
-    `<a class="btn roster-nav${wide ? ' nav-wide' : ''}" id="${id}" href="${href}"${current === name ? ' aria-current="page"' : ''}>${label}</a>`;
-  return `<nav class="home-nav" aria-label="Menú">
-    ${item('btn-roster', '#/jugadores', `Jugadores${app.roster.length ? ` · ${app.roster.length}` : ''}`, 'roster')}
-    ${item('btn-pagos', '#/pagos', 'Pagos', 'pagos')}
-    ${item('btn-historial', '#/historial', `Historial${n ? ` · ${n}` : ''}`, 'historial', true)}
-  </nav>`;
+function rosterSwitch(pay) {
+  return `<div class="chips" id="roster-section">
+    <a class="btn chip ${pay ? '' : 'on'}" id="btn-roster-list" href="#/jugadores">Lista</a>
+    <a class="btn chip ${pay ? 'on' : ''}" id="btn-pagos" href="#/jugadores/pagos">Pagos</a>
+  </div>`;
 }
 
 function renderHome() {
-  const today = todayISO();
-  const limit = addDays(today, 6);
   const upcoming = currentMatches(app.matches);
   const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && minePlayer(p))) : upcoming;
-  const next = all.filter((m) => m.date <= limit);
-  const later = all.filter((m) => m.date > limit);
+  const { next, later } = splitNear(all);
+  const open = app.showLater && later.length > 0;
+  const emptyHint = later.length
+    ? 'Los que vienen después están en el botón de abajo.'
+    : 'Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.';
   $('#view').innerHTML = `
     ${reminderBanners(next)}
-    ${homeNav()}
+    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
-      <div class="empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
-      <p class="small">Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.</p></div>`}
-    ${later.length ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
+      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
+      <p class="small">${emptyHint}</p></div>`}
+    ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
+    ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
     <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn" id="btn-import">${ICON.paste}Importar desde texto</button>
@@ -277,24 +364,128 @@ function renderHome() {
     </div></div>`;
   $('#btn-add-match').onclick = () => openMatchForm();
   $('#btn-import').onclick = () => openImport();
+  const laterBtn = $('#btn-later');
+  if (laterBtn) laterBtn.onclick = () => { rememberLater(!app.showLater); renderHome(); };
   bindReminderBanners();
 }
 
-function renderHistory() {
-  const past = pastMatches(app.matches);
+function renderTeams(id) {
+  const m = matchById(id);
+  if (!m) {
+    $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
+    return;
+  }
+  const main = playersOf(id);
+  const ids = main.map((p) => p.id);
+  const teams = normalizeTeams(m.teams, ids);
+  const balance = teamsBalance(teams);
+  const taken = new Set([...teams.bib, ...teams.plain]);
+  const free = main.filter((p) => !taken.has(p.id));
+  const readOnly = !canAdd(m, actor().uid);
+  const byId = new Map(main.map((p) => [p.id, p]));
+  const row = (player) => {
+    if (!player) return '';
+    return readOnly
+      ? `<li><div class="team-player" data-team-name="${esc(player.id)}">${esc(player.name)}</div></li>`
+      : `<li><button type="button" class="team-player" data-team-player="${esc(player.id)}">${esc(player.name)}</button></li>`;
+  };
+  const group = (title, list, listId) => `
+    <section>
+      <h2 class="section">${title}</h2>
+      ${list.length ? `<ul class="team-list" id="${listId}">${list.map(row).join('')}</ul>` : `<p class="empty-wait" id="${listId}">Nadie</p>`}
+    </section>`;
+  const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
+  const share = teamsMessage({ when, venue: VENUE, players: main, teams });
   $('#view').innerHTML = `
-    ${homeNav('historial')}
+    <section class="detail-head">
+      <h1>Equipos</h1>
+      <div class="when">${esc(when)} · ${esc(VENUE)}</div>
+      <p class="hint">Con los anotados. La lista de espera no entra.</p>
+      ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : '<p class="hint">Tocá un jugador para moverlo: sin asignar, con pechera, sin pechera.</p>'}
+    </section>
+    <div class="team-board" id="team-board">
+      <div class="team-counts">
+        <div class="team-count"><strong id="team-bib-count">${balance.bib}</strong><span>Con pechera</span></div>
+        <div class="team-count"><strong id="team-plain-count">${balance.plain}</strong><span>Sin pechera</span></div>
+      </div>
+      ${balance.balanced ? '' : '<p class="team-warn" id="team-balance">Está desbalanceado</p>'}
+      ${main.length ? '' : '<p class="empty-wait">No hay jugadores anotados.</p>'}
+      ${group('Sin asignar', free, 'team-unassigned')}
+      ${group('Con pechera', teams.bib.map((pid) => byId.get(pid)).filter(Boolean), 'team-bib')}
+      ${group('Sin pechera', teams.plain.map((pid) => byId.get(pid)).filter(Boolean), 'team-plain')}
+      <div class="team-actions">
+        ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Limpiar</button>'}
+        <a class="btn nav-wide" id="btn-teams-wa" href="${esc(waHref('', share))}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
+      </div>
+    </div>`;
+  const save = (next, msg) => run(app.store.setTeams(m.id, normalizeTeams(next, ids), app.who), msg);
+  if (!readOnly) {
+    $('#team-board').onclick = (e) => {
+      const btn = e.target.closest('[data-team-player]');
+      if (!btn) return;
+      save(cyclePlayer(teams, btn.dataset.teamPlayer, ids));
+    };
+    $('#btn-teams-shuffle').onclick = () => save(shuffleTeams(ids), 'Equipos mezclados');
+    $('#btn-teams-clear').onclick = () => save(emptyTeams(), 'Equipos limpios');
+  }
+}
+
+function renderHistory() {
+  const past = app.history || [];
+  const filter = app.historyFilter || {};
+  const caption = app.historyMeta?.caption || 'Partidos pasados, los más recientes primero.';
+  const active = !!(filter.day || filter.from || filter.to);
+  $('#view').innerHTML = `
     <h2 class="section">Historial de partidos</h2>
-    <p class="hint roster-lead">Los partidos cuya fecha ya pasó. Se pueden anotar pagos y corregir la lista.</p>
+    <form id="history-filter" class="history-filter">
+      <p class="hint roster-lead">Por defecto, los últimos 30. Una fecha, o un desde y hasta. Si completás la fecha, esa manda.</p>
+      <label class="field"><span>Una fecha</span><input type="date" id="hist-day" value="${esc(filter.day || '')}"></label>
+      <div class="row">
+        <label class="field"><span>Desde</span><input type="date" id="hist-from" value="${esc(filter.from || '')}"></label>
+        <label class="field"><span>Hasta</span><input type="date" id="hist-to" value="${esc(filter.to || '')}"></label>
+      </div>
+      <div class="history-actions">
+        <button type="submit" class="btn primary" id="hist-apply">Ver</button>
+        <button type="button" class="btn" id="hist-clear"${active ? '' : ' hidden'}>Limpiar</button>
+      </div>
+    </form>
+    <p class="hint" id="hist-caption">${esc(caption)}</p>
+    ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
     ${past.length ? `<ul class="match-list" id="list-history">${past.map(matchCard).join('')}</ul>` : `
-      <div class="empty" id="list-history"><div class="big">📅</div><p><b>Todavía no hay partidos pasados.</b></p>
-      <p class="small">Cuando pase el día, el partido sale del inicio y queda acá.</p></div>`}
+      <div class="empty" id="list-history"><div class="big">📅</div><p><b>${active ? 'Nada en ese filtro.' : 'Todavía no hay partidos pasados.'}</b></p>
+      <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}
     <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>`;
+  $('#history-filter').onsubmit = (e) => {
+    e.preventDefault();
+    const day = $('#hist-day').value;
+    const from = $('#hist-from').value;
+    const to = $('#hist-to').value;
+    const next = day ? { day } : ((from || to) ? { from, to } : null);
+    app.historyFilter = next;
+    app.store.setHistoryFilter(next);
+  };
+  const clear = $('#hist-clear');
+  if (clear) clear.onclick = () => {
+    app.historyFilter = null;
+    app.store.setHistoryFilter(null);
+  };
 }
 
 function renderMatch(id) {
   const m = matchById(id);
   if (!m) {
+    if (app.matchMiss[id] !== 'done') {
+      if (app.matchMiss[id] !== 'loading') {
+        app.matchMiss[id] = 'loading';
+        Promise.resolve(app.store.ensureMatch?.(id)).finally(() => {
+          app.matchMiss[id] = 'done';
+          const current = route();
+          if (current.name === 'match' && current.id === id) render();
+        });
+      }
+      $('#view').innerHTML = `<div class="empty" id="match-missing"><div class="big">⚽</div><p><b>Buscando el partido…</b></p></div>`;
+      return;
+    }
     $('#view').innerHTML = `<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`;
     return;
   }
@@ -319,38 +510,52 @@ function renderMatch(id) {
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name">${esc(p.name)}</div>
-          <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
+          <div class="sub">${phoneSub(p)}
             ${addedTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payMarkup(p)}
           ${promoBadge(p)}
         </button>
         ${readOnly ? '' : confirmSpotButton(p)}
         ${readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>`}
-        ${p.phone ? `<a class="wa-btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
+        ${waButton(p, waMessage(m, p))}
         ${readOnly ? '' : `<button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>`}
       </li>`);
   }
   const full = everyone.length >= cap;
   const collected = collectedLine(everyone);
   const mineLine = mineSummary(app.players.filter((p) => p.matchId === id), app.who).text;
+  const assigned = normalizeTeams(m.teams, everyone.map((p) => p.id));
+  const teamCount = assigned.bib.length + assigned.plain.length;
+  const signed = everyone.length + waitingOf(id).length;
+  const canEdit = canEditMatch(m, who.uid);
+  const notesText = String(m.notes || '').trim();
   $('#view').innerHTML = `
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
-      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
+      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(VENUE)}</div>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
+      ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
+      <div class="match-notes" id="match-notes">
+        <div class="match-notes-head"><strong>Notas</strong>${canEdit ? '<button type="button" class="btn" id="btn-notes">Editar</button>' : ''}</div>
+        ${notesText ? `<p class="match-notes-text">${esc(m.notes)}</p>` : '<p class="hint">Sin notas.</p>'}
+      </div>
       <div class="meta"><strong id="slot-count">${everyone.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (everyone.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - everyone.length}`}</span></div>
       ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
       <div class="mine-line" id="mine-stats">${esc(mineLine)}</div>
       ${everyone.length ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary(everyone).text)}</div>` : ''}
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
-        ${canEditMatch(m, who.uid) ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
-        ${canDelete(m, who.uid) ? `<button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>` : ''}
+        ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
+        ${canDelete(m, who.uid) && signed === 0 ? `<button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>` : ''}
       </div>
+      ${canEdit && signed > 0 && !m.cancelled ? '<button type="button" class="btn danger block" id="btn-cancel-match">Cancelar partido</button>' : ''}
+      ${canEdit && m.cancelled ? '<button type="button" class="btn block" id="btn-reactivate-match">Reactivar partido</button>' : ''}
+      <button type="button" class="btn block" id="btn-teams">Equipos${teamCount ? ` · ${assigned.bib.length}-${assigned.plain.length}` : ''}</button>
     </section>
     ${readOnly ? '<p class="hint" id="match-readonly">Solo lectura. No podés anotar ni cambiar este partido.</p>' : ''}
     ${reminderBanners([m])}
-    ${readOnly ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
+    ${readOnly || m.cancelled ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
+    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
@@ -398,26 +603,37 @@ function renderMatch(id) {
   };
   $('#btn-copy').onclick = () => copyText(listText(m)).then((ok) => toast(ok ? 'Lista copiada' : 'No se pudo copiar'));
   $('#btn-share').onclick = () => shareText(listText(m));
+  $('#btn-teams').onclick = () => { location.hash = `#/partido/${encodeURIComponent(m.id)}/equipos`; };
   if ($('#btn-edit-match')) $('#btn-edit-match').onclick = () => openMatchForm(m);
+  if ($('#btn-notes')) $('#btn-notes').onclick = () => openNotes(m);
+  if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = () => openCancel(m);
+  if ($('#btn-reactivate-match')) $('#btn-reactivate-match').onclick = () => reactivateMatch(m);
   if ($('#btn-del-match')) $('#btn-del-match').onclick = () => {
-    const n = playersOf(m.id).length + waitingOf(m.id).length;
-    if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs${n ? ` y sus ${n} jugadores` : ''}?`)) return;
+    if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs?`)) return;
     run(app.store.deleteMatch(m.id), 'Partido borrado');
     location.hash = '#/';
   };
 }
 
 /* ───────── textos ───────── */
+function confirmUrlFor(m, p) {
+  if (isShortCode(p?.shortCode)) return shortConfirmUrl(p.shortCode);
+  if (p?.confirmToken && p?.id) return confirmPageUrl({ matchId: m.id, playerId: p.id, token: p.confirmToken });
+  return '';
+}
 function waMessage(m, p) {
   const first = (p.name || '').trim().split(/\s+/)[0];
+  const link = confirmUrlFor(m, p);
   return `¡Hola ${first}! Te anoté para el fútbol 7 en ${VENUE} el ${labelDate(m.date)} a las ${m.time} hs.` +
-    (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽`;
+    (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽` + (link ? ` ${link}` : '');
 }
 function listText(m) {
   const ps = playersOf(m.id);
   const cap = m.capacity || CAPACITY;
   const lines = [`⚽ Fútbol 7 · ${VENUE}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
   if (m.note) lines.push(`📝 ${m.note}`);
+  if (m.cancelled) lines.push('Cancelado');
+  if (String(m.notes || '').trim()) lines.push(String(m.notes).trim());
   lines.push('');
   for (let i = 0; i < Math.max(cap, ps.length); i++) {
     const p = ps[i];
@@ -458,12 +674,12 @@ function waitingSection(m, full, readOnly) {
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name">${esc(p.name)}</div>
-          <div class="sub">${p.phone ? `<span>${esc(displayFromWa(p.phone))}</span>` : '<span>Sin número</span>'}
+          <div class="sub">${phoneSub(p)}
             ${addedTag(p)}${confirmTag(p)}</div>
           ${payMarkup(p)}
         </button>
         ${readOnly ? '' : `<button type="button" class="btn promote-btn" data-promote="${esc(p.id)}" ${full ? 'disabled' : ''} aria-label="Subir a ${esc(p.name)} al partido">Subir al partido</button>`}
-        ${p.phone ? `<a class="wa-btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>` : ''}
+        ${waButton(p, waMessage(m, p))}
         <button type="button" class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
       </li>`;
   }).join('');
@@ -519,15 +735,19 @@ function bindReminderBanners() {
 }
 
 async function openReminders(m) {
+  if (m?.cancelled === true) { toast('El partido está cancelado. No se mandan recordatorios.'); return; }
   const everyone = [...playersOf(m.id), ...waitingOf(m.id)];
   if (!everyone.length) { toast('No hay jugadores para avisar'); return; }
   let showAll = false;
   openSheet(`<h3>Enviar recordatorios</h3><p class="hint">Armando los links…</p>`);
   const tokens = new Map();
+  const codes = new Map();
   try {
     for (const p of everyone) {
       if (!p.phone) continue;
       tokens.set(p.id, await app.store.ensureConfirmToken(p.id));
+      const code = await app.store.ensureShortLink(p.id);
+      if (code) codes.set(p.id, code);
     }
   } catch (e) {
     console.error(e);
@@ -535,15 +755,22 @@ async function openReminders(m) {
     closeSheet();
     return;
   }
-  const fresh = everyone.map((p) => ({ ...p, confirmToken: tokens.get(p.id) || p.confirmToken }));
+  const fresh = everyone.map((p) => ({
+    ...p,
+    confirmToken: tokens.get(p.id) || p.confirmToken,
+    shortCode: codes.get(p.id) || p.shortCode,
+  }));
   const linkById = new Map(reminderLinks({
-    match: m, players: fresh, venue: VENUE, choice: waChoice(), android: isAndroidUa(navigator.userAgent),
-  }).map((row) => [new URL(row.confirmUrl).searchParams.get('p'), row]));
+    match: m, players: fresh, venue: VENUE,
+  }).map((row) => [row.id, row]));
   const paint = () => {
     const visible = showAll ? fresh : playersForOrganizer(fresh, app.who);
     const prog = reminderProgress(visible);
     const rows = visible.map((p) => {
       const link = linkById.get(p.id);
+      if (phoneHidden(p)) {
+        return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub private-wa">${esc(PRIVATE_WA_TEXT)}</div></div></li>`;
+      }
       if (!link) {
         return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div><button type="button" class="btn" data-remind-phone="${esc(p.id)}">Cargar WhatsApp</button></li>`;
       }
@@ -622,7 +849,77 @@ function promoteToMatch(m, player, disabled) {
   run(job);
 }
 
+function openNotes(m) {
+  openSheet(`
+    <form id="notes-form" novalidate>
+      <h3>Notas</h3>
+      <p class="hint">Motivo de una cancelación, o algo que pasó en el partido. Lo ven quienes pueden ver este partido.</p>
+      <label class="field"><span>Notas</span><textarea name="notes" maxlength="2000" autofocus>${esc(m.notes || '')}</textarea></label>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  $('#notes-form').onsubmit = (e) => {
+    e.preventDefault();
+    const notes = String(new FormData(e.target).get('notes') || '').slice(0, 2000);
+    closeSheet();
+    run(app.store.updateMatch(m.id, { notes }, app.who), 'Notas guardadas');
+  };
+}
+
+function openCancel(m) {
+  const signed = playersOf(m.id).length + waitingOf(m.id).length;
+  openSheet(`
+    <form id="cancel-form" novalidate>
+      <h3>Cancelar partido</h3>
+      <p class="hint">Queda cancelado, con sus ${signed} jugadores. No se borra. No se mandan recordatorios y el link de confirmación deja de pedir sí o no.</p>
+      <p class="hint">Si querés, escribí el motivo en las notas.</p>
+      <label class="field"><span>Notas</span><textarea id="cancel-notes" name="notes" maxlength="2000">${esc(m.notes || '')}</textarea></label>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Volver</button><button class="btn danger" type="submit">Cancelar partido</button></div>
+    </form>`);
+  $('#cancel-form').onsubmit = (e) => {
+    e.preventDefault();
+    const notes = String(new FormData(e.target).get('notes') || '').slice(0, 2000);
+    closeSheet();
+    const next = { ...m, notes, cancelled: true };
+    const job = (async () => {
+      await app.store.updateMatch(m.id, {
+        cancelled: true,
+        cancelledAt: Date.now(),
+        cancelledBy: actor().uid,
+        notes,
+      }, app.who);
+      await offerCancelWhatsApp(next);
+    })();
+    run(job, 'Partido cancelado');
+  };
+}
+
+function reactivateMatch(m) {
+  if (!confirm('¿Volver a activar este partido?')) return;
+  run(app.store.updateMatch(m.id, { cancelled: false }, app.who), 'Partido reactivado');
+}
+
+async function offerCancelWhatsApp(match) {
+  const people = [...playersOf(match.id), ...waitingOf(match.id)];
+  const links = cancelLinks({ match, players: people, venue: VENUE });
+  if (!links.length) {
+    toast(people.some(phoneHidden) ? PRIVATE_WA_TEXT : 'Nadie tiene WhatsApp para avisar la cancelación.');
+    return;
+  }
+  if (!confirm('¿Avisar por WhatsApp a los jugadores que se canceló?')) return;
+  const rows = links.map((link) => `
+    <li class="remind-row">
+      <div class="who"><div class="name">${esc(link.name)}</div></div>
+      <a class="btn primary" href="${esc(link.waUrl)}" target="_blank" rel="noopener">Avisar</a>
+    </li>`).join('');
+  openSheet(`
+    <h3>Avisar la cancelación</h3>
+    <p class="hint">Cada Avisar abre WhatsApp con el mensaje. No se manda solo y no incluye el link para confirmar.</p>
+    <ul class="remind-list" id="cancel-links">${rows}</ul>
+    <div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
+}
+
 async function offerPromotionWhatsApp(player, match) {
+  if (phoneHidden(player)) { toast(PRIVATE_WA_TEXT); return; }
   const phone = String(player?.phone || '').trim();
   if (!phone) {
     toast(`${player.name} no tiene WhatsApp para avisarle. Lo podés cargar en el perfil.`);
@@ -630,7 +927,10 @@ async function offerPromotionWhatsApp(player, match) {
   }
   const token = await app.store.ensureConfirmToken(player.id);
   if (!confirm(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`)) return;
-  const confirmUrl = confirmPageUrl({ matchId: match.id, playerId: player.id, token });
+  const code = await app.store.ensureShortLink(player.id);
+  const confirmUrl = isShortCode(code)
+    ? shortConfirmUrl(code)
+    : confirmPageUrl({ matchId: match.id, playerId: player.id, token });
   const text = promotionMessage({ player, match, venue: VENUE, confirmUrl });
   openWa({ phone, text });
 }
@@ -641,16 +941,9 @@ async function copyText(text) {
   }
 }
 async function shareText(text) {
-  const choice = readWaChoice();
-  const android = isAndroidUa(navigator.userAgent);
-  if (android && (choice === 'whatsapp' || choice === 'business')) {
-    openWa({ text });
-    return;
-  }
-  if ((!choice || choice === 'ask') && navigator.share) {
+  if (navigator.share) {
     try { await navigator.share({ text }); return; } catch (e) { if (e.name === 'AbortError') return; }
   }
-  // Sin Web Share: abrir WhatsApp con la lista lista para mandar
   const ok = await copyText(text);
   toast(ok ? 'Lista copiada. Pegala en el grupo.' : 'No se pudo compartir');
   openWa({ text });
@@ -658,56 +951,51 @@ async function shareText(text) {
 
 /* ───────── sheet (dialog) ───────── */
 const sheet = $('#sheet');
+const tabbar = $('#tabbar');
+const tabSlot = $('#tab-slot');
 let sheetLocked = false;
+function restoreTabs() {
+  if (!tabbar || !tabSlot || tabbar.parentElement === tabSlot) return;
+  tabSlot.append(tabbar);
+  tabSlot.style.minHeight = '';
+}
+/* Mientras hay una hoja abierta, las pestañas viven dentro del diálogo
+   para seguir tocables. La hoja queda debajo y no las tapa. */
+function liftTabs() {
+  if (!tabbar || !sheet.open) return;
+  placeBars();
+  if (tabbar.parentElement === sheet) return;
+  if (tabSlot) tabSlot.style.minHeight = `${tabbar.offsetHeight}px`;
+  sheet.prepend(tabbar);
+  placeBars();
+}
 function openSheet(html, { locked = false } = {}) {
   sheetLocked = locked;
+  restoreTabs();
   sheet.innerHTML = `<div class="sheet-body">${html}</div>`;
   if (!sheet.open) sheet.showModal();
+  liftTabs();
   const first = sheet.querySelector('[autofocus]');
   if (first) setTimeout(() => first.focus(), 50);
   return sheet;
 }
 function closeSheet() { sheetLocked = false; if (sheet.open) sheet.close(); }
+if (tabbar) tabbar.addEventListener('click', (e) => {
+  const link = e.target.closest('a[href]');
+  if (!link || !sheet.open) return;
+  e.preventDefault();
+  const href = link.getAttribute('href');
+  closeSheet();
+  if (href && location.hash !== href) location.hash = href;
+});
 sheet.addEventListener('cancel', (e) => { if (sheetLocked) e.preventDefault(); });
 sheet.addEventListener('click', (e) => {
   if (e.target === sheet && !sheetLocked) closeSheet();
   if (e.target.closest('[data-close]')) closeSheet();
 });
 
-function waChoiceBlock() {
-  const current = waChoice();
-  const btn = (id, label) => `<button type="button" class="btn${current === id ? ' primary' : ''}" id="wa-choice-${id}" aria-pressed="${current === id ? 'true' : 'false'}">${label}</button>`;
-  return `<div id="wa-choice">
-    <h3>¿Desde qué WhatsApp querés mandar los mensajes?</h3>
-    <p class="hint" id="wa-choice-note">Si tenés dos WhatsApp (Dual Messenger), el celular te va a dejar elegir.</p>
-    <div class="menu">
-      ${btn('ask', 'Que el celular pregunte cada vez')}
-      ${btn('whatsapp', 'WhatsApp')}
-      ${btn('business', 'WhatsApp Business')}
-    </div>
-    <p class="hint" id="wa-choice-force">WhatsApp y WhatsApp Business son para quien tiene Business y quiere salir siempre por una. No distinguen el WhatsApp dual. En iPhone o en la compu el celular elige igual.</p>
-  </div>`;
-}
-function paintWaChoice() {
-  const current = waChoice();
-  for (const id of ['whatsapp', 'business', 'ask']) {
-    const btn = $(`#wa-choice-${id}`);
-    if (!btn) continue;
-    btn.classList.toggle('primary', current === id);
-    btn.setAttribute('aria-pressed', current === id ? 'true' : 'false');
-  }
-}
-function bindWaChoice(onPick) {
-  for (const id of ['whatsapp', 'business', 'ask']) {
-    const btn = $(`#wa-choice-${id}`);
-    if (!btn) continue;
-    btn.onclick = () => onPick(id);
-  }
-}
 function openWa({ phone = '', text = '' } = {}) {
-  window.open(waSendUrl({
-    phone, text, choice: waChoice(), android: isAndroidUa(navigator.userAgent),
-  }), '_blank', 'noopener');
+  window.open(waSendUrl({ phone, text }), '_blank', 'noopener');
 }
 
 /* Ajustes */
@@ -716,7 +1004,9 @@ function openSettings() {
   openSheet(`
     <h3>Ajustes</h3>
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
-    <p class="hint">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
+    <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
+    <label class="checkline" id="set-mine-line"><input type="checkbox" id="set-mine"${app.mine ? ' checked' : ''}><span>Solo lo que anoté y lo que cobré</span></label>
+    <p class="hint">Oculta en Próximos partidos, el partido y Pagos lo de los demás organizadores. El cupo del partido no cambia.</p>
     <form id="price-form" novalidate>
       <p class="hint">Precios. Los ven todos al toque.</p>
       ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
@@ -726,13 +1016,11 @@ function openSettings() {
       <div class="err" id="price-err"></div>
       <button class="btn" type="submit">Guardar precios</button>
     </form>
-    ${waChoiceBlock()}
     <p class="hint">Tamaño del texto</p>
     <div class="text-size-choice" role="group" aria-label="Tamaño del texto">
       ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
     </div>
     <div class="menu">
-      <a class="btn" id="set-history" href="#/historial">Historial de partidos</a>
       ${app.role === 'admin' ? '<a class="btn" id="set-users" href="#/usuarios">Usuarios</a>' : ''}
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -755,13 +1043,6 @@ function openSettings() {
   sheet.querySelectorAll('[data-text-size]').forEach((btn) => {
     btn.onclick = () => { saveTextSize(Number(btn.dataset.textSize)); syncTextSize(); };
   });
-  bindWaChoice((choice) => {
-    saveWaChoice(choice);
-    paintWaChoice();
-    toast(choice === 'business' ? 'Los mensajes salen por WhatsApp Business' : choice === 'whatsapp' ? 'Los mensajes salen por WhatsApp' : 'El celular va a preguntar cada vez');
-  });
-  const history = $('#set-history');
-  if (history) history.onclick = () => closeSheet();
   const users = $('#set-users');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
@@ -777,6 +1058,8 @@ function openSettings() {
   const forget = $('#set-forget');
   if (forget) forget.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
   $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
+  const mine = $('#set-mine');
+  if (mine) mine.onchange = () => { app.mine = mine.checked; render(); };
 }
 
 function accessEditor(m) {
@@ -862,6 +1145,7 @@ function openMatchForm(m) {
     if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
     if (editingAccess) data.access = readAccessForm();
     closeSheet();
+    if (splitNear([{ date: data.date }]).later.length) rememberLater(true);
     if (m) run(app.store.updateMatch(m.id, data, app.who), 'Partido actualizado');
     else run(app.store.addMatch({ ...data, source: 'manual', capacity: CAPACITY }, app.who), 'Partido agregado');
   };
@@ -924,6 +1208,7 @@ function openImportPreview(text, found) {
   if (save) save.onclick = () => {
     const sel = items.filter((i) => i.on && i.date && i.time);
     if (!sel.length) return;
+    if (sel.some((item) => splitNear([{ date: item.date }]).later.length)) rememberLater(true);
     closeSheet();
     run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, capacity: CAPACITY, access: publicAccess(actor()) })), app.who),
       `${sel.length} partido${sel.length > 1 ? 's' : ''} importado${sel.length > 1 ? 's' : ''}`);
@@ -938,14 +1223,15 @@ function renderRoster() {
     <li class="slot" data-roster="${esc(person.id)}">
       <button type="button" class="who" data-roster-open="${esc(person.id)}">
         <div class="name">${esc(person.name)}</div>
-        <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</div>
+        <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}</div>
       </button>
-      ${person.phone ? `<a class="wa-btn" href="${esc(waHref(person.phone))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(person.name)}">${ICON.wa}</a>` : ''}
+      ${waButton(person)}
       <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}">${ICON.edit}</button>
       <button type="button" class="more-btn" data-roster-del="${esc(person.id)}" aria-label="Borrar ${esc(person.name)}">${ICON.trash}</button>
     </li>`).join('');
   $('#view').innerHTML = `
     <h2 class="section">Jugadores</h2>
+    ${rosterSwitch(false)}
     <p class="hint roster-lead">Lista guardada de nombre y WhatsApp. Se comparte entre los dos.</p>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
     <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
@@ -966,6 +1252,7 @@ function renderRoster() {
     const open = e.target.closest('[data-roster-open]');
     if (open) {
       app.profileMatchId = null;
+      app.profilePay = false;
       location.hash = `#/jugador/${encodeURIComponent(open.dataset.rosterOpen)}`;
     }
   };
@@ -987,19 +1274,20 @@ function rosterFormError(error, formId) {
 }
 
 function openRosterForm(person) {
+  const lockPhone = phoneHidden(person);
   openSheet(`
     <form id="roster-form" novalidate>
       <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
       <p class="hint">Nombre completo. El WhatsApp es opcional. Si el número ya está, no se duplica.</p>
       <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
-      <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person ? displayFromWa(person.phone) : '')}">
-        <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>
+      ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person ? displayFromWa(person.phone) : '')}">
+        <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
       <div class="field"><div class="err" id="rf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${person ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
   const form = $('#roster-form');
   const hint = $('#rf-phone');
-  form.phone.addEventListener('input', () => {
+  if (form.phone) form.phone.addEventListener('input', () => {
     const v = form.phone.value.trim();
     if (!v) { hint.className = 'small muted'; hint.textContent = 'Característica + número. Sin 0 ni 15 también sirve.'; return; }
     const r = normalizePhone(v);
@@ -1009,7 +1297,7 @@ function openRosterForm(person) {
   form.onsubmit = (e) => {
     e.preventDefault();
     const name = form.name.value.trim();
-    const phoneRaw = form.phone.value.trim();
+    const phoneRaw = form.phone ? form.phone.value.trim() : null;
     if (!name) { $('#rf-err').textContent = 'Poné el nombre.'; return; }
     let phone = '';
     if (phoneRaw) {
@@ -1018,7 +1306,7 @@ function openRosterForm(person) {
       phone = r.wa;
     }
     const job = person
-      ? app.store.updateRoster(person.id, { name, phone })
+      ? app.store.updateRoster(person.id, phoneRaw === null ? { name } : { name, phone })
       : app.store.addRoster({ name, phone }, app.who);
     Promise.resolve(job).then(() => { closeSheet(); toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores'); }).catch((err) => rosterFormError(err, 'rf-err'));
   };
@@ -1035,17 +1323,24 @@ function deleteRosterPlayer(person) {
 
 const noteId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 app.profileMatchId = null;
+app.profilePay = false;
 app.wantPhoneForm = false;
 
-async function ensureRoster({ name, phone, rosterId }) {
+async function ensureRoster({ name, phone, rosterId, phoneKey: key }) {
   const cleanName = String(name || '').trim();
   if (rosterId && app.roster.some((person) => person.id === rosterId)) return rosterId;
   const wa = canonicalPhone(phone);
+  const ident = key || (wa ? phoneIdentity({ phone: wa }) : '');
   if (wa) {
     const found = rosterByPhone(app.roster, wa);
     if (found) return found.id;
+  }
+  if (ident) {
+    const found = rosterByIdentity(app.roster, ident);
+    if (found) return found.id;
+    if (!wa) return rosterId || '';
   } else if (cleanName) {
-    const found = app.roster.find((person) => !canonicalPhone(person.phone) && foldText(person.name) === foldText(cleanName));
+    const found = app.roster.find((person) => !phoneIdentity(person) && foldText(person.name) === foldText(cleanName));
     if (found) return found.id;
   }
   if (!cleanName) return '';
@@ -1054,16 +1349,17 @@ async function ensureRoster({ name, phone, rosterId }) {
 
 async function openPlayerProfile(player, matchId) {
   if (!player) return;
+  app.profilePay = false;
   app.profileMatchId = matchId || null;
   try {
     let id = player.rosterId && app.roster.some((person) => person.id === player.rosterId) ? player.rosterId : '';
-    if (!id) id = await ensureRoster({ name: player.name, phone: player.phone, rosterId: player.rosterId });
+    if (!id) id = await ensureRoster({ name: player.name, phone: player.phone, rosterId: player.rosterId, phoneKey: player.phoneKey });
     if (!id) { toast('No se pudo abrir el perfil'); return; }
     if (player.id && player.rosterId !== id) await app.store.updatePlayer(player.id, { rosterId: id });
     location.hash = `#/jugador/${encodeURIComponent(id)}`;
   } catch (error) {
     if (error?.code === 'roster-duplicate') {
-      const person = rosterByPhone(app.roster, player.phone);
+      const person = rosterByPhone(app.roster, player.phone) || rosterByIdentity(app.roster, player.phoneKey);
       if (person) { location.hash = `#/jugador/${encodeURIComponent(person.id)}`; return; }
     }
     if (isRosterDenied(error)) { showError(`${ROSTER_DENIED_WRITE} El perfil no se pudo abrir.`); return; }
@@ -1080,7 +1376,7 @@ function saveProfile(id, patch) {
 
 function ledgerSection(person) {
   const organizer = app.payFilter || null;
-  const who = { phone: person.phone, rosterId: person.id, name: person.name };
+  const who = rosterIdentity(person);
   const money = paymentLedger({ ...who, players: app.players, matches: app.matches, organizer });
   const signups = signupLedger({ ...who, players: app.players, organizer });
   const parts = { cash: 0, transfer: 0, pending: 0 };
@@ -1204,12 +1500,14 @@ function renderPagos() {
     return `${esc(item.name)}: ${esc(formatARS(item.collected))} · anotó ${item.added}${later}`;
   }).join(' · ');
   $('#view').innerHTML = `
+    <h2 class="section">Jugadores</h2>
+    ${rosterSwitch(true)}
     <h2 class="section">Pagos</h2>
     <p class="hint roster-lead">Cuánto le pagó cada jugador a cada organizador, y quién lo anotó. Transfiere después no entra en lo cobrado hasta marcarlo.</p>
     <p class="mine-line" id="mine-stats">${esc(mineSummary(app.players, app.who).text)}</p>
     <p class="hint" id="org-totals">${orgLine}</p>
     <p class="hint" id="pending-total">Transfiere después: ${esc(formatARS(pending.total))}</p>
-    ${app.mine ? '<p class="hint">Filtro Mis: solo lo que anotaste y lo que cobraste.</p>' : payFilterChips(null)}
+    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : payFilterChips(null)}
     ${body}
     <h2 class="section">Transfiere después</h2>
     ${pendingBody}`;
@@ -1219,6 +1517,7 @@ function renderPagos() {
     const open = e.target.closest('[data-pay-open]');
     if (!open) return;
     app.profileMatchId = null;
+    app.profilePay = true;
     location.hash = `#/jugador/${encodeURIComponent(open.dataset.payOpen)}`;
   };
 }
@@ -1230,7 +1529,7 @@ function renderProfile(id) {
     $('#view').innerHTML = `<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`;
     return;
   }
-  const who = { phone: person.phone, rosterId: person.id, name: person.name };
+  const who = rosterIdentity(person);
   const stats = playerStats({ ...who, players: app.players, matches: app.matches });
   const record = playerRecord({ ...who, players: app.players, matches: app.matches });
   const positions = new Set(person.positions || []);
@@ -1239,10 +1538,15 @@ function renderProfile(id) {
   $('#view').innerHTML = `
     <article id="profile">
       <h2 class="section">${esc(person.name)}</h2>
-      <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</p>
+      <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</p>
       ${person.phone
         ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waHref(person.phone))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>`
-        : '<button type="button" class="btn profile-add-phone" id="profile-add-phone">Cargar WhatsApp</button>'}
+        : phoneHidden(person)
+          ? `<button type="button" class="btn profile-wa" id="profile-wa" disabled>${ICON.wa}${esc(PRIVATE_WA_TEXT)}</button>`
+          : '<button type="button" class="btn profile-add-phone" id="profile-add-phone">Cargar WhatsApp</button>'}
+      ${person.phone && person.hasPhone && person.phoneOwnerUid === actor().uid
+        ? `<label class="checkline" id="phone-share-line"><input type="checkbox" id="phone-share"${person.phoneShared ? ' checked' : ''}><span>Mostrar mi WhatsApp a los demás organizadores</span></label>`
+        : ''}
       ${partidosSection(person)}
       <section class="profile-block">
         <h2>Nivel de juego</h2>
@@ -1281,9 +1585,11 @@ function renderProfile(id) {
     </article>`;
   const addPhone = $('#profile-add-phone');
   if (addPhone) addPhone.onclick = () => openPhoneForm(person);
+  const share = $('#phone-share');
+  if (share) share.onchange = () => run(app.store.setPhoneShared({ rosterId: person.id }, share.checked));
   if (app.wantPhoneForm) {
     app.wantPhoneForm = false;
-    if (!person.phone) openPhoneForm(person);
+    if (!person.phone && !phoneHidden(person)) openPhoneForm(person);
   }
   $('#level-down').onclick = () => { if (level > 1) saveProfile(person.id, { level: level - 1 }); };
   $('#level-up').onclick = () => saveProfile(person.id, { level: level == null ? 1 : Math.min(10, level + 1) });
@@ -1320,7 +1626,7 @@ function signupRows(person) {
   const draft = signupDraft(person);
   const upcoming = upcomingMatches(app.matches);
   const rows = upcoming.map((match) => {
-    const state = matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match, players: app.players });
+    const state = matchSignupState({ ...rosterIdentity(person), match, players: app.players });
     return { id: match.id, match, state, existing: state.existing };
   });
   const keep = new Set(keptSignupIds(draft.ids, rows));
@@ -1410,7 +1716,7 @@ function bindPartidos(person) {
     for (const id of [...draft.ids]) {
       const match = matchById(id);
       const stillUp = match && upcomingMatches(app.matches).some((item) => item.id === id);
-      const state = match ? matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match, players: app.players }) : null;
+      const state = match ? matchSignupState({ ...rosterIdentity(person), match, players: app.players }) : null;
       if (!match || !stillUp || !state || state.existing) {
         draft.ids.delete(id);
         continue;
@@ -1434,11 +1740,11 @@ function bindPartidos(person) {
         : (chosen.length === 1 ? `${person.name} anotado` : `${person.name} anotado en ${chosen.length} partidos`);
     run((async () => {
       for (const row of chosen) {
-        const again = matchSignupState({ phone: person.phone, rosterId: person.id, name: person.name, match: row.match, players: app.players });
+        const again = matchSignupState({ ...rosterIdentity(person), match: row.match, players: app.players });
         if (again.existing) continue;
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
-        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone || '', rosterId: person.id }, app.who, {
+        await app.store.addPlayer(row.match, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true }, app.who, {
           waiting: again.willWait,
           tentative: tentative && !again.willWait,
         });
@@ -1482,17 +1788,17 @@ function openNoteForm(person, note) {
   };
 }
 
-async function linkedRosterId({ name, phone, rosterId }) {
-  try { return await ensureRoster({ name, phone, rosterId }); }
+async function linkedRosterId({ name, phone, rosterId, phoneKey: key }) {
+  try { return await ensureRoster({ name, phone, rosterId, phoneKey: key || (phone ? phoneIdentity({ phone }) : '') }); }
   catch (error) {
-    if (error?.code === 'roster-duplicate') return rosterByPhone(app.roster, phone)?.id || rosterId || '';
+    if (error?.code === 'roster-duplicate') return rosterByPhone(app.roster, phone)?.id || rosterByIdentity(app.roster, phoneIdentity({ phone }))?.id || rosterId || '';
     if (isRosterDenied(error)) showError(`${ROSTER_DENIED_WRITE} El partido igual quedó anotado.`);
     else console.error(error);
     return rosterId || '';
   }
 }
 
-function addSignedPlayer(m, { name, phone, rosterId }, asWait, tentative) {
+function addSignedPlayer(m, { name, phone, rosterId, phoneKey: key, hasPhone }, asWait, tentative) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return; }
   const full = playersOf(m.id).length >= (m.capacity || CAPACITY);
@@ -1504,11 +1810,12 @@ function addSignedPlayer(m, { name, phone, rosterId }, asWait, tentative) {
   closeSheet();
   run((async () => {
     const id = await linkedRosterId({ name, phone, rosterId });
-    await app.store.addPlayer(m, { name, phone, rosterId: id }, app.who, { waiting: asWait, tentative: tentative === true && !willWait });
+    await app.store.addPlayer(m, { name, phone, rosterId: id, phoneKey: key || '', hasPhone: hasPhone === true }, app.who, { waiting: asWait, tentative: tentative === true && !willWait });
   })(), willWait ? `${name} quedó en la lista de espera` : `${name} anotado`);
 }
 
 function openPhoneForm(person) {
+  if (phoneHidden(person)) { toast(PRIVATE_WA_TEXT); return; }
   openSheet(`
     <form id="phone-form" novalidate>
       <h3>WhatsApp de ${esc(person.name)}</h3>
@@ -1533,14 +1840,14 @@ function openPhoneForm(person) {
     if (!raw) { $('#phone-err').textContent = 'Poné el WhatsApp, o cancelá.'; return; }
     const parsed = normalizePhone(raw);
     if (!parsed.ok) { $('#phone-err').textContent = parsed.error; return; }
-    const dup = app.roster.find((item) => item.id !== person.id && canonicalPhone(item.phone) === parsed.wa);
+    const dup = app.roster.find((item) => item.id !== person.id && phoneIdentity(item) === phoneIdentity({ phone: parsed.wa }));
     if (dup) { $('#phone-err').textContent = `${dup.name} ya tiene ese WhatsApp`; return; }
     const linked = app.players.filter((player) => playerMatchesPerson(player, person));
     closeSheet();
     run((async () => {
       await app.store.updateRoster(person.id, { name: person.name, phone: parsed.wa });
       for (const player of linked) {
-        if (canonicalPhone(player.phone) === parsed.wa && player.rosterId === person.id) continue;
+        if (phoneIdentity(player) === phoneIdentity({ phone: parsed.wa }) && player.rosterId === person.id) continue;
         await app.store.updatePlayer(player.id, { phone: parsed.wa, rosterId: person.id });
       }
     })(), 'WhatsApp guardado');
@@ -1554,6 +1861,7 @@ function openPlayerForm(m, p, opts = {}) {
     if (blocked) { toast(blocked); return; }
   }
   const asWait = !p && opts.waiting === true;
+  const lockPhone = phoneHidden(p);
   openSheet(`
     <form id="player-form" novalidate>
       <h3>${p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
@@ -1561,15 +1869,15 @@ function openPlayerForm(m, p, opts = {}) {
       ${p ? '' : `<label class="field"><span>Buscar guardados</span><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
       <label class="field"><span>Nombre</span><input name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
-      <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
-        <div class="small muted" id="pf-phone">Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.</div></label>
+      ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
+        <div class="small muted" id="pf-phone">Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.</div></label>`}
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
       <div class="field"><div class="err" id="pf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${p ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
   const form = $('#player-form');
   const hint = $('#pf-phone');
-  form.phone.addEventListener('input', () => {
+  if (form.phone) form.phone.addEventListener('input', () => {
     const v = form.phone.value.trim();
     if (!v) { hint.className = 'small muted'; hint.textContent = 'Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.'; return; }
     const r = normalizePhone(v);
@@ -1583,21 +1891,21 @@ function openPlayerForm(m, p, opts = {}) {
       const q = find.value.trim();
       const found = q ? searchRoster(app.roster, q).slice(0, 8) : [];
       hits.hidden = !found.length;
-      hits.innerHTML = found.map((person) => `<li><button type="button" class="roster-hit" data-pick="${esc(person.id)}"><b>${esc(person.name)}</b><small>${person.phone ? esc(displayFromWa(person.phone)) : 'Sin número'}</small></button></li>`).join('');
+      hits.innerHTML = found.map((person) => `<li><button type="button" class="roster-hit" data-pick="${esc(person.id)}"><b>${esc(person.name)}</b><small>${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</small></button></li>`).join('');
     };
     find.addEventListener('input', paint);
     $('#roster-hits').addEventListener('click', (e) => {
       const btn = e.target.closest('[data-pick]');
       if (!btn) return;
       const person = app.roster.find((r) => r.id === btn.dataset.pick);
-      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id }, asWait, !!$('#player-tentative')?.checked);
+      if (person) addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }, asWait, !!$('#player-tentative')?.checked);
     });
     setTimeout(() => find.focus(), 50);
   }
   form.onsubmit = (e) => {
     e.preventDefault();
     const name = form.name.value.trim();
-    const phoneRaw = form.phone.value.trim();
+    const phoneRaw = form.phone ? form.phone.value.trim() : null;
     if (!name) { $('#pf-err').textContent = 'Poné el nombre.'; return; }
     let phone = '';
     if (phoneRaw) {
@@ -1608,8 +1916,10 @@ function openPlayerForm(m, p, opts = {}) {
     if (p) {
       closeSheet();
       run((async () => {
-        const id = await linkedRosterId({ name, phone, rosterId: p.rosterId });
-        await app.store.updatePlayer(p.id, { name, phone, ...(id ? { rosterId: id } : {}) });
+        const id = await linkedRosterId({ name, phone: phoneRaw === null ? '' : phone, rosterId: p.rosterId, phoneKey: p.phoneKey });
+        const patch = { name, ...(id ? { rosterId: id } : {}) };
+        if (phoneRaw !== null) patch.phone = phone;
+        await app.store.updatePlayer(p.id, patch);
       })(), 'Jugador actualizado');
     } else addSignedPlayer(m, { name, phone, rosterId: p?.rosterId }, asWait, !!$('#player-tentative')?.checked);
   };
@@ -1828,9 +2138,9 @@ function openPlayerMenu(m, p) {
   if (!p) return;
   openSheet(`
     <h3>${esc(p.name)}</h3>
-    <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu">
-      ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : '<button class="btn" id="pm-phone">Cargar WhatsApp</button>'}
+      ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : '<button class="btn" id="pm-phone">Cargar WhatsApp</button>'}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
@@ -1941,24 +2251,33 @@ function syncTextSize() {
     btn.classList.toggle('primary', on);
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
+  requestAnimationFrame(placeBars);
 }
 
 async function boot() {
+  clearWaChoice();
   $('#venue-name').textContent = VENUE;
   $('#btn-back').onclick = () => {
     const r = route();
+    if (r.name === 'teams') { location.hash = `#/partido/${encodeURIComponent(r.id)}`; return; }
     if (r.name === 'match') {
       const m = matchById(r.id);
-      if (m?.date && m.date < todayISO()) { location.hash = '#/historial'; return; }
+      location.hash = m?.date && m.date < todayISO() ? '#/historial' : '#/';
+      return;
     }
+    if (r.name === 'profile') {
+      if (app.profileMatchId) { location.hash = `#/partido/${encodeURIComponent(app.profileMatchId)}`; return; }
+      location.hash = app.profilePay ? '#/jugadores/pagos' : '#/jugadores';
+      return;
+    }
+    if (r.name === 'users') { location.hash = hashForTab(savedTab()); return; }
     location.hash = '#/';
   };
+  window.addEventListener('resize', placeBars);
   $('#btn-text-smaller').onclick = () => { stepTextSize(-1); syncTextSize(); };
   $('#btn-text-bigger').onclick = () => { stepTextSize(1); syncTextSize(); };
   syncTextSize();
   $('#btn-settings').onclick = openSettings;
-  $('#btn-who').onclick = openSettings;
-  $('#btn-mine').onclick = () => { app.mine = !app.mine; render(); };
   $('#brand').onclick = () => { location.hash = '#/'; };
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
@@ -1993,8 +2312,11 @@ async function boot() {
   });
   $('#demo-banner').hidden = app.store.mode === 'firebase';
   app.store.setActor(app.session.user);
-  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError }) => {
+  app.store.subscribe(({ matches, players, roster, rosterError, organizers, organizersError, prices, pricesError, history, historyMeta, historyError }) => {
     app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
+    app.history = history || [];
+    app.historyMeta = historyMeta || null;
+    app.historyError = historyError || '';
     app.roster = roster || [];
     app.organizers = organizers || [];
     app.prices = prices || null;
@@ -2015,7 +2337,10 @@ async function boot() {
   render();
   armReminderTimer();
   // refrescar etiquetas "Hoy/Mañana"; al cambiar el día, el partido pasa al historial (no se borra)
-  setInterval(() => { if (!sheet.open || !sheet.querySelector('input, textarea')) render(); }, 60_000);
+  setInterval(() => {
+    app.store?.syncDay?.();
+    if (!sheet.open || !sheet.querySelector('input, textarea')) render();
+  }, 60_000);
 }
 
 // El aviso del navegador solo sale si la página está abierta cuando se cumplen
@@ -2113,6 +2438,12 @@ async function fixOverflow() {
   finally { fixingOverflow = false; }
 }
 
-sheet.addEventListener('close', () => { app.refreshPaySheet = null; pendingRender = false; render(); });
+sheet.addEventListener('close', () => {
+  restoreTabs();
+  placeBars();
+  app.refreshPaySheet = null;
+  pendingRender = false;
+  render();
+});
 
 boot().catch((e) => { console.error(e); showError('Error al iniciar la app: ' + e.message); });
