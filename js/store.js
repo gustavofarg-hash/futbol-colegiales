@@ -28,7 +28,7 @@
 //    receivedBy: string|null           (quién cobró; null o ausente = "Sin especificar")
 //    paidUpdatedBy, paidUpdatedAt
 //    waiting: bool                      (true = lista de espera)
-//    invitedBy: id del jugador que lo trajo (amigo). invitedByName: nombre de ese momento.
+//    invitedBy: id del jugador principal que lo trajo. Un invitado no puede ser anfitrión. invitedByName: nombre de ese momento.
 //    waitOrder: number|null             (menor = más prioridad; null si es titular)
 //    rosterAt: number|null              (cuándo entró a la lista principal)
 //    confirmToken: string               (link largo de confirmar.html; se crea al anotar)
@@ -84,7 +84,7 @@ import { dropPlayer, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
-import { ALREADY_IN_MATCH, alreadyInMatch, isAutoGuestName } from './guests.js';
+import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
 import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
@@ -182,6 +182,15 @@ function storedGuestAuto(player) {
   if (player?.guestAuto === true) return true;
   if (player?.guestAuto === false) return false;
   return !!player?.invitedBy && isAutoGuestName(player?.name);
+}
+
+function refuseGuestHost(mates, data, current) {
+  if (!data || !('invitedBy' in data)) return;
+  const next = String(data.invitedBy || '').trim();
+  const prev = String(current?.invitedBy || '').trim();
+  if (!next || next === prev) return;
+  const message = inviteBlock(mates, next);
+  if (message) throw Object.assign(new Error(message), { code: 'guest-cannot-invite' });
 }
 
 function guestFields(data) {
@@ -585,8 +594,11 @@ class LocalStore {
   }
   async addPlayer(match, data, who, opts = {}) {
     const db = this._load(); const id = rid(); const now = Date.now();
-    const mates = Object.values(db.players).filter((p) => p.matchId === match.id);
+    const mates = Object.entries(db.players)
+      .filter(([, row]) => row.matchId === match.id)
+      .map(([pid, row]) => ({ id: pid, ...row }));
     refuseDuplicate(mates, data);
+    refuseGuestHost(mates, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
     const waiting = opts.waiting === true || mainCount >= cap;
@@ -634,11 +646,12 @@ class LocalStore {
   async updatePlayer(id, data) {
     const db = this._load(); if (!db.players[id]) return;
     const player = db.players[id];
+    const mates = Object.entries(db.players)
+      .filter(([, row]) => row.matchId === player.matchId)
+      .map(([pid, row]) => ({ id: pid, ...row }));
+    refuseGuestHost(mates, data, player);
     if (playerPatchEditsIdentity(data, player) && !canEditPlayer(player, this.actor)) throw editLockedError();
     if (playerPatchEditsIdentity(data, player)) {
-      const mates = Object.entries(db.players)
-        .filter(([, row]) => row.matchId === player.matchId)
-        .map(([pid, row]) => ({ id: pid, ...row }));
       refuseDuplicate(mates, identityAfterEdit(player, data), id);
     }
     const { phone, ...rest } = data || {};
@@ -1477,6 +1490,7 @@ class FirebaseStore {
     const { collection, addDoc, doc, updateDoc, deleteField } = this.fs; const now = Date.now();
     const mates = this.state.players.filter((p) => p.matchId === match.id);
     refuseDuplicate(mates, data);
+    refuseGuestHost(mates, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
     const waiting = opts.waiting === true || mainCount >= cap;
@@ -1526,6 +1540,10 @@ class FirebaseStore {
   async updatePlayer(id, data) {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;
     const cur = this.state.players.find((player) => player.id === id) || {};
+    if (cur.id) {
+      const mates = this.state.players.filter((row) => row.matchId === cur.matchId);
+      refuseGuestHost(mates, data, cur);
+    }
     if (cur.id && playerPatchEditsIdentity(data, cur) && !canEditPlayer(cur, this.actor)) throw editLockedError();
     if (cur.id && playerPatchEditsIdentity(data, cur)) {
       const mates = this.state.players.filter((row) => row.matchId === cur.matchId);

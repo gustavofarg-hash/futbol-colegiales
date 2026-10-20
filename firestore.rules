@@ -431,13 +431,35 @@ service cloud.firestore {
           && resource.data.get('playerCount', 0) == 0;
     }
 
+    function invitedByUnchanged() {
+      return resource != null && (
+        (!('invitedBy' in request.resource.data) && !('invitedBy' in resource.data))
+        || ('invitedBy' in request.resource.data && 'invitedBy' in resource.data
+            && request.resource.data.invitedBy == resource.data.invitedBy)
+      );
+    }
+    // Anfitrión nuevo: un jugador del mismo partido que no sea invitado.
+    // Si el vínculo no cambia, un invitado-de-invitado ya cargado se puede editar.
+    function hostData() {
+      return get(/databases/$(database)/documents/players/$(request.resource.data.invitedBy)).data;
+    }
+    function hostIsMainPlayer() {
+      return exists(/databases/$(database)/documents/players/$(request.resource.data.invitedBy))
+          && hostData().matchId == request.resource.data.matchId
+          && (!('invitedBy' in hostData()) || !(hostData().invitedBy is string) || hostData().invitedBy.size() == 0);
+    }
+    function invitedByOk() {
+      return !('invitedBy' in request.resource.data) || invitedByUnchanged() || hostIsMainPlayer();
+    }
+
     match /players/{playerId} {
       allow get: if isActiveStaff() && canReadListed(resource.data);
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
       allow create: if isActiveStaff() && validPlayer(request.resource.data)
+          && invitedByOk()
           && isAdder(matchData(request.resource.data.matchId))
           && playerListsOk(request.resource.data.matchId);
-      allow update: if isActiveStaff() && validPlayer(request.resource.data) && confirmationWriteOk()
+      allow update: if isActiveStaff() && validPlayer(request.resource.data) && invitedByOk() && confirmationWriteOk()
           && playerStampSame()
           && (playerNameSame() || isPlayerCreator())
           && (playerPhoneMetaSame() || isPlayerCreator() || legacyPhoneMoveOk())

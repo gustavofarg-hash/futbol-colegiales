@@ -17,7 +17,7 @@ import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
-import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, isAutoGuestName, normName, placeGroup, resolveFriendNames, waitWarning } from './guests.js';
+import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
@@ -142,9 +142,13 @@ const addBlock = (m) => {
   return n >= max ? limitMessage(max) : '';
 };
 const isWaiting = (p) => p.waiting === true;
-const playersOf = (matchId) => groupByInviter(app.players
-  .filter((p) => p.matchId === matchId && !isWaiting(p))
-  .sort((a, b) => (a.rosterAt ?? a.createdAt) - (b.rosterAt ?? b.createdAt) || String(a.id).localeCompare(String(b.id))));
+const playersOf = (matchId) => {
+  const all = app.players.filter((p) => p.matchId === matchId);
+  const main = all
+    .filter((p) => !isWaiting(p))
+    .sort((a, b) => (a.rosterAt ?? a.createdAt) - (b.rosterAt ?? b.createdAt) || String(a.id).localeCompare(String(b.id)));
+  return groupByInviter(main, all);
+};
 const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
@@ -188,10 +192,21 @@ function priceExample(amount) {
 function addedTag(player) {
   return `<span class="tag ${organizerTagClass(player.addedBy)}">Agregó: ${esc(player.addedBy || '?')}</span>`;
 }
-function friendHostName(player) {
-  if (!player?.invitedBy) return '';
+function playerIndex(matchId) {
+  const mates = app.players.filter((item) => !matchId || item.matchId === matchId);
+  return new Map(mates.map((item) => [item.id, item]));
+}
+function directHostName(player) {
+  if (!isGuest(player)) return '';
   const host = app.players.find((item) => item.id === player.invitedBy);
   return host?.name || player.invitedByName || '';
+}
+function friendHostName(player) {
+  if (!isGuest(player)) return '';
+  const byId = playerIndex(player.matchId);
+  const rootId = rootInviterId(player, byId);
+  if (rootId) return byId.get(rootId)?.name || directHostName(player);
+  return directHostName(player);
 }
 function friendTag(player) {
   if (!player?.invitedBy) return '';
@@ -213,14 +228,14 @@ function levelBadge(player) {
 function inviteClass(player) {
   if (!player?.id) return '';
   const mates = app.players.filter((item) => item.matchId === player.matchId);
-  const hostId = player.invitedBy
-    ? String(player.invitedBy)
-    : (mates.some((item) => item.invitedBy === player.id) ? String(player.id) : '');
+  const byId = new Map(mates.map((item) => [item.id, item]));
+  const root = rootInviterId(player, byId);
+  const hostsSomeone = mates.some((item) => rootInviterId(item, byId) === player.id);
+  const hostId = root || (hostsSomeone ? String(player.id) : (isGuest(player) ? String(player.invitedBy) : ''));
   if (!hostId) return '';
   let hash = 0;
   for (let i = 0; i < hostId.length; i++) hash = (hash * 33 + hostId.charCodeAt(i)) >>> 0;
-  const guest = !!player.invitedBy;
-  return ` invite-${hash % 6}${guest ? ' guest-row' : ' host-row'}`;
+  return ` invite-${hash % 6}${isGuest(player) ? ' guest-row' : ' host-row'}`;
 }
 function payMarkup(player) {
   const pending = pendingStatusText(player);
@@ -2171,8 +2186,14 @@ function matesOf(matchId) {
   return app.players.filter((player) => player.matchId === matchId);
 }
 
+function guestsOf(matchId, hostId) {
+  const mates = matesOf(matchId);
+  const byId = new Map(mates.map((player) => [player.id, player]));
+  return mates.filter((player) => rootInviterId(player, byId) === hostId);
+}
+
 function friendNamesOf(matchId, hostId) {
-  return matesOf(matchId).filter((player) => player.invitedBy === hostId).map((player) => player.name);
+  return guestsOf(matchId, hostId).map((player) => player.name);
 }
 
 function signupError(matchId, people) {
@@ -2189,6 +2210,8 @@ function focusField(el) {
 function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
+  const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
+  if (guestBlock) { toast(guestBlock); return false; }
   const taken = host?.id ? friendNamesOf(m.id, host.id) : [];
   const friends = resolveFriendNames(friendRows, taken).map((friend) => ({
     name: friend.name,
@@ -2472,7 +2495,7 @@ function openPlayerForm(m, p, opts = {}) {
         }
         if (editingFriend) {
           patch.invitedBy = p.invitedBy;
-          const freshHost = friendHostName(p);
+          const freshHost = directHostName(p);
           if (freshHost) patch.invitedByName = freshHost;
           patch.guestAuto = stillAuto;
         }
@@ -2727,7 +2750,7 @@ function openPlayerMenu(m, p) {
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
       <button class="btn" id="pm-edit"${own ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
-      <button class="btn" id="pm-friend">Agregar invitado</button>
+      ${isGuest(p) ? '' : '<button class="btn" id="pm-friend">Agregar invitado</button>'}
       ${!isWaiting(p) && canAdd(m, actor().uid) ? '<button class="btn" id="pm-wait">Bajar a lista de espera</button>' : ''}
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
@@ -2738,7 +2761,8 @@ function openPlayerMenu(m, p) {
   const spot = $('#pm-confirm-spot');
   if (spot) spot.onclick = () => { closeSheet(); clearReservedSpot(p); };
   if (own) $('#pm-edit').onclick = () => openPlayerForm(m, p);
-  $('#pm-friend').onclick = () => openFriendForm(m, p);
+  const addGuest = $('#pm-friend');
+  if (addGuest) addGuest.onclick = () => openFriendForm(m, p);
   const demote = $('#pm-wait');
   if (demote) demote.onclick = () => demoteToWait(m, p);
   $('#pm-del').onclick = () => removeMatchPlayer(m, p);
@@ -2746,7 +2770,7 @@ function openPlayerMenu(m, p) {
 
 function removeMatchPlayer(m, p, { asked = false } = {}) {
   const fromMain = !isWaiting(p);
-  const friends = matesOf(m.id).filter((item) => item.invitedBy === p.id);
+  const friends = guestsOf(m.id, p.id);
   if (!asked && !confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
   const dropFriends = friends.length > 0 && confirm(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
@@ -2766,7 +2790,7 @@ function removeMatchPlayer(m, p, { asked = false } = {}) {
 
 function demoteToWait(m, p) {
   if (!p || isWaiting(p) || !canAdd(m, actor().uid)) return;
-  const guests = matesOf(m.id).filter((item) => item.invitedBy === p.id && !isWaiting(item));
+  const guests = guestsOf(m.id, p.id).filter((item) => !isWaiting(item));
   const also = guests.length > 0 && confirm(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
   const moving = [p, ...(also ? guests : [])];
   closeSheet();
@@ -2782,6 +2806,8 @@ function demoteToWait(m, p) {
 
 function openFriendForm(m, host) {
   if (!host) return;
+  const guestBlock = inviteBlock(matesOf(m.id), host.id);
+  if (guestBlock) { toast(guestBlock); return; }
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return; }
   const next = resolveFriendNames([''], friendNamesOf(m.id, host.id))[0]?.name || 'Invitado 1';
