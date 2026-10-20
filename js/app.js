@@ -1,7 +1,7 @@
 import { ACCESS_CODE, CAPACITY, VENUE } from '../config.js';
 import { createStore } from './store.js';
 import { parseMatchesFromText } from './parser.js';
-import { normalizePhone, displayFromWa, isAndroidUa, normalizeWaChoice, WA_CHOICE_KEY, waSendUrl } from './phone.js';
+import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
   todayISO, addDays, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
@@ -76,25 +76,11 @@ const app = {
 };
 window.__app = app; // útil para depurar / tests
 
-function readWaChoice() {
-  try { return normalizeWaChoice(localStorage.getItem(WA_CHOICE_KEY)); }
-  catch { return null; }
-}
-function saveWaChoice(choice) {
-  const clean = normalizeWaChoice(choice);
-  if (!clean) return;
-  try { localStorage.setItem(WA_CHOICE_KEY, clean); } catch { /* modo privado */ }
-}
-function waChoice() {
-  return readWaChoice() || 'ask';
+function clearWaChoice() {
+  try { localStorage.removeItem(WA_CHOICE_KEY); } catch { /* modo privado */ }
 }
 function waHref(phone, text) {
-  return waSendUrl({
-    phone: phone || '',
-    text: text || '',
-    choice: waChoice(),
-    android: isAndroidUa(navigator.userAgent),
-  });
+  return waSendUrl({ phone: phone || '', text: text || '' });
 }
 
 /* ───────── toast ───────── */
@@ -630,7 +616,7 @@ async function openReminders(m) {
   }
   const fresh = everyone.map((p) => ({ ...p, confirmToken: tokens.get(p.id) || p.confirmToken }));
   const linkById = new Map(reminderLinks({
-    match: m, players: fresh, venue: VENUE, choice: waChoice(), android: isAndroidUa(navigator.userAgent),
+    match: m, players: fresh, venue: VENUE,
   }).map((row) => [new URL(row.confirmUrl).searchParams.get('p'), row]));
   const paint = () => {
     const visible = showAll ? fresh : playersForOrganizer(fresh, app.who);
@@ -769,9 +755,7 @@ function reactivateMatch(m) {
 
 async function offerCancelWhatsApp(match) {
   const people = [...playersOf(match.id), ...waitingOf(match.id)];
-  const links = cancelLinks({
-    match, players: people, venue: VENUE, choice: waChoice(), android: isAndroidUa(navigator.userAgent),
-  });
+  const links = cancelLinks({ match, players: people, venue: VENUE });
   if (!links.length) {
     toast(people.some(phoneHidden) ? PRIVATE_WA_TEXT : 'Nadie tiene WhatsApp para avisar la cancelación.');
     return;
@@ -809,16 +793,9 @@ async function copyText(text) {
   }
 }
 async function shareText(text) {
-  const choice = readWaChoice();
-  const android = isAndroidUa(navigator.userAgent);
-  if (android && (choice === 'whatsapp' || choice === 'business')) {
-    openWa({ text });
-    return;
-  }
-  if ((!choice || choice === 'ask') && navigator.share) {
+  if (navigator.share) {
     try { await navigator.share({ text }); return; } catch (e) { if (e.name === 'AbortError') return; }
   }
-  // Sin Web Share: abrir WhatsApp con la lista lista para mandar
   const ok = await copyText(text);
   toast(ok ? 'Lista copiada. Pegala en el grupo.' : 'No se pudo compartir');
   openWa({ text });
@@ -842,40 +819,8 @@ sheet.addEventListener('click', (e) => {
   if (e.target.closest('[data-close]')) closeSheet();
 });
 
-function waChoiceBlock() {
-  const current = waChoice();
-  const btn = (id, label) => `<button type="button" class="btn${current === id ? ' primary' : ''}" id="wa-choice-${id}" aria-pressed="${current === id ? 'true' : 'false'}">${label}</button>`;
-  return `<div id="wa-choice">
-    <h3>¿Desde qué WhatsApp querés mandar los mensajes?</h3>
-    <p class="hint" id="wa-choice-note">Si tenés dos WhatsApp (Dual Messenger), el celular te va a dejar elegir.</p>
-    <div class="menu">
-      ${btn('ask', 'Que el celular pregunte cada vez')}
-      ${btn('whatsapp', 'WhatsApp')}
-      ${btn('business', 'WhatsApp Business')}
-    </div>
-    <p class="hint" id="wa-choice-force">WhatsApp y WhatsApp Business son para quien tiene Business y quiere salir siempre por una. No distinguen el WhatsApp dual. En iPhone o en la compu el celular elige igual.</p>
-  </div>`;
-}
-function paintWaChoice() {
-  const current = waChoice();
-  for (const id of ['whatsapp', 'business', 'ask']) {
-    const btn = $(`#wa-choice-${id}`);
-    if (!btn) continue;
-    btn.classList.toggle('primary', current === id);
-    btn.setAttribute('aria-pressed', current === id ? 'true' : 'false');
-  }
-}
-function bindWaChoice(onPick) {
-  for (const id of ['whatsapp', 'business', 'ask']) {
-    const btn = $(`#wa-choice-${id}`);
-    if (!btn) continue;
-    btn.onclick = () => onPick(id);
-  }
-}
 function openWa({ phone = '', text = '' } = {}) {
-  window.open(waSendUrl({
-    phone, text, choice: waChoice(), android: isAndroidUa(navigator.userAgent),
-  }), '_blank', 'noopener');
+  window.open(waSendUrl({ phone, text }), '_blank', 'noopener');
 }
 
 /* Ajustes */
@@ -896,7 +841,6 @@ function openSettings() {
       <div class="err" id="price-err"></div>
       <button class="btn" type="submit">Guardar precios</button>
     </form>
-    ${waChoiceBlock()}
     <p class="hint">Tamaño del texto</p>
     <div class="text-size-choice" role="group" aria-label="Tamaño del texto">
       ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
@@ -924,11 +868,6 @@ function openSettings() {
   };
   sheet.querySelectorAll('[data-text-size]').forEach((btn) => {
     btn.onclick = () => { saveTextSize(Number(btn.dataset.textSize)); syncTextSize(); };
-  });
-  bindWaChoice((choice) => {
-    saveWaChoice(choice);
-    paintWaChoice();
-    toast(choice === 'business' ? 'Los mensajes salen por WhatsApp Business' : choice === 'whatsapp' ? 'Los mensajes salen por WhatsApp' : 'El celular va a preguntar cada vez');
   });
   const history = $('#set-history');
   if (history) history.onclick = () => closeSheet();
@@ -2134,6 +2073,7 @@ function syncTextSize() {
 }
 
 async function boot() {
+  clearWaChoice();
   $('#venue-name').textContent = VENUE;
   $('#btn-back').onclick = () => {
     const r = route();
