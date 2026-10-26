@@ -673,7 +673,7 @@ class LocalStore {
     refuseGuestHost(mates, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
-    const waiting = opts.waiting === true || mainCount >= cap;
+    const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
     const player = {
@@ -1605,7 +1605,7 @@ class FirebaseStore {
     refuseGuestHost(mates, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
-    const waiting = opts.waiting === true || mainCount >= cap;
+    const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;

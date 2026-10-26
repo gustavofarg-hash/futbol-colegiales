@@ -1,6 +1,6 @@
 import { ACCESS_CODE, VENUE } from '../config.js';
 import { createStore } from './store.js';
-import { parseMatchesFromText } from './parser.js';
+import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
   todayISO, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
@@ -29,7 +29,7 @@ import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, pr
 import { emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import {
-  VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
+  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
@@ -723,6 +723,7 @@ function renderHistory() {
     ${chips}
     ${venueNarrow && !(venues.selected || []).length ? '<p class="hint" id="hist-venue-empty">Elegí una sede o Todas para ver los partidos.</p>' : ''}
     <p class="hint" id="hist-caption">${esc(caption)}</p>
+    <button type="button" class="btn block" id="btn-hist-import">Importar partidos desde texto</button>
     ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
     ${past.length ? `<ul class="match-list" id="list-history">${past.map(matchCard).join('')}</ul>` : `
       <div class="empty" id="list-history"><div class="big">📅</div><p><b>${esc(emptyLead)}</b></p>
@@ -736,6 +737,8 @@ function renderHistory() {
     app.historyFilter = next;
     app.store.setHistoryFilter(next);
   };
+  const histImport = $('#btn-hist-import');
+  if (histImport) histImport.onclick = () => openHistoryImport();
   const clear = $('#hist-clear');
   if (clear) clear.onclick = () => {
     app.historyFilter = null;
@@ -1700,6 +1703,117 @@ function openImportPreview(text, found) {
     closeSheet();
     run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, perTeam: 7, venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }), venueName: venueLabel({ venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }) }, app.venues), access: publicAccess(actor()) })), app.who),
       `${sel.length} partido${sel.length > 1 ? 's' : ''} importado${sel.length > 1 ? 's' : ''}`);
+  };
+}
+
+function readTextFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('read'));
+    reader.readAsText(file);
+  });
+}
+
+function playedDuplicate(item) {
+  const seen = new Set();
+  for (const match of [...(app.matches || []), ...(app.history || [])]) {
+    if (!match?.id || seen.has(match.id)) continue;
+    seen.add(match.id);
+    if (match.date === item.date && (match.time || '') === item.time && matchVenueId(match) === DEFAULT_VENUE_ID) return match;
+  }
+  return null;
+}
+
+function importedPlayerFields(raw) {
+  const phone = raw.phone ? canonicalPhone(raw.phone) : '';
+  const byPhone = phone ? rosterByPhone(app.roster, phone) : null;
+  const folded = foldText(raw.name);
+  const byName = !byPhone && folded
+    ? app.roster.find((person) => foldText(person.name) === folded || (person.shortName && foldText(person.shortName) === folded))
+    : null;
+  const person = byPhone || byName;
+  if (!person) return { name: raw.name, phone };
+  return {
+    name: person.name,
+    shortName: person.shortName || '',
+    phone: person.phone || '',
+    rosterId: person.id,
+    phoneKey: person.phoneKey || '',
+    hasPhone: person.hasPhone === true,
+    phoneShared: person.phoneShared === true,
+  };
+}
+
+function openHistoryImport(prevText = '') {
+  openSheet(`
+    <h3>Importar partidos desde texto</h3>
+    <p class="hint">Pegá una lista con la fecha y la hora en el encabezado y los jugadores numerados. Si hay varios, separalos con otro encabezado. Quedan como partidos ya jugados.</p>
+    <label class="field"><span>Texto</span><textarea id="hist-imp-text" placeholder="Ej: Jueves 16/10 21hs&#10;1. Juan Pérez&#10;2. Ana Gómez">${esc(prevText)}</textarea></label>
+    <label class="field"><span>O un archivo .txt</span><input type="file" id="hist-imp-file" accept=".txt,text/plain"></label>
+    <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button type="button" class="btn primary" id="hist-imp-next">Ver</button></div>`);
+  $('#hist-imp-file').onchange = () => {
+    const file = $('#hist-imp-file').files?.[0];
+    if (!file) return;
+    readTextFile(file).then((text) => { $('#hist-imp-text').value = text; }).catch(() => toast('No se pudo leer el archivo'));
+  };
+  $('#hist-imp-next').onclick = () => {
+    const text = $('#hist-imp-text').value;
+    openHistoryImportPreview(text, parsePlayedMatchesFromText(text, { now: new Date() }));
+  };
+}
+
+function openHistoryImportPreview(text, found) {
+  const items = (found || []).map((item) => ({ ...item, duplicate: !!playedDuplicate(item), on: !playedDuplicate(item) }));
+  const cards = items.map((item, i) => {
+    const names = item.players.length ? item.players.map((player) => player.name).join(', ') : 'Sin jugadores';
+    return `<li data-i="${i}">
+      <div class="top"><input type="checkbox" ${item.on ? 'checked' : ''} ${item.duplicate ? 'disabled' : ''} aria-label="Importar partido"><b class="lbl">${esc(capitalize(labelDate(item.date)))} · ${esc(item.time)} hs</b></div>
+      <div class="sub">Polideportivo Colegiales</div>
+      <div class="sub">${esc(names)}</div>
+      ${item.duplicate ? '<div class="err">Ya hay un partido a esa hora en Polideportivo Colegiales.</div>' : ''}
+    </li>`;
+  }).join('');
+  openSheet(`
+    <h3>Vista previa</h3>
+    ${items.length ? `<ul class="import-preview" id="hist-imp-list">${cards}</ul>` : '<p class="hint">No encontré partidos con fecha, hora y una lista de jugadores.</p>'}
+    <div class="sheet-actions"><button type="button" class="btn" id="hist-imp-back">Volver</button>${items.some((item) => item.on) ? '<button type="button" class="btn primary" id="hist-imp-save">Importar</button>' : ''}</div>`);
+  const back = $('#hist-imp-back');
+  if (back) back.onclick = () => openHistoryImport(text);
+  const list = $('#hist-imp-list');
+  if (list) list.addEventListener('change', (e) => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    items[Number(li.dataset.i)].on = e.target.checked && !items[Number(li.dataset.i)].duplicate;
+  });
+  const save = $('#hist-imp-save');
+  if (save) save.onclick = () => {
+    const chosen = items.filter((item) => item.on && !item.duplicate);
+    if (!chosen.length) return;
+    closeSheet();
+    run((async () => {
+      let n = 0;
+      for (const item of chosen) {
+        if (playedDuplicate(item)) continue;
+        const id = await app.store.addMatch({
+          date: item.date,
+          time: item.time,
+          note: '',
+          source: 'texto',
+          sourceText: item.source || text.slice(0, 140),
+          perTeam: 7,
+          venueId: DEFAULT_VENUE_ID,
+          venueName: DEFAULT_VENUE_NAME,
+          access: publicAccess(actor()),
+        }, app.who);
+        const match = matchById(id) || { id, date: item.date, time: item.time, capacity: 14, venueId: DEFAULT_VENUE_ID };
+        for (const raw of item.players) {
+          await app.store.addPlayer(match, importedPlayerFields(raw), app.who, { forceMain: true });
+        }
+        n += 1;
+      }
+      toast(n ? `${n} partido${n === 1 ? '' : 's'} en el historial` : 'Esos partidos ya estaban');
+    })());
   };
 }
 

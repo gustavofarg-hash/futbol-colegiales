@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMatchesFromText as p } from '../js/parser.js';
+import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore, listenDeniedPlan } from '../js/store.js';
@@ -1474,6 +1474,27 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.equal(scoreLine({ bib: 2, plain: 0 }), 'Con pechera 2 – 0 Sin pechera');
   assert.equal(goaliesLeft(['a', 'b'], ['b']), 1);
   assert.match(teamsMessage({ when: 'Martes', venue: 'Sede', players: [], teams: { bib: [], plain: [] }, score: { bib: 2, plain: 1 } }), /Marcador: Con pechera 2 – Sin pechera 1/);
+});
+
+test('importar historial lee fecha, hora y jugadores de varios partidos', () => {
+  const text = `Jueves 16/10 21hs
+1. Juan Pérez
+2. Ana Gómez 11 5555-6666
+
+[17/10/26, 19:30] Gustavo:
+1. Pedro
+2. Pedro
+1. Luis`;
+  const blocks = parsePlayedMatchesFromText(text, { now: new Date('2026-10-19T13:00:00-03:00') });
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].date, '2026-10-16');
+  assert.equal(blocks[0].time, '21:00');
+  assert.deepEqual(blocks[0].players.map((player) => player.name), ['Juan Pérez', 'Ana Gómez']);
+  assert.match(blocks[0].players[1].phone, /5555/);
+  assert.equal(blocks[1].date, '2026-10-17');
+  assert.equal(blocks[1].time, '19:30');
+  assert.deepEqual(blocks[1].players.map((player) => player.name), ['Pedro', 'Luis']);
+  assert.equal(p('jueves 22/10 21hs', { now: new Date('2026-10-19T13:00:00-03:00') })[0].date, '2026-10-22');
 });
 
 test('compartir la app nombra el link de instalación', () => {
