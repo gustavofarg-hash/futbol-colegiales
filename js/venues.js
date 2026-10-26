@@ -109,6 +109,17 @@ export function venueLabel(match, stored) {
   return DEFAULT_VENUE_NAME;
 }
 
+/** "Fútbol 7". El número es jugadores por equipo de ese partido. */
+export function footballLabel(match) {
+  return `Fútbol ${perTeamOf(match)}`;
+}
+
+/** La misma etiqueta en minúscula, para el medio de una frase. */
+export function footballPhrase(match) {
+  const label = footballLabel(match);
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
 export function perTeamOf(match) {
   const asked = Number(match?.perTeam);
   if (Number.isInteger(asked) && asked >= MIN_PER_TEAM && asked <= MAX_PER_TEAM) return asked;

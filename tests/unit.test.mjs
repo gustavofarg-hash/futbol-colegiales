@@ -14,7 +14,7 @@ import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, toEpoch } from '../js/dates.js';
-import { capacityFor, defaultVenueId, filterHistoryByVenues, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
+import { capacityFor, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
@@ -718,6 +718,13 @@ test('aviso al subir de la espera y lugar reservado', () => {
     confirmUrl: url,
   });
   assert.equal(msg, `¡Hola Juan Pérez! Se hizo un lugar en el fútbol 7 en Polideportivo Colegiales el jueves 22/10 a las 21:00 hs. ¿Confirmás tu presencia? ¿Querés que te deje anotado? Respondé en este link: ${url}`);
+  const cinco = promotionMessage({
+    player: { name: 'Juan Pérez' },
+    match: { date: '2026-10-22', time: '21:00', perTeam: 5 },
+    venue: 'Polideportivo Colegiales',
+    confirmUrl: url,
+  });
+  assert.match(cinco, /en el fútbol 5 en Polideportivo Colegiales/);
   assert.equal(reservationClearedByAnswer({ tentative: true, confirmed: 'si' }), true);
   assert.equal(reservationClearedByAnswer({ tentative: true, confirmed: 'no' }), false);
   assert.equal(reservationClearedByAnswer({ confirmed: 'si' }), false);
@@ -1628,6 +1635,10 @@ test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegi
   assert.deepEqual(matchSize({ capacity: 1 }), { perTeam: null, capacity: 1 });
   assert.equal(perTeamOf({}), 7);
   assert.equal(perTeamOf({ capacity: 14 }), 7);
+  assert.equal(footballLabel({}), 'Fútbol 7');
+  assert.equal(footballLabel({ perTeam: 8 }), 'Fútbol 8');
+  assert.equal(footballLabel({ capacity: 12 }), 'Fútbol 6');
+  assert.equal(footballPhrase({ perTeam: 5 }), 'fútbol 5');
   assert.equal(matchCapacity({ capacity: 1 }), 1);
   assert.equal(capacityFor(11), 22);
   assert.equal(venueLabel({}, []), 'Polideportivo Colegiales');

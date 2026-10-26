@@ -28,7 +28,7 @@ import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } f
 import { PRICES_DENIED_WRITE, normalizePrices, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { cyclePlayer, emptyTeams, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import {
-  VENUES_DENIED_WRITE, capacityFor, defaultVenueId, filterHistoryByVenues, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
+  VENUES_DENIED_WRITE, capacityFor, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
@@ -694,7 +694,7 @@ function renderMatch(id) {
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
       <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(placeOf(m))}</div>
-      <p class="hint" id="match-size">Fútbol ${perTeamOf(m)} contra ${perTeamOf(m)} · ${cap} jugadores</p>
+      <p class="hint" id="match-size">${esc(footballLabel(m))}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
       <div class="match-notes" id="match-notes">
@@ -786,13 +786,13 @@ function confirmUrlFor(m, p) {
 function waMessage(m, p) {
   const first = (p.name || '').trim().split(/\s+/)[0];
   const link = confirmUrlFor(m, p);
-  return `¡Hola ${first}! Te anoté para el fútbol 7 en ${placeOf(m)} el ${labelDate(m.date)} a las ${m.time} hs.` +
+  return `¡Hola ${first}! Te anoté para el ${footballPhrase(m)} en ${placeOf(m)} el ${labelDate(m.date)} a las ${m.time} hs.` +
     (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽` + (link ? ` ${link}` : '');
 }
 function listText(m) {
   const ps = playersOf(m.id);
   const cap = capOf(m);
-  const lines = [`⚽ Fútbol 7 · ${placeOf(m)}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
+  const lines = [`⚽ ${footballLabel(m)} · ${placeOf(m)}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
   if (m.note) lines.push(`📝 ${m.note}`);
   if (m.cancelled) lines.push('Cancelado');
   if (String(m.notes || '').trim()) lines.push(String(m.notes).trim());
