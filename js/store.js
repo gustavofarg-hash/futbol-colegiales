@@ -1120,7 +1120,7 @@ class FirebaseStore {
     const { onSnapshot } = this.fs;
     const un = onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
       if (!snap.metadata.fromCache) this.serverOk = true;
-      this.state.pending = snap.metadata.hasPendingWrites;
+      this._noteSnap(snap);
       this._buckets.matches.upcoming = this._takeMatchSnap(snap);
       this._rebuild('matches');
       this._backfillMatches(snap.docs);
@@ -1140,6 +1140,7 @@ class FirebaseStore {
     const q = this._applyMatchPlan(matchQueryPlan('history', bounds, bounds.before));
     const { onSnapshot } = this.fs;
     const un = onSnapshot(q, (snap) => {
+      this._noteSnap(snap);
       this.state.historyError = '';
       this._buckets.matches.history = this._takeMatchSnap(snap);
       this._rebuild('matches');
@@ -1155,10 +1156,15 @@ class FirebaseStore {
     });
     this._swap('history', un);
   }
+  _noteSnap(snap) {
+    const meta = snap?.metadata;
+    if (!meta) return;
+    this.state.fromCache = meta.fromCache === true;
+    this.state.pending = meta.hasPendingWrites === true;
+  }
   _rebuild(kind) {
-    const byId = new Map();
-    for (const list of Object.values(this._buckets[kind] || {})) for (const item of list || []) byId.set(item.id, item);
-    this.state[kind] = [...byId.values()];
+    const priority = kind === 'matches' ? ['opened', 'history', 'upcoming'] : ['broad', 'narrow'];
+    this.state[kind] = mergeDocsById(this._buckets[kind] || {}, priority);
     this._emit();
     if (kind === 'matches' || kind === 'players') this._reconcilePlayerCounts();
     if (kind === 'players') this._migrateContacts();
@@ -1259,11 +1265,13 @@ class FirebaseStore {
     this._listenUpcoming();
     this._listenHistory();
     watch(collection(this.db, 'players'), null, (snap) => {
+      this._noteSnap(snap);
       this._buckets.players.broad = take(snap);
       this._rebuild('players');
       this._backfillPlayers(snap.docs);
     }, legacyDenied('players'));
     watch(query(collection(this.db, 'players'), where('viewers', 'array-contains-any', accessIds)), null, (snap) => {
+      this._noteSnap(snap);
       this._buckets.players.narrow = take(snap);
       this._rebuild('players');
     });
@@ -2094,6 +2102,23 @@ class FirebaseStore {
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'venues', id), next);
   }
+}
+
+/** Une listas del mismo id. Las últimas claves de priority pisan a las anteriores. */
+export function mergeDocsById(buckets, priority = []) {
+  const rank = new Map(priority.map((key, index) => [key, index]));
+  const keys = Object.keys(buckets || {}).sort((a, b) => {
+    const ar = rank.has(a) ? rank.get(a) : -1;
+    const br = rank.has(b) ? rank.get(b) : -1;
+    return ar - br || a.localeCompare(b);
+  });
+  const byId = new Map();
+  for (const key of keys) {
+    for (const item of buckets[key] || []) {
+      if (item?.id) byId.set(item.id, item);
+    }
+  }
+  return [...byId.values()];
 }
 
 /** Store de localStorage, sin Firebase. Lo usa el modo demo y las pruebas. */

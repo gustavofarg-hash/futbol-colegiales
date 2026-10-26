@@ -7,7 +7,7 @@ import {
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
-import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from './waiting.js';
+import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
   needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress,
@@ -146,10 +146,7 @@ const addBlock = (m) => {
 const isWaiting = (p) => p.waiting === true;
 const playersOf = (matchId) => {
   const all = app.players.filter((p) => p.matchId === matchId);
-  const main = all
-    .filter((p) => !isWaiting(p))
-    .sort((a, b) => (a.rosterAt ?? a.createdAt) - (b.rosterAt ?? b.createdAt) || String(a.id).localeCompare(String(b.id)));
-  return groupByInviter(main, all);
+  return groupByInviter(rosterSplit(all).main, all);
 };
 const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
@@ -3339,6 +3336,8 @@ async function boot() {
   app.store.subscribe((view) => {
     const { matches, players, roster, rosterError, organizers, organizersError, venues, venuesError, prices, pricesError, history, historyMeta, historyError } = view;
     app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
+    app.pendingWrites = view.pending === true;
+    app.fromCache = view.fromCache === true;
     app.history = history || [];
     app.historyMeta = historyMeta || null;
     app.historyError = historyError || '';
@@ -3454,10 +3453,12 @@ let pendingRender = false;
 let fixingOverflow = false;
 async function fixOverflow() {
   if (fixingOverflow || !app.store) return;
+  if (app.pendingWrites || app.fromCache) return;
   const patches = [];
   for (const m of app.matches) {
     const all = app.players.filter((p) => p.matchId === m.id);
-    patches.push(...overflowPatches(all, capOf(m)));
+    const expected = Number.isInteger(m.playerCount) ? m.playerCount : all.length;
+    patches.push(...overflowPatches(all, capOf(m), { expectedCount: expected }));
   }
   if (!patches.length) return;
   fixingOverflow = true;

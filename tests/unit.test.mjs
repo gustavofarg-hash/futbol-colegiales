@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
-import { createDemoStore, listenDeniedPlan } from '../js/store.js';
-import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
+import { createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
+import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
@@ -593,6 +593,40 @@ test('lista de espera: al final, flechas y subir al primero', async () => {
   ], 2);
   assert.deepEqual(overflow, [{ id: 'c', waiting: true, waitOrder: 2, rosterAt: null }]);
   assert.equal(nextWaitOrder([{ waitOrder: 2 }, { waitOrder: 5 }]), 6);
+});
+
+test('14 confirmados se ven igual aunque la hora llegue como Timestamp', () => {
+  const rows = [];
+  for (let i = 0; i < 14; i++) {
+    rows.push({
+      id: `p${String(i).padStart(2, '0')}`,
+      waiting: false,
+      createdAt: 1_000 + i,
+      rosterAt: 1_000 + i,
+      phone: i % 2 ? '5491100000000' : '',
+    });
+  }
+  const gustavo = rows.map((player) => ({ ...player }));
+  const martin = rows.map((player) => ({
+    ...player,
+    phone: '',
+    createdAt: { seconds: Math.floor(player.createdAt / 1000), nanoseconds: (player.createdAt % 1000) * 1e6 },
+    rosterAt: { toMillis() { return player.rosterAt; } },
+  }));
+  const seenBy = (list) => rosterSplit(list);
+  const left = seenBy(gustavo);
+  const right = seenBy(martin);
+  assert.equal(left.waiting.length, 0);
+  assert.equal(right.waiting.length, 0);
+  assert.deepEqual(left.main.map((player) => player.id), right.main.map((player) => player.id));
+  assert.deepEqual(overflowPatches(gustavo.slice(0, 12), 14, { expectedCount: 14 }), []);
+  assert.deepEqual(overflowPatches(martin.slice(0, 12), 14, { expectedCount: 14 }), []);
+  assert.deepEqual(overflowPatches(gustavo, 12).map((player) => player.id), ['p12', 'p13']);
+  assert.deepEqual(overflowPatches(martin, 12).map((player) => player.id), ['p12', 'p13']);
+  const narrow = gustavo.map((player) => ({ ...player, waiting: false }));
+  const broad = gustavo.map((player, index) => ({ ...player, waiting: index >= 12 }));
+  const merged = mergeDocsById({ narrow, broad }, ['broad', 'narrow']);
+  assert.equal(merged.filter((player) => player.waiting === true).length, 0);
 });
 
 test('acortar: spoo.me, da.gd, basura y tiempo', async () => {
