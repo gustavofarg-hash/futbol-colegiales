@@ -8,6 +8,8 @@
 //    time: "HH:MM"             (hora local Buenos Aires, 24 h)
 //    startsAt: number          (epoch ms, calculado con offset -03:00)
 //    note: string
+//    court: string opcional, hasta 20 (N° de cancha). Vacío = sin número.
+//    price: int opcional. Precio por jugador de este partido. Si falta, el pago usa Ajustes.
 //    capacity: 14
 //    source: "manual" | "texto" | "whatsapp"
 //    sourceRef: string|null    (id del mensaje de origen, para deduplicar)
@@ -21,6 +23,9 @@
 //    hasPhone, phoneOwnerUid, phoneShared
 //    El número está en playerContacts/{playerId}, no acá.
 //    addedBy: "Gustavo" | "Martín"
+//    signedUpWith, signedUpWithName: organizador con quien se anotó (uid + nombre)
+//    goals: int opcional 0..99. Goles de ese jugador en el partido. No cambia matches.score.
+//    inGoal: bool opcional. Marcó que fue al arco. No cambia el marcador.
 //    createdAt, updatedAt
 //    paid: bool                         (opcional)
 //    amount: number|null                (pesos; solo si paid)
@@ -45,6 +50,8 @@
 //    { bib: [playerId], plain: [playerId] }
 //    bib = con pechera, plain = sin pechera. Solo titulares.
 //    Se guarda en el mismo partido: quien puede anotar lo edita y el resto lo ve.
+//  matches.score (opcional) { bib, plain } enteros 0..999. Marcador del partido,
+//    independiente de los goles de cada jugador.
 //  matches.cancelled (opcional, bool), cancelledAt, cancelledBy
 //  matches.notes (texto libre, hasta 2000). Distinto de note (la nota corta de la tarjeta).
 //  matches.playerCount (int). Lo actualiza el cliente al anotar o quitar.
@@ -57,6 +64,7 @@
 //    phone, ownerUid, visibleToAll (default false), phoneKey
 //  roster/{rosterId}
 //    name (el teléfono está en rosterContacts)
+//    shortName: apodo opcional, hasta 40. En el partido y en Equipos reemplaza al nombre.
 //    createdBy, createdAt, updatedAt
 //    level: número de 1 a 10, con un decimal (6.8). En pantalla va con coma.
 //    positions: ["Arquero"|"Defensa"|"Mediocampo"|"Ataque"]
@@ -78,22 +86,23 @@ import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { toEpoch, todayISO } from './dates.js';
 import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
+import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
-import { dropPlayer, teamsRecord } from './teams.js';
+import { bumpGoals, bumpScore, dropPlayer, scoreRecord, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
+import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, phoneIdentity, rosterInMatchMessage, rosterMatchCount } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
 } from './organizers.js';
 import { canEditPlayer, canEditRoster, editLockedError, playerPatchEditsIdentity } from './edit-lock.js';
 import {
-  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
+  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
@@ -203,6 +212,23 @@ function guestFields(data) {
   return base;
 }
 
+/** Con quién se anotó. Si el alta no lo manda, queda el organizador logueado. */
+function signupWith(data, actor) {
+  const has = !!data && ('signedUpWith' in data || 'signedUpWithName' in data);
+  const uid = String((has ? data.signedUpWith : actor?.uid) || '').trim().slice(0, 128);
+  const name = String((has ? data.signedUpWithName : actor?.name) || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  if (!uid || !name) return {};
+  return { signedUpWith: uid, signedUpWithName: name };
+}
+
+function applySignupPatch(rest) {
+  if (!rest || (!('signedUpWith' in rest) && !('signedUpWithName' in rest))) return;
+  const next = signupWith(rest, null);
+  delete rest.signedUpWith;
+  delete rest.signedUpWithName;
+  Object.assign(rest, next);
+}
+
 function cleanPersonName(value) {
   return String(value || '').trim().replace(/\s+/g, ' ');
 }
@@ -256,6 +282,37 @@ function applyRosterNamePatches(db, patches, now) {
   }
 }
 
+function mergePlayerPatches(...groups) {
+  const byId = new Map();
+  for (const item of groups.flat()) {
+    const prev = byId.get(item.id);
+    byId.set(item.id, { id: item.id, patch: { ...(prev?.patch || {}), ...item.patch } });
+  }
+  return [...byId.values()];
+}
+
+/** Copia el apodo a los jugadores del partido con ese rosterId que este organizador puede editar. */
+function rosterShortPatches(players, rosterId, shortName, actor) {
+  const id = String(rosterId || '').trim();
+  if (!id) return [];
+  const short = cleanShortName(shortName);
+  const patches = [];
+  for (const player of players || []) {
+    if (!player?.id || String(player.rosterId || '') !== id) continue;
+    if (!canEditPlayer(player, actor)) continue;
+    if (cleanShortName(player.shortName) === short) continue;
+    patches.push({ id: player.id, patch: { shortName: short } });
+  }
+  return patches;
+}
+
+function applyShortName(target, value, present) {
+  if (!present) return;
+  const short = cleanShortName(value);
+  if (short) target.shortName = short;
+  else delete target.shortName;
+}
+
 function matchDoc(data, who) {
   const now = Date.now();
   const access = data?.access ? accessPatch(data.access) : null;
@@ -269,6 +326,8 @@ function matchDoc(data, who) {
     venueName: String(data.venueName || DEFAULT_VENUE_NAME).trim() || DEFAULT_VENUE_NAME,
     capacity: size.capacity,
     ...(size.perTeam ? { perTeam: size.perTeam } : {}),
+    ...(cleanCourt(data.court) ? { court: cleanCourt(data.court) } : {}),
+    ...(storedMatchPrice(data) != null ? { price: storedMatchPrice(data) } : {}),
     source: data.source || 'manual',
     sourceRef: data.sourceRef || null,
     sourceText: data.sourceText || null,
@@ -287,10 +346,23 @@ function refusePlayedCancel(match, data) {
   }
 }
 
+function storedMatchPrice(data) {
+  if (!data || !('price' in data) || data.price == null || data.price === '') return null;
+  const n = Number(data.price);
+  if (Number.isInteger(n) && n >= 0 && n <= MAX_PRICE) return n;
+  return null;
+}
+
 function cleanMatchPatch(data) {
   const access = data?.access ? accessPatch(data.access) : null;
   const { access: _access, playerCount: _count, ...rest } = data || {};
   if ('notes' in rest) rest.notes = String(rest.notes ?? '').slice(0, 2000);
+  if ('court' in rest) rest.court = cleanCourt(rest.court);
+  if ('price' in rest) {
+    const price = storedMatchPrice(rest);
+    if (price == null) delete rest.price;
+    else rest.price = price;
+  }
   if ('cancelled' in rest) rest.cancelled = rest.cancelled === true;
   if (rest.cancelled === false) {
     rest.cancelledAt = null;
@@ -601,7 +673,7 @@ class LocalStore {
     refuseGuestHost(mates, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
-    const waiting = opts.waiting === true || mainCount >= cap;
+    const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
     const player = {
@@ -615,6 +687,8 @@ class LocalStore {
       ...(rosterId ? { rosterId } : {}),
       ...guestFields(data),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
+      ...signupWith(data, this.actor),
+      ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
     };
     db.players[id] = player;
     if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '', data.phoneShared === true);
@@ -643,6 +717,31 @@ class LocalStore {
     match.updatedAt = Date.now();
     this._save(db);
   }
+  async adjustScore(id, side, delta, who) {
+    const db = this._load();
+    const match = db.matches[id];
+    if (!match) return;
+    match.score = scoreRecord(bumpScore(match.score, side, delta)).score;
+    match.updatedBy = who || match.updatedBy;
+    match.updatedAt = Date.now();
+    this._save(db);
+  }
+  async adjustGoals(playerId, delta) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!player) return;
+    player.goals = bumpGoals(player.goals, delta);
+    player.updatedAt = Date.now();
+    this._save(db);
+  }
+  async setInGoal(playerId, on) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!player) return;
+    player.inGoal = on === true;
+    player.updatedAt = Date.now();
+    this._save(db);
+  }
   async updatePlayer(id, data) {
     const db = this._load(); if (!db.players[id]) return;
     const player = db.players[id];
@@ -655,6 +754,7 @@ class LocalStore {
       refuseDuplicate(mates, identityAfterEdit(player, data), id);
     }
     const { phone, ...rest } = data || {};
+    applySignupPatch(rest);
     Object.assign(player, rest, { updatedAt: Date.now() });
     delete player.phone;
     if ('phone' in (data || {})) {
@@ -720,6 +820,7 @@ class LocalStore {
     if (existing) throw Object.assign(new Error(`${existing.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     const id = rid(); const now = Date.now();
     const person = { name: data.name.trim(), createdBy: who || '', createdByUid: this.actor?.uid || '', createdAt: now, updatedAt: now, hasPhone: false, phoneKey: '', phoneOwnerUid: this.actor?.uid || '', phoneShared: false };
+    applyShortName(person, data.shortName, 'shortName' in (data || {}));
     db.roster[id] = person;
     if (phone) writeContact(db, 'roster', id, phone, person, this.actor?.uid || '', data.phoneShared === true);
     this._save(db); return id;
@@ -732,13 +833,15 @@ class LocalStore {
       const dup = phoneDup(db, 'roster', id, phone);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
-    const nextName = cleanPersonName(data?.name);
+    const nextName = cleanPersonName(data?.name ?? cur.name);
     if (!nextName) throw Object.assign(new Error('Poné el nombre.'), { code: 'invalid-name' });
-    const patches = nextName !== cleanPersonName(cur.name)
-      ? rosterNamePatches(rosterPlayers(db), id, nextName, this.actor)
-      : [];
+    const patches = mergePlayerPatches(
+      nextName !== cleanPersonName(cur.name) ? rosterNamePatches(rosterPlayers(db), id, nextName, this.actor) : [],
+      'shortName' in (data || {}) ? rosterShortPatches(rosterPlayers(db), id, data.shortName, this.actor) : [],
+    );
     const now = Date.now();
     Object.assign(cur, { name: nextName, updatedAt: now });
+    applyShortName(cur, data?.shortName, 'shortName' in (data || {}));
     delete cur.phone;
     if ('phone' in (data || {})) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
     applyRosterNamePatches(db, patches, now);
@@ -760,6 +863,9 @@ class LocalStore {
     }
     if ('positions' in patch) next.positions = patch.positions || [];
     if ('notes' in patch) next.notes = patch.notes || [];
+    if ('shortName' in patch) {
+      namePatches = mergePlayerPatches(namePatches, rosterShortPatches(rosterPlayers(db), id, patch.shortName, this.actor));
+    }
     const phone = 'phone' in patch ? (patch.phone || '') : this._rosterPhone(db, id);
     if ('phone' in patch && phone) {
       const dup = phoneDup(db, 'roster', id, phone);
@@ -767,6 +873,7 @@ class LocalStore {
     }
     const now = Date.now();
     Object.assign(cur, next, { updatedAt: now });
+    if ('shortName' in patch) applyShortName(cur, patch.shortName, true);
     delete cur.phone;
     if ('phone' in patch) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
     applyRosterNamePatches(db, namePatches, now);
@@ -774,6 +881,11 @@ class LocalStore {
   }
   async deleteRoster(id) {
     const db = this._load();
+    const cur = db.roster[id];
+    if (cur) {
+      const n = rosterMatchCount(rosterPlayers(db), { ...cur, id, phone: this._rosterPhone(db, id) });
+      if (n) throw Object.assign(new Error(rosterInMatchMessage(cur.name, n)), { code: 'roster-in-match' });
+    }
     delete db.roster[id];
     ensureContacts(db);
     delete db.contacts.roster[id];
@@ -1008,7 +1120,7 @@ class FirebaseStore {
     const { onSnapshot } = this.fs;
     const un = onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
       if (!snap.metadata.fromCache) this.serverOk = true;
-      this.state.pending = snap.metadata.hasPendingWrites;
+      this._noteSnap(snap);
       this._buckets.matches.upcoming = this._takeMatchSnap(snap);
       this._rebuild('matches');
       this._backfillMatches(snap.docs);
@@ -1028,6 +1140,7 @@ class FirebaseStore {
     const q = this._applyMatchPlan(matchQueryPlan('history', bounds, bounds.before));
     const { onSnapshot } = this.fs;
     const un = onSnapshot(q, (snap) => {
+      this._noteSnap(snap);
       this.state.historyError = '';
       this._buckets.matches.history = this._takeMatchSnap(snap);
       this._rebuild('matches');
@@ -1043,10 +1156,15 @@ class FirebaseStore {
     });
     this._swap('history', un);
   }
+  _noteSnap(snap) {
+    const meta = snap?.metadata;
+    if (!meta) return;
+    this.state.fromCache = meta.fromCache === true;
+    this.state.pending = meta.hasPendingWrites === true;
+  }
   _rebuild(kind) {
-    const byId = new Map();
-    for (const list of Object.values(this._buckets[kind] || {})) for (const item of list || []) byId.set(item.id, item);
-    this.state[kind] = [...byId.values()];
+    const priority = kind === 'matches' ? ['opened', 'history', 'upcoming'] : ['broad', 'narrow'];
+    this.state[kind] = mergeDocsById(this._buckets[kind] || {}, priority);
     this._emit();
     if (kind === 'matches' || kind === 'players') this._reconcilePlayerCounts();
     if (kind === 'players') this._migrateContacts();
@@ -1147,11 +1265,13 @@ class FirebaseStore {
     this._listenUpcoming();
     this._listenHistory();
     watch(collection(this.db, 'players'), null, (snap) => {
+      this._noteSnap(snap);
       this._buckets.players.broad = take(snap);
       this._rebuild('players');
       this._backfillPlayers(snap.docs);
     }, legacyDenied('players'));
     watch(query(collection(this.db, 'players'), where('viewers', 'array-contains-any', accessIds)), null, (snap) => {
+      this._noteSnap(snap);
       this._buckets.players.narrow = take(snap);
       this._rebuild('players');
     });
@@ -1493,7 +1613,7 @@ class FirebaseStore {
     refuseGuestHost(mates, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true).length;
-    const waiting = opts.waiting === true || mainCount >= cap;
+    const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
@@ -1512,6 +1632,8 @@ class FirebaseStore {
       ...(rosterId ? { rosterId } : {}),
       ...guestFields(data),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
+      ...signupWith(data, this.actor),
+      ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);
     const stored = this.state.matches.find((item) => item.id === match.id) || match;
@@ -1537,6 +1659,24 @@ class FirebaseStore {
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'matches', id), { teams: rec.teams, updatedBy: who || '', updatedAt: Date.now() });
   }
+  async adjustScore(id, side, delta, who) {
+    const { doc, getDoc, updateDoc } = this.fs;
+    const ref = doc(this.db, 'matches', id);
+    const snap = await getDoc(ref);
+    const score = scoreRecord(bumpScore(snap.data()?.score, side, delta)).score;
+    await updateDoc(ref, { score, updatedBy: who || '', updatedAt: Date.now() });
+  }
+  async adjustGoals(playerId, delta) {
+    const { doc, getDoc, updateDoc } = this.fs;
+    const ref = doc(this.db, 'players', playerId);
+    const snap = await getDoc(ref);
+    const goals = bumpGoals(snap.data()?.goals, delta);
+    await updateDoc(ref, { goals, updatedAt: Date.now() });
+  }
+  async setInGoal(playerId, on) {
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'players', playerId), { inGoal: on === true, updatedAt: Date.now() });
+  }
   async updatePlayer(id, data) {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;
     const cur = this.state.players.find((player) => player.id === id) || {};
@@ -1550,6 +1690,7 @@ class FirebaseStore {
       refuseDuplicate(mates, identityAfterEdit(cur, data), id);
     }
     const { phone, ...rest } = data || {};
+    applySignupPatch(rest);
     const patch = { ...rest, updatedAt: Date.now() };
     if ('phone' in (data || {})) {
       try {
@@ -1746,6 +1887,7 @@ class FirebaseStore {
     const person = {
       name: data.name.trim(), phone: '', createdBy: who || '', createdByUid: uid, createdAt: now, updatedAt: now,
       hasPhone: false, phoneKey: phone ? phoneKey(phone) : '', phoneOwnerUid: uid, phoneShared: false,
+      ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
     };
     const ref = await addDoc(collection(this.db, 'roster'), person);
     if (phone) {
@@ -1770,12 +1912,17 @@ class FirebaseStore {
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
     const { doc, updateDoc, deleteField, writeBatch } = this.fs;
-    const nextName = cleanPersonName(data?.name);
+    const nextName = cleanPersonName(data?.name ?? cur.name);
     if (!nextName) throw Object.assign(new Error('Poné el nombre.'), { code: 'invalid-name' });
-    const namePatches = nextName !== cleanPersonName(cur.name)
-      ? rosterNamePatches(this.state.players || [], id, nextName, this.actor)
-      : [];
+    const namePatches = mergePlayerPatches(
+      nextName !== cleanPersonName(cur.name) ? rosterNamePatches(this.state.players || [], id, nextName, this.actor) : [],
+      'shortName' in (data || {}) ? rosterShortPatches(this.state.players || [], id, data.shortName, this.actor) : [],
+    );
     const next = { name: nextName, updatedAt: Date.now() };
+    if ('shortName' in (data || {})) {
+      const short = cleanShortName(data.shortName);
+      next.shortName = short || deleteField();
+    }
     if ('phone' in (data || {})) {
       try {
         const wrote = await this._writeContactDoc('roster', id, phone, cur);
@@ -1823,11 +1970,13 @@ class FirebaseStore {
     }
     if ('positions' in patch) next.positions = patch.positions || [];
     if ('notes' in patch) next.notes = patch.notes || [];
+    if ('shortName' in patch) namePatches = mergePlayerPatches(namePatches, rosterShortPatches(this.state.players || [], id, patch.shortName, this.actor));
     if ('phone' in patch && canonicalWa(patch.phone)) {
       const dup = this._rosterDup(patch.phone, id);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
     const { doc, updateDoc, deleteField, writeBatch } = this.fs;
+    if ('shortName' in patch) next.shortName = cleanShortName(patch.shortName) || deleteField();
     if ('phone' in patch) {
       try {
         const wrote = await this._writeContactDoc('roster', id, patch.phone, cur);
@@ -1864,6 +2013,12 @@ class FirebaseStore {
     await this._commitRosterName(id, next, namePatches, { doc, updateDoc, writeBatch });
   }
   async deleteRoster(id) {
+    const cur = (this.state.roster || []).find((row) => row.id === id);
+    if (cur) {
+      const phone = cur.phone || this.state.rosterContacts?.[id]?.phone || '';
+      const n = rosterMatchCount(this.state.players || [], { ...cur, phone });
+      if (n) throw Object.assign(new Error(rosterInMatchMessage(cur.name, n)), { code: 'roster-in-match' });
+    }
     const { doc, writeBatch } = this.fs;
     const batch = writeBatch(this.db);
     batch.delete(doc(this.db, 'roster', id));
@@ -1947,6 +2102,23 @@ class FirebaseStore {
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'venues', id), next);
   }
+}
+
+/** Une listas del mismo id. Las últimas claves de priority pisan a las anteriores. */
+export function mergeDocsById(buckets, priority = []) {
+  const rank = new Map(priority.map((key, index) => [key, index]));
+  const keys = Object.keys(buckets || {}).sort((a, b) => {
+    const ar = rank.has(a) ? rank.get(a) : -1;
+    const br = rank.has(b) ? rank.get(b) : -1;
+    return ar - br || a.localeCompare(b);
+  });
+  const byId = new Map();
+  for (const key of keys) {
+    for (const item of buckets[key] || []) {
+      if (item?.id) byId.set(item.id, item);
+    }
+  }
+  return [...byId.values()];
 }
 
 /** Store de localStorage, sin Firebase. Lo usa el modo demo y las pruebas. */

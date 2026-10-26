@@ -1,20 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMatchesFromText as p } from '../js/parser.js';
+import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
-import { createDemoStore, listenDeniedPlan } from '../js/store.js';
-import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
-import { phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
+import { createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
+import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
+import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
-import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
+import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, toEpoch } from '../js/dates.js';
-import { capacityFor, defaultVenueId, filterHistoryByVenues, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
+import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
@@ -24,7 +24,8 @@ import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
-import { cyclePlayer, dropPlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { bumpGoals, bumpScore, cyclePlayer, dropPlayer, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { APP_INSTALL_URL, appShareMessage } from '../js/share.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -123,6 +124,15 @@ test('texto de pago y total del partido', () => {
   assert.equal(paymentStatusText(nico), '');
   assert.equal(collectedLine([nico]), '');
   assert.equal(collectedLine([juan, pedro, nico]), 'Recaudado: $5.000 · 1/3 pagaron');
+  assert.equal(collectedLine([{ freePlay: true, paid: true, name: 'Libre' }, juan]), 'Recaudado: $5.000 · 1/1 pagaron · 1 juega gratis');
+  assert.equal(paymentStatusText({ freePlay: true, paid: true, amount: 5000 }), 'Juega gratis');
+  assert.deepEqual(paymentParts({ freePlay: true, paid: true, cash: 5000 }), { cash: 0, transfer: 0, pending: 0, received: 0, split: false });
+  const gratis = paymentRecord({ freePlay: true, paid: true, split: true }, 'Gustavo', 10);
+  assert.equal(gratis.ok, true);
+  assert.equal(gratis.patch.freePlay, true);
+  assert.equal(gratis.patch.paid, true);
+  assert.equal(gratis.patch.amount, null);
+  assert.equal(gratis.patch.cash, null);
   const many = Array.from({ length: 14 }, (_, i) => (i < 9 ? { paid: true, amount: 5000, method: 'efectivo' } : { name: 'x' }));
   assert.equal(collectedLine(many), 'Recaudado: $45.000 · 9/14 pagaron');
 });
@@ -585,6 +595,40 @@ test('lista de espera: al final, flechas y subir al primero', async () => {
   assert.equal(nextWaitOrder([{ waitOrder: 2 }, { waitOrder: 5 }]), 6);
 });
 
+test('14 confirmados se ven igual aunque la hora llegue como Timestamp', () => {
+  const rows = [];
+  for (let i = 0; i < 14; i++) {
+    rows.push({
+      id: `p${String(i).padStart(2, '0')}`,
+      waiting: false,
+      createdAt: 1_000 + i,
+      rosterAt: 1_000 + i,
+      phone: i % 2 ? '5491100000000' : '',
+    });
+  }
+  const gustavo = rows.map((player) => ({ ...player }));
+  const martin = rows.map((player) => ({
+    ...player,
+    phone: '',
+    createdAt: { seconds: Math.floor(player.createdAt / 1000), nanoseconds: (player.createdAt % 1000) * 1e6 },
+    rosterAt: { toMillis() { return player.rosterAt; } },
+  }));
+  const seenBy = (list) => rosterSplit(list);
+  const left = seenBy(gustavo);
+  const right = seenBy(martin);
+  assert.equal(left.waiting.length, 0);
+  assert.equal(right.waiting.length, 0);
+  assert.deepEqual(left.main.map((player) => player.id), right.main.map((player) => player.id));
+  assert.deepEqual(overflowPatches(gustavo.slice(0, 12), 14, { expectedCount: 14 }), []);
+  assert.deepEqual(overflowPatches(martin.slice(0, 12), 14, { expectedCount: 14 }), []);
+  assert.deepEqual(overflowPatches(gustavo, 12).map((player) => player.id), ['p12', 'p13']);
+  assert.deepEqual(overflowPatches(martin, 12).map((player) => player.id), ['p12', 'p13']);
+  const narrow = gustavo.map((player) => ({ ...player, waiting: false }));
+  const broad = gustavo.map((player, index) => ({ ...player, waiting: index >= 12 }));
+  const merged = mergeDocsById({ narrow, broad }, ['broad', 'narrow']);
+  assert.equal(merged.filter((player) => player.waiting === true).length, 0);
+});
+
 test('acortar: spoo.me, da.gd, basura y tiempo', async () => {
   const longUrl = 'https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=Ab3x9Zk2';
   const spooOnly = async (url, init) => {
@@ -718,6 +762,13 @@ test('aviso al subir de la espera y lugar reservado', () => {
     confirmUrl: url,
   });
   assert.equal(msg, `¡Hola Juan Pérez! Se hizo un lugar en el fútbol 7 en Polideportivo Colegiales el jueves 22/10 a las 21:00 hs. ¿Confirmás tu presencia? ¿Querés que te deje anotado? Respondé en este link: ${url}`);
+  const cinco = promotionMessage({
+    player: { name: 'Juan Pérez' },
+    match: { date: '2026-10-22', time: '21:00', perTeam: 5 },
+    venue: 'Polideportivo Colegiales',
+    confirmUrl: url,
+  });
+  assert.match(cinco, /en el fútbol 5 en Polideportivo Colegiales/);
   assert.equal(reservationClearedByAnswer({ tentative: true, confirmed: 'si' }), true);
   assert.equal(reservationClearedByAnswer({ tentative: true, confirmed: 'no' }), false);
   assert.equal(reservationClearedByAnswer({ confirmed: 'si' }), false);
@@ -829,6 +880,18 @@ test('búsqueda del plantel: nombre, apellido y teléfono', () => {
   assert.deepEqual(names('NES'), []);
   assert.equal(rosterHit(roster[0], 'eira'), false);
   assert.deepEqual(names('2222-3333'), ['Ernesto Pereira']);
+  assert.deepEqual(searchRoster([{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }], 'tito').map((p) => p.name), ['Ernesto Pereira']);
+  assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }]), 'Tito');
+  assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9', shortName: 'Viejo' }, [{ id: '9', name: 'Ernesto Pereira' }]), 'Ernesto Pereira');
+  assert.equal(displayName({ name: 'Ernesto Pereira', shortName: 'Tito' }, []), 'Tito');
+  assert.equal(cleanShortName('  Tito   '), 'Tito');
+  assert.equal(rosterMatchCount([
+    { matchId: 'a', rosterId: '1' },
+    { matchId: 'a', rosterId: '1', waiting: true },
+    { matchId: 'b', name: 'Luis Gómez', phone: '5491166667777' },
+  ], { id: '1', name: 'Luis Gómez', phone: '5491166667777' }), 2);
+  assert.equal(rosterMatchCount([], { id: '1', name: 'Luis' }), 0);
+  assert.equal(rosterInMatchMessage('Luis Gómez', 1), 'Luis Gómez está anotado en 1 partido. Quitalo de esos partidos antes de borrarlo de Jugadores.');
   assert.deepEqual(names('+54 9 11 4444'), ['José Pérez']);
   assert.deepEqual(names('11 9999 0000'), ['Ana Gómez']);
   assert.deepEqual(names(''), ['Ana Gómez', 'Ernesto Pereira', 'José Pérez']);
@@ -900,6 +963,19 @@ test('plantel demo: no duplica por teléfono', async () => {
   store.setActor({ uid: 'gustavo', name: 'Gustavo' });
   await store.updateRoster(id, { name: 'Ernesto P.', phone: '5491122223333' });
   assert.equal(JSON.parse(mem.get('f7c-test-roster')).roster[id].name, 'Ernesto P.');
+  const matchId = await store.addMatch({ date: '2026-10-27', time: '21:00', capacity: 14 }, 'Gustavo');
+  const match = JSON.parse(mem.get('f7c-test-roster')).matches[matchId];
+  const playerId = await store.addPlayer({ ...match, id: matchId }, { name: 'Ernesto P.', rosterId: id, phone: '' }, 'Gustavo');
+  await store.updateRoster(id, { name: 'Ernesto P.', shortName: 'Tito' });
+  const saved = JSON.parse(mem.get('f7c-test-roster'));
+  assert.equal(saved.roster[id].shortName, 'Tito');
+  assert.equal(saved.players[playerId].shortName, 'Tito');
+  await store.updateRoster(id, { shortName: '' });
+  const cleared = JSON.parse(mem.get('f7c-test-roster'));
+  assert.equal(cleared.roster[id].shortName, undefined);
+  assert.equal(cleared.players[playerId].shortName, '');
+  await assert.rejects(() => store.deleteRoster(id), (error) => error.code === 'roster-in-match');
+  await store.deletePlayer(playerId);
   await store.deleteRoster(id);
   assert.equal(Object.keys(JSON.parse(mem.get('f7c-test-roster')).roster).length, 0);
 });
@@ -1165,6 +1241,10 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(parsePriceInput('5000').amount, 5000);
   assert.equal(parsePriceInput('5.000,50').ok, false);
   assert.equal(parsePriceInput('-1').ok, false);
+  assert.equal(priceOfMatch({ price: 7500 }, { matchPrice: 5000 }), 7500);
+  assert.equal(priceOfMatch({}, { matchPrice: 6000 }), 6000);
+  assert.equal(priceOfMatch({ price: 1.5 }, null), 5000);
+  assert.equal(priceOfMatch({ price: 0 }, { matchPrice: 5000 }), 0);
   assert.deepEqual(splitEven(9000, 2), [4500, 4500]);
   assert.deepEqual(splitEven(9001, 2), [4501, 4500]);
   assert.deepEqual(splitPaymentAcross({ cash: 9001, transfer: 100, pending: 0 }, 2), [
@@ -1409,6 +1489,54 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.match(msg, /Sin pechera \(1\)/);
   assert.match(msg, /1\. Beto/);
   assert.deepEqual(teamsRecord({ bib: ['ana'], plain: ['ana'] }).teams, { bib: ['ana'], plain: [] });
+  const moved = movePlayer({ bib: [], plain: [] }, 'ana', 'bib', ['ana', 'beto'], 1);
+  assert.deepEqual(moved.teams, { bib: ['ana'], plain: [] });
+  const full = movePlayer(moved.teams, 'beto', 'bib', ['ana', 'beto'], 1);
+  assert.equal(full.ok, false);
+  assert.equal(full.side, 'bib');
+  assert.deepEqual(movePlayer(moved.teams, 'ana', 'none', ['ana', 'beto'], 1).teams, { bib: [], plain: [] });
+  assert.deepEqual(normalizeScore(undefined), { bib: 0, plain: 0 });
+  assert.deepEqual(bumpScore({ bib: 0, plain: 2 }, 'bib', 1), { bib: 1, plain: 2 });
+  assert.deepEqual(bumpScore({ bib: 0, plain: 2 }, 'plain', -1), { bib: 0, plain: 1 });
+  assert.deepEqual(bumpScore({ bib: 0, plain: 0 }, 'bib', -1), { bib: 0, plain: 0 });
+  assert.deepEqual(bumpScore({ bib: 999, plain: 0 }, 'bib', 1), { bib: 999, plain: 0 });
+  assert.equal(bumpGoals(0, 1), 1);
+  assert.equal(bumpGoals(0, -1), 0);
+  assert.equal(bumpGoals(99, 1), 99);
+  assert.equal(bumpGoals(undefined, 2), 2);
+  assert.equal(scoreLine(undefined), '');
+  assert.equal(scoreLine({ bib: 2, plain: 0 }), 'Con pechera 2 – 0 Sin pechera');
+  assert.equal(goaliesLeft(['a', 'b'], ['b']), 1);
+  assert.match(teamsMessage({ when: 'Martes', venue: 'Sede', players: [], teams: { bib: [], plain: [] }, score: { bib: 2, plain: 1 } }), /Marcador: Con pechera 2 – Sin pechera 1/);
+});
+
+test('importar historial lee fecha, hora y jugadores de varios partidos', () => {
+  const text = `Jueves 16/10 21hs
+1. Juan Pérez
+2. Ana Gómez 11 5555-6666
+
+[17/10/26, 19:30] Gustavo:
+1. Pedro
+2. Pedro
+1. Luis`;
+  const blocks = parsePlayedMatchesFromText(text, { now: new Date('2026-10-19T13:00:00-03:00') });
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].date, '2026-10-16');
+  assert.equal(blocks[0].time, '21:00');
+  assert.deepEqual(blocks[0].players.map((player) => player.name), ['Juan Pérez', 'Ana Gómez']);
+  assert.match(blocks[0].players[1].phone, /5555/);
+  assert.equal(blocks[1].date, '2026-10-17');
+  assert.equal(blocks[1].time, '19:30');
+  assert.deepEqual(blocks[1].players.map((player) => player.name), ['Pedro', 'Luis']);
+  assert.equal(p('jueves 22/10 21hs', { now: new Date('2026-10-19T13:00:00-03:00') })[0].date, '2026-10-22');
+});
+
+test('compartir la app nombra el link de instalación', () => {
+  const text = appShareMessage();
+  assert.match(text, /Anotate con Mis Partidos/);
+  assert.match(text, /Instalá la app desde acá/);
+  assert.ok(text.includes(APP_INSTALL_URL));
+  assert.equal(APP_INSTALL_URL, 'https://gustavofarg-hash.github.io/futbol-colegiales/');
 });
 
 test('cancelar no arma recordatorio y el mensaje no lleva link', () => {
@@ -1628,6 +1756,15 @@ test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegi
   assert.deepEqual(matchSize({ capacity: 1 }), { perTeam: null, capacity: 1 });
   assert.equal(perTeamOf({}), 7);
   assert.equal(perTeamOf({ capacity: 14 }), 7);
+  assert.equal(footballLabel({}), 'Fútbol 7');
+  assert.equal(footballLabel({ perTeam: 8 }), 'Fútbol 8');
+  assert.equal(footballLabel({ capacity: 12 }), 'Fútbol 6');
+  assert.equal(footballPhrase({ perTeam: 5 }), 'fútbol 5');
+  assert.equal(courtLabel({}), '');
+  assert.equal(courtLabel({ court: '3' }), 'Cancha 3');
+  assert.equal(courtLabel({ court: 'Cancha 2' }), 'Cancha 2');
+  assert.equal(courtLabel({ court: 'cancha' }), 'Cancha');
+  assert.equal(cleanCourt('  12   norte  extra extra extra'), '12 norte extra extra');
   assert.equal(matchCapacity({ capacity: 1 }), 1);
   assert.equal(capacityFor(11), 22);
   assert.equal(venueLabel({}, []), 'Polideportivo Colegiales');
@@ -1661,6 +1798,16 @@ test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegi
   assert.equal(db.matches[id].venueName, 'Polideportivo Colegiales');
   assert.equal(db.matches[id].perTeam, 7);
   assert.equal(db.matches[id].capacity, 14);
+  assert.equal(db.matches[id].court, undefined);
+  const conCancha = await store.addMatch({ date: '2026-10-23', time: '20:00', court: ' Cancha 4 ' }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].court, 'Cancha 4');
+  await store.updateMatch(conCancha, { court: '' }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].court, '');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].price, undefined);
+  await store.updateMatch(conCancha, { price: 7500 }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].price, 7500);
+  await store.updateMatch(conCancha, { price: 1.5 }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].price, 7500);
   assert.equal(db.venues.colegiales.name, 'Polideportivo Colegiales');
   const norte = await store.addVenue('Club Norte');
   await store.updateVenue(norte, { name: 'Club Norte Sur' });
@@ -1689,4 +1836,32 @@ test('no se cancela un partido que ya entró al historial', async () => {
   assert.equal(db.matches[played].cancelled, undefined);
   assert.equal(db.matches[played].notes, 'Se puede anotar');
   assert.equal(db.matches[ahead].cancelled, true);
+});
+
+test('se anotó con queda en el jugador y se puede cambiar sin tocar el nombre', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.setActor({ uid: 'gustavo', name: 'Gustavo' });
+  const id = await store.addMatch({ date: '2026-10-22', time: '21:00' }, 'Gustavo');
+  const pid = await store.addPlayer({ id, date: '2026-10-22', capacity: 14 }, { name: 'Juan Pérez', phone: '' }, 'Gustavo');
+  let player = JSON.parse(mem.get(store.key)).players[pid];
+  assert.equal(player.signedUpWith, 'gustavo');
+  assert.equal(player.signedUpWithName, 'Gustavo');
+  store.setActor({ uid: 'martin', name: 'Martín' });
+  await store.updatePlayer(pid, { signedUpWith: 'martin', signedUpWithName: 'Martín' });
+  player = JSON.parse(mem.get(store.key)).players[pid];
+  assert.equal(player.name, 'Juan Pérez');
+  assert.equal(player.signedUpWith, 'martin');
+  assert.equal(player.signedUpWithName, 'Martín');
+  const amigo = await store.addPlayer({ id, date: '2026-10-22', capacity: 14 }, {
+    name: 'Invitado 1', phone: '', invitedBy: pid, signedUpWith: 'gustavo', signedUpWithName: 'Gustavo',
+  }, 'Martín');
+  const guest = JSON.parse(mem.get(store.key)).players[amigo];
+  assert.equal(guest.signedUpWith, 'gustavo');
+  assert.equal(guest.signedUpWithName, 'Gustavo');
 });

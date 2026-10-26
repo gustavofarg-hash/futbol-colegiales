@@ -1,13 +1,49 @@
 // Lista de espera. El orden es un número waitOrder en el jugador
 // (menor = más prioridad). Los que llegan nuevos van al final.
 
+/** Milisegundos de entrada. Acepta número, Timestamp.toMillis o {seconds, nanoseconds}. */
+export function entryMillis(player) {
+  const raw = player?.rosterAt ?? player?.createdAt;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (raw && typeof raw.toMillis === 'function') {
+    const n = Number(raw.toMillis());
+    return Number.isFinite(n) ? n : null;
+  }
+  if (raw && typeof raw.seconds === 'number' && Number.isFinite(raw.seconds)) {
+    const nanos = typeof raw.nanoseconds === 'number' && Number.isFinite(raw.nanoseconds) ? raw.nanoseconds : 0;
+    return raw.seconds * 1000 + Math.floor(nanos / 1e6);
+  }
+  return null;
+}
+
+function compareEntry(a, b) {
+  const am = entryMillis(a);
+  const bm = entryMillis(b);
+  if (am == null && bm == null) return String(a?.id).localeCompare(String(b?.id));
+  if (am == null) return 1;
+  if (bm == null) return -1;
+  return am - bm || String(a?.id).localeCompare(String(b?.id));
+}
+
 export function sortWaiting(players) {
   return [...(players || [])].sort((a, b) => {
     const ao = orderOf(a);
     const bo = orderOf(b);
     if (ao !== bo) return ao - bo;
-    return (a.createdAt || 0) - (b.createdAt || 0) || String(a.id).localeCompare(String(b.id));
+    return compareEntry(a, b);
   });
+}
+
+/** Titulares y espera según el dato guardado. No recorta por cupo. */
+export function rosterSplit(players) {
+  const main = [];
+  const waiting = [];
+  for (const player of players || []) {
+    if (player?.waiting === true) waiting.push(player);
+    else main.push(player);
+  }
+  main.sort(compareEntry);
+  return { main, waiting: sortWaiting(waiting) };
 }
 
 function orderOf(p) {
@@ -44,12 +80,14 @@ export function moveWaiting(players, id, dir) {
  * Si hay más titulares que el cupo (dos altas a la vez), los que sobran
  * —los últimos en entrar— pasan al final de la espera.
  */
-export function overflowPatches(players, capacity) {
-  const cap = capacity || 14;
-  const main = (players || [])
-    .filter((p) => p.waiting !== true)
-    .sort((a, b) => (a.rosterAt ?? a.createdAt ?? 0) - (b.rosterAt ?? b.createdAt ?? 0) || String(a.id).localeCompare(String(b.id)));
+export function overflowPatches(players, capacity, opts = {}) {
+  const list = players || [];
+  if (opts.expectedCount != null && opts.expectedCount !== list.length) return [];
+  const cap = Number(capacity);
+  if (!Number.isInteger(cap) || cap <= 0) return [];
+  const main = list.filter((p) => p.waiting !== true).sort(compareEntry);
+  if (main.some((p) => entryMillis(p) == null)) return [];
   if (main.length <= cap) return [];
-  let order = nextWaitOrder((players || []).filter((p) => p.waiting === true));
+  let order = nextWaitOrder(list.filter((p) => p.waiting === true));
   return main.slice(cap).map((p) => ({ id: p.id, waiting: true, waitOrder: order++, rosterAt: null }));
 }

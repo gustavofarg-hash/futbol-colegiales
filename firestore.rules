@@ -62,7 +62,16 @@ service cloud.firestore {
           && (!('perTeam' in d) || (d.perTeam is int && d.perTeam >= 5 && d.perTeam <= 11))
           && (!('capacity' in d) || (d.capacity is int && d.capacity >= 1 && d.capacity <= 40))
           && (!('perTeam' in d) || !('capacity' in d) || d.capacity == d.perTeam * 2)
+          && (!('court' in d) || (d.court is string && d.court.size() <= 20))
+          && (!('price' in d) || (d.price is int && d.price >= 0 && d.price <= 1000000000))
+          && (!('score' in d) || scoreOk(d.score))
           && accessShape(d);
+    }
+    function scoreOk(s) {
+      return s is map
+          && s.keys().hasOnly(['bib', 'plain'])
+          && s.bib is int && s.bib >= 0 && s.bib <= 999
+          && s.plain is int && s.plain >= 0 && s.plain <= 999;
     }
     function accessShape(d) {
       return (!('viewers' in d) || (d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30))
@@ -168,7 +177,12 @@ service cloud.firestore {
           && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number)
           && (!('viewers' in d) || (d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30))
           && (!('adders' in d) || (d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30))
-          && (!('addedByUid' in d) || (d.addedByUid is string && d.addedByUid.size() <= 128));
+          && (!('addedByUid' in d) || (d.addedByUid is string && d.addedByUid.size() <= 128))
+          && (!('signedUpWith' in d) || (d.signedUpWith is string && d.signedUpWith.size() > 0 && d.signedUpWith.size() <= 128))
+          && (!('signedUpWithName' in d) || (d.signedUpWithName is string && d.signedUpWithName.size() > 0 && d.signedUpWithName.size() <= 40))
+          && (!('freePlay' in d) || d.freePlay is bool)
+          && (!('goals' in d) || (d.goals is int && d.goals >= 0 && d.goals <= 99))
+          && (!('inGoal' in d) || d.inGoal is bool);
     }
 
     function transferPartOk(p) {
@@ -259,7 +273,8 @@ service cloud.firestore {
           && request.resource.data.get('phoneOwnerUid', null) == resource.data.get('phoneOwnerUid', null)
           && request.resource.data.get('level', null) == resource.data.get('level', null)
           && request.resource.data.get('positions', null) == resource.data.get('positions', null)
-          && request.resource.data.get('notes', null) == resource.data.get('notes', null);
+          && request.resource.data.get('notes', null) == resource.data.get('notes', null)
+          && request.resource.data.get('shortName', null) == resource.data.get('shortName', null);
     }
 
     // Un organizador puede actualizar al jugador. El nombre y el teléfono
@@ -296,6 +311,7 @@ service cloud.firestore {
           && (!('shortCode' in d) || (d.shortCode is string && d.shortCode.matches('^[0-9A-Za-z]{8}$')))
           && (!('invitedBy' in d) || (d.invitedBy is string && d.invitedBy.size() > 0 && d.invitedBy.size() <= 128))
           && (!('invitedByName' in d) || (d.invitedByName is string && d.invitedByName.size() > 0 && d.invitedByName.size() <= 60))
+          && (!('shortName' in d) || (d.shortName is string && d.shortName.size() <= 40))
           && validPayment(d);
     }
 
@@ -342,7 +358,8 @@ service cloud.firestore {
           && (!('updatedAt' in d) || d.updatedAt is number)
           && (!('level' in d) || (d.level is number && d.level >= 1 && d.level <= 10))
           && (!('positions' in d) || positionsOk(d.positions))
-          && (!('notes' in d) || notesOk(d.notes));
+          && (!('notes' in d) || notesOk(d.notes))
+          && (!('shortName' in d) || (d.shortName is string && d.shortName.size() <= 40));
     }
     function validOrganizer(d) {
       return d.name is string && d.name.size() > 0 && d.name.size() <= 40
@@ -474,6 +491,8 @@ service cloud.firestore {
     }
 
     match /roster/{rosterId} {
+      // El borrado no puede mirar players: las reglas no consultan otra
+      // colección. La app rechaza el borrado si esa ficha está anotada.
       allow read, delete: if isActiveStaff();
       allow create: if isActiveStaff() && validRoster(request.resource.data);
       allow update: if isActiveStaff() && validRoster(request.resource.data)

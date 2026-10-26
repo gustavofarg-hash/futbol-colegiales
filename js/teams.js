@@ -49,6 +49,52 @@ export function teamsBalance(teams) {
   return { bib, plain, balanced: bib === plain };
 }
 
+function clampScore(n) {
+  const x = Number(n);
+  if (!Number.isInteger(x) || x < 0) return 0;
+  return Math.min(999, x);
+}
+
+/** Marcador del partido. No sale de los goles de cada jugador. */
+export function normalizeScore(raw) {
+  return { bib: clampScore(raw?.bib), plain: clampScore(raw?.plain) };
+}
+
+export function scoreRecord(raw) {
+  return { ok: true, score: normalizeScore(raw) };
+}
+
+export function bumpScore(score, side, delta) {
+  const base = normalizeScore(score);
+  const key = side === 'plain' ? 'plain' : 'bib';
+  const step = Number(delta);
+  return { ...base, [key]: clampScore(base[key] + (Number.isInteger(step) ? step : 0)) };
+}
+
+function clampGoals(n) {
+  const x = Number(n);
+  if (!Number.isInteger(x) || x < 0) return 0;
+  return Math.min(99, x);
+}
+
+/** Goles de un jugador. No mueven el marcador del partido. */
+export function bumpGoals(current, delta) {
+  const step = Number(delta);
+  return clampGoals(clampGoals(current) + (Number.isInteger(step) ? step : 0));
+}
+
+/** Texto del marcador. Vacío si el partido todavía no tiene uno. */
+export function scoreLine(score) {
+  if (!score || typeof score !== 'object') return '';
+  const s = normalizeScore(score);
+  return `Con pechera ${s.bib} – ${s.plain} Sin pechera`;
+}
+
+export function goaliesLeft(playerIds, flaggedIds) {
+  const done = new Set((flaggedIds || []).map((id) => String(id)));
+  return (playerIds || []).filter((id) => !done.has(String(id))).length;
+}
+
 /** Saca a quien se bajó. changed es false si no estaba en ningún equipo. */
 export function dropPlayer(teams, playerId) {
   if (!teams || typeof teams !== 'object') return { changed: false, teams: null };
@@ -61,9 +107,26 @@ export function dropPlayer(teams, playerId) {
 }
 
 /**
- * Toque: sin asignar → con pechera → sin pechera → sin asignar.
- * allowedIds son los titulares. Alguien de la espera no entra.
+ * Mueve a un lado, o lo devuelve a sin asignar.
+ * side: 'bib' | 'plain' | 'none'. Si el lado está lleno, no cambia.
  */
+export function movePlayer(teams, playerId, side, allowedIds, cap) {
+  const allow = (allowedIds || []).map((id) => String(id));
+  const base = normalizeTeams(teams, allow);
+  const id = String(playerId || '');
+  if (!allow.includes(id)) return { ok: false, reason: 'fuera', teams: base };
+  const without = {
+    bib: base.bib.filter((item) => item !== id),
+    plain: base.plain.filter((item) => item !== id),
+  };
+  if (side === 'none' || side === 'unassigned') return { ok: true, teams: without };
+  const target = side === 'plain' ? 'plain' : 'bib';
+  const limit = Number(cap);
+  if (Number.isInteger(limit) && limit > 0 && without[target].length >= limit) {
+    return { ok: false, reason: 'full', side: target, teams: base };
+  }
+  return { ok: true, teams: { bib: without.bib, plain: without.plain, [target]: [...without[target], id] } };
+}
 export function cyclePlayer(teams, playerId, allowedIds) {
   const allow = (allowedIds || []).map((id) => String(id));
   const base = normalizeTeams(teams, allow);
@@ -87,7 +150,7 @@ export function shuffleTeams(playerIds, rng = Math.random) {
   return { bib: ids.slice(0, mid), plain: ids.slice(mid) };
 }
 
-export function teamsMessage({ when = '', venue = '', players = [], teams = emptyTeams() } = {}) {
+export function teamsMessage({ when = '', venue = '', players = [], teams = emptyTeams(), score = null } = {}) {
   const nameOf = (id) => (players || []).find((player) => player.id === id)?.name || 'Jugador';
   const block = (title, ids) => {
     const lines = [`${title} (${ids.length})`];
@@ -95,9 +158,11 @@ export function teamsMessage({ when = '', venue = '', players = [], teams = empt
     else ids.forEach((id, i) => lines.push(`${i + 1}. ${nameOf(id)}`));
     return lines;
   };
+  const board = score ? [`Marcador: Con pechera ${score.bib} – Sin pechera ${score.plain}`] : [];
   return [
     `⚽ Equipos · ${venue}`,
     when,
+    ...board,
     '',
     ...block('Con pechera', teams.bib || []),
     '',

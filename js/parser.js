@@ -219,3 +219,83 @@ export function parseMatchesFromText(text, { now = new Date(), refDate } = {}) {
     return true;
   }).map((r) => (r.warning ? r : { date: r.date, time: r.time, source: r.source }));
 }
+
+function playerLine(line) {
+  const match = String(line || '').trim().match(/^(?:\d{1,2}|[•*])\s*[.)]\s+(.+)$/);
+  if (!match) return null;
+  let rest = match[1].trim().replace(/\s+/g, ' ');
+  let phone = '';
+  const tail = rest.match(/^(.*?)(?:\s+[-–|]\s*|\s+)(\+?\d[\d\s().-]{6,}\d)\s*$/);
+  if (tail) {
+    const digits = tail[2].replace(/\D/g, '');
+    const name = tail[1].trim().replace(/[-–|:]+$/, '').trim();
+    if (name && digits.length >= 8 && digits.length <= 15) {
+      rest = name;
+      phone = tail[2].trim();
+    }
+  }
+  rest = rest.slice(0, 60).trim();
+  if (!rest) return null;
+  return { name: rest, phone };
+}
+
+function directPlayedMatch(line, opts) {
+  const found = parseMatchesFromText(line, opts).find((item) => item.date && item.time);
+  if (!found) return null;
+  return { date: found.date, time: found.time, source: line.trim().slice(0, 140) };
+}
+
+function waPlayedMatch(line) {
+  const h = WA_HEADER.exec(String(line || '').trim());
+  if (!h) return null;
+  const y = fullYear(h[3]);
+  const month = Number(h[2]);
+  const day = Number(h[1]);
+  if (!isValidDate(y, month, day)) return null;
+  const hour = Number(h[4]);
+  const minute = h[5];
+  if (hour > 23) return null;
+  return {
+    date: toISODate(y, month, day),
+    time: `${String(hour).padStart(2, '0')}:${minute}`,
+    source: String(line).trim().slice(0, 140),
+  };
+}
+
+function nextPlayerLine(lines, start) {
+  for (let i = start; i < lines.length; i++) {
+    const line = String(lines[i] || '').trim();
+    if (!line) continue;
+    return !!playerLine(line);
+  }
+  return false;
+}
+
+/**
+ * Partidos ya jugados, con la lista numerada de quienes jugaron.
+ * Un encabezado con fecha y hora abre un partido. Otro encabezado empieza el siguiente.
+ */
+export function parsePlayedMatchesFromText(text, opts = {}) {
+  const lines = String(text || '').split(/\r?\n/);
+  const blocks = [];
+  let current = null;
+  const begin = (match) => {
+    current = { date: match.date, time: match.time, source: match.source, players: [] };
+    blocks.push(current);
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = String(lines[i] || '').trim();
+    if (!line) continue;
+    const player = playerLine(line);
+    if (player && current) {
+      const key = player.name.toLowerCase();
+      if (!current.players.some((item) => item.name.toLowerCase() === key)) current.players.push(player);
+      continue;
+    }
+    const direct = directPlayedMatch(line, opts);
+    if (direct) { begin(direct); continue; }
+    const header = waPlayedMatch(line);
+    if (header && nextPlayerLine(lines, i + 1)) begin(header);
+  }
+  return blocks;
+}
