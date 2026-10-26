@@ -23,6 +23,7 @@
 //    hasPhone, phoneOwnerUid, phoneShared
 //    El número está en playerContacts/{playerId}, no acá.
 //    addedBy: "Gustavo" | "Martín"
+//    signedUpWith, signedUpWithName: organizador con quien se anotó (uid + nombre)
 //    createdAt, updatedAt
 //    paid: bool                         (opcional)
 //    amount: number|null                (pesos; solo si paid)
@@ -204,6 +205,23 @@ function guestFields(data) {
   if (data?.guestAuto === true) base.guestAuto = true;
   else if (data?.guestAuto === false) base.guestAuto = false;
   return base;
+}
+
+/** Con quién se anotó. Si el alta no lo manda, queda el organizador logueado. */
+function signupWith(data, actor) {
+  const has = !!data && ('signedUpWith' in data || 'signedUpWithName' in data);
+  const uid = String((has ? data.signedUpWith : actor?.uid) || '').trim().slice(0, 128);
+  const name = String((has ? data.signedUpWithName : actor?.name) || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  if (!uid || !name) return {};
+  return { signedUpWith: uid, signedUpWithName: name };
+}
+
+function applySignupPatch(rest) {
+  if (!rest || (!('signedUpWith' in rest) && !('signedUpWithName' in rest))) return;
+  const next = signupWith(rest, null);
+  delete rest.signedUpWith;
+  delete rest.signedUpWithName;
+  Object.assign(rest, next);
 }
 
 function cleanPersonName(value) {
@@ -633,6 +651,7 @@ class LocalStore {
       ...(rosterId ? { rosterId } : {}),
       ...guestFields(data),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
+      ...signupWith(data, this.actor),
     };
     db.players[id] = player;
     if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '', data.phoneShared === true);
@@ -673,6 +692,7 @@ class LocalStore {
       refuseDuplicate(mates, identityAfterEdit(player, data), id);
     }
     const { phone, ...rest } = data || {};
+    applySignupPatch(rest);
     Object.assign(player, rest, { updatedAt: Date.now() });
     delete player.phone;
     if ('phone' in (data || {})) {
@@ -1530,6 +1550,7 @@ class FirebaseStore {
       ...(rosterId ? { rosterId } : {}),
       ...guestFields(data),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
+      ...signupWith(data, this.actor),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);
     const stored = this.state.matches.find((item) => item.id === match.id) || match;
@@ -1568,6 +1589,7 @@ class FirebaseStore {
       refuseDuplicate(mates, identityAfterEdit(cur, data), id);
     }
     const { phone, ...rest } = data || {};
+    applySignupPatch(rest);
     const patch = { ...rest, updatedAt: Date.now() };
     if ('phone' in (data || {})) {
       try {

@@ -1720,3 +1720,31 @@ test('no se cancela un partido que ya entró al historial', async () => {
   assert.equal(db.matches[played].notes, 'Se puede anotar');
   assert.equal(db.matches[ahead].cancelled, true);
 });
+
+test('se anotó con queda en el jugador y se puede cambiar sin tocar el nombre', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.setActor({ uid: 'gustavo', name: 'Gustavo' });
+  const id = await store.addMatch({ date: '2026-10-22', time: '21:00' }, 'Gustavo');
+  const pid = await store.addPlayer({ id, date: '2026-10-22', capacity: 14 }, { name: 'Juan Pérez', phone: '' }, 'Gustavo');
+  let player = JSON.parse(mem.get(store.key)).players[pid];
+  assert.equal(player.signedUpWith, 'gustavo');
+  assert.equal(player.signedUpWithName, 'Gustavo');
+  store.setActor({ uid: 'martin', name: 'Martín' });
+  await store.updatePlayer(pid, { signedUpWith: 'martin', signedUpWithName: 'Martín' });
+  player = JSON.parse(mem.get(store.key)).players[pid];
+  assert.equal(player.name, 'Juan Pérez');
+  assert.equal(player.signedUpWith, 'martin');
+  assert.equal(player.signedUpWithName, 'Martín');
+  const amigo = await store.addPlayer({ id, date: '2026-10-22', capacity: 14 }, {
+    name: 'Invitado 1', phone: '', invitedBy: pid, signedUpWith: 'gustavo', signedUpWithName: 'Gustavo',
+  }, 'Martín');
+  const guest = JSON.parse(mem.get(store.key)).players[amigo];
+  assert.equal(guest.signedUpWith, 'gustavo');
+  assert.equal(guest.signedUpWithName, 'Gustavo');
+});

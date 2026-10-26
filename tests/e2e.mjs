@@ -252,6 +252,7 @@ const players = [
 await page.click('#btn-add-player');
 await page.waitForSelector('#wa-share');
 check('Alta del partido: Mostrar el WhatsApp para todos, destildado', (await page.locator('#wa-share-line').innerText()).replace(/\s+/g, ' ').trim() === 'Mostrar el WhatsApp para todos' && !(await page.isChecked('#wa-share')));
+check('Se anotó con arranca en Gustavo', (await page.locator('#signed-up-with option:checked').innerText()).trim() === 'Gustavo');
 await page.click('#player-form [data-close]');
 for (const [name, phone] of players) {
   await page.click('#btn-add-player');
@@ -283,6 +284,7 @@ check('Link wa.me Juan correcto',
   juanHrefText.slice(0, 180));
 players.forEach(([n, , wa], i) => check(`Número normalizado ${n} → ${wa}`, hrefs[i]?.startsWith(`https://wa.me/${wa}?text=`)));
 check('Cada jugador muestra "Agregó: Gustavo"', (await page.$$('.tag.g')).length === 3);
+check('Juan se anotó con Gustavo', juanLink.player.signedUpWith === 'gustavo' && juanLink.player.signedUpWithName === 'Gustavo' && (await page.textContent('.slot:has-text("Juan Pérez")')).includes('Se anotó con: Gustavo'));
 check('Todos figuran sin respuesta', (await page.textContent('#confirm-sum')).includes('Sin respuesta: 3'));
 const juanAtAdd = await page.evaluate(() => {
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
@@ -383,6 +385,13 @@ await page.waitForSelector('.slot .name:text-is("Nico Ruiz")');
 check('Jugador agregado por Martín muestra "Agregó: Martín"', (await page.textContent('.slot:has-text("Nico Ruiz") .tag')).includes('Martín'));
 const juanHidden = (await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).innerText()).replace(/\s+/g, ' ');
 check('Martín no ve el WhatsApp de Juan', !juanHidden.includes('1234') && !juanHidden.includes('549') && juanHidden.includes('El WhatsApp de este jugador es privado'), juanHidden);
+await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).locator('[data-menu]').click();
+await page.waitForSelector('#signed-up-with');
+await page.selectOption('#signed-up-with', { label: 'Martín' });
+await page.waitForFunction(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((p) => p.name === 'Juan Pérez' && p.signedUpWith === 'martin'));
+await page.locator('dialog.sheet[open] [data-close]').click();
+await page.waitForFunction(() => (document.querySelector('#slots .slot')?.innerText || '').includes('Se anotó con: Martín'));
+check('Martín cambia con quién se anotó Juan', (await page.textContent('#slots .slot:has-text("Juan Pérez")')).includes('Se anotó con: Martín'));
 check('El botón de WhatsApp de Juan está deshabilitado', await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).locator('.wa-btn').isDisabled());
 await page.click('#btn-remind');
 await page.waitForSelector('#remind-list .name');

@@ -192,6 +192,34 @@ function priceExample(amount) {
 function addedTag(player) {
   return `<span class="tag ${organizerTagClass(player.addedBy)}">Agregó: ${esc(player.addedBy || '?')}</span>`;
 }
+function signupStaffOptions(player) {
+  const options = staffUsers(app.users).map((user) => ({ uid: user.uid, name: user.name }));
+  const me = actor();
+  if (me?.uid && !options.some((item) => item.uid === me.uid)) options.unshift({ uid: me.uid, name: me.name || 'Yo' });
+  if (player?.signedUpWith && !options.some((item) => item.uid === player.signedUpWith)) {
+    options.push({ uid: player.signedUpWith, name: player.signedUpWithName || 'Organizador' });
+  }
+  const selected = player?.signedUpWith || me?.uid || options[0]?.uid || '';
+  return { options, selected };
+}
+function signupFields(player) {
+  const { options, selected } = signupStaffOptions(player);
+  if (!options.length) return '';
+  return `<label class="field"><span>Se anotó con:</span><select name="signedUpWith" id="signed-up-with">${options.map((item) => `<option value="${esc(item.uid)}"${item.uid === selected ? ' selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label>`;
+}
+function readSignup(root) {
+  const sel = root?.matches?.('[name=signedUpWith]') ? root : root?.querySelector?.('[name=signedUpWith]');
+  if (!sel) return {};
+  const uid = String(sel.value || '').trim().slice(0, 128);
+  const name = String(sel.selectedOptions?.[0]?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  if (!uid || !name) return {};
+  return { signedUpWith: uid, signedUpWithName: name };
+}
+function signedUpTag(player) {
+  const name = String(player?.signedUpWithName || '').trim();
+  if (!name) return '';
+  return `<span class="tag">Se anotó con: ${esc(name)}</span>`;
+}
 function playerIndex(matchId) {
   const mates = app.players.filter((item) => !matchId || item.matchId === matchId);
   return new Map(mates.map((item) => [item.id, item]));
@@ -672,7 +700,7 @@ function renderMatch(id) {
         <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name-row"><div class="name">${esc(p.name)}</div>${levelBadge(p)}</div>
           <div class="sub">${phoneSub(p)}
-            ${friendTag(p)}${addedTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
+            ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payMarkup(p)}
           ${promoBadge(p)}
         </button>
@@ -844,7 +872,7 @@ function waitingSection(m, full, readOnly) {
         <button type="button" class="who" data-profile="${esc(p.id)}">
           <div class="name-row"><div class="name">${esc(p.name)}</div>${levelBadge(p)}</div>
           <div class="sub">${phoneSub(p)}
-            ${friendTag(p)}${addedTag(p)}${confirmTag(p)}</div>
+            ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}${confirmTag(p)}</div>
           ${payMarkup(p)}
         </button>
         ${readOnly ? '' : `<button type="button" class="btn promote-btn" data-promote="${esc(p.id)}" ${full ? 'disabled' : ''} aria-label="Subir a ${esc(p.name)} al partido">Subir al partido</button>`}
@@ -2252,6 +2280,7 @@ function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
   }
   const warning = friends.length && !onWait ? waitWarning(place.spots, place.wait) : '';
   if (warning && !confirm(warning)) return false;
+  const signup = readSignup(document.querySelector('#player-form, #friend-form'));
   const known = host?.rosterId ? app.roster.find((person) => person.id === host.rosterId) : null;
   const share = host?.phoneShared === true || known?.phoneShared === true;
   const lead = host?.name || friends[0]?.name || '';
@@ -2279,6 +2308,7 @@ function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
         phoneKey: host.phoneKey || saved?.phoneKey || '',
         hasPhone: host.hasPhone === true || saved?.hasPhone === true,
         phoneShared: visible,
+        ...signup,
       }, app.who, { waiting, tentative: tentative === true && !waiting });
       hostName = host.name;
       offset = 1;
@@ -2291,6 +2321,7 @@ function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
         invitedBy: hostId,
         invitedByName: hostName,
         guestAuto: friend.guestAuto === true,
+        ...signup,
       }, app.who, { waiting });
       offset += 1;
     }
@@ -2376,6 +2407,7 @@ function openPlayerForm(m, p, opts = {}) {
       <h3>${editingFriend ? 'Editar invitado' : p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
+      ${signupFields(p)}
       ${editingFriend ? `<p class="hint" id="friend-stays">Sigue siendo invitado de ${esc(hostName || 'quien lo invitó')}.</p>` : ''}
       ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
@@ -2395,8 +2427,21 @@ function openPlayerForm(m, p, opts = {}) {
     </form>`);
   const form = $('#player-form');
   if (locked) {
-    form.querySelectorAll('input, textarea, select').forEach((el) => { el.disabled = true; });
-    form.onsubmit = (e) => e.preventDefault();
+    const canChangeSignup = canAdd(m, actor().uid);
+    form.querySelectorAll('input, textarea, select').forEach((el) => {
+      if (canChangeSignup && el.name === 'signedUpWith') return;
+      el.disabled = true;
+    });
+    const save = form.querySelector('button[type=submit]');
+    if (save && canChangeSignup) save.disabled = false;
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      if (!canChangeSignup) return;
+      const signup = readSignup(form);
+      if (!signup.signedUpWith) return;
+      closeSheet();
+      run(app.store.updatePlayer(p.id, signup), 'Se anotó con actualizado');
+    };
     return;
   }
   const hint = $('#pf-phone');
@@ -2486,6 +2531,7 @@ function openPlayerForm(m, p, opts = {}) {
         return;
       }
       const savingNewRoster = offerRoster && $('#save-roster')?.checked === true;
+      const signup = readSignup(form);
       if (savingNewRoster) {
         const known = rosterAlreadySaved(name, phoneForCheck);
         if (known && alreadyInMatch(matesOf(m.id), { name: known.name, phone: known.phone || phoneForCheck, phoneKey: known.phoneKey, hasPhone: known.hasPhone === true, rosterId: known.id }, { exceptId: p.id })) {
@@ -2513,6 +2559,7 @@ function openPlayerForm(m, p, opts = {}) {
           if (freshHost) patch.invitedByName = freshHost;
           patch.guestAuto = stillAuto;
         }
+        Object.assign(patch, signup);
         await app.store.updatePlayer(p.id, patch);
       })(), editingFriend ? 'Invitado actualizado' : 'Jugador actualizado');
       return;
@@ -2757,6 +2804,7 @@ function openPlayerMenu(m, p) {
   openSheet(`
     <h3>${esc(p.name)}</h3>
     <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    ${canAdd(m, actor().uid) ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
       ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
       <button class="btn" id="pm-profile">Ver perfil</button>
@@ -2770,6 +2818,12 @@ function openPlayerMenu(m, p) {
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, m.id); };
+  const signupBox = $('#signed-up-with');
+  if (signupBox) signupBox.onchange = () => {
+    const signup = readSignup(signupBox);
+    if (!signup.signedUpWith) return;
+    run(app.store.updatePlayer(p.id, signup), 'Se anotó con actualizado');
+  };
   const loadPhone = $('#pm-phone');
   if (loadPhone && own) loadPhone.onclick = () => { closeSheet(); app.wantPhoneForm = true; openPlayerProfile(p, m.id); };
   const spot = $('#pm-confirm-spot');
@@ -2829,6 +2883,7 @@ function openFriendForm(m, host) {
     <form id="friend-form" novalidate>
       <h3>Invitados de ${esc(host.name)}</h3>
       <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Cuentan para el cupo como cualquier jugador.</p>
+      ${signupFields(null)}
       <div class="friend-box">
         <div class="friend-head"><span>Invitados</span><button type="button" class="btn" id="btn-add-friend">Agregar invitado</button></div>
         <div id="friend-rows"></div>
