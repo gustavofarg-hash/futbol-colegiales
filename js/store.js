@@ -24,6 +24,7 @@
 //    El número está en playerContacts/{playerId}, no acá.
 //    addedBy: "Gustavo" | "Martín"
 //    signedUpWith, signedUpWithName: organizador con quien se anotó (uid + nombre)
+//    goals: int opcional 0..99. Goles de ese jugador en el partido. No cambia matches.score.
 //    createdAt, updatedAt
 //    paid: bool                         (opcional)
 //    amount: number|null                (pesos; solo si paid)
@@ -86,7 +87,7 @@ import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
-import { bumpScore, dropPlayer, scoreRecord, teamsRecord } from './teams.js';
+import { bumpGoals, bumpScore, dropPlayer, scoreRecord, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
@@ -689,6 +690,14 @@ class LocalStore {
     match.score = scoreRecord(bumpScore(match.score, side, delta)).score;
     match.updatedBy = who || match.updatedBy;
     match.updatedAt = Date.now();
+    this._save(db);
+  }
+  async adjustGoals(playerId, delta) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!player) return;
+    player.goals = bumpGoals(player.goals, delta);
+    player.updatedAt = Date.now();
     this._save(db);
   }
   async updatePlayer(id, data) {
@@ -1593,6 +1602,13 @@ class FirebaseStore {
     const snap = await getDoc(ref);
     const score = scoreRecord(bumpScore(snap.data()?.score, side, delta)).score;
     await updateDoc(ref, { score, updatedBy: who || '', updatedAt: Date.now() });
+  }
+  async adjustGoals(playerId, delta) {
+    const { doc, getDoc, updateDoc } = this.fs;
+    const ref = doc(this.db, 'players', playerId);
+    const snap = await getDoc(ref);
+    const goals = bumpGoals(snap.data()?.goals, delta);
+    await updateDoc(ref, { goals, updatedAt: Date.now() });
   }
   async updatePlayer(id, data) {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;

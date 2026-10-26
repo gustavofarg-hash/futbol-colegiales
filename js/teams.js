@@ -71,6 +71,18 @@ export function bumpScore(score, side, delta) {
   return { ...base, [key]: clampScore(base[key] + (Number.isInteger(step) ? step : 0)) };
 }
 
+function clampGoals(n) {
+  const x = Number(n);
+  if (!Number.isInteger(x) || x < 0) return 0;
+  return Math.min(99, x);
+}
+
+/** Goles de un jugador. No mueven el marcador del partido. */
+export function bumpGoals(current, delta) {
+  const step = Number(delta);
+  return clampGoals(clampGoals(current) + (Number.isInteger(step) ? step : 0));
+}
+
 /** Saca a quien se bajó. changed es false si no estaba en ningún equipo. */
 export function dropPlayer(teams, playerId) {
   if (!teams || typeof teams !== 'object') return { changed: false, teams: null };

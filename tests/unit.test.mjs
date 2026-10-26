@@ -24,7 +24,7 @@ import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
-import { bumpScore, cyclePlayer, dropPlayer, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { bumpGoals, bumpScore, cyclePlayer, dropPlayer, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -1440,6 +1440,10 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.deepEqual(bumpScore({ bib: 0, plain: 2 }, 'plain', -1), { bib: 0, plain: 1 });
   assert.deepEqual(bumpScore({ bib: 0, plain: 0 }, 'bib', -1), { bib: 0, plain: 0 });
   assert.deepEqual(bumpScore({ bib: 999, plain: 0 }, 'bib', 1), { bib: 999, plain: 0 });
+  assert.equal(bumpGoals(0, 1), 1);
+  assert.equal(bumpGoals(0, -1), 0);
+  assert.equal(bumpGoals(99, 1), 99);
+  assert.equal(bumpGoals(undefined, 2), 2);
   assert.match(teamsMessage({ when: 'Martes', venue: 'Sede', players: [], teams: { bib: [], plain: [] }, score: { bib: 2, plain: 1 } }), /Marcador: Con pechera 2 – Sin pechera 1/);
 });
 

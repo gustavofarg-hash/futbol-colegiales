@@ -26,7 +26,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
-import { bumpScore, emptyTeams, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import { emptyTeams, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import {
   VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -541,9 +541,13 @@ function renderTeams(id) {
       const other = side === 'bib' ? 'plain' : 'bib';
       const otherIcon = other === 'bib' ? vest : shirt;
       const otherLabel = other === 'bib' ? 'Pasar a con pechera' : 'Pasar a sin pechera';
+      const goals = Number.isInteger(player.goals) && player.goals > 0 ? player.goals : 0;
+      const goalBox = readOnly
+        ? `<span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span>`
+        : `<span class="goal-box"><button type="button" data-goal="-1" aria-label="Restar un gol de ${esc(player.name)}">−</button><span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span><button type="button" data-goal="1" aria-label="Sumar un gol de ${esc(player.name)}">+</button></span>`;
       rows.push(readOnly
-        ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span></li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(player.name)}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(player.name)} de este equipo">✕</button></li>`);
+        ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span>${goalBox}</li>`
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span>${goalBox}<button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(player.name)}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(player.name)} de este equipo">✕</button></li>`);
     }
     return rows.join('');
   };
@@ -614,8 +618,13 @@ function renderTeams(id) {
   };
   if (!readOnly) {
     $('#team-board').onclick = (e) => {
-      const btn = e.target.closest('[data-assign]');
       const row = e.target.closest('[data-drag-player]');
+      const goal = e.target.closest('[data-goal]');
+      if (goal && row) {
+        run(app.store.adjustGoals(row.dataset.dragPlayer, Number(goal.dataset.goal)));
+        return;
+      }
+      const btn = e.target.closest('[data-assign]');
       if (!btn || !row) return;
       assign(row.dataset.dragPlayer, btn.dataset.assign);
     };

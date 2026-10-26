@@ -330,6 +330,13 @@ button.team-player { color: inherit; cursor: pointer; }
   border: 1px solid var(--line); border-radius: 12px; background: var(--card);
 }
 .team-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.goal-box { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.goal-box button, .goal-n {
+  min-width: 28px; height: 28px; padding: 0; border-radius: 8px; font-weight: 800;
+  font-variant-numeric: tabular-nums; display: grid; place-items: center;
+}
+.goal-box button { border: 1px solid var(--line); background: var(--bg); color: inherit; font: inherit; font-weight: 800; }
+.goal-n { color: var(--muted); }
 .team-ico, .team-x {
   flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 1px solid var(--line);
   border-radius: 10px; background: var(--bg); color: inherit; display: grid; place-items: center;
