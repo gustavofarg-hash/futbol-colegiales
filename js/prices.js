@@ -14,6 +14,16 @@ function asPrice(value, fallback) {
   return fallback;
 }
 
+/**
+ * Precio por jugador de este partido. Si el partido no lo tiene guardado
+ * (los de antes), se usa el de Ajustes.
+ */
+export function priceOfMatch(match, prices) {
+  const n = Number(match?.price);
+  if (Number.isInteger(n) && n >= 0 && n <= MAX_PRICE) return n;
+  return normalizePrices(prices).matchPrice;
+}
+
 /** Documento de Firestore, o los defaults si no está o está incompleto. */
 export function normalizePrices(raw) {
   const src = raw || {};

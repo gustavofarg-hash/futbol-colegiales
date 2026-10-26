@@ -9,6 +9,7 @@
 //    startsAt: number          (epoch ms, calculado con offset -03:00)
 //    note: string
 //    court: string opcional, hasta 20 (N° de cancha). Vacío = sin número.
+//    price: int opcional. Precio por jugador de este partido. Si falta, el pago usa Ajustes.
 //    capacity: 14
 //    source: "manual" | "texto" | "whatsapp"
 //    sourceRef: string|null    (id del mensaje de origen, para deduplicar)
@@ -79,6 +80,7 @@ import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { toEpoch, todayISO } from './dates.js';
 import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
+import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { dropPlayer, teamsRecord } from './teams.js';
@@ -271,6 +273,7 @@ function matchDoc(data, who) {
     capacity: size.capacity,
     ...(size.perTeam ? { perTeam: size.perTeam } : {}),
     ...(cleanCourt(data.court) ? { court: cleanCourt(data.court) } : {}),
+    ...(storedMatchPrice(data) != null ? { price: storedMatchPrice(data) } : {}),
     source: data.source || 'manual',
     sourceRef: data.sourceRef || null,
     sourceText: data.sourceText || null,
@@ -289,11 +292,23 @@ function refusePlayedCancel(match, data) {
   }
 }
 
+function storedMatchPrice(data) {
+  if (!data || !('price' in data) || data.price == null || data.price === '') return null;
+  const n = Number(data.price);
+  if (Number.isInteger(n) && n >= 0 && n <= MAX_PRICE) return n;
+  return null;
+}
+
 function cleanMatchPatch(data) {
   const access = data?.access ? accessPatch(data.access) : null;
   const { access: _access, playerCount: _count, ...rest } = data || {};
   if ('notes' in rest) rest.notes = String(rest.notes ?? '').slice(0, 2000);
   if ('court' in rest) rest.court = cleanCourt(rest.court);
+  if ('price' in rest) {
+    const price = storedMatchPrice(rest);
+    if (price == null) delete rest.price;
+    else rest.price = price;
+  }
   if ('cancelled' in rest) rest.cancelled = rest.cancelled === true;
   if (rest.cancelled === false) {
     rest.cancelledAt = null;

@@ -25,7 +25,7 @@ import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSu
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
-import { PRICES_DENIED_WRITE, normalizePrices, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
+import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { cyclePlayer, emptyTeams, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import {
   VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
@@ -695,6 +695,7 @@ function renderMatch(id) {
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
       <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(placeOf(m))}${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</div>
       <p class="hint" id="match-size">${esc(footballLabel(m))}</p>
+      ${Number.isInteger(m.price) ? `<p class="hint" id="match-price">Valor: ${esc(formatARS(m.price))}</p>` : ''}
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
       <div class="match-notes" id="match-notes">
@@ -798,6 +799,7 @@ function listText(m) {
   const cap = capOf(m);
   const lines = [`⚽ ${footballLabel(m)} · ${placeOf(m)}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
   if (courtLabel(m)) lines.push(courtLabel(m));
+  if (Number.isInteger(m.price)) lines.push(`Valor: ${formatARS(m.price)}`);
   if (m.note) lines.push(`📝 ${m.note}`);
   if (m.cancelled) lines.push('Cancelado');
   if (String(m.notes || '').trim()) lines.push(String(m.notes).trim());
@@ -1443,6 +1445,8 @@ function openMatchForm(m) {
         <label class="field"><span>Hora</span><input type="time" name="time" required value="${esc(m ? m.time : '21:00')}"></label>
       </div>
       <label class="field"><span>N° de cancha (opcional)</span><input name="court" id="match-court-input" maxlength="20" placeholder="Ej: 3" autocomplete="off" value="${esc(m?.court || '')}"></label>
+      <label class="field"><span>Valor del partido</span><input name="price" id="match-price-input" inputmode="numeric" autocomplete="off" value="${priceOfMatch(m, livePrices())}"></label>
+      <p class="hint">Por jugador. Arranca con el valor de Ajustes y se puede cambiar en este partido.</p>
       <label class="field"><span>Nota (opcional)</span><input type="text" name="note" maxlength="300" placeholder="Ej: cancha 2, traer pechera" value="${esc(m?.note || '')}"></label>
       ${editingAccess ? accessEditor(m) : ''}
       <div class="field"><div class="err" id="mf-err"></div></div>
@@ -1469,6 +1473,9 @@ function openMatchForm(m) {
     data.perTeam = team;
     data.capacity = capacityFor(team);
     data.court = cleanCourt(f.get('court'));
+    const price = parsePriceInput(f.get('price'));
+    if (!price.ok) { $('#mf-err').textContent = price.error; return; }
+    data.price = price.amount;
     const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
     if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
     if (editingAccess) data.access = readAccessForm();
@@ -2652,7 +2659,7 @@ function openPaymentForm(m, p) {
     if (!input) return;
     const current = readMoney(input.value);
     if (!current.ok || current.amount !== 0) return;
-    input.value = moneyText(livePrices().matchPrice);
+    input.value = moneyText(priceOfMatch(m, livePrices())) || '0';
     // Queda seleccionado: el próximo número reemplaza el precio y borrar lo vacía.
     try { input.select(); } catch { /* algunos navegadores no seleccionan en el foco */ }
   };

@@ -12,7 +12,7 @@ import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBo
 import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
-import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
+import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, toEpoch } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
@@ -1172,6 +1172,10 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(parsePriceInput('5000').amount, 5000);
   assert.equal(parsePriceInput('5.000,50').ok, false);
   assert.equal(parsePriceInput('-1').ok, false);
+  assert.equal(priceOfMatch({ price: 7500 }, { matchPrice: 5000 }), 7500);
+  assert.equal(priceOfMatch({}, { matchPrice: 6000 }), 6000);
+  assert.equal(priceOfMatch({ price: 1.5 }, null), 5000);
+  assert.equal(priceOfMatch({ price: 0 }, { matchPrice: 5000 }), 0);
   assert.deepEqual(splitEven(9000, 2), [4500, 4500]);
   assert.deepEqual(splitEven(9001, 2), [4501, 4500]);
   assert.deepEqual(splitPaymentAcross({ cash: 9001, transfer: 100, pending: 0 }, 2), [
@@ -1682,6 +1686,11 @@ test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegi
   assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].court, 'Cancha 4');
   await store.updateMatch(conCancha, { court: '' }, 'Gustavo');
   assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].court, '');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].price, undefined);
+  await store.updateMatch(conCancha, { price: 7500 }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].price, 7500);
+  await store.updateMatch(conCancha, { price: 1.5 }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].price, 7500);
   assert.equal(db.venues.colegiales.name, 'Polideportivo Colegiales');
   const norte = await store.addVenue('Club Norte');
   await store.updateVenue(norte, { name: 'Club Norte Sur' });
