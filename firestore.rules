@@ -491,6 +491,8 @@ service cloud.firestore {
     }
 
     match /roster/{rosterId} {
+      // El borrado no puede mirar players: las reglas no consultan otra
+      // colección. La app rechaza el borrado si esa ficha está anotada.
       allow read, delete: if isActiveStaff();
       allow create: if isActiveStaff() && validRoster(request.resource.data);
       allow update: if isActiveStaff() && validRoster(request.resource.data)

@@ -5,7 +5,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { createDemoStore, listenDeniedPlan } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterHit, searchRoster } from '../js/roster.js';
+import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -851,6 +851,13 @@ test('búsqueda del plantel: nombre, apellido y teléfono', () => {
   assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9', shortName: 'Viejo' }, [{ id: '9', name: 'Ernesto Pereira' }]), 'Ernesto Pereira');
   assert.equal(displayName({ name: 'Ernesto Pereira', shortName: 'Tito' }, []), 'Tito');
   assert.equal(cleanShortName('  Tito   '), 'Tito');
+  assert.equal(rosterMatchCount([
+    { matchId: 'a', rosterId: '1' },
+    { matchId: 'a', rosterId: '1', waiting: true },
+    { matchId: 'b', name: 'Luis Gómez', phone: '5491166667777' },
+  ], { id: '1', name: 'Luis Gómez', phone: '5491166667777' }), 2);
+  assert.equal(rosterMatchCount([], { id: '1', name: 'Luis' }), 0);
+  assert.equal(rosterInMatchMessage('Luis Gómez', 1), 'Luis Gómez está anotado en 1 partido. Quitalo de esos partidos antes de borrarlo de Jugadores.');
   assert.deepEqual(names('+54 9 11 4444'), ['José Pérez']);
   assert.deepEqual(names('11 9999 0000'), ['Ana Gómez']);
   assert.deepEqual(names(''), ['Ana Gómez', 'Ernesto Pereira', 'José Pérez']);
@@ -933,6 +940,8 @@ test('plantel demo: no duplica por teléfono', async () => {
   const cleared = JSON.parse(mem.get('f7c-test-roster'));
   assert.equal(cleared.roster[id].shortName, undefined);
   assert.equal(cleared.players[playerId].shortName, '');
+  await assert.rejects(() => store.deleteRoster(id), (error) => error.code === 'roster-in-match');
+  await store.deletePlayer(playerId);
   await store.deleteRoster(id);
   assert.equal(Object.keys(JSON.parse(mem.get('f7c-test-roster')).roster).length, 0);
 });

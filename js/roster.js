@@ -85,6 +85,23 @@ export function rosterByIdentity(roster, key) {
   return (roster || []).find((person) => phoneIdentity(person) === id) || null;
 }
 
+/** Partidos distintos en los que esta ficha está anotada, titular o en espera. */
+export function rosterMatchCount(players, person) {
+  const id = String(person?.id || '');
+  const matches = new Set();
+  for (const player of players || []) {
+    if (!player?.matchId) continue;
+    if ((id && player.rosterId === id) || playerMatchesPerson(player, person)) matches.add(player.matchId);
+  }
+  return matches.size;
+}
+
+export function rosterInMatchMessage(name, count) {
+  const n = Number(count) || 0;
+  const partidos = n === 1 ? 'partido' : 'partidos';
+  return `${name} está anotado en ${n} ${partidos}. Quitalo de esos partidos antes de borrarlo de Jugadores.`;
+}
+
 /**
  * El jugador es esta ficha del plantel.
  * Manda el teléfono (el hash, aunque el número esté oculto). Si ninguno tiene, manda el id del plantel.

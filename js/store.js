@@ -95,7 +95,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, phoneIdentity } from './roster.js';
+import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, phoneIdentity, rosterInMatchMessage, rosterMatchCount } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -881,6 +881,11 @@ class LocalStore {
   }
   async deleteRoster(id) {
     const db = this._load();
+    const cur = db.roster[id];
+    if (cur) {
+      const n = rosterMatchCount(rosterPlayers(db), { ...cur, id, phone: this._rosterPhone(db, id) });
+      if (n) throw Object.assign(new Error(rosterInMatchMessage(cur.name, n)), { code: 'roster-in-match' });
+    }
     delete db.roster[id];
     ensureContacts(db);
     delete db.contacts.roster[id];
@@ -2000,6 +2005,12 @@ class FirebaseStore {
     await this._commitRosterName(id, next, namePatches, { doc, updateDoc, writeBatch });
   }
   async deleteRoster(id) {
+    const cur = (this.state.roster || []).find((row) => row.id === id);
+    if (cur) {
+      const phone = cur.phone || this.state.rosterContacts?.[id]?.phone || '';
+      const n = rosterMatchCount(this.state.players || [], { ...cur, phone });
+      if (n) throw Object.assign(new Error(rosterInMatchMessage(cur.name, n)), { code: 'roster-in-match' });
+    }
     const { doc, writeBatch } = this.fs;
     const batch = writeBatch(this.db);
     batch.delete(doc(this.db, 'roster', id));

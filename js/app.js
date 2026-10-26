@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -1830,9 +1830,15 @@ function openRosterForm(person) {
 
 function deleteRosterPlayer(person) {
   if (!person) return;
+  const signed = rosterMatchCount(app.players, person);
+  if (signed) {
+    toast(rosterInMatchMessage(person.name, signed));
+    return;
+  }
   if (!confirm(`¿Borrar a ${person.name} de Jugadores? No lo quita de los partidos.`)) return;
   Promise.resolve(app.store.deleteRoster(person.id)).then(() => toast(`${person.name} borrado`)).catch((err) => {
-    if (isRosterDenied(err)) showError(ROSTER_DENIED_WRITE);
+    if (err?.code === 'roster-in-match') toast(err.message);
+    else if (isRosterDenied(err)) showError(ROSTER_DENIED_WRITE);
     else toast('No se pudo borrar: ' + (err?.code || err?.message || err));
   });
 }
