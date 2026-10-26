@@ -310,6 +310,26 @@ button.team-player { color: inherit; cursor: pointer; }
 .team-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-actions .btn { min-width: 0; white-space: normal; text-align: center; line-height: 1.15; }
 .team-actions a { grid-column: 1 / -1; }
+.team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
+.team-columns section, .team-row, .team-slot { min-width: 0; }
+.team-row {
+  display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 4px 6px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+}
+.team-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.team-ico, .team-x {
+  flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--bg); color: inherit; display: grid; place-items: center;
+}
+.team-ico svg { width: 20px; height: 20px; display: block; }
+.team-ico[data-assign="bib"] { color: var(--green); }
+.team-slot.empty {
+  min-height: 36px; padding: 8px; border: 1px dashed var(--line); border-radius: 12px;
+  color: var(--muted); font-weight: 700;
+}
+@media (max-width: 420px) {
+  .team-columns { grid-template-columns: 1fr; }
+}
 .ledger-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
 .ledger-list li { font-weight: 700; font-variant-numeric: tabular-nums; }
 .pay-row .who { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }

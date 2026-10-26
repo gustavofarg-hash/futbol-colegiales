@@ -24,7 +24,7 @@ import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
-import { cyclePlayer, dropPlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { cyclePlayer, dropPlayer, movePlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -1429,6 +1429,12 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.match(msg, /Sin pechera \(1\)/);
   assert.match(msg, /1\. Beto/);
   assert.deepEqual(teamsRecord({ bib: ['ana'], plain: ['ana'] }).teams, { bib: ['ana'], plain: [] });
+  const moved = movePlayer({ bib: [], plain: [] }, 'ana', 'bib', ['ana', 'beto'], 1);
+  assert.deepEqual(moved.teams, { bib: ['ana'], plain: [] });
+  const full = movePlayer(moved.teams, 'beto', 'bib', ['ana', 'beto'], 1);
+  assert.equal(full.ok, false);
+  assert.equal(full.side, 'bib');
+  assert.deepEqual(movePlayer(moved.teams, 'ana', 'none', ['ana', 'beto'], 1).teams, { bib: [], plain: [] });
 });
 
 test('cancelar no arma recordatorio y el mensaje no lleva link', () => {

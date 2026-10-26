@@ -61,9 +61,26 @@ export function dropPlayer(teams, playerId) {
 }
 
 /**
- * Toque: sin asignar → con pechera → sin pechera → sin asignar.
- * allowedIds son los titulares. Alguien de la espera no entra.
+ * Mueve a un lado, o lo devuelve a sin asignar.
+ * side: 'bib' | 'plain' | 'none'. Si el lado está lleno, no cambia.
  */
+export function movePlayer(teams, playerId, side, allowedIds, cap) {
+  const allow = (allowedIds || []).map((id) => String(id));
+  const base = normalizeTeams(teams, allow);
+  const id = String(playerId || '');
+  if (!allow.includes(id)) return { ok: false, reason: 'fuera', teams: base };
+  const without = {
+    bib: base.bib.filter((item) => item !== id),
+    plain: base.plain.filter((item) => item !== id),
+  };
+  if (side === 'none' || side === 'unassigned') return { ok: true, teams: without };
+  const target = side === 'plain' ? 'plain' : 'bib';
+  const limit = Number(cap);
+  if (Number.isInteger(limit) && limit > 0 && without[target].length >= limit) {
+    return { ok: false, reason: 'full', side: target, teams: base };
+  }
+  return { ok: true, teams: { bib: without.bib, plain: without.plain, [target]: [...without[target], id] } };
+}
 export function cyclePlayer(teams, playerId, allowedIds) {
   const allow = (allowedIds || []).map((id) => String(id));
   const base = normalizeTeams(teams, allow);

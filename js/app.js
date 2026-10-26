@@ -26,7 +26,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
-import { cyclePlayer, emptyTeams, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import { emptyTeams, movePlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import {
   VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -526,25 +526,38 @@ function renderTeams(id) {
   const free = main.filter((p) => !taken.has(p.id));
   const readOnly = !canAdd(m, actor().uid);
   const byId = new Map(main.map((p) => [p.id, p]));
-  const row = (player) => {
-    if (!player) return '';
-    return readOnly
-      ? `<li><div class="team-player" data-team-name="${esc(player.id)}">${esc(player.name)}</div></li>`
-      : `<li><button type="button" class="team-player" data-team-player="${esc(player.id)}">${esc(player.name)}</button></li>`;
+  const slots = perTeamOf(m);
+  const vest = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4 4 7v3l3-1v11h10V9l3 1V7l-4-3-2 3h-4Z" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+  const shirt = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4 4 7v3l3-1v11h10V9l3 1V7l-4-3-2 3h-4Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  const slotRows = (side, list) => {
+    const count = Math.max(slots, list.length);
+    const rows = [];
+    for (let i = 0; i < count; i++) {
+      const player = byId.get(list[i]);
+      if (!player) {
+        rows.push('<li class="team-slot empty">Libre</li>');
+        continue;
+      }
+      const other = side === 'bib' ? 'plain' : 'bib';
+      const otherIcon = other === 'bib' ? vest : shirt;
+      const otherLabel = other === 'bib' ? 'Pasar a con pechera' : 'Pasar a sin pechera';
+      rows.push(readOnly
+        ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span></li>`
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(player.name)}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(player.name)} de este equipo">✕</button></li>`);
+    }
+    return rows.join('');
   };
-  const group = (title, list, listId) => `
-    <section>
-      <h2 class="section">${title}</h2>
-      ${list.length ? `<ul class="team-list" id="${listId}">${list.map(row).join('')}</ul>` : `<p class="empty-wait" id="${listId}">Nadie</p>`}
-    </section>`;
+  const freeRows = free.map((player) => (readOnly
+    ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span></li>`
+    : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(player.name)}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(player.name)}">${shirt}</button></li>`)).join('');
   const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
   const share = teamsMessage({ when, venue: placeOf(m), players: main, teams });
   if (!replaceView(`
     <section class="detail-head">
       <h1>Equipos</h1>
       <div class="when">${esc(when)} · ${esc(placeOf(m))}</div>
-      <p class="hint">Con los anotados. La lista de espera no entra.</p>
-      ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : '<p class="hint">Tocá un jugador para moverlo: sin asignar, con pechera, sin pechera.</p>'}
+      <p class="hint">Con los anotados. ${slots} por equipo. La lista de espera no entra.</p>
+      ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : '<p class="hint">Tocá la pechera o la camiseta. La ✕ lo devuelve a Sin asignar.</p>'}
     </section>
     <div class="team-board" id="team-board">
       <div class="team-counts">
@@ -553,21 +566,75 @@ function renderTeams(id) {
       </div>
       ${balance.balanced ? '' : '<p class="team-warn" id="team-balance">Está desbalanceado</p>'}
       ${main.length ? '' : '<p class="empty-wait">No hay jugadores anotados.</p>'}
-      ${group('Sin asignar', free, 'team-unassigned')}
-      ${group('Con pechera', teams.bib.map((pid) => byId.get(pid)).filter(Boolean), 'team-bib')}
-      ${group('Sin pechera', teams.plain.map((pid) => byId.get(pid)).filter(Boolean), 'team-plain')}
+      <div class="team-columns">
+        <section id="team-bib" data-drop-side="bib">
+          <h2 class="section">Con pechera</h2>
+          <ul class="team-list">${slotRows('bib', teams.bib)}</ul>
+        </section>
+        <section id="team-plain" data-drop-side="plain">
+          <h2 class="section">Sin pechera</h2>
+          <ul class="team-list">${slotRows('plain', teams.plain)}</ul>
+        </section>
+      </div>
+      <section id="team-unassigned" data-drop-side="none">
+        <h2 class="section">Sin asignar</h2>
+        ${free.length ? `<ul class="team-list">${freeRows}</ul>` : '<p class="empty-wait">Nadie</p>'}
+      </section>
       <div class="team-actions">
         ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Limpiar</button>'}
         <a class="btn nav-wide" id="btn-teams-wa" href="${esc(waHref('', share))}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
       </div>
     </div>`)) return;
   const save = (next, msg) => run(app.store.setTeams(m.id, normalizeTeams(next, ids), app.who), msg);
+  const assign = (playerId, side) => {
+    const moved = movePlayer(teams, playerId, side, ids, slots);
+    if (!moved.ok && moved.reason === 'full') {
+      toast(moved.side === 'plain' ? 'Sin pechera está completo' : 'Con pechera está completo');
+      return;
+    }
+    if (moved.ok) save(moved.teams);
+  };
   if (!readOnly) {
     $('#team-board').onclick = (e) => {
-      const btn = e.target.closest('[data-team-player]');
-      if (!btn) return;
-      save(cyclePlayer(teams, btn.dataset.teamPlayer, ids));
+      const btn = e.target.closest('[data-assign]');
+      const row = e.target.closest('[data-drag-player]');
+      if (!btn || !row) return;
+      assign(row.dataset.dragPlayer, btn.dataset.assign);
     };
+    let dragId = '';
+    let pointer = null;
+    $('#team-board').addEventListener('dragstart', (e) => {
+      const row = e.target.closest('[data-drag-player]');
+      if (!row) return;
+      dragId = row.dataset.dragPlayer;
+      e.dataTransfer?.setData('text/plain', dragId);
+    });
+    $('#team-board').addEventListener('dragover', (e) => {
+      if (e.target.closest('[data-drop-side]')) e.preventDefault();
+    });
+    $('#team-board').addEventListener('drop', (e) => {
+      const zone = e.target.closest('[data-drop-side]');
+      if (!zone) return;
+      e.preventDefault();
+      const playerId = dragId || e.dataTransfer?.getData('text/plain');
+      if (playerId) assign(playerId, zone.dataset.dropSide);
+    });
+    $('#team-board').addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      const row = e.target.closest('[data-drag-player]');
+      if (!row) return;
+      pointer = { id: row.dataset.dragPlayer, x: e.clientX, y: e.clientY };
+    });
+    $('#team-board').addEventListener('pointerup', (e) => {
+      if (!pointer) return;
+      const moved = Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) > 12;
+      const playerId = pointer.id;
+      pointer = null;
+      if (!moved) return;
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      const zone = hit?.closest?.('[data-drop-side]');
+      if (zone) assign(playerId, zone.dataset.dropSide);
+    });
     $('#btn-teams-shuffle').onclick = () => save(shuffleTeams(ids), 'Equipos mezclados');
     $('#btn-teams-clear').onclick = () => save(emptyTeams(), 'Equipos limpios');
   }
