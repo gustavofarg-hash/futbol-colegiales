@@ -24,7 +24,7 @@ import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
-import { bumpGoals, bumpScore, cyclePlayer, dropPlayer, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { bumpGoals, bumpScore, cyclePlayer, dropPlayer, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -1444,6 +1444,9 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.equal(bumpGoals(0, -1), 0);
   assert.equal(bumpGoals(99, 1), 99);
   assert.equal(bumpGoals(undefined, 2), 2);
+  assert.equal(scoreLine(undefined), '');
+  assert.equal(scoreLine({ bib: 2, plain: 0 }), 'Con pechera 2 – 0 Sin pechera');
+  assert.equal(goaliesLeft(['a', 'b'], ['b']), 1);
   assert.match(teamsMessage({ when: 'Martes', venue: 'Sede', players: [], teams: { bib: [], plain: [] }, score: { bib: 2, plain: 1 } }), /Marcador: Con pechera 2 – Sin pechera 1/);
 });
 

@@ -25,6 +25,7 @@
 //    addedBy: "Gustavo" | "Martín"
 //    signedUpWith, signedUpWithName: organizador con quien se anotó (uid + nombre)
 //    goals: int opcional 0..99. Goles de ese jugador en el partido. No cambia matches.score.
+//    inGoal: bool opcional. Marcó que fue al arco. No cambia el marcador.
 //    createdAt, updatedAt
 //    paid: bool                         (opcional)
 //    amount: number|null                (pesos; solo si paid)
@@ -697,6 +698,14 @@ class LocalStore {
     const player = db.players[playerId];
     if (!player) return;
     player.goals = bumpGoals(player.goals, delta);
+    player.updatedAt = Date.now();
+    this._save(db);
+  }
+  async setInGoal(playerId, on) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!player) return;
+    player.inGoal = on === true;
     player.updatedAt = Date.now();
     this._save(db);
   }
@@ -1609,6 +1618,10 @@ class FirebaseStore {
     const snap = await getDoc(ref);
     const goals = bumpGoals(snap.data()?.goals, delta);
     await updateDoc(ref, { goals, updatedAt: Date.now() });
+  }
+  async setInGoal(playerId, on) {
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'players', playerId), { inGoal: on === true, updatedAt: Date.now() });
   }
   async updatePlayer(id, data) {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;

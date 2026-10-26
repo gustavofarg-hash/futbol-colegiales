@@ -326,9 +326,15 @@ button.team-player { color: inherit; cursor: pointer; }
 .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-columns section, .team-row, .team-slot { min-width: 0; }
 .team-row {
-  display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 4px 6px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-height: 44px; padding: 4px 6px;
   border: 1px solid var(--line); border-radius: 12px; background: var(--card);
 }
+.arco, .arco-done {
+  display: flex; align-items: center; gap: 4px; flex: 1 1 100%;
+  font-size: 0.75rem; font-weight: 700; line-height: 1.2;
+}
+.arco input { width: 18px; height: 18px; margin: 0; }
+.arco-left { margin: 0 0 6px; color: var(--muted); font-size: 0.75rem; font-weight: 700; }
 .team-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
 .goal-box { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .goal-box button, .goal-n {

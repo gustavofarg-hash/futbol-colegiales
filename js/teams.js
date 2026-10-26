@@ -83,6 +83,18 @@ export function bumpGoals(current, delta) {
   return clampGoals(clampGoals(current) + (Number.isInteger(step) ? step : 0));
 }
 
+/** Texto del marcador. Vacío si el partido todavía no tiene uno. */
+export function scoreLine(score) {
+  if (!score || typeof score !== 'object') return '';
+  const s = normalizeScore(score);
+  return `Con pechera ${s.bib} – ${s.plain} Sin pechera`;
+}
+
+export function goaliesLeft(playerIds, flaggedIds) {
+  const done = new Set((flaggedIds || []).map((id) => String(id)));
+  return (playerIds || []).filter((id) => !done.has(String(id))).length;
+}
+
 /** Saca a quien se bajó. changed es false si no estaba en ningún equipo. */
 export function dropPlayer(teams, playerId) {
   if (!teams || typeof teams !== 'object') return { changed: false, teams: null };

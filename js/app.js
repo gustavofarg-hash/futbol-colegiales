@@ -26,7 +26,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
-import { emptyTeams, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import { emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import {
   VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -467,6 +467,7 @@ function matchCard(m) {
       <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(m.time || '--:--')} hs</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
+      ${m.score ? `<div class="match-note" data-score>${esc(scoreLine(m.score))}</div>` : ''}
       ${waitingOf(m.id).length ? `<div class="match-note">${waitingOf(m.id).length} en espera</div>` : ''}
     </div>
     <div class="count ${n >= cap ? 'full' : ''}" aria-label="${n} de ${cap} anotados">
@@ -545,9 +546,12 @@ function renderTeams(id) {
       const goalBox = readOnly
         ? `<span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span>`
         : `<span class="goal-box"><button type="button" data-goal="-1" aria-label="Restar un gol de ${esc(player.name)}">−</button><span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span><button type="button" data-goal="1" aria-label="Sumar un gol de ${esc(player.name)}">+</button></span>`;
+      const arco = readOnly
+        ? (player.inGoal === true ? `<span class="arco-done">Fue al arco</span>` : '')
+        : `<label class="arco"><input type="checkbox" data-arco ${player.inGoal === true ? 'checked' : ''}><span>Fue al arco</span></label>`;
       rows.push(readOnly
-        ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span>${goalBox}</li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span>${goalBox}<button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(player.name)}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(player.name)} de este equipo">✕</button></li>`);
+        ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span>${goalBox}${arco}</li>`
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span>${goalBox}${arco}<button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(player.name)}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(player.name)} de este equipo">✕</button></li>`);
     }
     return rows.join('');
   };
@@ -584,10 +588,12 @@ function renderTeams(id) {
       <div class="team-columns">
         <section id="team-bib" data-drop-side="bib">
           <h2 class="section">Con pechera</h2>
+          <p class="arco-left" id="arco-bib">Faltan ir al arco: ${goaliesLeft(teams.bib, teams.bib.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('bib', teams.bib)}</ul>
         </section>
         <section id="team-plain" data-drop-side="plain">
           <h2 class="section">Sin pechera</h2>
+          <p class="arco-left" id="arco-plain">Faltan ir al arco: ${goaliesLeft(teams.plain, teams.plain.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('plain', teams.plain)}</ul>
         </section>
       </div>
@@ -624,6 +630,11 @@ function renderTeams(id) {
         run(app.store.adjustGoals(row.dataset.dragPlayer, Number(goal.dataset.goal)));
         return;
       }
+      const arco = e.target.closest('.arco');
+      if (arco && row) {
+        run(app.store.setInGoal(row.dataset.dragPlayer, !!arco.querySelector('[data-arco]')?.checked));
+        return;
+      }
       const btn = e.target.closest('[data-assign]');
       if (!btn || !row) return;
       assign(row.dataset.dragPlayer, btn.dataset.assign);
@@ -647,7 +658,7 @@ function renderTeams(id) {
       if (playerId) assign(playerId, zone.dataset.dropSide);
     });
     $('#team-board').addEventListener('pointerdown', (e) => {
-      if (e.target.closest('button')) return;
+      if (e.target.closest('button, label, input')) return;
       const row = e.target.closest('[data-drag-player]');
       if (!row) return;
       pointer = { id: row.dataset.dragPlayer, x: e.clientX, y: e.clientY };
@@ -818,6 +829,7 @@ function renderMatch(id) {
       <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(placeOf(m))}${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</div>
       <p class="hint" id="match-size">${esc(footballLabel(m))}</p>
       ${Number.isInteger(m.price) ? `<p class="hint" id="match-price">Valor: ${esc(formatARS(m.price))}</p>` : ''}
+      ${m.score ? `<p class="hint" id="match-score">${esc(scoreLine(m.score))}</p>` : ''}
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
       <div class="match-notes" id="match-notes">

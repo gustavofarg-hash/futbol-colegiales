@@ -1485,6 +1485,8 @@ const equipos = await page.evaluate(async () => {
   const ayer = window.__app.matches.find((m) => m.note === 'Ayer');
   const hist = window.__app.players.find((p) => p.matchId === ayer.id && p.name === 'Histórico Pérez');
   await window.__app.store.setTeams(ayer.id, { bib: [hist.id], plain: [] }, who);
+  await window.__app.store.adjustScore(ayer.id, 'bib', 2);
+  await window.__app.store.adjustScore(ayer.id, 'plain', 1);
   return { id, ana, beto, ciro };
 });
 await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, equipos.id);
@@ -1515,6 +1517,14 @@ await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[d
 await page.waitForFunction(() => document.querySelector('#team-bib .goal-n')?.textContent === '0');
 const goalsStored = await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).players[id].goals, equipos.ana);
 check('Los goles del jugador no mueven el marcador ni bajan de cero', goalsStored === 0 && (await page.textContent('#score-bib')) === scoreBeforeGoals, String(goalsStored));
+check('Faltan ir al arco cuenta al asignado', (await page.textContent('#arco-bib')) === 'Faltan ir al arco: 1');
+await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[data-arco]').click();
+await page.waitForFunction(() => document.querySelector('#arco-bib')?.textContent === 'Faltan ir al arco: 0');
+const arcoState = await page.evaluate((ids) => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  return { inGoal: db.players[ids.ana].inGoal, score: db.matches[ids.id].score };
+}, equipos);
+check('Fue al arco queda guardado y no toca el marcador', arcoState.inGoal === true && arcoState.score.bib === 0 && arcoState.score.plain === 1, JSON.stringify(arcoState));
 check('Avisa si está desbalanceado', (await page.textContent('#team-balance')).includes('desbalanceado'));
 await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[data-assign="plain"]').click();
 await page.waitForSelector('#team-plain:has-text("Equipo Ana")');
@@ -1551,7 +1561,10 @@ const storedTeams = await page.evaluate((id) => JSON.parse(localStorage.getItem(
 check('Al bajarse sale del equipo guardado', storedTeams.bib.includes(equipos.ana) && !storedTeams.bib.concat(storedTeams.plain).includes(equipos.ciro) && !storedTeams.bib.concat(storedTeams.plain).includes(equipos.beto), JSON.stringify(storedTeams));
 await page.evaluate(() => { location.hash = '#/historial'; });
 await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+check('El historial muestra el marcador', (await page.locator('#list-history .match-card:has-text("Ayer") [data-score]').innerText()).includes('Con pechera 2') && (await page.locator('#list-history .match-card:has-text("Ayer") [data-score]').innerText()).includes('1 Sin pechera'));
 await page.click('#list-history .match-card:has-text("Ayer")');
+await page.waitForSelector('#match-score');
+check('El detalle muestra el marcador', (await page.textContent('#match-score')).includes('Con pechera 2') && (await page.textContent('#match-score')).includes('1 Sin pechera'));
 await page.waitForSelector('#btn-teams');
 await page.click('#btn-teams');
 await page.waitForSelector('#team-bib:has-text("Histórico Pérez")');
@@ -1572,7 +1585,7 @@ await page.click('.match-card:has-text("Solo anota Gustavo")');
 await page.waitForSelector('#btn-teams');
 await page.click('#btn-teams');
 await page.waitForSelector('#teams-readonly');
-check('Quien no puede anotar ve los equipos y no los cambia', (await page.locator('#btn-teams-shuffle').count()) === 0 && (await page.locator('[data-assign]').count()) === 0 && (await page.locator('[data-score]').count()) === 0 && (await page.locator('[data-goal]').count()) === 0 && (await page.textContent('#score-bib')) === '0' && (await page.locator('#team-bib').innerText()).includes('Lectura Luis'));
+check('Quien no puede anotar ve los equipos y no los cambia', (await page.locator('#btn-teams-shuffle').count()) === 0 && (await page.locator('[data-assign]').count()) === 0 && (await page.locator('[data-score]').count()) === 0 && (await page.locator('[data-goal]').count()) === 0 && (await page.locator('[data-arco]').count()) === 0 && (await page.textContent('#score-bib')) === '0' && (await page.locator('#team-bib').innerText()).includes('Lectura Luis'));
 check('Quien solo mira igual puede compartir por WhatsApp', (await page.getAttribute('#btn-teams-wa', 'href') || '').includes('wa.me/'));
 await page.click('#btn-settings');
 await page.click('#set-logout');
