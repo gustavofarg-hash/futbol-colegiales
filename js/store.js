@@ -48,6 +48,8 @@
 //    { bib: [playerId], plain: [playerId] }
 //    bib = con pechera, plain = sin pechera. Solo titulares.
 //    Se guarda en el mismo partido: quien puede anotar lo edita y el resto lo ve.
+//  matches.score (opcional) { bib, plain } enteros 0..999. Marcador del partido,
+//    independiente de los goles de cada jugador.
 //  matches.cancelled (opcional, bool), cancelledAt, cancelledBy
 //  matches.notes (texto libre, hasta 2000). Distinto de note (la nota corta de la tarjeta).
 //  matches.playerCount (int). Lo actualiza el cliente al anotar o quitar.
@@ -84,7 +86,7 @@ import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
-import { dropPlayer, teamsRecord } from './teams.js';
+import { bumpScore, dropPlayer, scoreRecord, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
@@ -676,6 +678,15 @@ class LocalStore {
     const match = db.matches[id];
     if (!match) return;
     match.teams = rec.teams;
+    match.updatedBy = who || match.updatedBy;
+    match.updatedAt = Date.now();
+    this._save(db);
+  }
+  async adjustScore(id, side, delta, who) {
+    const db = this._load();
+    const match = db.matches[id];
+    if (!match) return;
+    match.score = scoreRecord(bumpScore(match.score, side, delta)).score;
     match.updatedBy = who || match.updatedBy;
     match.updatedAt = Date.now();
     this._save(db);
@@ -1575,6 +1586,13 @@ class FirebaseStore {
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-teams' });
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'matches', id), { teams: rec.teams, updatedBy: who || '', updatedAt: Date.now() });
+  }
+  async adjustScore(id, side, delta, who) {
+    const { doc, getDoc, updateDoc } = this.fs;
+    const ref = doc(this.db, 'matches', id);
+    const snap = await getDoc(ref);
+    const score = scoreRecord(bumpScore(snap.data()?.score, side, delta)).score;
+    await updateDoc(ref, { score, updatedBy: who || '', updatedAt: Date.now() });
   }
   async updatePlayer(id, data) {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;

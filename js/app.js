@@ -26,7 +26,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
-import { emptyTeams, movePlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import { bumpScore, emptyTeams, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import {
   VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -551,7 +551,13 @@ function renderTeams(id) {
     ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span></li>`
     : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(player.name)}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(player.name)}">${shirt}</button></li>`)).join('');
   const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
-  const share = teamsMessage({ when, venue: placeOf(m), players: main, teams });
+  const score = normalizeScore(m.score);
+  const share = teamsMessage({ when, venue: placeOf(m), players: main, teams, score: m.score ? score : null });
+  const scoreSide = (side, label, value) => {
+    const n = `<strong id="score-${side}">${value}</strong>`;
+    if (readOnly) return `<div class="score-side"><span>${esc(label)}</span>${n}</div>`;
+    return `<div class="score-side"><span>${esc(label)}</span><div class="score-controls"><button type="button" class="score-btn" data-score="${side}" data-delta="-1" aria-label="Restar uno al marcador de ${esc(label)}">−1</button>${n}<button type="button" class="score-btn" data-score="${side}" data-delta="1" aria-label="Sumar uno al marcador de ${esc(label)}">+1</button></div></div>`;
+  };
   if (!replaceView(`
     <section class="detail-head">
       <h1>Equipos</h1>
@@ -560,6 +566,11 @@ function renderTeams(id) {
       ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : '<p class="hint">Tocá la pechera o la camiseta. La ✕ lo devuelve a Sin asignar.</p>'}
     </section>
     <div class="team-board" id="team-board">
+      <div class="scoreboard" id="scoreboard" aria-label="Marcador">
+        ${scoreSide('bib', 'Con pechera', score.bib)}
+        <span class="score-dash" aria-hidden="true">–</span>
+        ${scoreSide('plain', 'Sin pechera', score.plain)}
+      </div>
       <div class="team-counts">
         <div class="team-count"><strong id="team-bib-count">${balance.bib}</strong><span>Con pechera</span></div>
         <div class="team-count"><strong id="team-plain-count">${balance.plain}</strong><span>Sin pechera</span></div>
@@ -586,6 +597,13 @@ function renderTeams(id) {
       </div>
     </div>`)) return;
   const save = (next, msg) => run(app.store.setTeams(m.id, normalizeTeams(next, ids), app.who), msg);
+  if (!readOnly) {
+    $('#scoreboard').onclick = (e) => {
+      const btn = e.target.closest('[data-score]');
+      if (!btn) return;
+      run(app.store.adjustScore(m.id, btn.dataset.score, Number(btn.dataset.delta), app.who));
+    };
+  }
   const assign = (playerId, side) => {
     const moved = movePlayer(teams, playerId, side, ids, slots);
     if (!moved.ok && moved.reason === 'full') {

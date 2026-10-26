@@ -49,6 +49,28 @@ export function teamsBalance(teams) {
   return { bib, plain, balanced: bib === plain };
 }
 
+function clampScore(n) {
+  const x = Number(n);
+  if (!Number.isInteger(x) || x < 0) return 0;
+  return Math.min(999, x);
+}
+
+/** Marcador del partido. No sale de los goles de cada jugador. */
+export function normalizeScore(raw) {
+  return { bib: clampScore(raw?.bib), plain: clampScore(raw?.plain) };
+}
+
+export function scoreRecord(raw) {
+  return { ok: true, score: normalizeScore(raw) };
+}
+
+export function bumpScore(score, side, delta) {
+  const base = normalizeScore(score);
+  const key = side === 'plain' ? 'plain' : 'bib';
+  const step = Number(delta);
+  return { ...base, [key]: clampScore(base[key] + (Number.isInteger(step) ? step : 0)) };
+}
+
 /** Saca a quien se bajó. changed es false si no estaba en ningún equipo. */
 export function dropPlayer(teams, playerId) {
   if (!teams || typeof teams !== 'object') return { changed: false, teams: null };
@@ -104,7 +126,7 @@ export function shuffleTeams(playerIds, rng = Math.random) {
   return { bib: ids.slice(0, mid), plain: ids.slice(mid) };
 }
 
-export function teamsMessage({ when = '', venue = '', players = [], teams = emptyTeams() } = {}) {
+export function teamsMessage({ when = '', venue = '', players = [], teams = emptyTeams(), score = null } = {}) {
   const nameOf = (id) => (players || []).find((player) => player.id === id)?.name || 'Jugador';
   const block = (title, ids) => {
     const lines = [`${title} (${ids.length})`];
@@ -112,9 +134,11 @@ export function teamsMessage({ when = '', venue = '', players = [], teams = empt
     else ids.forEach((id, i) => lines.push(`${i + 1}. ${nameOf(id)}`));
     return lines;
   };
+  const board = score ? [`Marcador: Con pechera ${score.bib} – Sin pechera ${score.plain}`] : [];
   return [
     `⚽ Equipos · ${venue}`,
     when,
+    ...board,
     '',
     ...block('Con pechera', teams.bib || []),
     '',

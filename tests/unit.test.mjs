@@ -24,7 +24,7 @@ import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
-import { cyclePlayer, dropPlayer, movePlayer, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { bumpScore, cyclePlayer, dropPlayer, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -1435,6 +1435,12 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.equal(full.ok, false);
   assert.equal(full.side, 'bib');
   assert.deepEqual(movePlayer(moved.teams, 'ana', 'none', ['ana', 'beto'], 1).teams, { bib: [], plain: [] });
+  assert.deepEqual(normalizeScore(undefined), { bib: 0, plain: 0 });
+  assert.deepEqual(bumpScore({ bib: 0, plain: 2 }, 'bib', 1), { bib: 1, plain: 2 });
+  assert.deepEqual(bumpScore({ bib: 0, plain: 2 }, 'plain', -1), { bib: 0, plain: 1 });
+  assert.deepEqual(bumpScore({ bib: 0, plain: 0 }, 'bib', -1), { bib: 0, plain: 0 });
+  assert.deepEqual(bumpScore({ bib: 999, plain: 0 }, 'bib', 1), { bib: 999, plain: 0 });
+  assert.match(teamsMessage({ when: 'Martes', venue: 'Sede', players: [], teams: { bib: [], plain: [] }, score: { bib: 2, plain: 1 } }), /Marcador: Con pechera 2 – Sin pechera 1/);
 });
 
 test('cancelar no arma recordatorio y el mensaje no lleva link', () => {

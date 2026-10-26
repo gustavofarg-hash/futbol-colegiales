@@ -64,7 +64,14 @@ service cloud.firestore {
           && (!('perTeam' in d) || !('capacity' in d) || d.capacity == d.perTeam * 2)
           && (!('court' in d) || (d.court is string && d.court.size() <= 20))
           && (!('price' in d) || (d.price is int && d.price >= 0 && d.price <= 1000000000))
+          && (!('score' in d) || scoreOk(d.score))
           && accessShape(d);
+    }
+    function scoreOk(s) {
+      return s is map
+          && s.keys().hasOnly(['bib', 'plain'])
+          && s.bib is int && s.bib >= 0 && s.bib <= 999
+          && s.plain is int && s.plain >= 0 && s.plain <= 999;
     }
     function accessShape(d) {
       return (!('viewers' in d) || (d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30))
