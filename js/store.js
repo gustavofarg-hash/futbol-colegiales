@@ -8,6 +8,7 @@
 //    time: "HH:MM"             (hora local Buenos Aires, 24 h)
 //    startsAt: number          (epoch ms, calculado con offset -03:00)
 //    note: string
+//    court: string opcional, hasta 20 (N° de cancha). Vacío = sin número.
 //    capacity: 14
 //    source: "manual" | "texto" | "whatsapp"
 //    sourceRef: string|null    (id del mensaje de origen, para deduplicar)
@@ -93,7 +94,7 @@ import {
 } from './organizers.js';
 import { canEditPlayer, canEditRoster, editLockedError, playerPatchEditsIdentity } from './edit-lock.js';
 import {
-  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
+  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
@@ -269,6 +270,7 @@ function matchDoc(data, who) {
     venueName: String(data.venueName || DEFAULT_VENUE_NAME).trim() || DEFAULT_VENUE_NAME,
     capacity: size.capacity,
     ...(size.perTeam ? { perTeam: size.perTeam } : {}),
+    ...(cleanCourt(data.court) ? { court: cleanCourt(data.court) } : {}),
     source: data.source || 'manual',
     sourceRef: data.sourceRef || null,
     sourceText: data.sourceText || null,
@@ -291,6 +293,7 @@ function cleanMatchPatch(data) {
   const access = data?.access ? accessPatch(data.access) : null;
   const { access: _access, playerCount: _count, ...rest } = data || {};
   if ('notes' in rest) rest.notes = String(rest.notes ?? '').slice(0, 2000);
+  if ('court' in rest) rest.court = cleanCourt(rest.court);
   if ('cancelled' in rest) rest.cancelled = rest.cancelled === true;
   if (rest.cancelled === false) {
     rest.cancelledAt = null;

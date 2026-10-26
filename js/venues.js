@@ -120,6 +120,19 @@ export function footballPhrase(match) {
   return label.charAt(0).toLowerCase() + label.slice(1);
 }
 
+/** "Cancha 3". Vacío si el partido no tiene número. "Cancha 2" no se duplica. */
+export function courtLabel(match) {
+  const raw = String(match?.court || '').trim().replace(/\s+/g, ' ');
+  if (!raw) return '';
+  const rest = raw.replace(/^cancha\b/i, '').trim();
+  if (/^cancha\b/i.test(raw)) return rest ? `Cancha ${rest}` : 'Cancha';
+  return `Cancha ${raw}`;
+}
+
+export function cleanCourt(raw) {
+  return String(raw || '').trim().replace(/\s+/g, ' ').slice(0, 20);
+}
+
 export function perTeamOf(match) {
   const asked = Number(match?.perTeam);
   if (Number.isInteger(asked) && asked >= MIN_PER_TEAM && asked <= MAX_PER_TEAM) return asked;

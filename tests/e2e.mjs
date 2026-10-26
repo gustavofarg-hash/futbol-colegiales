@@ -1711,6 +1711,7 @@ await page.waitForFunction(() => document.querySelectorAll('dialog.sheet[open]')
 await page.click('#btn-add-match');
 await page.selectOption('#match-venue', { label: 'Club Norte Sur' });
 await page.selectOption('#match-per-team', '6');
+await page.fill('#match-form [name=court]', '3');
 await page.fill('#match-form [name=date]', '2026-11-08');
 await page.fill('#match-form [name=time]', '19:30');
 await page.click('#match-form button[type=submit]');
@@ -1719,13 +1720,13 @@ const norteCard = (await page.locator('.match-card:has-text("8/11")').innerText(
 check('La tarjeta muestra la sede y el cupo de 6 por equipo', norteCard.includes('Club Norte Sur') && /0\/12/.test(norteCard), norteCard);
 await page.click('.match-card:has-text("8/11")');
 await page.waitForSelector('#slot-count');
-check('El detalle usa la sede y Faltan 12', (await page.textContent('.when')).includes('Club Norte Sur') && (await page.textContent('#slot-count')) === '0/12' && (await page.textContent('#match-size')).trim() === 'Fútbol 6');
+check('El detalle usa la sede y Faltan 12', (await page.textContent('.when')).includes('Club Norte Sur') && (await page.textContent('#slot-count')) === '0/12' && (await page.textContent('#match-size')).trim() === 'Fútbol 6' && (await page.textContent('#match-court')).trim() === 'Cancha 3');
 await page.click('#btn-copy');
 const norteCopy = await page.evaluate(() => navigator.clipboard.readText());
-check('La lista copiada nombra la sede', norteCopy.includes('Club Norte Sur') && norteCopy.includes('Faltan 12') && norteCopy.includes('⚽ Fútbol 6'), norteCopy.split('\n').slice(0, 3).join(' | '));
+check('La lista copiada nombra la sede', norteCopy.includes('Club Norte Sur') && norteCopy.includes('Faltan 12') && norteCopy.includes('⚽ Fútbol 6') && norteCopy.includes('Cancha 3'), norteCopy.split('\n').slice(0, 4).join(' | '));
 await page.click('#btn-edit-match');
 await page.waitForSelector('#match-venue');
-check('Editar partido conserva la sede y los 6', (await page.locator('#match-venue option:checked').innerText()).trim() === 'Club Norte Sur' && await page.inputValue('#match-per-team') === '6');
+check('Editar partido conserva la sede y los 6', (await page.locator('#match-venue option:checked').innerText()).trim() === 'Club Norte Sur' && await page.inputValue('#match-per-team') === '6' && await page.inputValue('#match-court-input') === '3');
 await page.click('#match-form [data-close]');
 await page.click('#btn-settings');
 await page.click('#set-venues');

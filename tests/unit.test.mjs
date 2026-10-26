@@ -14,7 +14,7 @@ import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, toEpoch } from '../js/dates.js';
-import { capacityFor, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
+import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
@@ -1639,6 +1639,11 @@ test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegi
   assert.equal(footballLabel({ perTeam: 8 }), 'Fútbol 8');
   assert.equal(footballLabel({ capacity: 12 }), 'Fútbol 6');
   assert.equal(footballPhrase({ perTeam: 5 }), 'fútbol 5');
+  assert.equal(courtLabel({}), '');
+  assert.equal(courtLabel({ court: '3' }), 'Cancha 3');
+  assert.equal(courtLabel({ court: 'Cancha 2' }), 'Cancha 2');
+  assert.equal(courtLabel({ court: 'cancha' }), 'Cancha');
+  assert.equal(cleanCourt('  12   norte  extra extra extra'), '12 norte extra extra');
   assert.equal(matchCapacity({ capacity: 1 }), 1);
   assert.equal(capacityFor(11), 22);
   assert.equal(venueLabel({}, []), 'Polideportivo Colegiales');
@@ -1672,6 +1677,11 @@ test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegi
   assert.equal(db.matches[id].venueName, 'Polideportivo Colegiales');
   assert.equal(db.matches[id].perTeam, 7);
   assert.equal(db.matches[id].capacity, 14);
+  assert.equal(db.matches[id].court, undefined);
+  const conCancha = await store.addMatch({ date: '2026-10-23', time: '20:00', court: ' Cancha 4 ' }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].court, 'Cancha 4');
+  await store.updateMatch(conCancha, { court: '' }, 'Gustavo');
+  assert.equal(JSON.parse(mem.get(store.key)).matches[conCancha].court, '');
   assert.equal(db.venues.colegiales.name, 'Polideportivo Colegiales');
   const norte = await store.addVenue('Club Norte');
   await store.updateVenue(norte, { name: 'Club Norte Sur' });

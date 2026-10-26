@@ -28,7 +28,7 @@ import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } f
 import { PRICES_DENIED_WRITE, normalizePrices, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { cyclePlayer, emptyTeams, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import {
-  VENUES_DENIED_WRITE, capacityFor, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
+  VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
@@ -693,7 +693,7 @@ function renderMatch(id) {
   if (!replaceView(`
     <section class="detail-head">
       <h1>${esc(capitalize(labelDate(m.date)))}</h1>
-      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(placeOf(m))}</div>
+      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(placeOf(m))}${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</div>
       <p class="hint" id="match-size">${esc(footballLabel(m))}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
@@ -783,16 +783,21 @@ function confirmUrlFor(m, p) {
   if (p?.confirmToken && p?.id) return confirmPageUrl({ matchId: m.id, playerId: p.id, token: p.confirmToken });
   return '';
 }
+function placeLine(m) {
+  const court = courtLabel(m);
+  return court ? `${placeOf(m)} (${court})` : placeOf(m);
+}
 function waMessage(m, p) {
   const first = (p.name || '').trim().split(/\s+/)[0];
   const link = confirmUrlFor(m, p);
-  return `¡Hola ${first}! Te anoté para el ${footballPhrase(m)} en ${placeOf(m)} el ${labelDate(m.date)} a las ${m.time} hs.` +
+  return `¡Hola ${first}! Te anoté para el ${footballPhrase(m)} en ${placeLine(m)} el ${labelDate(m.date)} a las ${m.time} hs.` +
     (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽` + (link ? ` ${link}` : '');
 }
 function listText(m) {
   const ps = playersOf(m.id);
   const cap = capOf(m);
   const lines = [`⚽ ${footballLabel(m)} · ${placeOf(m)}`, `📅 ${capitalize(labelDate(m.date))} · ${m.time} hs`];
+  if (courtLabel(m)) lines.push(courtLabel(m));
   if (m.note) lines.push(`📝 ${m.note}`);
   if (m.cancelled) lines.push('Cancelado');
   if (String(m.notes || '').trim()) lines.push(String(m.notes).trim());
@@ -1437,6 +1442,7 @@ function openMatchForm(m) {
         <label class="field"><span>Fecha</span><input type="date" name="date" required min="${m ? '' : today}" value="${esc(m ? m.date : today)}"></label>
         <label class="field"><span>Hora</span><input type="time" name="time" required value="${esc(m ? m.time : '21:00')}"></label>
       </div>
+      <label class="field"><span>N° de cancha (opcional)</span><input name="court" id="match-court-input" maxlength="20" placeholder="Ej: 3" autocomplete="off" value="${esc(m?.court || '')}"></label>
       <label class="field"><span>Nota (opcional)</span><input type="text" name="note" maxlength="300" placeholder="Ej: cancha 2, traer pechera" value="${esc(m?.note || '')}"></label>
       ${editingAccess ? accessEditor(m) : ''}
       <div class="field"><div class="err" id="mf-err"></div></div>
@@ -1462,6 +1468,7 @@ function openMatchForm(m) {
     data.venueName = picked.name;
     data.perTeam = team;
     data.capacity = capacityFor(team);
+    data.court = cleanCourt(f.get('court'));
     const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
     if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
     if (editingAccess) data.access = readAccessForm();

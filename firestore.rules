@@ -62,6 +62,7 @@ service cloud.firestore {
           && (!('perTeam' in d) || (d.perTeam is int && d.perTeam >= 5 && d.perTeam <= 11))
           && (!('capacity' in d) || (d.capacity is int && d.capacity >= 1 && d.capacity <= 40))
           && (!('perTeam' in d) || !('capacity' in d) || d.capacity == d.perTeam * 2)
+          && (!('court' in d) || (d.court is string && d.court.size() <= 20))
           && accessShape(d);
     }
     function accessShape(d) {

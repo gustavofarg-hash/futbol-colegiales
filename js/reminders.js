@@ -5,7 +5,7 @@ import { sameOrganizer } from './organizers.js';
 import { playerAccess } from './access.js';
 import { waSendUrl } from './phone.js';
 import { isShortCode, shortConfirmUrl } from './short.js';
-import { footballPhrase } from './venues.js';
+import { courtLabel, footballPhrase } from './venues.js';
 
 export const CONFIRM_ORIGIN = 'https://gustavofarg-hash.github.io/futbol-colegiales';
 
@@ -31,7 +31,9 @@ export function reminderMessage({ player, match, venue, confirmUrl }) {
   const first = String(player?.name || '').trim().split(/\s+/)[0] || 'hola';
   const when = `${labelDate(match.date)} a las ${match.time} hs`;
   const note = match.note ? ` (${match.note})` : '';
-  return `¡Hola ${first}! Te escribo por el ${footballPhrase(match)} en ${venue} el ${when}${note}. ¿Confirmás que jugás? Respondé en este link: ${confirmUrl}`;
+  const court = courtLabel(match);
+  const place = court ? `${venue} (${court})` : venue;
+  return `¡Hola ${first}! Te escribo por el ${footballPhrase(match)} en ${place} el ${when}${note}. ¿Confirmás que jugás? Respondé en este link: ${confirmUrl}`;
 }
 
 export function waReminderUrl(phone, text, opts = {}) {
@@ -142,7 +144,9 @@ export function promotionMessage({ player, match, venue, confirmUrl }) {
   const name = String(player?.name || '').trim() || 'hola';
   const when = labelDate(match?.date);
   const time = match?.time || '--:--';
-  return `¡Hola ${name}! Se hizo un lugar en el ${footballPhrase(match)} en ${venue} el ${when} a las ${time} hs. ¿Confirmás tu presencia? ¿Querés que te deje anotado? Respondé en este link: ${confirmUrl}`;
+  const court = courtLabel(match);
+  const place = court ? `${venue} (${court})` : venue;
+  return `¡Hola ${name}! Se hizo un lugar en el ${footballPhrase(match)} en ${place} el ${when} a las ${time} hs. ¿Confirmás tu presencia? ¿Querés que te deje anotado? Respondé en este link: ${confirmUrl}`;
 }
 
 /** El cartel aparece cuando el partido empieza en 2 horas o menos. */
@@ -211,7 +215,8 @@ export function cancelMessage({ player, match, venue }) {
   const name = String(player?.name || '').trim() || 'hola';
   const when = labelDate(match?.date);
   const time = match?.time || '--:--';
-  const place = venue || 'Polideportivo Colegiales';
+  const court = courtLabel(match);
+  const place = `${venue || 'Polideportivo Colegiales'}${court ? ` (${court})` : ''}`;
   const reason = String(match?.notes || '').trim();
   const why = reason ? ` Motivo: ${reason}` : '';
   return `Hola ${name}, se canceló el partido de ${footballPhrase(match)} en ${place} del ${when} a las ${time} hs.${why}`;
