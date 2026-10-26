@@ -6,7 +6,7 @@ import {
   todayISO, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { collectedLine, formatARS, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
+import { collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -2629,6 +2629,7 @@ function openPaymentForm(m, p) {
           <button type="button" class="btn" data-paid="no">No</button>
         </div>
       </div>
+      <label class="checkline" id="free-play-line"><input type="checkbox" id="pay-free" name="freePlay"${isFreePlay(p) ? ' checked' : ''}><span>Juega gratis</span></label>
       <div id="pay-details">
         <div class="price-picks" id="pay-prices"></div>
         ${promo ? `<label class="pay-apply"><input type="checkbox" id="pay-apply-promo"><span id="pay-apply-label">Aplicar a los ${promo.count} partidos</span></label>` : ''}
@@ -2745,12 +2746,33 @@ function openPaymentForm(m, p) {
     run(app.store.markTransferReceived(p.id, app.who), 'Transferencia marcada como cobrada', PAY_RULES_MSG);
   };
   sync();
+  const freeBox = $('#pay-free');
+  const paintFree = () => {
+    const on = freeBox?.checked === true;
+    for (const input of [form.cash, form.transfer, form.pending, form.cashTo, form.transferTo, form.pendingTo]) {
+      if (!input) continue;
+      input.disabled = on;
+      if (on && input.tagName === 'INPUT') input.value = '';
+    }
+    if (on) {
+      paid = true;
+      $('#pay-err').textContent = '';
+      sync();
+    }
+  };
+  if (freeBox) freeBox.onchange = paintFree;
+  if (freeBox?.checked) paintFree();
   form.onsubmit = (e) => {
     e.preventDefault();
+    if (freeBox?.checked) {
+      closeSheet();
+      run(app.store.setPayment(p.id, { freePlay: true, paid: true, split: true }, app.who), 'Juega gratis', PAY_RULES_MSG);
+      return;
+    }
     if (paid !== true && paid !== false) { $('#pay-err').textContent = 'Indicá si pagó.'; return; }
     if (!paid) {
       closeSheet();
-      run(app.store.setPayment(p.id, { paid: false, split: true }, app.who), 'Marcado como no pagó', PAY_RULES_MSG);
+      run(app.store.setPayment(p.id, { paid: false, split: true, freePlay: false }, app.who), 'Marcado como no pagó', PAY_RULES_MSG);
       return;
     }
     const cash = readMoney(form.cash.value);
@@ -2767,6 +2789,7 @@ function openPaymentForm(m, p) {
       const jobs = freshPromo.rows.map((row, i) => app.store.setPayment(row.player.id, {
         paid: true,
         split: true,
+        freePlay: false,
         cash: shares[i].cash,
         transfer: shares[i].transfer,
         pendingTransfer: shares[i].pending,
@@ -2782,6 +2805,7 @@ function openPaymentForm(m, p) {
     const rec = {
       paid: true,
       split: true,
+      freePlay: false,
       cash: cash.amount,
       transfer: transfer.amount,
       pendingTransfer: pending.amount,

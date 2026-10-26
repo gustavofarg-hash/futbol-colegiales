@@ -172,7 +172,8 @@ service cloud.firestore {
           && (!('adders' in d) || (d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30))
           && (!('addedByUid' in d) || (d.addedByUid is string && d.addedByUid.size() <= 128))
           && (!('signedUpWith' in d) || (d.signedUpWith is string && d.signedUpWith.size() > 0 && d.signedUpWith.size() <= 128))
-          && (!('signedUpWithName' in d) || (d.signedUpWithName is string && d.signedUpWithName.size() > 0 && d.signedUpWithName.size() <= 40));
+          && (!('signedUpWithName' in d) || (d.signedUpWithName is string && d.signedUpWithName.size() > 0 && d.signedUpWithName.size() <= 40))
+          && (!('freePlay' in d) || d.freePlay is bool);
     }
 
     function transferPartOk(p) {

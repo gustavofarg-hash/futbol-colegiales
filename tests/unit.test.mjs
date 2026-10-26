@@ -123,6 +123,15 @@ test('texto de pago y total del partido', () => {
   assert.equal(paymentStatusText(nico), '');
   assert.equal(collectedLine([nico]), '');
   assert.equal(collectedLine([juan, pedro, nico]), 'Recaudado: $5.000 · 1/3 pagaron');
+  assert.equal(collectedLine([{ freePlay: true, paid: true, name: 'Libre' }, juan]), 'Recaudado: $5.000 · 1/1 pagaron · 1 juega gratis');
+  assert.equal(paymentStatusText({ freePlay: true, paid: true, amount: 5000 }), 'Juega gratis');
+  assert.deepEqual(paymentParts({ freePlay: true, paid: true, cash: 5000 }), { cash: 0, transfer: 0, pending: 0, received: 0, split: false });
+  const gratis = paymentRecord({ freePlay: true, paid: true, split: true }, 'Gustavo', 10);
+  assert.equal(gratis.ok, true);
+  assert.equal(gratis.patch.freePlay, true);
+  assert.equal(gratis.patch.paid, true);
+  assert.equal(gratis.patch.amount, null);
+  assert.equal(gratis.patch.cash, null);
   const many = Array.from({ length: 14 }, (_, i) => (i < 9 ? { paid: true, amount: 5000, method: 'efectivo' } : { name: 'x' }));
   assert.equal(collectedLine(many), 'Recaudado: $45.000 · 9/14 pagaron');
 });

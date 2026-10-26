@@ -75,6 +75,11 @@ function finiteMoney(value) {
   return Number.isFinite(n) ? roundARS(n) : 0;
 }
 
+/** Juega gratis: no debe nada, aunque el documento viejo todavía tenga montos. */
+export function isFreePlay(player) {
+  return player?.freePlay === true;
+}
+
 /** true si el documento ya usa efectivo / transferencia / pendiente por separado. */
 export function isSplitPayment(player) {
   if (!player) return false;
@@ -87,7 +92,7 @@ export function isSplitPayment(player) {
  */
 export function paymentParts(player) {
   const empty = { cash: 0, transfer: 0, pending: 0, received: 0, split: false };
-  if (!player) return empty;
+  if (!player || isFreePlay(player)) return empty;
   if (!isSplitPayment(player)) {
     if (player.paid !== true) return empty;
     const received = finiteMoney(player.amount);
@@ -223,6 +228,7 @@ function receivedStatusText(player) {
 
 /** Texto para la fila y para la lista copiada. Incluye lo pendiente. Vacío si todavía no se cargó. */
 export function paymentStatusText(player) {
+  if (isFreePlay(player)) return 'Juega gratis';
   const pending = pendingStatusText(player);
   const head = receivedStatusText(player);
   if (pending && head && head !== 'No pagó') return `${head} · ${pending}`;
@@ -239,15 +245,26 @@ export function paymentHeadline(player) {
   return full.endsWith(pending) ? full.slice(0, -pending.length).replace(/ ·\s*$/, '') : full;
 }
 
-/** "Recaudado: $45.000 · 9/14 pagaron", o "" si nadie tiene un pago cargado. */
+/** "Recaudado: $45.000 · 9/14 pagaron", o "" si nadie tiene un pago cargado.
+ * Quien juega gratis no debe: no suma plata ni entra en el "faltan pagar". */
 export function collectedLine(players) {
   const list = players || [];
-  const pending = sumParts(list).pending;
-  if (!list.some((p) => p.paid === true || p.paid === false) && pending <= 0) return '';
-  const paid = list.filter((p) => p.paid === true);
+  const free = list.filter((p) => isFreePlay(p)).length;
+  const paying = list.filter((p) => !isFreePlay(p));
+  const pending = sumParts(paying).pending;
+  const freeText = free ? (free === 1 ? '1 juega gratis' : `${free} juegan gratis`) : '';
+  if (!paying.some((p) => p.paid === true || p.paid === false) && pending <= 0) {
+    return freeText;
+  }
+  const paid = paying.filter((p) => p.paid === true);
   const total = paid.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-  const base = `Recaudado: ${formatARS(total)} · ${paid.length}/${list.length} pagaron`;
-  return pending > 0 ? `${base} · Transfiere después: ${formatARS(pending)}` : base;
+  const base = paying.length
+    ? `Recaudado: ${formatARS(total)} · ${paid.length}/${paying.length} pagaron`
+    : `Recaudado: ${formatARS(0)}`;
+  const bits = [base];
+  if (freeText) bits.push(freeText);
+  if (pending > 0) bits.push(`Transfiere después: ${formatARS(pending)}`);
+  return bits.join(' · ');
 }
 
 /**
@@ -284,13 +301,41 @@ function methodOfParts(cash, transfer) {
   return null;
 }
 
+function freePlayPatch(who, now) {
+  return {
+    paidUpdatedBy: String(who || ''),
+    paidUpdatedAt: now,
+    paid: true,
+    freePlay: true,
+    amount: null,
+    method: null,
+    receivedBy: null,
+    cash: null,
+    transfer: null,
+    pendingTransfer: null,
+    transferReceivedAt: null,
+    transferReceivedBy: null,
+    cashTo: null,
+    transferTo: null,
+    pendingTo: null,
+    transferParts: null,
+  };
+}
+
+function freeFlag(input) {
+  if (!input || !('freePlay' in input)) return {};
+  return { freePlay: input.freePlay === true };
+}
+
 export function paymentRecord(input, who, now = Date.now()) {
+  if (input?.freePlay === true) return { ok: true, patch: freePlayPatch(who, now) };
   if (!usesSplitInput(input)) return legacyPaymentRecord(input, who, now);
   const paid = input?.paid;
   if (paid !== true && paid !== false) return { ok: false, error: 'Indicá si pagó.' };
   const stamp = { paidUpdatedBy: String(who || ''), paidUpdatedAt: now };
   const cleared = {
     ...stamp,
+    ...freeFlag(input),
     paid: false,
     amount: null,
     method: null,
@@ -362,6 +407,7 @@ export function paymentRecord(input, who, now = Date.now()) {
     ok: true,
     patch: {
       ...stamp,
+      ...freeFlag(input),
       paid: received > 0,
       amount: received > 0 ? received : null,
       method: methodOfParts(cash, transfer),
@@ -383,7 +429,7 @@ function legacyPaymentRecord(input, who, now) {
   const paid = input?.paid;
   if (paid !== true && paid !== false) return { ok: false, error: 'Indicá si pagó.' };
   const stamp = { paidUpdatedBy: String(who || ''), paidUpdatedAt: now };
-  if (paid === false) return { ok: true, patch: { ...stamp, paid: false, amount: null, method: null, receivedBy: null } };
+  if (paid === false) return { ok: true, patch: { ...stamp, ...freeFlag(input), paid: false, amount: null, method: null, receivedBy: null } };
   const amount = input.amount;
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0 || amount > MAX_AMOUNT) {
     return { ok: false, error: 'Monto inválido.' };
@@ -393,7 +439,7 @@ function legacyPaymentRecord(input, who, now) {
   }
   const receivedBy = receiverValue(input);
   if (receivedBy && typeof receivedBy === 'object') return { ok: false, error: receivedBy.error };
-  return { ok: true, patch: { ...stamp, paid: true, amount: roundARS(amount), method: input.method, receivedBy } };
+  return { ok: true, patch: { ...stamp, ...freeFlag(input), paid: true, amount: roundARS(amount), method: input.method, receivedBy } };
 }
 
 function legacyReceiver(player) {
