@@ -27,6 +27,7 @@ import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import {
   VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -1270,6 +1271,20 @@ async function shareText(text) {
   toast(ok ? 'Lista copiada. Pegala en el grupo.' : 'No se pudo compartir');
   openWa({ text });
 }
+async function shareApp() {
+  const text = appShareMessage();
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: 'Mis Partidos', text, url: APP_INSTALL_URL });
+      return;
+    } catch (e) {
+      if (e?.name === 'AbortError') return;
+    }
+  }
+  const ok = await copyText(text);
+  toast(ok ? 'Link copiado' : 'No se pudo copiar');
+  openWa({ text });
+}
 
 /* ───────── sheet (dialog) ───────── */
 const sheet = $('#sheet');
@@ -1387,6 +1402,7 @@ function openSettings() {
       ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
     </div>
     <div class="menu" id="set-sections">
+      <button type="button" class="btn" id="set-share-app">Compartir app</button>
       <button type="button" class="btn" id="set-venues">Sedes</button>
       ${app.role === 'admin' ? '<a class="btn" id="set-organizers" href="#/usuarios">Organizadores</a>' : ''}
     </div>
@@ -1414,6 +1430,8 @@ function openSettings() {
   });
   const venuesBtn = $('#set-venues');
   if (venuesBtn) venuesBtn.onclick = () => openVenues();
+  const shareAppBtn = $('#set-share-app');
+  if (shareAppBtn) shareAppBtn.onclick = () => { void shareApp(); };
   const users = $('#set-organizers');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {

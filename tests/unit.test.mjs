@@ -25,6 +25,7 @@ import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
 import { bumpGoals, bumpScore, cyclePlayer, dropPlayer, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { APP_INSTALL_URL, appShareMessage } from '../js/share.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -1448,6 +1449,14 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.equal(scoreLine({ bib: 2, plain: 0 }), 'Con pechera 2 – 0 Sin pechera');
   assert.equal(goaliesLeft(['a', 'b'], ['b']), 1);
   assert.match(teamsMessage({ when: 'Martes', venue: 'Sede', players: [], teams: { bib: [], plain: [] }, score: { bib: 2, plain: 1 } }), /Marcador: Con pechera 2 – Sin pechera 1/);
+});
+
+test('compartir la app nombra el link de instalación', () => {
+  const text = appShareMessage();
+  assert.match(text, /Anotate con Mis Partidos/);
+  assert.match(text, /Instalá la app desde acá/);
+  assert.ok(text.includes(APP_INSTALL_URL));
+  assert.equal(APP_INSTALL_URL, 'https://gustavofarg-hash.github.io/futbol-colegiales/');
 });
 
 test('cancelar no arma recordatorio y el mensaje no lleva link', () => {
