@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, searchRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -134,6 +134,7 @@ function run(p, okMsg, deniedMsg) {
 
 /* ───────── datos derivados ───────── */
 const actor = () => ({ uid: app.session?.user?.uid || '', name: app.who || '' });
+const shownName = (player) => displayName(player, app.roster);
 const addBlock = (m) => {
   const who = actor();
   if (!canAdd(m, who.uid)) return 'Este partido es de solo lectura.';
@@ -551,17 +552,17 @@ function renderTeams(id) {
         ? (player.inGoal === true ? `<span class="arco-done">Fue al arco</span>` : '')
         : `<label class="arco"><input type="checkbox" data-arco ${player.inGoal === true ? 'checked' : ''}><span>Fue al arco</span></label>`;
       rows.push(readOnly
-        ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span>${goalBox}${arco}</li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span>${goalBox}${arco}<button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(player.name)}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(player.name)} de este equipo">✕</button></li>`);
+        ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${arco}</li>`
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${arco}<button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></li>`);
     }
     return rows.join('');
   };
   const freeRows = free.map((player) => (readOnly
-    ? `<li class="team-row"><span class="team-name">${esc(player.name)}</span></li>`
-    : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(player.name)}</span><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(player.name)}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(player.name)}">${shirt}</button></li>`)).join('');
+    ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span></li>`
+    : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></li>`)).join('');
   const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
   const score = normalizeScore(m.score);
-  const share = teamsMessage({ when, venue: placeOf(m), players: main, teams, score: m.score ? score : null });
+  const share = teamsMessage({ when, venue: placeOf(m), players: main.map((player) => ({ ...player, name: shownName(player) })), teams, score: m.score ? score : null });
   const scoreSide = (side, label, value) => {
     const n = `<strong id="score-${side}">${value}</strong>`;
     if (readOnly) return `<div class="score-side"><span>${esc(label)}</span>${n}</div>`;
@@ -804,7 +805,7 @@ function renderMatch(id) {
       <li class="slot ${i >= cap ? 'extra' : ''}${inviteClass(p)}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
-          <div class="name-row"><div class="name">${esc(p.name)}</div>${levelBadge(p)}</div>
+          <div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>
           <div class="sub">${phoneSub(p)}
             ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payMarkup(p)}
@@ -944,7 +945,7 @@ function listText(m) {
     const pay = p ? paymentStatusText(p) : '';
     const hold = p?.tentative === true ? 'a confirmar' : '';
     const bits = [pay, hold].filter(Boolean).join(' · ');
-    lines.push(`${i + 1}. ${p ? p.name + friendSuffix(p) : ''}${bits ? ` — ${bits}` : ''}`);
+    lines.push(`${i + 1}. ${p ? shownName(p) + friendSuffix(p) : ''}${bits ? ` — ${bits}` : ''}`);
   }
   lines.push('', ps.length >= cap ? '✅ ¡Completo!' : `Faltan ${cap - ps.length}`);
   const collected = collectedLine(ps);
@@ -956,7 +957,7 @@ function listText(m) {
     lines.push('', 'Lista de espera:');
     wait.forEach((p, i) => {
       const pay = paymentStatusText(p);
-      lines.push(`${i + 1}. ${p.name}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
+      lines.push(`${i + 1}. ${shownName(p)}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
     });
   }
   return lines.join('\n');
@@ -977,7 +978,7 @@ function waitingSection(m, full, readOnly) {
         </div>
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
-          <div class="name-row"><div class="name">${esc(p.name)}</div>${levelBadge(p)}</div>
+          <div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>
           <div class="sub">${phoneSub(p)}
             ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}${confirmTag(p)}</div>
           ${payMarkup(p)}
@@ -1787,6 +1788,7 @@ function openRosterForm(person) {
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">Nombre completo. El WhatsApp es opcional. Si el número ya está, no se duplica.</p>
       <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
+      <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person ? displayFromWa(person.phone) : '')}">
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
       ${person ? '' : '<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"><span>Mostrar el WhatsApp para todos</span></label>'}
@@ -1810,6 +1812,7 @@ function openRosterForm(person) {
   form.onsubmit = (e) => {
     e.preventDefault();
     const name = form.name.value.trim();
+    const shortName = form.shortName.value;
     const phoneRaw = form.phone ? form.phone.value.trim() : null;
     if (!name) { $('#rf-err').textContent = 'Poné el nombre.'; return; }
     let phone = '';
@@ -1819,8 +1822,8 @@ function openRosterForm(person) {
       phone = r.wa;
     }
     const job = person
-      ? app.store.updateRoster(person.id, phoneRaw === null ? { name } : { name, phone })
-      : app.store.addRoster({ name, phone, phoneShared: $('#wa-share')?.checked === true }, app.who);
+      ? app.store.updateRoster(person.id, phoneRaw === null ? { name, shortName } : { name, phone, shortName })
+      : app.store.addRoster({ name, phone, shortName, phoneShared: $('#wa-share')?.checked === true }, app.who);
     Promise.resolve(job).then(() => { closeSheet(); toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores'); }).catch((err) => rosterFormError(err, 'rf-err'));
   };
 }
@@ -2054,6 +2057,7 @@ function renderProfile(id) {
   const painted = replaceView(`
     <article id="profile">
       <h2 class="section">${esc(person.name)}</h2>
+      ${cleanShortName(person.shortName) ? `<p class="hint" id="profile-nick">En los partidos se ve como ${esc(cleanShortName(person.shortName))}</p>` : ''}
       ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" value="${esc(person.name)}"></label>` : ''}
       <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</p>
       ${lockNote}
@@ -2290,7 +2294,7 @@ function bindPartidos(person) {
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
         try {
-          await app.store.addPlayer(row.match, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true, phoneShared: person.phoneShared === true }, app.who, {
+          await app.store.addPlayer(row.match, { name: person.name, shortName: person.shortName || '', phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true, phoneShared: person.phoneShared === true }, app.who, {
             waiting: again.willWait,
             tentative: tentative && !again.willWait,
           });
@@ -2427,6 +2431,7 @@ function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
       const waiting = offset >= place.main;
       hostId = await app.store.addPlayer(m, {
         name: host.name,
+        shortName: saved?.shortName || '',
         phone: host.phone || '',
         rosterId: id,
         phoneKey: host.phoneKey || saved?.phoneKey || '',

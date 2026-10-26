@@ -22,12 +22,28 @@ export function phoneDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
-/** true si el texto es el comienzo del nombre, del apellido (cualquier palabra) o un tramo del teléfono. */
+export function cleanShortName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+}
+
+/**
+ * En la lista del partido y en Equipos se ve el apodo.
+ * Si está en Jugadores, manda ese apodo. Si no, el que quedó copiado en el partido.
+ */
+export function displayName(player, roster) {
+  const person = player?.rosterId
+    ? (roster || []).find((item) => item?.id === player.rosterId)
+    : null;
+  if (person) return cleanShortName(person.shortName) || player?.name || person.name || '';
+  return cleanShortName(player?.shortName) || player?.name || '';
+}
+
+/** true si el texto es el comienzo del nombre, del apodo, del apellido (cualquier palabra) o un tramo del teléfono. */
 export function rosterHit(person, query) {
   const raw = String(query || '').trim();
   if (!raw) return true;
   const q = foldText(raw);
-  const words = foldText(person?.name).split(/\s+/).filter(Boolean);
+  const words = `${foldText(person?.name)} ${foldText(person?.shortName)}`.split(/\s+/).filter(Boolean);
   if (q && words.some((word) => word.startsWith(q))) return true;
   const digits = phoneDigits(raw);
   if (digits && phoneDigits(person?.phone).includes(digits)) return true;

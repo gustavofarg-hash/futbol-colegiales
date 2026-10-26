@@ -64,6 +64,7 @@
 //    phone, ownerUid, visibleToAll (default false), phoneKey
 //  roster/{rosterId}
 //    name (el teléfono está en rosterContacts)
+//    shortName: apodo opcional, hasta 40. En el partido y en Equipos reemplaza al nombre.
 //    createdBy, createdAt, updatedAt
 //    level: número de 1 a 10, con un decimal (6.8). En pantalla va con coma.
 //    positions: ["Arquero"|"Defensa"|"Mediocampo"|"Ataque"]
@@ -94,7 +95,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, isRosterDenied, phoneIdentity } from './roster.js';
+import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, phoneIdentity } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -279,6 +280,37 @@ function applyRosterNamePatches(db, patches, now) {
     if (!player) continue;
     Object.assign(player, item.patch, { updatedAt: now });
   }
+}
+
+function mergePlayerPatches(...groups) {
+  const byId = new Map();
+  for (const item of groups.flat()) {
+    const prev = byId.get(item.id);
+    byId.set(item.id, { id: item.id, patch: { ...(prev?.patch || {}), ...item.patch } });
+  }
+  return [...byId.values()];
+}
+
+/** Copia el apodo a los jugadores del partido con ese rosterId que este organizador puede editar. */
+function rosterShortPatches(players, rosterId, shortName, actor) {
+  const id = String(rosterId || '').trim();
+  if (!id) return [];
+  const short = cleanShortName(shortName);
+  const patches = [];
+  for (const player of players || []) {
+    if (!player?.id || String(player.rosterId || '') !== id) continue;
+    if (!canEditPlayer(player, actor)) continue;
+    if (cleanShortName(player.shortName) === short) continue;
+    patches.push({ id: player.id, patch: { shortName: short } });
+  }
+  return patches;
+}
+
+function applyShortName(target, value, present) {
+  if (!present) return;
+  const short = cleanShortName(value);
+  if (short) target.shortName = short;
+  else delete target.shortName;
 }
 
 function matchDoc(data, who) {
@@ -656,6 +688,7 @@ class LocalStore {
       ...guestFields(data),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
       ...signupWith(data, this.actor),
+      ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
     };
     db.players[id] = player;
     if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '', data.phoneShared === true);
@@ -787,6 +820,7 @@ class LocalStore {
     if (existing) throw Object.assign(new Error(`${existing.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     const id = rid(); const now = Date.now();
     const person = { name: data.name.trim(), createdBy: who || '', createdByUid: this.actor?.uid || '', createdAt: now, updatedAt: now, hasPhone: false, phoneKey: '', phoneOwnerUid: this.actor?.uid || '', phoneShared: false };
+    applyShortName(person, data.shortName, 'shortName' in (data || {}));
     db.roster[id] = person;
     if (phone) writeContact(db, 'roster', id, phone, person, this.actor?.uid || '', data.phoneShared === true);
     this._save(db); return id;
@@ -799,13 +833,15 @@ class LocalStore {
       const dup = phoneDup(db, 'roster', id, phone);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
-    const nextName = cleanPersonName(data?.name);
+    const nextName = cleanPersonName(data?.name ?? cur.name);
     if (!nextName) throw Object.assign(new Error('Poné el nombre.'), { code: 'invalid-name' });
-    const patches = nextName !== cleanPersonName(cur.name)
-      ? rosterNamePatches(rosterPlayers(db), id, nextName, this.actor)
-      : [];
+    const patches = mergePlayerPatches(
+      nextName !== cleanPersonName(cur.name) ? rosterNamePatches(rosterPlayers(db), id, nextName, this.actor) : [],
+      'shortName' in (data || {}) ? rosterShortPatches(rosterPlayers(db), id, data.shortName, this.actor) : [],
+    );
     const now = Date.now();
     Object.assign(cur, { name: nextName, updatedAt: now });
+    applyShortName(cur, data?.shortName, 'shortName' in (data || {}));
     delete cur.phone;
     if ('phone' in (data || {})) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
     applyRosterNamePatches(db, patches, now);
@@ -827,6 +863,9 @@ class LocalStore {
     }
     if ('positions' in patch) next.positions = patch.positions || [];
     if ('notes' in patch) next.notes = patch.notes || [];
+    if ('shortName' in patch) {
+      namePatches = mergePlayerPatches(namePatches, rosterShortPatches(rosterPlayers(db), id, patch.shortName, this.actor));
+    }
     const phone = 'phone' in patch ? (patch.phone || '') : this._rosterPhone(db, id);
     if ('phone' in patch && phone) {
       const dup = phoneDup(db, 'roster', id, phone);
@@ -834,6 +873,7 @@ class LocalStore {
     }
     const now = Date.now();
     Object.assign(cur, next, { updatedAt: now });
+    if ('shortName' in patch) applyShortName(cur, patch.shortName, true);
     delete cur.phone;
     if ('phone' in patch) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
     applyRosterNamePatches(db, namePatches, now);
@@ -1580,6 +1620,7 @@ class FirebaseStore {
       ...guestFields(data),
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
       ...signupWith(data, this.actor),
+      ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
     };
     const ref = await addDoc(collection(this.db, 'players'), player);
     const stored = this.state.matches.find((item) => item.id === match.id) || match;
@@ -1833,6 +1874,7 @@ class FirebaseStore {
     const person = {
       name: data.name.trim(), phone: '', createdBy: who || '', createdByUid: uid, createdAt: now, updatedAt: now,
       hasPhone: false, phoneKey: phone ? phoneKey(phone) : '', phoneOwnerUid: uid, phoneShared: false,
+      ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
     };
     const ref = await addDoc(collection(this.db, 'roster'), person);
     if (phone) {
@@ -1857,12 +1899,17 @@ class FirebaseStore {
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
     const { doc, updateDoc, deleteField, writeBatch } = this.fs;
-    const nextName = cleanPersonName(data?.name);
+    const nextName = cleanPersonName(data?.name ?? cur.name);
     if (!nextName) throw Object.assign(new Error('Poné el nombre.'), { code: 'invalid-name' });
-    const namePatches = nextName !== cleanPersonName(cur.name)
-      ? rosterNamePatches(this.state.players || [], id, nextName, this.actor)
-      : [];
+    const namePatches = mergePlayerPatches(
+      nextName !== cleanPersonName(cur.name) ? rosterNamePatches(this.state.players || [], id, nextName, this.actor) : [],
+      'shortName' in (data || {}) ? rosterShortPatches(this.state.players || [], id, data.shortName, this.actor) : [],
+    );
     const next = { name: nextName, updatedAt: Date.now() };
+    if ('shortName' in (data || {})) {
+      const short = cleanShortName(data.shortName);
+      next.shortName = short || deleteField();
+    }
     if ('phone' in (data || {})) {
       try {
         const wrote = await this._writeContactDoc('roster', id, phone, cur);
@@ -1910,11 +1957,13 @@ class FirebaseStore {
     }
     if ('positions' in patch) next.positions = patch.positions || [];
     if ('notes' in patch) next.notes = patch.notes || [];
+    if ('shortName' in patch) namePatches = mergePlayerPatches(namePatches, rosterShortPatches(this.state.players || [], id, patch.shortName, this.actor));
     if ('phone' in patch && canonicalWa(patch.phone)) {
       const dup = this._rosterDup(patch.phone, id);
       if (dup) throw Object.assign(new Error(`${dup.name} ya tiene ese WhatsApp`), { code: 'roster-duplicate' });
     }
     const { doc, updateDoc, deleteField, writeBatch } = this.fs;
+    if ('shortName' in patch) next.shortName = cleanShortName(patch.shortName) || deleteField();
     if ('phone' in patch) {
       try {
         const wrote = await this._writeContactDoc('roster', id, patch.phone, cur);
