@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
@@ -30,7 +31,7 @@ import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
-import { BACKUP_WRITE_BATCH, backupFilename, backupReadError, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
+import { BACKUP_WRITE_BATCH, backupFilename, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -2068,9 +2069,21 @@ test('el error del backup nombra la colección y el documento', () => {
   const write = backupWriteError({ kind: 'set', segments: ['players', 'ana'] }, denied);
   assert.match(write.message, /guardar players\/ana/);
   assert.match(write.message, /Firebase rechazó el permiso/);
-  const read = backupReadError('matches', denied);
-  assert.match(read.message, /leer Partidos \(matches\)/);
-  assert.match(read.message, /Firebase rechazó el permiso/);
+  assert.equal(/missing or insufficient permissions/i.test(write.message), false);
+  const read = backupReadError('links', denied);
+  assert.match(read.message, /leer Links \(links\)/);
+  const del = backupWriteError({ kind: 'delete', segments: ['matches', 'x'] }, denied);
+  assert.match(del.message, /borrar matches\/x/);
+  const bare = backupSurfaceMessage(denied, 'No se pudo cargar el backup.');
+  assert.equal(/missing or insufficient permissions/i.test(bare), false);
+  assert.match(bare, /Firebase rechazó el permiso/);
+  assert.equal(backupSurfaceMessage(write, 'fallback'), write.message);
+  const sw = readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const version = sw.match(/const VERSION = '([^']+)'/)[1];
+  assert.equal(version, 'f7c-v54');
+  assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
+  assert.match(app, /id="app-version">Versión \$\{APP_VERSION\}/);
 });
 
 test('sin uid no se carga el backup y un organizador tampoco', async () => {

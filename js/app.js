@@ -28,12 +28,13 @@ import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } f
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
-import { BACKUP_COLLECTIONS, COLLECTION_LABELS, backupFilename, parseBackup } from './backup.js';
+import { BACKUP_COLLECTIONS, COLLECTION_LABELS, backupFilename, backupSurfaceMessage, parseBackup } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
+const APP_VERSION = 'f7c-v54';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1447,7 +1448,8 @@ function openSettings() {
       <button class="btn" id="set-logout">Cerrar sesión</button>
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
-    <p class="footer-note">Mis Partidos · ${esc(VENUE)} · v1</p>`);
+    <p class="footer-note">Mis Partidos · ${esc(VENUE)}</p>
+    <p class="footer-note" id="app-version">Versión ${APP_VERSION}</p>`);
   $('#price-form').onsubmit = (e) => {
     e.preventDefault();
     const form = e.target;
@@ -1521,7 +1523,7 @@ async function shareBackupFile(filename, text) {
 
 function failBackup(error) {
   console.error(error);
-  toast(error?.message || 'No se pudo hacer el backup.', 7000);
+  toast(backupSurfaceMessage(error, 'No se pudo hacer el backup.'), 7000);
 }
 
 async function currentBackupFile() {
@@ -1557,7 +1559,7 @@ function openResetDb() {
       toast('Base de datos vacía');
     }).catch((error) => {
       apply.disabled = false;
-      const msg = error?.message || 'No se pudo borrar.';
+      const msg = backupSurfaceMessage(error, 'No se pudo borrar.');
       $('#reset-err').textContent = msg;
       toast(msg, 7000);
     });
@@ -1612,7 +1614,7 @@ function openRestore() {
       toast('Base cargada desde el backup');
     }).catch((error) => {
       apply.disabled = false;
-      const msg = error?.message || 'No se pudo cargar el backup.';
+      const msg = backupSurfaceMessage(error, 'No se pudo cargar el backup.');
       $('#backup-err').textContent = msg;
       toast(msg, 7000);
     });

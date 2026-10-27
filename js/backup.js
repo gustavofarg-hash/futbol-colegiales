@@ -236,6 +236,16 @@ export function backupReadError(collectionName, error) {
   });
 }
 
+/** Lo que se muestra en rojo. Nunca el texto crudo de Firebase, sin decir dónde. */
+export function backupSurfaceMessage(error, fallback) {
+  const text = String(error?.message || '').trim();
+  if (/missing or insufficient permissions/i.test(text) && !/^No se pudo\b/.test(text)) {
+    const where = error?.path ? ` ${error.path}` : '';
+    return `No se pudo completar${where}. Firebase rechazó el permiso.`;
+  }
+  return text || fallback;
+}
+
 /** Vuelve a armar un Timestamp si el que escribe conoce la clase. */
 export function reviveValue(value, Timestamp) {
   if (Array.isArray(value)) return value.map((item) => reviveValue(item, Timestamp));

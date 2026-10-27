@@ -1164,16 +1164,16 @@ export class FirebaseStore {
     for (let i = 0; i < ops.length; i += size) {
       const slice = ops.slice(i, i + size).filter((op) => !isOwnUserDoc(op.segments, uid));
       if (!slice.length) continue;
-      const batch = writeBatch(this.db);
-      for (const op of slice) {
-        const ref = doc(this.db, ...op.segments);
-        if (op.kind === 'delete') batch.delete(ref);
-        else batch.set(ref, op.data);
-      }
       try {
+        const batch = writeBatch(this.db);
+        for (const op of slice) {
+          const ref = doc(this.db, ...op.segments);
+          if (op.kind === 'delete') batch.delete(ref);
+          else batch.set(ref, op.data);
+        }
         await batch.commit();
       } catch (error) {
-        throw backupWriteError(slice[0], error);
+        throw error?.path ? error : backupWriteError(slice[0], error);
       }
     }
   }
