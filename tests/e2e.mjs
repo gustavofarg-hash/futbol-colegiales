@@ -2202,10 +2202,10 @@ for (const ic of manifest.icons) {
 
 check('A− y A+ están en el encabezado', await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
 await page.click('#btn-text-bigger');
-check('A+ pasa a Grande y se guarda en el teléfono', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '20px' && localStorage.getItem('f7c-text-size') === '2'));
+check('A+ pasa a Grande y se guarda en el teléfono', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '20px' && localStorage.getItem('f7c-text-size') === '20'));
 await page.click('#btn-settings');
-await page.click('[data-text-size="4"]');
-check('En Ajustes, Enorme agranda al instante', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '24px' && localStorage.getItem('f7c-text-size') === '4'));
+await page.click('dialog.sheet [data-text-size="8"]');
+check('En Ajustes, Enorme agranda al instante', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '24px' && localStorage.getItem('f7c-text-size') === '24'));
 check('A+ queda deshabilitado en Enorme', await page.locator('#btn-text-bigger').isDisabled());
 await page.click('dialog.sheet [data-close]');
 await page.evaluate(() => { location.hash = '#/'; });
@@ -2287,6 +2287,32 @@ check('confirmar.html usa el tamaño guardado', await confirmSize.evaluate(() =>
 const overflowConfirm = await confirmSize.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('confirmar.html en 360px no desborda', overflowConfirm <= 1, String(overflowConfirm));
 await confirmSize.close();
+
+await page.setViewportSize({ width: 390, height: 844 });
+await page.evaluate(() => localStorage.setItem('f7c-text-size', '0'));
+await page.reload();
+await page.waitForFunction(() => window.__app?.who && getComputedStyle(document.documentElement).fontSize === '16px');
+check('Un ajuste viejo de Chica sigue en 16px', (await page.evaluate(() => localStorage.getItem('f7c-text-size'))) === '0');
+for (let step = 0; step < 4; step += 1) await page.click('#btn-text-smaller');
+check('A− baja cuatro pasos más, hasta 8px', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '8px' && localStorage.getItem('f7c-text-size') === '8') && await page.locator('#btn-text-smaller').isDisabled() && !(await page.locator('#btn-text-bigger').isDisabled()));
+await page.setViewportSize({ width: 360, height: 740 });
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('#btn-add-match');
+const overflowMin = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+const minBars = await page.evaluate(() => {
+  const tabs = document.querySelector('#tabbar').getBoundingClientRect();
+  const smaller = document.querySelector('#btn-text-smaller').getBoundingClientRect();
+  const settings = document.querySelector('#btn-settings').getBoundingClientRect();
+  return {
+    tabs: tabs.top >= 0 && tabs.bottom <= window.innerHeight && tabs.width <= window.innerWidth + 1 && smaller.width >= 32 && settings.width >= 32,
+  };
+});
+check('Mínima en 360px no desborda y los controles siguen', overflowMin <= 1 && minBars.tabs, JSON.stringify({ overflowMin, minBars }));
+await page.reload();
+await page.waitForFunction(() => getComputedStyle(document.documentElement).fontSize === '8px');
+check('El mínimo de 8px queda guardado', (await page.evaluate(() => localStorage.getItem('f7c-text-size'))) === '8');
+await page.evaluate(() => localStorage.setItem('f7c-text-size', '18'));
+await page.setViewportSize({ width: 390, height: 844 });
 
 const debtPerson = await page.evaluate(async () => {
   const who = window.__app.who;

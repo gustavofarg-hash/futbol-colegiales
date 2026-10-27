@@ -18,11 +18,14 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <script>
     (function () {
-      var steps = [16, 18, 20, 22, 24];
-      var i = 1;
+      var steps = [8, 10, 12, 14, 16, 18, 20, 22, 24];
+      var legacy = [16, 18, 20, 22, 24];
+      var i = 5;
       try {
         var n = parseInt(localStorage.getItem('f7c-text-size'), 10);
-        if (n >= 0 && n < steps.length) i = n;
+        var byPx = steps.indexOf(n);
+        if (byPx >= 0) i = byPx;
+        else if (n >= 0 && n < legacy.length) i = steps.indexOf(legacy[n]);
       } catch (e) {}
       document.documentElement.style.fontSize = steps[i] + 'px';
     })();

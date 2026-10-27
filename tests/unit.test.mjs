@@ -22,7 +22,7 @@ import {
 } from '../js/reminders.js';
 import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
-import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
+import { TEXT_SIZE_DEFAULT, TEXT_SIZES, indexFromStored, readTextSize, stepTextSize, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
 import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import { APP_INSTALL_URL, appShareMessage } from '../js/share.js';
@@ -1140,16 +1140,42 @@ test('el sí de la ficha gana y un sí viejo no se borra si la ficha no contest�
   assert.equal(out[2].confirmedAt, 4);
 });
 
-test('tamaño de texto: Normal es el default y hay cinco pasos', () => {
-  assert.deepEqual(TEXT_SIZES.map((s) => s.label), ['Chica', 'Normal', 'Grande', 'Muy grande', 'Enorme']);
+test('tamaño de texto: cuatro pasos menos que 16px, y lo viejo sigue', () => {
+  assert.deepEqual(TEXT_SIZES.map((s) => s.label), ['Mínima', 'Muy chica', 'Más chica', 'Chiquita', 'Chica', 'Normal', 'Grande', 'Muy grande', 'Enorme']);
+  assert.deepEqual(TEXT_SIZES.map((s) => s.px), [8, 10, 12, 14, 16, 18, 20, 22, 24]);
   assert.equal(TEXT_SIZES[TEXT_SIZE_DEFAULT].label, 'Normal');
   assert.equal(TEXT_SIZES[TEXT_SIZE_DEFAULT].px, 18);
-  assert.equal(TEXT_SIZES[0].px, 16);
-  assert.equal(TEXT_SIZES[4].px, 24);
+  assert.equal(TEXT_SIZES[0].px, 8);
+  assert.equal(TEXT_SIZES[4].px, 16);
+  for (let i = 1; i < TEXT_SIZES.length; i += 1) assert.equal(TEXT_SIZES[i].px - TEXT_SIZES[i - 1].px, 2);
   assert.equal(textSizeIndex(null), TEXT_SIZE_DEFAULT);
-  assert.equal(textSizeIndex('4'), 4);
+  assert.equal(textSizeIndex('0'), 0);
+  assert.equal(textSizeIndex('8'), 8);
   assert.equal(textSizeIndex('9'), TEXT_SIZE_DEFAULT);
   assert.equal(textSizeIndex('-1'), TEXT_SIZE_DEFAULT);
+  assert.equal(indexFromStored('0'), 4);
+  assert.equal(indexFromStored('1'), TEXT_SIZE_DEFAULT);
+  assert.equal(indexFromStored('4'), 8);
+  assert.equal(indexFromStored('8'), 0);
+  assert.equal(indexFromStored('16'), 4);
+  assert.equal(indexFromStored('24'), 8);
+  assert.equal(indexFromStored('9'), TEXT_SIZE_DEFAULT);
+  assert.equal(indexFromStored(null), TEXT_SIZE_DEFAULT);
+  const box = new Map();
+  const storage = {
+    getItem: (key) => (box.has(key) ? box.get(key) : null),
+    setItem: (key, value) => box.set(key, String(value)),
+  };
+  storage.setItem('f7c-text-size', '1');
+  assert.equal(TEXT_SIZES[readTextSize(storage)].px, 18);
+  assert.equal(stepTextSize(-1, storage), 4);
+  assert.equal(storage.getItem('f7c-text-size'), '16');
+  assert.equal(stepTextSize(-4, storage), 0);
+  assert.equal(TEXT_SIZES[readTextSize(storage)].px, 8);
+  assert.equal(storage.getItem('f7c-text-size'), '8');
+  assert.equal(stepTextSize(-1, storage), 0);
+  assert.equal(stepTextSize(1, storage), 1);
+  assert.equal(storage.getItem('f7c-text-size'), '10');
 });
 
 test('el placeholder no habilita al admin y el mail se compara sin mayúsculas', () => {
@@ -1662,9 +1688,9 @@ test('con jugadores no se borra, el contador sigue y las notas quedan en la fich
   assert.equal(JSON.parse(mem.get('f7c-test-cancel')).matches[empty].playerCount, 0);
   await store.deleteMatch(empty);
   assert.equal(JSON.parse(mem.get('f7c-test-cancel')).matches[empty], undefined);
-  const mid = await store.addMatch({ date: '2026-10-26', time: '21:00', note: '' }, 'Gustavo');
-  const main = await store.addPlayer({ id: mid, date: '2026-10-26', capacity: 14 }, { name: 'Teo', phone: '5491166662222' }, 'Gustavo');
-  await store.addPlayer({ id: mid, date: '2026-10-26', capacity: 14 }, { name: 'Espera', phone: '' }, 'Gustavo', { waiting: true });
+  const mid = await store.addMatch({ date: '2026-11-20', time: '21:00', note: '' }, 'Gustavo');
+  const main = await store.addPlayer({ id: mid, date: '2026-11-20', capacity: 14 }, { name: 'Teo', phone: '5491166662222' }, 'Gustavo');
+  await store.addPlayer({ id: mid, date: '2026-11-20', capacity: 14 }, { name: 'Espera', phone: '' }, 'Gustavo', { waiting: true });
   let db = JSON.parse(mem.get('f7c-test-cancel'));
   assert.equal(db.matches[mid].playerCount, 2);
   await assert.rejects(() => store.deleteMatch(mid), (err) => err.code === 'has-players');
@@ -1921,7 +1947,7 @@ test('no se cancela un partido que ya entró al historial', async () => {
   };
   const store = createDemoStore();
   const played = await store.addMatch({ date: '2026-10-11', time: '19:00', note: 'Viejo' }, 'Gustavo');
-  const ahead = await store.addMatch({ date: '2026-10-26', time: '21:00', note: 'Futuro' }, 'Gustavo');
+  const ahead = await store.addMatch({ date: '2026-11-20', time: '21:00', note: 'Futuro' }, 'Gustavo');
   await assert.rejects(() => store.updateMatch(played, { cancelled: true, notes: 'Se suspendió' }, 'Gustavo'), /ya se jugó/);
   await store.updateMatch(played, { notes: 'Se puede anotar' }, 'Gustavo');
   await store.updateMatch(ahead, { cancelled: true, notes: 'Lluvia' }, 'Gustavo');
