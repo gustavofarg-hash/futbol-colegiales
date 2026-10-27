@@ -440,8 +440,7 @@ check('Copiar lista como texto', clip.includes('Jueves 22/10 · 21:00 hs') && cl
 // Pagos
 await page.click('.slot:has-text("Juan Pérez") .pay-btn');
 await page.waitForSelector('#pay-form');
-check('El formulario de pago arranca sin monto', await page.isHidden('#pay-details'));
-await page.click('#pay-form [data-paid="si"]');
+check('El pago abre directo en los montos', (await page.locator('#pay-form [data-paid]').count()) === 0 && await page.isVisible('#pay-details') && await page.isVisible('#pay-free') && await page.isVisible('#pay-form [name=pending]'));
 check('El efectivo arranca vacío', await page.$eval('#pay-form [name=cash]', (el) => el.value === ''));
 await page.locator('#pay-form [name=cash]').focus();
 check('Al tocar el efectivo se completa con el precio de Ajustes', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '5000'));
@@ -456,12 +455,7 @@ await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
 const juanPay = (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).replace(/\s+/g, ' ');
 check('Juan: Pagó $5.000 · Transferencia', juanPay.includes('Pagó $5.000') && juanPay.includes('Transferencia'), juanPay);
 
-await page.click('.slot:has-text("Pedro Gómez") .pay-btn');
-await page.click('#pay-form [data-paid="no"]');
-check('Si no pagó se oculta el monto', await page.isHidden('#pay-details'));
-await page.click('#pay-form button[type=submit]');
-await page.waitForSelector('.slot:has-text("Pedro Gómez") .pay-line.no');
-check('Pedro: No pagó', (await page.textContent('.slot:has-text("Pedro Gómez") .pay-line')).includes('No pagó'));
+check('Pedro sigue sin estado de pago', (await page.$$('.slot:has-text("Pedro Gómez") .pay-line')).length === 0);
 check('Nico sigue sin estado de pago', (await page.$$('.slot:has-text("Nico R.") .pay-line')).length === 0);
 const rec = (await page.textContent('#collected')).replace(/\s+/g, ' ');
 check('Total recaudado 1/3', rec.includes('Recaudado: $5.000') && rec.includes('1/3 pagaron'), rec);
@@ -470,7 +464,7 @@ await page.click('#btn-copy');
 const clipPay = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada incluye los pagos',
   clipPay.includes('1. Juan Pérez — Pagó $5.000 · Transferencia')
-  && clipPay.includes('Pedro Gómez — No pagó')
+  && clipPay.includes('Pedro Gómez') && !/Pedro Gómez —/.test(clipPay)
   && clipPay.includes('3. Nico R.\n')
   && clipPay.includes('Recaudado: $5.000 · 1/3 pagaron'),
   clipPay.split('\n').filter((l) => l.includes('Juan') || l.includes('Pedro') || l.includes('Nico') || l.includes('Recaudado')).join(' | '));
@@ -482,6 +476,7 @@ const stored = await page.evaluate(() => {
 check('El pago queda en el jugador (localStorage)', stored?.paid === true && stored.amount === 5000 && stored.method === 'transferencia' && stored.paidUpdatedBy === 'Martín' && stored.receivedBy === 'Martín');
 await page.click('.slot:has-text("Juan Pérez") .pay-btn');
 check('Cobró arranca en quien está usando la app', await page.$eval('#pay-form [name=transferTo]', (el) => el.value === 'Martín'));
+check('El pago guardado vuelve a cargar la transferencia', await page.$eval('#pay-form [name=transfer]', (el) => el.value.replace(/\./g, '') === '5000') && await page.isVisible('#pay-details'));
 await page.click('#pay-form [data-close]');
 
 // Otra pestaña del mismo navegador ve el cambio al guardarlo
@@ -1059,7 +1054,7 @@ await page.waitForSelector('.match-card[data-date="2026-10-19"]');
 await page.click('.match-card[data-date="2026-10-19"]');
 await page.waitForSelector('.slot:has-text("Ana Hoy") .pay-btn');
 await page.click('.slot:has-text("Ana Hoy") .pay-btn');
-await page.click('#pay-form [data-paid="si"]');
+await page.waitForSelector('#pay-form [name=pending]');
 await page.fill('#pay-form [name=cash]', '2000');
 await page.fill('#pay-form [name=transfer]', '3000');
 await page.fill('#pay-form [name=pending]', '1500');
@@ -1218,7 +1213,7 @@ await page.waitForSelector('.match-card[data-date="2026-10-22"]');
 await page.click('.match-card[data-date="2026-10-22"]');
 await page.waitForSelector('.slot:has-text("Nico R.") .pay-btn');
 await page.click('.slot:has-text("Nico R.") .pay-btn');
-await page.click('#pay-form [data-paid="si"]');
+await page.waitForSelector('#pay-form [name=cash]');
 await page.locator('#pay-form [name=cash]').focus();
 check('El pago usa el precio guardado en el partido', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '5000'));
 check('El botón de un partido muestra el precio nuevo', (await page.textContent('#pay-prices')).includes('$6.000'));
@@ -1232,7 +1227,7 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, propio);
 await page.waitForSelector('#match-price');
 check('El detalle muestra el valor de ese partido', (await page.textContent('#match-price')).includes('$7.500'));
 await page.click('.slot:has-text("Precio Propio") .pay-btn');
-await page.click('#pay-form [data-paid="si"]');
+await page.waitForSelector('#pay-form [name=transfer]');
 await page.locator('#pay-form [name=transfer]').focus();
 check('Un campo vacío usa el valor del partido', await page.$eval('#pay-form [name=transfer]', (el) => el.value.replace(/\./g, '') === '7500'));
 await page.locator('#pay-free').check();
@@ -1260,7 +1255,7 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoIds.a);
 await page.waitForSelector('.promo-badge');
 check('Badge de promo 2 en el partido', (await page.textContent('.promo-badge')).includes('Promo 2 partidos por $9.000'));
 await page.click('.slot:has-text("Promo Uno") .pay-btn');
-await page.click('#pay-form [data-paid="si"]');
+await page.waitForSelector('#pay-form [name=cash]');
 check('Sin aplicar, el monto arranca vacío', await page.$eval('#pay-form [name=cash]', (el) => el.value === ''));
 check('La hoja también muestra la promo', (await page.textContent('#pay-promo')).includes('Promo 2 partidos por $9.000'));
 await page.click('#pay-apply-promo');
@@ -1416,7 +1411,6 @@ await page.evaluate(() => window.scrollTo(0, 0));
 await page.setViewportSize({ width: 390, height: 844 });
 await page.click('#slots .pay-btn');
 await page.waitForSelector('#pay-form');
-await page.click('#pay-form [data-paid="si"]');
 await page.fill('#pay-form [name=cash]', '5000');
 await page.fill('#pay-form [name=transfer]', '');
 await page.click('#pay-form button[type=submit]');
@@ -2264,7 +2258,6 @@ await page.click('#btn-back');
 await page.waitForSelector('.pay-btn');
 await page.click('.pay-btn');
 await page.waitForSelector('#pay-form');
-await page.click('#pay-form [data-paid="si"]');
 const moneyRow = await page.evaluate(() => {
   const row = document.querySelector('#pay-form .pay-money');
   const input = row.querySelector('input');

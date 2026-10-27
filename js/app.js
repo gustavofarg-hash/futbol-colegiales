@@ -2798,7 +2798,6 @@ function readMoney(raw) {
 }
 function openPaymentForm(m, p) {
   if (!p || !canAdd(m, actor().uid)) return;
-  let paid = p.paid === true ? true : p.paid === false ? false : null;
   const parts = paymentParts(p);
   const known = p.paid === true || p.paid === false || parts.pending > 0 || parts.split;
   const promo = promoOf(p);
@@ -2837,13 +2836,6 @@ function openPaymentForm(m, p) {
       ${parts.pending > 0 ? `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(parts.pending))}</p>
       <button type="button" class="btn block" id="btn-receive-pending">Marcar transferencia como cobrada</button>` : ''}
       ${receivedNote}
-      <div class="field">
-        <span>¿Pagó?</span>
-        <div class="seg">
-          <button type="button" class="btn" data-paid="si">Sí</button>
-          <button type="button" class="btn" data-paid="no">No</button>
-        </div>
-      </div>
       <label class="checkline" id="free-play-line"><input type="checkbox" id="pay-free" name="freePlay"${isFreePlay(p) ? ' checked' : ''}><span>Juega gratis</span></label>
       <div id="pay-details">
         <div class="price-picks" id="pay-prices"></div>
@@ -2873,7 +2865,6 @@ function openPaymentForm(m, p) {
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
     </form>`);
   const form = $('#pay-form');
-  const details = $('#pay-details');
   const paintSelect = (select, selected) => {
     const names = payStaffNames([selected, ...paymentShares(p).map((share) => share.name)]);
     const current = names.find((name) => sameOrganizer(name, selected)) || names[0] || '';
@@ -2945,22 +2936,11 @@ function openPaymentForm(m, p) {
       suggestion = 0;
     } else suggestion = 0;
   };
-  const sync = () => {
-    sheet.querySelector('[data-paid="si"]').classList.toggle('primary', paid === true);
-    sheet.querySelector('[data-paid="no"]').classList.toggle('primary', paid === false);
-    details.hidden = paid !== true;
-  };
-  sheet.querySelectorAll('[data-paid]').forEach((b) => (b.onclick = () => {
-    paid = b.dataset.paid === 'si';
-    $('#pay-err').textContent = '';
-    sync();
-  }));
   const receive = $('#btn-receive-pending');
   if (receive) receive.onclick = () => {
     closeSheet();
     run(app.store.markTransferReceived(p.id, app.who), 'Transferencia marcada como cobrada', PAY_RULES_MSG);
   };
-  sync();
   const freeBox = $('#pay-free');
   const paintFree = () => {
     const on = freeBox?.checked === true;
@@ -2969,11 +2949,7 @@ function openPaymentForm(m, p) {
       input.disabled = on;
       if (on && input.tagName === 'INPUT') input.value = '';
     }
-    if (on) {
-      paid = true;
-      $('#pay-err').textContent = '';
-      sync();
-    }
+    if (on) $('#pay-err').textContent = '';
   };
   if (freeBox) freeBox.onchange = paintFree;
   if (freeBox?.checked) paintFree();
@@ -2982,12 +2958,6 @@ function openPaymentForm(m, p) {
     if (freeBox?.checked) {
       closeSheet();
       run(app.store.setPayment(p.id, { freePlay: true, paid: true, split: true }, app.who), 'Juega gratis', PAY_RULES_MSG);
-      return;
-    }
-    if (paid !== true && paid !== false) { $('#pay-err').textContent = 'Indicá si pagó.'; return; }
-    if (!paid) {
-      closeSheet();
-      run(app.store.setPayment(p.id, { paid: false, split: true, freePlay: false }, app.who), 'Marcado como no pagó', PAY_RULES_MSG);
       return;
     }
     const cash = readMoney(form.cash.value);
