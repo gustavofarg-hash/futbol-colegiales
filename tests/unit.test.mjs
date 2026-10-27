@@ -31,7 +31,7 @@ import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
-import { BACKUP_WRITE_BATCH, backupFilename, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
+import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -2084,6 +2084,64 @@ test('el error del backup nombra la colección y el documento', () => {
   assert.equal(version, 'f7c-v54');
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
   assert.match(app, /id="app-version">Versión \$\{APP_VERSION\}/);
+});
+
+test('la carga muestra el avance y deja el aviso de éxito hasta cerrarlo', async () => {
+  assert.equal(BACKUP_LOADED_OK, 'Todos los datos fueron cargados con éxito');
+  assert.equal(backupProgressText(120, 950), 'Cargando… 120/950');
+  assert.equal(backupProgressText(0, 0), 'Cargando…');
+  assert.equal(backupProgressText(5, 3), 'Cargando… 3/3');
+  const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  assert.match(app, /status\.textContent = BACKUP_LOADED_OK/);
+  assert.match(app, /toast\(BACKUP_LOADED_OK, 0\)/);
+  assert.doesNotMatch(app, /importDatabase\(payload\)\.then\(\(\) => \{\s*closeSheet\(\)/);
+  assert.match(css, /\.backup-ok[\s\S]*color:\s*var\(--green\)/);
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const demo = createDemoStore();
+  demo.key = 'f7c-test-progress';
+  demo.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const backup = buildBackup({
+    matches: { a: { date: '2026-11-02', time: '21:00' }, b: { date: '2026-11-03', time: '21:00' } },
+    players: { p1: { name: 'Ana', matchId: 'a' } },
+  }, new Date('2026-10-27T18:05:30Z'));
+  const steps = [];
+  await demo.importDatabase(backup, (progress) => steps.push(`${progress.done}/${progress.total}`));
+  assert.deepEqual(steps, ['0/3', '3/3']);
+
+  const store = new FirebaseStore();
+  store.actor = { uid: 'admin-uid', name: 'Gustavo', role: 'admin' };
+  store.db = {};
+  const commits = [];
+  store.fs = {
+    Timestamp: class Timestamp { constructor(seconds, nanoseconds) { this.seconds = seconds; this.nanoseconds = nanoseconds; } },
+    writeBatch() {
+      const batch = [];
+      return {
+        set(ref) { batch.push(`set ${ref.path}`); },
+        delete(ref) { batch.push(`delete ${ref.path}`); },
+        async commit() { commits.push(batch.join(',')); },
+      };
+    },
+    doc(_db, ...segments) { return { path: segments.join('/') }; },
+  };
+  store._readCollection = async (name) => (name === 'matches' ? { viejo: { date: '2026-01-01' }, a: { date: '2026-11-02' } } : {});
+  const live = [];
+  const file = buildBackup({
+    matches: { a: { date: '2026-11-02', time: '21:00' }, b: { date: '2026-11-03', time: '21:00' } },
+    users: { 'admin-uid': { role: 'admin', active: true }, 'por-mail': { role: 'admin', active: true } },
+  }, new Date('2026-10-27T18:05:30Z'));
+  await store.importDatabase(file, (progress) => live.push(`${progress.done}/${progress.total}`));
+  assert.equal(live[0], '0/0');
+  assert.equal(live.at(-1), '4/4');
+  assert.deepEqual(live.filter((step) => step.endsWith('/4')), ['0/4', '1/4', '2/4', '3/4', '4/4']);
+  assert.deepEqual(commits, ['delete matches/viejo', 'set matches/a', 'set matches/b', 'set users/por-mail']);
+  assert.equal(commits.some((line) => line.includes('users/admin-uid')), false);
 });
 
 test('sin uid no se carga el backup y un organizador tampoco', async () => {

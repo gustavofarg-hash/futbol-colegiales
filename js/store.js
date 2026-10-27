@@ -107,6 +107,23 @@ import {
 } from './venues.js';
 import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, parseBackup, plainValue, requireAdmin, reviveValue } from './backup.js';
 
+function reportBackupProgress(onProgress, done, total) {
+  if (typeof onProgress !== 'function') return;
+  try { onProgress({ done, total }); } catch { /* la pantalla no frena la carga */ }
+}
+
+function backupDocCount(backup) {
+  let total = 0;
+  const collections = backup?.collections || {};
+  for (const name of BACKUP_COLLECTIONS) {
+    const docs = collections[name];
+    if (docs && typeof docs === 'object') total += Object.keys(docs).length;
+  }
+  const subs = backup?.subcollections;
+  if (subs && typeof subs === 'object') total += Object.keys(subs).length;
+  return total;
+}
+
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
 const FB_VERSION = '13.0.0';
@@ -1006,13 +1023,15 @@ class LocalStore {
     requireAdmin(this.actor);
     return buildBackup(localCollections(this._load()), opts.when);
   }
-  async importDatabase(payload) {
+  async importDatabase(payload, onProgress) {
     requireAdmin(this.actor);
     const parsed = parseBackup(payload);
     if (!parsed.ok) throw Object.assign(new Error(parsed.error), { code: 'invalid-backup' });
     if (Object.keys(parsed.backup.subcollections).length) {
       throw Object.assign(new Error('Este backup tiene subcolecciones y la demo no las puede guardar.'), { code: 'invalid-backup' });
     }
+    const total = backupDocCount(parsed.backup);
+    reportBackupProgress(onProgress, 0, total);
     const db = this._load();
     const docs = parsed.backup.collections;
     db.matches = structuredClone(docs.matches);
@@ -1027,6 +1046,7 @@ class LocalStore {
     db.contacts.players = structuredClone(docs.playerContacts);
     db.contacts.roster = structuredClone(docs.rosterContacts);
     this._save(db);
+    reportBackupProgress(onProgress, total, total);
     return parsed.summary;
   }
   async resetDatabase() {
@@ -1119,12 +1139,13 @@ export class FirebaseStore {
     for (const name of BACKUP_COLLECTIONS) collections[name] = await this._readCollection(name);
     return buildBackup(collections, opts.when);
   }
-  async importDatabase(payload) {
+  async importDatabase(payload, onProgress) {
     requireAdmin(this.actor);
     const parsed = parseBackup(payload);
     if (!parsed.ok) throw Object.assign(new Error(parsed.error), { code: 'invalid-backup' });
     const keepUser = this.actor?.uid || '';
     if (!keepUser) throw Object.assign(new Error('No hay sesión de administrador.'), { code: 'admin-only' });
+    reportBackupProgress(onProgress, 0, 0);
     const Timestamp = this.fs.Timestamp;
     const ops = [];
     for (const name of BACKUP_COLLECTIONS) {
@@ -1144,7 +1165,7 @@ export class FirebaseStore {
       if (isOwnUserDoc(segments, keepUser)) continue;
       ops.push({ kind: 'set', segments, data: reviveValue(data, Timestamp) });
     }
-    await this._commitOps(ops);
+    await this._commitOps(ops, onProgress);
     return parsed.summary;
   }
   async resetDatabase() {
@@ -1157,12 +1178,16 @@ export class FirebaseStore {
     }
     await this._commitOps(ops);
   }
-  async _commitOps(ops) {
+  async _commitOps(ops, onProgress) {
     const { writeBatch, doc } = this.fs;
     const uid = this.actor?.uid || '';
     const size = BACKUP_WRITE_BATCH;
-    for (let i = 0; i < ops.length; i += size) {
-      const slice = ops.slice(i, i + size).filter((op) => !isOwnUserDoc(op.segments, uid));
+    const work = ops.filter((op) => !isOwnUserDoc(op.segments, uid));
+    const total = work.length;
+    reportBackupProgress(onProgress, 0, total);
+    let done = 0;
+    for (let i = 0; i < work.length; i += size) {
+      const slice = work.slice(i, i + size);
       if (!slice.length) continue;
       try {
         const batch = writeBatch(this.db);
@@ -1175,6 +1200,8 @@ export class FirebaseStore {
       } catch (error) {
         throw error?.path ? error : backupWriteError(slice[0], error);
       }
+      done += slice.length;
+      reportBackupProgress(onProgress, done, total);
     }
   }
   async _readCollection(name) {
