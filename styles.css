@@ -160,17 +160,20 @@ h2.section:first-child { margin-top: 4px; }
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 48px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--line);
   background: var(--card); color: var(--text); font-weight: 700; font-size: 0.96875rem; text-decoration: none;
+  transition: transform .08s ease, filter .08s ease, background .08s ease;
 }
 .btn svg { width: 20px; height: 20px; }
-.btn.primary { background: var(--green); border-color: var(--green); color: #fff; }
+.btn.primary { background: var(--green); border-color: var(--green); color: #fff; box-shadow: 0 1px 0 rgba(0,0,0,.12); }
 @media (prefers-color-scheme: dark) { .btn.primary { color: #06210f; } }
-.btn.danger { color: var(--danger); }
+.btn.danger { color: var(--danger); background: #fff6f6; border-color: color-mix(in srgb, var(--danger) 28%, var(--line)); }
+@media (prefers-color-scheme: dark) { .btn.danger { background: #2a1515; } }
 .btn.danger.solid { background: #c62828; border-color: #c62828; color: #fff; }
 #btn-cancel-match { margin-top: 18px; }
 .btn.danger.solid:active { filter: brightness(.92); }
-.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost { background: transparent; border-color: transparent; box-shadow: none; }
 .btn.block { width: 100%; }
-.btn:active { filter: brightness(.95); }
+.btn:active:not(:disabled) { transform: scale(.98); filter: brightness(.96); }
+.btn:focus-visible { outline: 2px solid var(--green-2); outline-offset: 2px; }
 .btn:disabled { opacity: .5; }
 
 /* Detalle del partido */
