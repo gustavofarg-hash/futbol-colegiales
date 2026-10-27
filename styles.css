@@ -310,7 +310,10 @@ dialog.sheet[open] > .tabbar {
 .tanteador { margin: 8px 4px 0; text-align: center; font-size: 0.75rem; font-weight: 800; letter-spacing: .12em; color: var(--muted); }
 .score-side { min-width: 0; text-align: center; }
 .score-label { display: flex; align-items: center; justify-content: center; gap: 4px; font-weight: 700; font-size: 0.8rem; line-height: 1.15; }
-.score-label svg { width: 18px; height: 18px; flex: none; }
+.score-label svg { width: 22px; height: 22px; flex: none; }
+.vest-bib path { fill: #FF6A00; stroke: #C24100; stroke-width: 1.15; }
+.vest-plain { color: var(--muted); }
+.vest-plain path { fill: none; stroke: currentColor; stroke-width: 1.7; }
 .score-controls { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .score-side strong { font-size: 1.8rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .score-dash { font-size: 1.4rem; font-weight: 800; }
@@ -367,7 +370,10 @@ h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
   border-radius: 10px; background: var(--bg); color: inherit; display: grid; place-items: center;
 }
 .team-ico svg { width: 20px; height: 20px; display: block; }
-.team-ico[data-assign="bib"] { color: var(--green); }
+.team-ico[data-assign="bib"] { color: #FF6A00; background: #fff1e6; border-color: transparent; }
+@media (prefers-color-scheme: dark) {
+  .team-ico[data-assign="bib"] { background: #3a2414; }
+}
 .team-slot.empty {
   min-height: 36px; padding: 8px; border: 1px dashed var(--line); border-radius: 12px;
   color: var(--muted); font-weight: 700;
