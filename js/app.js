@@ -34,7 +34,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v54';
+const APP_VERSION = 'f7c-v55';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -550,7 +550,7 @@ function renderTeams(id) {
       const goalMark = player.inGoal === true
         ? '<span class="arco-tick" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#0f7a3d"/><path d="M4.6 8.2 7 10.6 11.6 5.4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
         : '';
-      const goalIco = '<svg class="goal-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 18.5V6.2h17v12.3"/><path d="M3.5 10.2h17M7.4 6.2v4M12 6.2v4M16.6 6.2v4"/></svg>';
+      const goalIco = `<svg class="goal-ico" viewBox="0 0 64 64" aria-hidden="true"><path d="M18 16h30L44 38H16Z" fill="#e7f3ff"/><path d="M8 22 18 16v22L8 52M56 20 48 16v22l8 14" fill="#f4f9fd" stroke="#c5d8ea" stroke-width="1"/><g fill="none" stroke="#7eb6e6" stroke-width="1.2"><path d="M18 20.5h28M17.2 26h26.2M16.4 31.5h24.4M15.8 37h22"/><path d="M24 16.4v21.2M31 16.2v21.6M38 16v21.2M45 15.8v19.6"/><path d="M8 30h10M8 40h8M56 28H48M56 38h-8"/></g><path d="M8 22h48v30" fill="none" stroke="#8ea3b8" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 22h48v30" fill="none" stroke="#f8fbff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
       const arco = readOnly
         ? (player.inGoal === true ? `<span class="arco-mark on" aria-label="Fue al arco">${goalIco}${goalMark}</span>` : '')
         : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;

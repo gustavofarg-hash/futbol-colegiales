@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v54');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v55');
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -1632,7 +1632,8 @@ await page.mouse.move(anaName.x + 6, anaName.y + anaName.height / 2);
 await page.mouse.down();
 await page.mouse.move(anaName.x + 36, anaName.y + anaName.height / 2, { steps: 8 });
 await page.mouse.up();
-check('Arrastrar el nombre no abre el menú', await page.locator('#pm-profile').count() === 0 && !(await page.evaluate(() => !!document.querySelector('#sheet')?.open)));
+const dragMenu = await page.evaluate(() => ({ open: !!document.querySelector('#sheet')?.open }));
+check('Arrastrar el nombre no abre el menú', dragMenu.open === false, JSON.stringify(dragMenu));
 const scoreBeforeGoals = await page.textContent('#score-bib');
 await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[data-goal="1"]').click();
 await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[data-goal="1"]').click();
@@ -1643,6 +1644,18 @@ await page.waitForFunction(() => document.querySelector('#team-bib .goal-n')?.te
 const goalsStored = await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).players[id].goals, equipos.ana);
 check('Los goles del jugador no mueven el marcador ni bajan de cero', goalsStored === 0 && (await page.textContent('#score-bib')) === scoreBeforeGoals, String(goalsStored));
 check('Faltan ir al arco cuenta al asignado', (await page.textContent('#arco-bib')) === 'Faltan ir al arco: 1');
+const arcoOff = await page.locator('#team-bib [data-arco]').evaluate((btn) => {
+  const style = getComputedStyle(btn);
+  const ico = getComputedStyle(btn.querySelector('.goal-ico'));
+  return {
+    bg: style.backgroundColor,
+    border: style.borderTopWidth,
+    opacity: ico.opacity,
+    paths: btn.querySelectorAll('.goal-ico path').length,
+    tick: !!btn.querySelector('.arco-tick'),
+  };
+});
+check('El arco apagado es la red en gris, sin recuadro', (arcoOff.bg === 'rgba(0, 0, 0, 0)' || arcoOff.bg === 'transparent') && arcoOff.border === '0px' && Number(arcoOff.opacity) < 0.6 && arcoOff.paths >= 4 && !arcoOff.tick, JSON.stringify(arcoOff));
 await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[data-arco]').click();
 await page.waitForFunction(() => document.querySelector('#arco-bib')?.textContent === 'Faltan ir al arco: 0');
 const arcoState = await page.evaluate((ids) => {
@@ -1662,6 +1675,18 @@ const arcoRow = await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana
   };
 });
 check('Fue al arco queda a la derecha de la fila', arcoRow.same && arcoRow.rowH <= 56 && arcoRow.w >= 40 && arcoRow.on, JSON.stringify(arcoRow));
+const arcoOn = await page.locator('#team-bib [data-arco].on').evaluate((btn) => {
+  const style = getComputedStyle(btn);
+  const ico = getComputedStyle(btn.querySelector('.goal-ico'));
+  const tick = btn.querySelector('.arco-tick svg');
+  return {
+    bg: style.backgroundColor,
+    opacity: ico.opacity,
+    tick: !!tick,
+    fill: tick ? tick.querySelector('circle')?.getAttribute('fill') : '',
+  };
+});
+check('El arco prendido se ve entero y suma el tilde verde', (arcoOn.bg === 'rgba(0, 0, 0, 0)' || arcoOn.bg === 'transparent') && arcoOn.opacity === '1' && arcoOn.tick && arcoOn.fill === '#0f7a3d', JSON.stringify(arcoOn));
 check('Avisa si está desbalanceado', (await page.textContent('#team-balance')).includes('desbalanceado'));
 await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Beto' }).locator('[data-assign="bib"]').click();
 await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Ciro' }).locator('[data-assign="bib"]').click();
