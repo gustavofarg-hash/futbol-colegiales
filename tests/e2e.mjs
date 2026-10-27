@@ -1607,6 +1607,18 @@ const arcoState = await page.evaluate((ids) => {
   return { inGoal: db.players[ids.ana].inGoal, inGoalAt: db.players[ids.ana].inGoalAt, score: db.matches[ids.id].score };
 }, equipos);
 check('Fue al arco queda guardado y no toca el marcador', arcoState.inGoal === true && typeof arcoState.inGoalAt === 'number' && arcoState.score.bib === 0 && arcoState.score.plain === 1, JSON.stringify(arcoState));
+const arcoRow = await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).evaluate((row) => {
+  const name = row.querySelector('.team-name').getBoundingClientRect();
+  const btn = row.querySelector('[data-arco]').getBoundingClientRect();
+  const box = row.getBoundingClientRect();
+  return {
+    rowH: Math.round(box.height),
+    same: Math.abs((name.top + name.height / 2) - (btn.top + btn.height / 2)) < 10,
+    w: Math.round(btn.width),
+    on: row.querySelector('[data-arco]').getAttribute('aria-pressed') === 'true',
+  };
+});
+check('Fue al arco queda a la derecha de la fila', arcoRow.same && arcoRow.rowH <= 56 && arcoRow.w >= 40 && arcoRow.on, JSON.stringify(arcoRow));
 check('Avisa si está desbalanceado', (await page.textContent('#team-balance')).includes('desbalanceado'));
 await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Beto' }).locator('[data-assign="bib"]').click();
 await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Ciro' }).locator('[data-assign="bib"]').click();

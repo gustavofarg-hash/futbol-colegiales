@@ -347,17 +347,23 @@ h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
 .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-columns section, .team-row, .team-slot { min-width: 0; }
 .team-row {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-height: 44px; padding: 4px 6px;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; min-height: 44px; padding: 2px 4px 2px 8px;
   border: 1px solid var(--line); border-radius: 12px; background: var(--card);
 }
-.arco, .arco-done {
-  display: flex; align-items: center; gap: 4px; flex: 1 1 100%;
-  font-size: 0.75rem; font-weight: 700; line-height: 1.2;
+.team-side { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
+.arco-btn, .arco-mark {
+  position: relative; flex: 0 0 40px; width: 40px; height: 40px; padding: 0;
+  display: grid; place-items: center; border-radius: 12px; color: color-mix(in srgb, var(--muted) 55%, transparent);
 }
-.arco input { width: 18px; height: 18px; margin: 0; }
+.arco-btn { border: 1px solid var(--line); background: var(--bg); }
+.arco-btn:active { transform: scale(.96); }
+.arco-btn.on, .arco-mark.on { color: var(--green); background: var(--green-soft); border-color: transparent; }
+.arco-btn .goal-ico, .arco-mark .goal-ico { width: 22px; height: 22px; }
+.arco-tick { position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; pointer-events: none; }
+.arco-tick svg { width: 14px; height: 14px; display: block; }
 .arco-left { margin: 0 0 6px; color: var(--muted); font-size: 0.75rem; font-weight: 700; }
 .team-name { flex: 1 1 4.5rem; min-width: min(100%, 4.5rem); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.team-tools { margin-left: auto; display: flex; gap: 4px; flex: none; }
+.team-tools { display: flex; gap: 4px; flex: none; }
 .goal-box { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .goal-box button, .goal-n {
   min-width: 28px; height: 28px; padding: 0; border-radius: 8px; font-weight: 800;

@@ -535,13 +535,18 @@ function renderTeams(id) {
       const goalBox = readOnly
         ? `<span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span>`
         : `<span class="goal-box"><button type="button" data-goal="-1" aria-label="Restar un gol de ${esc(player.name)}">−</button><span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span><button type="button" data-goal="1" aria-label="Sumar un gol de ${esc(player.name)}">+</button></span>`;
+      const goalMark = player.inGoal === true
+        ? '<span class="arco-tick" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#0f7a3d"/><path d="M4.6 8.2 7 10.6 11.6 5.4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
+        : '';
+      const goalIco = '<svg class="goal-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 18.5V6.2h17v12.3"/><path d="M3.5 10.2h17M7.4 6.2v4M12 6.2v4M16.6 6.2v4"/></svg>';
       const arco = readOnly
-        ? (player.inGoal === true ? `<span class="arco-done">Fue al arco</span>` : '')
-        : `<label class="arco"><input type="checkbox" data-arco ${player.inGoal === true ? 'checked' : ''}><span>Fue al arco</span></label>`;
+        ? (player.inGoal === true ? `<span class="arco-mark on" aria-label="Fue al arco">${goalIco}${goalMark}</span>` : '')
+        : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
       const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
+      const side = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
       rows.push(readOnly
-        ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${arco}</li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${tools}${arco}</li>`);
+        ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span><span class="team-side">${goalBox}${arco}</span></li>`
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${side}</li>`);
     }
     return rows.join('');
   };
@@ -619,9 +624,9 @@ function renderTeams(id) {
         run(app.store.adjustGoals(row.dataset.dragPlayer, Number(goal.dataset.goal)));
         return;
       }
-      const arco = e.target.closest('.arco');
+      const arco = e.target.closest('[data-arco]');
       if (arco && row) {
-        run(app.store.setInGoal(row.dataset.dragPlayer, !!arco.querySelector('[data-arco]')?.checked));
+        run(app.store.setInGoal(row.dataset.dragPlayer, arco.getAttribute('aria-pressed') !== 'true'));
         return;
       }
       const btn = e.target.closest('[data-assign]');
