@@ -389,10 +389,10 @@ h2.section.team-heading .vest { width: 20px; height: 20px; flex: none; }
   border-radius: 10px; background: var(--bg); color: inherit; display: grid; place-items: center;
 }
 .team-ico svg { width: 20px; height: 20px; display: block; }
-.team-ico[data-assign="bib"] { color: #FF6A00; background: #fff1e6; border-color: transparent; }
-@media (prefers-color-scheme: dark) {
-  .team-ico[data-assign="bib"] { background: #3a2414; }
+.team-ico[data-assign="bib"] {
+  color: #FF6A00; background: transparent; border-color: transparent;
 }
+.team-ico[data-assign="bib"]:active { background: color-mix(in srgb, var(--line) 55%, transparent); }
 .team-slot.empty {
   min-height: 36px; padding: 8px; border: 1px dashed var(--line); border-radius: 12px;
   color: var(--muted); font-weight: 700;

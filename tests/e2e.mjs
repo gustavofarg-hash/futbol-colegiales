@@ -1596,6 +1596,8 @@ check('Equipos no repite la ayuda ni el cupo', !teamsIntro.includes('Con los ano
 const bibFill = await page.locator('#scoreboard .vest-bib path').evaluate((el) => getComputedStyle(el).fill);
 const plainFill = await page.locator('#scoreboard .vest-plain path').evaluate((el) => getComputedStyle(el).fill);
 check('Con pechera es una musculosa naranja', bibFill === 'rgb(255, 106, 0)', bibFill);
+const bibBtnBg = await page.locator('#team-unassigned [data-assign="bib"]').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+check('El botón de pechera no parece seleccionado', bibBtnBg === 'rgba(0, 0, 0, 0)' || bibBtnBg === 'transparent', bibBtnBg);
 check('Los títulos de equipo llevan la musculosa', (await page.locator('#team-bib h2 .vest-bib').count()) === 1 && (await page.locator('#team-plain h2 .vest-plain').count()) === 1);
 check('Sin pechera es la misma musculosa en contorno', plainFill === 'none' || plainFill === 'rgba(0, 0, 0, 0)', plainFill);
 check('El marcador arranca en cero', (await page.textContent('#score-bib')) === '0' && (await page.textContent('#score-plain')) === '0');
