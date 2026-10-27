@@ -133,7 +133,7 @@ check('Arranca sin partidos', await page.isVisible('text=No hay partidos en los 
 check('La app se llama Mis Partidos', (await page.title()) === 'Mis Partidos' && (await page.textContent('.brand-title')) === 'Mis Partidos');
 check('Bajo el título dice Agenda de partidos', (await page.textContent('#venue-name')) === 'Agenda de partidos');
 await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/header-agenda.png' });
-check('Próximos sigue mostrando la sede y el formato', (await page.textContent('.footer-note')).includes('Polideportivo Colegiales') && (await page.textContent('.footer-note')).includes('Fútbol 7 contra 7'));
+check('La lista no muestra sede y formato al pie', await page.locator('#view .footer-note').count() === 0 && !(await page.locator('#view').innerText()).includes('Fútbol 7 contra 7'));
 check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
 const tabLabels = await page.$$eval('#tabbar a', (els) => els.map((el) => el.textContent.trim()));
 check('Tres pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial']), tabLabels.join(' | '));
@@ -172,9 +172,11 @@ await page.fill('#match-form [name=note]', 'Cancha 2');
 await page.click('#match-form button[type=submit]');
 await page.waitForSelector('.match-card');
 let cardText = (await page.textContent('.match-card')).replace(/\s+/g, ' ');
-check('Partido agregado aparece en la lista', /JUE/.test(cardText) && /22/.test(cardText) && /OCT/.test(cardText) && !/Jueves/.test(cardText) && /21hs \(\$5\.000\)/.test(cardText) && !/Con pechera/.test(cardText) && /0\/14/.test(cardText), cardText.trim());
+check('Partido agregado aparece en la lista', /JUE/.test(cardText) && /22/.test(cardText) && /OCT/.test(cardText) && !/Jueves/.test(cardText) && /21hs \(\$5\.000\)/.test(cardText) && !/Con pechera/.test(cardText) && /0\/14/.test(cardText) && !cardText.includes('Fútbol 7 contra 7'), cardText.trim());
+check('La lista con partidos tampoco muestra el pie de sede y formato', await page.locator('#view .footer-note').count() === 0);
 await page.click('.match-card');
 await page.waitForSelector('#btn-add-player');
+check('El detalle sigue mostrando la sede y el formato', (await page.textContent('#match-place'))?.replace(/\s+/g, ' ').trim() === 'Polideportivo Colegiales (F7)');
 await page.evaluate(() => window.scrollTo(0, 600));
 const matchBars = await page.evaluate(() => {
   const tabs = document.querySelector('#tabbar').getBoundingClientRect();
