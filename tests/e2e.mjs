@@ -626,7 +626,7 @@ await page.click('#btn-add-wait');
 check('Anotar en espera no ofrece lugar reservado', (await page.locator('#player-tentative').count()) === 0);
 await page.click('#player-form [data-close]');
 await page.click('#btn-add-player');
-check('El alta al partido ofrece lugar reservado', await page.isVisible('#player-tentative'));
+check('El alta al partido ofrece anotar como pendiente', await page.isVisible('#player-tentative') && (await page.locator('#player-form').innerText()).includes('Anotar como pendiente de confirmación') && !(await page.locator('#player-form').innerText()).includes('Lugar reservado'));
 await page.fill('#player-form [name=name]', 'Reserva Luis');
 await page.fill('#player-form [name=phone]', '11 6666-0101');
 await page.check('#player-tentative');
@@ -1096,7 +1096,7 @@ check('El jueves figura Anotado', (await juevesRow.innerText()).includes('Anotad
 check('El casillero del jueves está marcado y no se puede volver a anotar', await juevesRow.locator('input').isChecked() && await juevesRow.locator('input').isDisabled());
 const sabadoRow = page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' });
 check('El sábado muestra los lugares libres', (await sabadoRow.innerText()).includes('Quedan'));
-check('El perfil ofrece lugar reservado', await page.isVisible('#signup-tentative'));
+check('El perfil ofrece anotar como pendiente', await page.isVisible('#signup-tentative') && (await page.locator('#profile').innerText()).includes('Anotar como pendiente de confirmación') && !(await page.locator('#profile').innerText()).includes('Lugar reservado'));
 await page.check('#signup-tentative');
 await sabadoRow.locator('input[type=checkbox]').check();
 check('El botón dice Anotar en 1 partido', (await page.textContent('#btn-signup')).trim() === 'Anotar en 1 partido');

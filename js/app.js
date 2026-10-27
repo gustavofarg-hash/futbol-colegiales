@@ -2313,7 +2313,7 @@ function partidosSection(person) {
     <p class="hint">Elegí los próximos y anotalo de una. Si el partido está completo, va a la lista de espera.</p>
     <ul class="slots" id="signup-list">${rows.join('')}</ul>
     ${empty}
-    <label class="checkline"><input type="checkbox" id="signup-tentative" ${draft.tentative ? 'checked' : ''}> Lugar reservado (a confirmar)</label>
+    <label class="checkline"><input type="checkbox" id="signup-tentative" ${draft.tentative ? 'checked' : ''}> Anotar como pendiente de confirmación</label>
     <button type="button" class="btn primary block" id="btn-signup"${draft.ids.size ? '' : ' disabled'}>${esc(signupButtonLabel(draft.ids.size))}</button>
   </section>`;
 }
@@ -2642,7 +2642,7 @@ function openPlayerForm(m, p, opts = {}) {
         <div class="small muted" id="pf-phone">${esc(emptyPhoneHint)}</div></label>`}
       ${(!p || editingFriend) && !lockPhone ? `<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"${p?.phoneShared === true ? ' checked' : ''}><span>Mostrar el WhatsApp para todos</span></label>` : ''}
       ${offerRoster ? '<label class="checkline" id="save-roster-line"><input type="checkbox" id="save-roster" name="saveRoster"><span>Guardar en Jugadores</span></label>' : ''}
-      ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
+      ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Anotar como pendiente de confirmación</label>' : ''}
       ${p ? '' : `<div class="friend-box" id="friend-box">
         <div class="friend-head"><span>Invitados</span><button type="button" class="btn" id="btn-add-friend">Agregar invitado</button></div>
         <div id="friend-rows"></div>
