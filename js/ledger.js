@@ -1,7 +1,8 @@
 // Totales de pagos y de "Agregó", por jugador y por organizador.
 // Puro: las pruebas no necesitan Firebase. Un pago sin receivedBy cuenta como "Sin especificar".
-import { MESES_CORTOS } from './dates.js';
-import { formatARS, paymentShares } from './payments.js';
+import { MESES_CORTOS, numericDate, shortHour } from './dates.js';
+import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
+import { priceOfMatch } from './prices.js';
 import { UNSPECIFIED, sameOrganizer } from './organizers.js';
 import { foldText, phoneIdentity, playerMatchesPerson } from './roster.js';
 
@@ -264,6 +265,36 @@ export function pendingTransfers({ players, roster, organizer = null }) {
   }));
   rows.sort((a, b) => b.amount - a.amount || foldText(a.name).localeCompare(foldText(b.name), 'es'));
   return { total, rows };
+}
+
+/**
+ * Lo que le falta pagar, partido por partido.
+ * Debe el precio del partido menos lo ya cobrado (efectivo + transferencia).
+ * Transfiere después no está cobrado, así que entra en ese resto.
+ * Juega gratis, la lista de espera y un partido cancelado no suman.
+ */
+export function playerDebt({ person, players, matches, prices }) {
+  const byId = new Map((matches || []).map((match) => [match.id, match]));
+  const rows = [];
+  for (const player of players || []) {
+    if (!playerMatchesPerson(player, person)) continue;
+    if (player.waiting === true || isFreePlay(player)) continue;
+    const match = byId.get(player.matchId);
+    if (!match || match.cancelled === true) continue;
+    const owed = roundARS(priceOfMatch(match, prices) - paymentParts(player).received);
+    if (!(owed > 0)) continue;
+    const when = [numericDate(match.date), shortHour(match.time)].filter(Boolean).join(' · ');
+    rows.push({
+      matchId: match.id,
+      date: match.date || '',
+      time: match.time || '',
+      owed,
+      text: `${when} · ${formatARS(owed)}`,
+    });
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || String(a.matchId).localeCompare(String(b.matchId)));
+  const total = roundARS(rows.reduce((sum, row) => sum + row.owed, 0));
+  return { total, rows, text: total > 0 ? `Debe en total: ${formatARS(total)}` : '' };
 }
 
 /** true si hay un pago sin cobrador o un alta sin "Agregó", para mostrar el filtro. */

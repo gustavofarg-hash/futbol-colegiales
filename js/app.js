@@ -21,7 +21,7 @@ import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, invit
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
-import { hasUnspecified, mineSummary, paymentLedger, signupLedger } from './ledger.js';
+import { hasUnspecified, mineSummary, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -2024,6 +2024,16 @@ function saveProfile(id, patch) {
   });
 }
 
+function debtBlock(person) {
+  const debt = playerDebt({ person, players: app.players, matches: app.matches, prices: livePrices() });
+  if (!(debt.total > 0)) return '';
+  return `
+    <section class="profile-block" id="debt">
+      <p class="debt-total" id="debt-total">${esc(debt.text)}</p>
+      <ul class="ledger-list" id="debt-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>
+    </section>`;
+}
+
 function ledgerSection(person) {
   const organizer = app.payFilter || null;
   const who = rosterIdentity(person);
@@ -2176,6 +2186,7 @@ function renderProfile(id) {
         <p class="hint" id="stat-pay">${esc(record.paidText)}</p>
         ${record.confirmText ? `<p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>` : ''}
       </section>
+      ${debtBlock(person)}
       ${ledgerSection(person)}
       <section class="profile-block">
         <h2>Notas de partido</h2>
@@ -2302,7 +2313,7 @@ function partidosSection(person) {
     <p class="hint">Elegí los próximos y anotalo de una. Si el partido está completo, va a la lista de espera.</p>
     <ul class="slots" id="signup-list">${rows.join('')}</ul>
     ${empty}
-    <label class="checkline"><input type="checkbox" id="signup-tentative" ${draft.tentative ? 'checked' : ''}> Lugar reservado (a confirmar)</label>
+    <label class="checkline"><input type="checkbox" id="signup-tentative" ${draft.tentative ? 'checked' : ''}> Anotar como pendiente de confirmación</label>
     <button type="button" class="btn primary block" id="btn-signup"${draft.ids.size ? '' : ' disabled'}>${esc(signupButtonLabel(draft.ids.size))}</button>
   </section>`;
 }
@@ -2631,7 +2642,7 @@ function openPlayerForm(m, p, opts = {}) {
         <div class="small muted" id="pf-phone">${esc(emptyPhoneHint)}</div></label>`}
       ${(!p || editingFriend) && !lockPhone ? `<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"${p?.phoneShared === true ? ' checked' : ''}><span>Mostrar el WhatsApp para todos</span></label>` : ''}
       ${offerRoster ? '<label class="checkline" id="save-roster-line"><input type="checkbox" id="save-roster" name="saveRoster"><span>Guardar en Jugadores</span></label>' : ''}
-      ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Lugar reservado (a confirmar)</label>' : ''}
+      ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Anotar como pendiente de confirmación</label>' : ''}
       ${p ? '' : `<div class="friend-box" id="friend-box">
         <div class="friend-head"><span>Invitados</span><button type="button" class="btn" id="btn-add-friend">Agregar invitado</button></div>
         <div id="friend-rows"></div>
@@ -2798,7 +2809,6 @@ function readMoney(raw) {
 }
 function openPaymentForm(m, p) {
   if (!p || !canAdd(m, actor().uid)) return;
-  let paid = p.paid === true ? true : p.paid === false ? false : null;
   const parts = paymentParts(p);
   const known = p.paid === true || p.paid === false || parts.pending > 0 || parts.split;
   const promo = promoOf(p);
@@ -2837,13 +2847,6 @@ function openPaymentForm(m, p) {
       ${parts.pending > 0 ? `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(parts.pending))}</p>
       <button type="button" class="btn block" id="btn-receive-pending">Marcar transferencia como cobrada</button>` : ''}
       ${receivedNote}
-      <div class="field">
-        <span>¿Pagó?</span>
-        <div class="seg">
-          <button type="button" class="btn" data-paid="si">Sí</button>
-          <button type="button" class="btn" data-paid="no">No</button>
-        </div>
-      </div>
       <label class="checkline" id="free-play-line"><input type="checkbox" id="pay-free" name="freePlay"${isFreePlay(p) ? ' checked' : ''}><span>Juega gratis</span></label>
       <div id="pay-details">
         <div class="price-picks" id="pay-prices"></div>
@@ -2873,7 +2876,6 @@ function openPaymentForm(m, p) {
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
     </form>`);
   const form = $('#pay-form');
-  const details = $('#pay-details');
   const paintSelect = (select, selected) => {
     const names = payStaffNames([selected, ...paymentShares(p).map((share) => share.name)]);
     const current = names.find((name) => sameOrganizer(name, selected)) || names[0] || '';
@@ -2945,22 +2947,11 @@ function openPaymentForm(m, p) {
       suggestion = 0;
     } else suggestion = 0;
   };
-  const sync = () => {
-    sheet.querySelector('[data-paid="si"]').classList.toggle('primary', paid === true);
-    sheet.querySelector('[data-paid="no"]').classList.toggle('primary', paid === false);
-    details.hidden = paid !== true;
-  };
-  sheet.querySelectorAll('[data-paid]').forEach((b) => (b.onclick = () => {
-    paid = b.dataset.paid === 'si';
-    $('#pay-err').textContent = '';
-    sync();
-  }));
   const receive = $('#btn-receive-pending');
   if (receive) receive.onclick = () => {
     closeSheet();
     run(app.store.markTransferReceived(p.id, app.who), 'Transferencia marcada como cobrada', PAY_RULES_MSG);
   };
-  sync();
   const freeBox = $('#pay-free');
   const paintFree = () => {
     const on = freeBox?.checked === true;
@@ -2969,11 +2960,7 @@ function openPaymentForm(m, p) {
       input.disabled = on;
       if (on && input.tagName === 'INPUT') input.value = '';
     }
-    if (on) {
-      paid = true;
-      $('#pay-err').textContent = '';
-      sync();
-    }
+    if (on) $('#pay-err').textContent = '';
   };
   if (freeBox) freeBox.onchange = paintFree;
   if (freeBox?.checked) paintFree();
@@ -2982,12 +2969,6 @@ function openPaymentForm(m, p) {
     if (freeBox?.checked) {
       closeSheet();
       run(app.store.setPayment(p.id, { freePlay: true, paid: true, split: true }, app.who), 'Juega gratis', PAY_RULES_MSG);
-      return;
-    }
-    if (paid !== true && paid !== false) { $('#pay-err').textContent = 'Indicá si pagó.'; return; }
-    if (!paid) {
-      closeSheet();
-      run(app.store.setPayment(p.id, { paid: false, split: true, freePlay: false }, app.who), 'Marcado como no pagó', PAY_RULES_MSG);
       return;
     }
     const cash = readMoney(form.cash.value);
