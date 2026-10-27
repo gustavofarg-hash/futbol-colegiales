@@ -28,7 +28,7 @@ import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } f
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
-import { backupFilename } from './backup.js';
+import { BACKUP_COLLECTIONS, COLLECTION_LABELS, backupFilename, parseBackup } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -1437,6 +1437,7 @@ function openSettings() {
     ${app.role === 'admin' ? `<div class="menu" id="set-db">
       <p class="hint">Base de datos</p>
       <button type="button" class="btn" id="set-backup">Hacer backup</button>
+      <button type="button" class="btn" id="set-restore">Cargar base de datos desde un backup</button>
     </div>` : ''}
     <div class="menu">
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
@@ -1466,6 +1467,8 @@ function openSettings() {
   if (shareAppBtn) shareAppBtn.onclick = () => { void shareApp(); };
   const backupBtn = $('#set-backup');
   if (backupBtn) backupBtn.onclick = () => openBackup();
+  const restoreBtn = $('#set-restore');
+  if (restoreBtn) restoreBtn.onclick = () => openRestore();
   const users = $('#set-organizers');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
@@ -1517,6 +1520,61 @@ async function currentBackupFile() {
   const when = new Date();
   const backup = await app.store.exportDatabase({ when });
   return { filename: backupFilename(when), text: JSON.stringify(backup, null, 2) };
+}
+
+function backupSummaryHtml(summary) {
+  const rows = BACKUP_COLLECTIONS.map((name) => `<li><span>${esc(COLLECTION_LABELS[name])}</span><b>${summary.counts[name]}</b></li>`).join('');
+  const sub = summary.subcollections ? `<li><span>Subcolecciones</span><b>${summary.subcollections}</b></li>` : '';
+  return `<p class="hint">Fecha del backup: ${esc(summary.exportedAt)}</p><ul class="backup-summary">${rows}${sub}</ul>`;
+}
+
+function openRestore() {
+  if (app.role !== 'admin') return;
+  let parsed = null;
+  openSheet(`
+    <h3>Cargar base de datos desde un backup</h3>
+    <p class="backup-warn">Los datos de ahora se reemplazan por los del archivo. No se puede deshacer.</p>
+    <label class="field"><span>Archivo JSON</span><input id="backup-file" type="file" accept="application/json,.json"></label>
+    <div id="backup-summary"></div>
+    <p class="err" id="backup-err"></p>
+    <div class="menu">
+      <button type="button" class="btn danger" id="backup-apply" disabled>Reemplazar los datos actuales</button>
+      <button type="button" class="btn ghost" data-close>Cerrar</button>
+    </div>`);
+  const fileInput = $('#backup-file');
+  const apply = $('#backup-apply');
+  fileInput.onchange = () => {
+    const file = fileInput.files?.[0];
+    parsed = null;
+    apply.disabled = true;
+    $('#backup-summary').innerHTML = '';
+    $('#backup-err').textContent = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = parseBackup(String(reader.result || ''));
+      if (!result.ok) { $('#backup-err').textContent = result.error; return; }
+      parsed = result;
+      $('#backup-summary').innerHTML = backupSummaryHtml(result.summary);
+      apply.disabled = false;
+    };
+    reader.onerror = () => { $('#backup-err').textContent = 'No se pudo leer el archivo.'; };
+    reader.readAsText(file);
+  };
+  apply.onclick = () => {
+    if (!parsed?.ok) return;
+    apply.disabled = true;
+    const payload = parsed.backup;
+    app.store.importDatabase(payload).then(() => {
+      closeSheet();
+      toast('Base cargada desde el backup');
+    }).catch((error) => {
+      apply.disabled = false;
+      const msg = error?.message || 'No se pudo cargar el backup.';
+      $('#backup-err').textContent = msg;
+      toast(msg);
+    });
+  };
 }
 
 function openBackup() {

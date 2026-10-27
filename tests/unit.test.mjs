@@ -2089,3 +2089,38 @@ test('el backup se nombra con la hora de Buenos Aires y solo lo exporta el admin
   const built = buildBackup({ matches: { a: { date: '2026-11-02' } } }, when);
   assert.deepEqual(parseBackup(built).backup.collections.matches, built.collections.matches);
 });
+
+test('cargar un backup reemplaza los datos y un organizador no puede', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-restore';
+  const when = new Date('2026-10-27T18:05:30Z');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addMatch({ date: '2026-11-02', time: '21:00', note: 'Original' }, 'Gustavo');
+  const match = { id, date: '2026-11-02', capacity: 14 };
+  const pid = await store.addPlayer(match, { name: 'Ana Backup', phone: '11 5555-0101' }, 'Gustavo');
+  await store.setPrices({ matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 });
+  const backup = await store.exportDatabase({ when });
+  await store.addMatch({ date: '2026-12-01', time: '10:00', note: 'Extra' }, 'Gustavo');
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await assert.rejects(() => store.importDatabase(backup), (error) => error.code === 'admin-only');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  assert.equal(parseBackup('{').ok, false);
+  assert.equal(parseBackup('{"format":"otro"}').ok, false);
+  const summary = await store.importDatabase(JSON.stringify(backup));
+  assert.equal(summary.counts.matches, 1);
+  assert.equal(summary.counts.players, 1);
+  const again = await store.exportDatabase({ when });
+  assert.deepEqual(again.collections, backup.collections);
+  const db = JSON.parse(mem.get(store.key));
+  assert.equal(db.matches[id].note, 'Original');
+  assert.equal(db.players[pid].name, 'Ana Backup');
+  assert.equal(db.contacts.players[pid].phone, '5491155550101');
+  assert.equal(Object.values(db.matches).some((match) => match.note === 'Extra'), false);
+  assert.equal(db.settings.prices.matchPrice, 5000);
+});

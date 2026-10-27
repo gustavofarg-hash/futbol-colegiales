@@ -117,7 +117,7 @@ check('Ajustes no pregunta desde qué WhatsApp', (await page.locator('#wa-choice
 await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
-check('El admin ve hacer backup', await page.isVisible('#set-backup'));
+check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -1103,7 +1103,7 @@ check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-
 
 await page.click('#btn-settings');
 check('Un organizador no administra usuarios', (await page.locator('#set-organizers').count()) === 0 && await page.isVisible('#set-venues'));
-check('Un organizador no ve el backup', (await page.locator('#set-backup').count()) === 0);
+check('Un organizador no ve el backup', (await page.locator('#set-backup').count()) === 0 && (await page.locator('#set-restore').count()) === 0);
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
@@ -2504,6 +2504,20 @@ await page.evaluate(() => {
 await page.click('#backup-drive');
 await page.waitForFunction(() => window.__sharedBackup);
 check('Guardar en Drive abre el menú de compartir con el archivo', /^Mis_partidos_/.test(await page.evaluate(() => window.__sharedBackup)));
+await page.evaluate(async () => {
+  await window.__app.store.addMatch({ date: '2026-12-01', time: '21:00', note: 'No debe quedar' }, window.__app.who);
+});
+await page.click('[data-close]');
+await page.click('#btn-settings');
+await page.click('#set-restore');
+await page.waitForSelector('#backup-file');
+await page.setInputFiles('#backup-file', { name: backupName, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backupJson)) });
+await page.waitForSelector('#backup-summary li');
+const summaryText = await page.locator('#backup-summary').innerText();
+check('Cargar backup muestra la fecha y cuántos partidos trae', summaryText.includes('Fecha del backup') && summaryText.includes('Partidos') && (await page.locator('.backup-warn').innerText()).includes('reemplazan'));
+await page.click('#backup-apply');
+await page.waitForFunction(() => !document.querySelector('#backup-apply'));
+check('Cargar el backup saca lo que se agregó después', await page.evaluate(() => !window.__app.matches.some((match) => match.note === 'No debe quedar') && window.__app.matches.some((match) => match.note === 'Para equipos' || match.note === 'Ayer' || match.date)));
 
 const fresh = await ctx.newPage();
 fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

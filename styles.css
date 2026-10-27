@@ -574,6 +574,13 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 .choice { display: grid; gap: 10px; margin: 14px 0 4px; }
 .choice .btn { min-height: 60px; font-size: 1.125rem; }
 
+.backup-warn {
+  margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; font-weight: 700;
+  background: var(--warn-bg); color: var(--warn-text);
+}
+.backup-summary { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 4px; }
+.backup-summary li { display: flex; justify-content: space-between; gap: 12px; font-weight: 700; }
+#backup-err, #reset-err { color: var(--danger); font-weight: 700; min-height: 1.2em; }
 .menu { display: grid; gap: 8px; }
 .menu .btn { justify-content: flex-start; }
 .menu .btn small { margin-left: auto; color: var(--muted); font-weight: 600; }
