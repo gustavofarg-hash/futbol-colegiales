@@ -21,7 +21,7 @@ import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, invit
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
-import { hasUnspecified, mineSummary, paymentLedger, signupLedger } from './ledger.js';
+import { hasUnspecified, mineSummary, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -2024,6 +2024,16 @@ function saveProfile(id, patch) {
   });
 }
 
+function debtBlock(person) {
+  const debt = playerDebt({ person, players: app.players, matches: app.matches, prices: livePrices() });
+  if (!(debt.total > 0)) return '';
+  return `
+    <section class="profile-block" id="debt">
+      <p class="debt-total" id="debt-total">${esc(debt.text)}</p>
+      <ul class="ledger-list" id="debt-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>
+    </section>`;
+}
+
 function ledgerSection(person) {
   const organizer = app.payFilter || null;
   const who = rosterIdentity(person);
@@ -2176,6 +2186,7 @@ function renderProfile(id) {
         <p class="hint" id="stat-pay">${esc(record.paidText)}</p>
         ${record.confirmText ? `<p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>` : ''}
       </section>
+      ${debtBlock(person)}
       ${ledgerSection(person)}
       <section class="profile-block">
         <h2>Notas de partido</h2>

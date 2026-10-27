@@ -427,6 +427,7 @@ h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
 .chip { border-radius: 999px; padding: 8px 14px; min-height: 40px; }
 .chip.on { background: var(--green); border-color: var(--green); color: #fff; }
 .stat-summary { font-weight: 800; margin: 0 0 6px; }
+.debt-total { color: var(--danger); font-weight: 800; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
 .stat-dates { margin: 0; padding-left: 18px; color: var(--muted); }
 .pnote { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; background: var(--card); }
 .pnote .when { font-size: 0.8125rem; font-weight: 700; color: var(--muted); }

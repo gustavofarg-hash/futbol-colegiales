@@ -2288,6 +2288,34 @@ const overflowConfirm = await confirmSize.evaluate(() => document.documentElemen
 check('confirmar.html en 360px no desborda', overflowConfirm <= 1, String(overflowConfirm));
 await confirmSize.close();
 
+const debtPerson = await page.evaluate(async () => {
+  const who = window.__app.who;
+  const store = window.__app.store;
+  const pastId = await store.addMatch({ date: '2026-10-18', time: '20:00', price: 5000, perTeam: 7 }, who);
+  const nextId = await store.addMatch({ date: '2026-11-02', time: '21:00', price: 8000, perTeam: 7 }, who);
+  const cancelId = await store.addMatch({ date: '2026-11-05', time: '19:00', price: 5000, perTeam: 7 }, who);
+  const freeId = await store.addMatch({ date: '2026-11-04', time: '21:00', price: 5000, perTeam: 7 }, who);
+  await store.updateMatch(cancelId, { cancelled: true }, who);
+  const rosterId = await store.addRoster({ name: 'Deuda Díaz', phone: '5491100001111', phoneShared: true }, who);
+  const fields = { name: 'Deuda Díaz', phone: '5491100001111', rosterId };
+  const past = window.__app.matches.find((m) => m.id === pastId);
+  const next = window.__app.matches.find((m) => m.id === nextId);
+  const cancelled = window.__app.matches.find((m) => m.id === cancelId);
+  const freeMatch = window.__app.matches.find((m) => m.id === freeId);
+  const shortId = await store.addPlayer(past, fields, who);
+  await store.addPlayer(next, fields, who);
+  await store.addPlayer(cancelled, fields, who);
+  const freePlayer = await store.addPlayer(freeMatch, fields, who);
+  await store.setPayment(shortId, { paid: true, split: true, freePlay: false, cash: 2000, transfer: 0, pendingTransfer: 1500, cashTo: who, pendingTo: who }, who);
+  await store.setPayment(freePlayer, { freePlay: true, paid: true, split: true }, who);
+  return rosterId;
+});
+await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, debtPerson);
+await page.waitForSelector('#debt-total');
+const debtText = (await page.locator('#debt').innerText()).replace(/\s+/g, ' ');
+const debtColor = await page.$eval('#debt-total', (el) => getComputedStyle(el).color);
+check('El perfil muestra lo que debe, en rojo', debtText.includes('Debe en total: $11.000') && debtText.includes('18/10/2026 · 20hs · $3.000') && debtText.includes('02/11/2026 · 21hs · $8.000') && !debtText.includes('05/11/2026') && !debtText.includes('04/11/2026') && (debtColor === 'rgb(198, 40, 40)' || debtColor === 'rgb(255, 107, 107)'), `${debtText} ${debtColor}`);
+
 const fresh = await ctx.newPage();
 fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 await fresh.clock.install({ time: NOW });

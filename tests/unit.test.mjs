@@ -9,7 +9,7 @@ import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, roster
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
-import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from '../js/ledger.js';
+import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -1183,6 +1183,40 @@ test('demo: login, alta de organizador, desactivar y borrar', () => {
   assert.equal(deleteOrganizerDemo(db, admin.session, created.uid).ok, true);
   assert.equal(loginDemo(db, 'lucia@demo.local', 'secreto').ok, false);
   assert.equal(loginDemo(db, 'martin@demo.local', 'demo-martin').session.role, 'organizer');
+});
+
+test('la deuda es el precio menos lo cobrado, sin gratis ni cancelados', () => {
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const person = { id: 'ros-deuda', name: 'Deuda Díaz', phone: '5491100001111' };
+  const matches = [
+    { id: 'corto', date: '2026-10-18', time: '20:00', price: 5000 },
+    { id: 'pend', date: '2026-11-02', time: '21:00', price: 8000 },
+    { id: 'saldado', date: '2026-10-20', time: '19:30', price: 5000 },
+    { id: 'gratis', date: '2026-11-04', time: '21:00', price: 5000 },
+    { id: 'cancel', date: '2026-11-05', time: '19:00', price: 5000, cancelled: true },
+    { id: 'espera', date: '2026-11-06', time: '18:00', price: 5000 },
+    { id: 'viejo', date: '2026-09-01', time: '21:00' },
+    { id: 'otro', date: '2026-10-22', time: '21:00', price: 5000 },
+  ];
+  const players = [
+    { matchId: 'corto', rosterId: 'ros-deuda', name: 'Deuda Díaz', phone: '5491100001111', paid: true, amount: 2000, cash: 2000, transfer: 0, pendingTransfer: 1500 },
+    { matchId: 'pend', rosterId: 'ros-deuda', name: 'Deuda Díaz', phone: '5491100001111', paid: false, cash: 0, transfer: 0, pendingTransfer: 8000 },
+    { matchId: 'saldado', rosterId: 'ros-deuda', name: 'Deuda Díaz', phone: '5491100001111', paid: true, amount: 5000, method: 'efectivo' },
+    { matchId: 'gratis', rosterId: 'ros-deuda', name: 'Deuda Díaz', phone: '5491100001111', freePlay: true, paid: true },
+    { matchId: 'cancel', rosterId: 'ros-deuda', name: 'Deuda Díaz', phone: '5491100001111' },
+    { matchId: 'espera', rosterId: 'ros-deuda', name: 'Deuda Díaz', phone: '5491100001111', waiting: true },
+    { matchId: 'viejo', rosterId: 'ros-deuda', name: 'Deuda Díaz', phone: '5491100001111', paid: true, amount: 2000, method: 'transferencia' },
+    { matchId: 'otro', name: 'Otro', phone: '5491199999999' },
+  ];
+  const debt = playerDebt({ person, players, matches, prices });
+  assert.equal(debt.total, 14000);
+  assert.equal(debt.text, 'Debe en total: $14.000');
+  assert.deepEqual(debt.rows.map((row) => row.text), [
+    '01/09/2026 · 21hs · $3.000',
+    '18/10/2026 · 20hs · $3.000',
+    '02/11/2026 · 21hs · $8.000',
+  ]);
+  assert.equal(playerDebt({ person, players: players.filter((p) => p.matchId === 'saldado'), matches, prices }).text, '');
 });
 
 test('Mis y totales por organizador', () => {
