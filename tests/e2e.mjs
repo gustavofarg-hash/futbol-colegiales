@@ -922,6 +922,25 @@ await page.evaluate(() => window.scrollTo(0, 80));
 await assertStill('La búsqueda de Jugadores se queda quieta');
 await assertRepaintKeeps('La búsqueda de Jugadores conserva el texto y el scroll');
 check('La búsqueda sigue en jose', (await page.inputValue('#roster-q')) === 'jose' && await page.locator('#roster-list .name').count() === 1);
+await page.fill('#roster-q', '');
+const scrollIds = await page.evaluate(async () => {
+  const ids = [];
+  for (let i = 0; i < 28; i++) ids.push(await window.__app.store.addRoster({ name: `Scroll ${String(i).padStart(2, '0')} Jugador`, phone: '' }, window.__app.who));
+  return ids;
+});
+await page.waitForFunction(() => document.querySelectorAll('#roster-list .slot').length >= 20);
+await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+const stickySearch = await page.evaluate(() => {
+  const r = document.querySelector('#roster-q').getBoundingClientRect();
+  const bar = document.querySelector('.topstack').getBoundingClientRect().bottom;
+  return { top: Math.round(r.top), h: Math.round(r.height), bar: Math.round(bar), vh: innerHeight };
+});
+check('La búsqueda de Jugadores sigue visible al bajar',
+  stickySearch.top >= stickySearch.bar - 2 && stickySearch.top < stickySearch.vh - 40 && stickySearch.h >= 30,
+  JSON.stringify(stickySearch));
+await page.evaluate(async (ids) => {
+  for (const id of ids) await window.__app.store.deleteRoster(id);
+}, scrollIds);
 await page.evaluate(() => window.scrollTo(0, 0));
 await page.setViewportSize({ width: 390, height: 844 });
 await page.click('#tab-proximos');
