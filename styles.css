@@ -118,7 +118,7 @@ h2.section:first-child { margin-top: 4px; }
 .match-day { font-weight: 700; font-variant-numeric: tabular-nums; }
 .match-time { font-weight: 700; font-size: 1.03125rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .match-when { font-variant-numeric: tabular-nums; }
-.match-note { color: var(--muted); font-size: 0.84375rem; overflow-wrap: anywhere; }
+.match-note { color: var(--muted); font-size: 0.84375rem; overflow-wrap: break-word; min-width: 0; }
 .badge { display: inline-block; font-size: 0.71875rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--green); color: #fff; }
 .badge.bad { background: var(--warn-bg); color: var(--warn-text); }
 @media (prefers-color-scheme: dark) { .badge { color: #06210f; } .badge.bad { color: var(--warn-text); } }
@@ -191,7 +191,7 @@ h2.section:first-child { margin-top: 4px; }
   min-width: 0; max-width: 100%;
 }
 .slot .n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 0.8125rem; font-weight: 800; background: var(--green-soft); color: var(--green); flex: none; }
-.slot .who { flex: 1; min-width: 0; max-width: 100%; display: flex; flex-direction: column; align-items: stretch; }
+.slot > .who { flex: 1 1 0%; min-width: min(100%, 4.75rem); max-width: 100%; display: flex; flex-direction: column; align-items: stretch; }
 .slot .who > * { min-width: 0; max-width: 100%; }
 button.who { text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
 .name-row { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
@@ -211,9 +211,10 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .slot .sub > .reserved-badge,
 .slot .sub > .friend-tag { flex: 0 1 auto; min-width: 0; }
 .private-wa { overflow-wrap: break-word; min-width: 0; max-width: 100%; }
-.edit-lock { overflow-wrap: anywhere; min-width: 0; }
+.edit-lock { overflow-wrap: break-word; min-width: 0; max-width: 100%; }
 .slot .sub .edit-lock { flex: 1 1 100%; }
 .tag { font-size: 0.71875rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+.slot .tag { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag.g { color: #1d4ed8; border-color: rgba(29,78,216,.3); background: rgba(29,78,216,.07); }
 .tag.m { color: #b45309; border-color: rgba(180,83,9,.3); background: rgba(180,83,9,.07); }
 @media (prefers-color-scheme: dark) { .tag.g { color: #93b4ff; } .tag.m { color: #fbbf72; } }
@@ -248,7 +249,7 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .wait-tools .btn { flex: 1; min-height: 46px; font-size: 0.875rem; padding: 0 8px; }
 .empty-wait { color: var(--muted); font-size: 0.90625rem; margin: 0 4px 4px; }
 .confirm-sum { margin-top: 8px; font-size: 0.84375rem; font-weight: 700; color: var(--muted); }
-.confirm-tag { font-weight: 700; white-space: nowrap; }
+.confirm-tag { font-weight: 700; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .confirm-tag.ok { color: var(--green); }
 .confirm-tag.no { color: var(--danger); }
 .confirm-tag.pending { color: var(--muted); }
@@ -266,8 +267,9 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
   flex: 0 1 76px; max-width: 92px; min-width: 0; min-height: 44px; padding: 4px 6px;
   font-size: 0.72rem; line-height: 1.1; white-space: normal; text-align: center;
 }
-/* El botón de confirmar no comparte la fila: si no, aplasta el nombre y los carteles letra por letra. */
-.slot > .confirm-spot {
+/* Confirmar y Subir no comparten la fila: si no, el nombre queda de un carácter de ancho. */
+.slot > .confirm-spot,
+.slot > .promote-btn {
   order: 1; flex: 1 0 100%; max-width: 100%; min-width: 0; margin: 0;
   white-space: nowrap;
 }
@@ -332,7 +334,7 @@ dialog.sheet[open] > .tabbar {
   display: flex; align-items: center; width: 100%; min-width: 0; min-height: 48px;
   padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px;
   background: var(--card); text-align: left; font: inherit; font-weight: 700;
-  overflow-wrap: anywhere;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 button.team-player { color: inherit; cursor: pointer; }
 .team-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
@@ -351,7 +353,7 @@ h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
 }
 .arco input { width: 18px; height: 18px; margin: 0; }
 .arco-left { margin: 0 0 6px; color: var(--muted); font-size: 0.75rem; font-weight: 700; }
-.team-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.team-name { flex: 1 1 4.5rem; min-width: min(100%, 4.5rem); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-tools { margin-left: auto; display: flex; gap: 4px; flex: none; }
 .goal-box { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .goal-box button, .goal-n {
@@ -385,8 +387,8 @@ h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
   border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
   color: inherit; font: inherit;
 }
-.roster-hit b { font-size: 0.96875rem; overflow-wrap: anywhere; }
-.roster-hit small { color: var(--muted); font-size: 0.8125rem; overflow-wrap: anywhere; }
+.roster-hit b { font-size: 0.96875rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roster-hit small { color: var(--muted); font-size: 0.8125rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roster-hit.taken { opacity: .72; }
 .roster-hit small.taken { color: var(--warn-text); font-weight: 800; }
 .find-row { display: flex; align-items: stretch; gap: 8px; min-width: 0; }
@@ -452,8 +454,9 @@ h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
 .remind-banner small { display: block; margin-top: 3px; font-size: 0.8125rem; font-weight: 700; }
 .remind-open { width: 100%; margin: 12px 0 4px; }
 .remind-list { list-style: none; margin: 0; padding: 0; }
-.remind-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
-.remind-row .who { flex: 1; min-width: 0; }
+.remind-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.remind-row .who { flex: 1 1 8rem; min-width: min(100%, 8rem); }
+.remind-row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .remind-row .btn { min-height: 42px; flex: none; }
 .sent { color: var(--green); font-weight: 700; }
 .confirm-page { padding-bottom: 24px; }
