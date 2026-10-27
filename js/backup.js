@@ -10,6 +10,15 @@ export const BACKUP_ZONE = 'America/Buenos_Aires';
 // pasar de 20 lecturas o de 1000 expresiones. El mensaje es el de permisos.
 // El emulador no aplica ese tope, por eso allá un lote de 400 parece andar.
 export const BACKUP_WRITE_BATCH = 1;
+export const BACKUP_LOADED_OK = 'Todos los datos fueron cargados con éxito';
+
+/** Texto del avance. Con total 0 todavía no se sabe cuántos documentos van. */
+export function backupProgressText(done, total) {
+  const n = Math.max(0, Math.floor(Number(done) || 0));
+  const all = Math.max(0, Math.floor(Number(total) || 0));
+  if (!all) return 'Cargando…';
+  return `Cargando… ${Math.min(n, all)}/${all}`;
+}
 
 export const BACKUP_COLLECTIONS = Object.freeze([
   'matches',
@@ -234,6 +243,16 @@ export function backupReadError(collectionName, error) {
     code: error?.code || 'backup-read',
     path: collectionName,
   });
+}
+
+/** Lo que se muestra en rojo. Nunca el texto crudo de Firebase, sin decir dónde. */
+export function backupSurfaceMessage(error, fallback) {
+  const text = String(error?.message || '').trim();
+  if (/missing or insufficient permissions/i.test(text) && !/^No se pudo\b/.test(text)) {
+    const where = error?.path ? ` ${error.path}` : '';
+    return `No se pudo completar${where}. Firebase rechazó el permiso.`;
+  }
+  return text || fallback;
 }
 
 /** Vuelve a armar un Timestamp si el que escribe conoce la clase. */

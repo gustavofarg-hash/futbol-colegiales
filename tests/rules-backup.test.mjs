@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { FirebaseStore } from '../js/store.js';
-import { buildBackup } from '../js/backup.js';
+import { BACKUP_COLLECTIONS, buildBackup } from '../js/backup.js';
 
 const WHEN = new Date('2026-10-27T18:05:30Z');
 const ADMIN = {
@@ -174,12 +174,12 @@ function watchCommits(store, { failPath = '' } = {}) {
   return sizes;
 }
 
-async function openEnv() {
+async function openEnv(projectId = 'demo-f7c-backup') {
   const { initializeTestEnvironment } = await import('@firebase/rules-unit-testing');
   const host = process.env.FIRESTORE_EMULATOR_HOST;
   const [hostname, portRaw] = host.split(':');
   return initializeTestEnvironment({
-    projectId: 'demo-f7c-backup',
+    projectId,
     firestore: {
       rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8'),
       host: hostname,
@@ -278,6 +278,213 @@ test('si una escritura del backup falla, el error nombra el documento y no desha
     assert.equal((await fs.getDoc(fs.doc(db, 'matches', 'm00'))).exists(), true);
     assert.equal((await fs.getDoc(fs.doc(db, 'players', 'falla'))).exists(), false);
     assert.deepEqual((await fs.getDoc(fs.doc(db, 'users', 'admin-uid'))).data(), ADMIN);
+  } finally {
+    await testEnv.cleanup();
+  }
+});
+
+function linkCode(i) {
+  return `L${i.toString(36).padStart(7, '0')}`.slice(0, 8);
+}
+
+function confirmToken(i) {
+  return `confirm-${String(i).padStart(4, '0')}-token`;
+}
+
+/** Los mismos tamaños que el backup con el que Gustavo vio el error. */
+function gustavoSizedBackup() {
+  const matches = {};
+  const players = {};
+  const roster = {};
+  const playerContacts = {};
+  const rosterContacts = {};
+  const confirmations = {};
+  const links = {};
+  for (let i = 0; i < 28; i++) matches[`m${String(i).padStart(2, '0')}`] = matchDoc(i);
+  for (let i = 0; i < 122; i++) {
+    const id = `pl${String(i).padStart(3, '0')}`;
+    const doc = {
+      matchId: 'm00',
+      matchDate: '2026-08-01',
+      name: `Jugador ${i}`,
+      phone: '',
+      addedBy: 'Gustavo',
+      addedByUid: 'admin-uid',
+      createdAt: 1,
+      updatedAt: 1,
+      viewers: ['*'],
+      adders: ['*'],
+      confirmToken: confirmToken(i),
+    };
+    if (i === 5) doc.phone = '5491111111111';
+    if (i === 6) {
+      doc.paid = true;
+      doc.amount = 5000;
+      doc.method = 'transferencia';
+      doc.goals = 1;
+      doc.inGoal = true;
+      doc.inGoalAt = 10;
+    }
+    if (i > 0 && i % 17 === 0) doc.invitedBy = `pl${String(i - 1).padStart(3, '0')}`;
+    if (i === 0) doc.invitedBy = 'pl121';
+    players[id] = doc;
+  }
+  for (let i = 0; i < 61; i++) {
+    roster[`r${String(i).padStart(2, '0')}`] = {
+      name: `Plantel ${i}`,
+      phone: '',
+      level: 6.5,
+      createdBy: 'Gustavo',
+      createdByUid: 'admin-uid',
+      createdAt: 1,
+    };
+  }
+  for (let i = 0; i < 42; i++) {
+    const id = `pl${String(i).padStart(3, '0')}`;
+    playerContacts[id] = {
+      phone: '5491111112222',
+      ownerUid: i % 2 === 0 ? 'admin-uid' : 'org-uid',
+      visibleToAll: i % 2 === 0,
+      phoneKey: hex('c'),
+      viewers: i % 2 === 0 ? ['*'] : ['org-uid'],
+    };
+  }
+  for (let i = 0; i < 18; i++) {
+    rosterContacts[`r${String(i).padStart(2, '0')}`] = {
+      phone: '5491111113333',
+      ownerUid: 'admin-uid',
+      visibleToAll: false,
+      phoneKey: hex('d'),
+    };
+  }
+  for (let i = 0; i < 144; i++) {
+    const card = {
+      playerId: `pl${String(i % 122).padStart(3, '0')}`,
+      matchId: 'm00',
+      name: `Jugador ${i % 122}`,
+      date: '2026-08-01',
+      time: '21:00',
+      note: '',
+    };
+    if (i % 5 !== 0) card.viewers = ['*'];
+    confirmations[confirmToken(i)] = card;
+  }
+  for (let i = 0; i < 478; i++) {
+    const id = i === 7 ? 'corto' : linkCode(i);
+    const doc = { m: 'm00', p: 'pl000', t: confirmToken(0) };
+    if (i % 10 === 0) {
+      doc.shortAt = 1;
+      doc.shortProvider = 'spoo';
+      doc.shortUrl = 'https://spoo.me/Abcd123';
+    }
+    links[id] = doc;
+  }
+  return buildBackup({
+    matches,
+    players,
+    roster,
+    venues: {
+      'polideportivo-colegiales': { name: 'Polideportivo Colegiales', active: true, order: 1, createdAt: 1 },
+      norte: { name: 'Club Norte', active: true, order: 2, createdAt: 1 },
+      sur: { name: 'Club Sur', active: false, order: 3, createdAt: 1 },
+    },
+    organizers: {},
+    settings: {},
+    confirmations,
+    playerContacts,
+    rosterContacts,
+    links,
+    users: {
+      'admin-uid': { role: 'organizer', name: 'PISADO', email: 'gustavof.arg@gmail.com', active: false, createdAt: 1 },
+      'gustavof.arg@gmail.com': { role: 'admin', name: 'Por mail', email: 'gustavof.arg@gmail.com', active: true, createdAt: 1 },
+      'org-uid': { role: 'organizer', name: 'Martín', email: 'martin@demo.local', active: true, createdAt: 2 },
+    },
+  }, WHEN);
+}
+
+async function listOrThrow(fs, db, name) {
+  try {
+    return await fs.getDocs(fs.collection(db, name));
+  } catch (error) {
+    throw new Error(`No se pudo listar ${name}: ${error?.code || ''} ${error?.message || error}`);
+  }
+}
+
+test('el backup del tamaño real se carga, el admin sigue por uid y el error no es el texto crudo', { timeout: 180000 }, async (t) => {
+  if (!process.env.FIRESTORE_EMULATOR_HOST) {
+    t.skip('sin emulador de Firestore');
+    return;
+  }
+  const { assertFails } = await import('@firebase/rules-unit-testing');
+  const fs = await import('firebase/firestore');
+  const testEnv = await openEnv('demo-f7c-size');
+  try {
+    await testEnv.clearFirestore();
+    const db = testEnv.authenticatedContext('admin-uid', { email: 'gustavof.arg@gmail.com' }).firestore();
+    await fs.setDoc(fs.doc(db, 'users', 'admin-uid'), ADMIN);
+    await fs.setDoc(fs.doc(db, 'users', 'gustavof.arg@gmail.com'), {
+      role: 'admin', name: 'Por mail', email: 'gustavof.arg@gmail.com', active: true, createdAt: 1,
+    });
+    await fs.setDoc(fs.doc(db, 'users', 'viejo'), {
+      role: 'organizer', name: 'Viejo', email: 'viejo@demo.local', active: true, createdAt: 1,
+    });
+    await fs.setDoc(fs.doc(db, 'organizers', 'viejo'), { name: 'Viejo', createdAt: 1 });
+    await fs.setDoc(fs.doc(db, 'settings', 'prices'), { matchPrice: 1, promo2Price: 2, promo3Price: 3 });
+    await fs.setDoc(fs.doc(db, 'settings', 'otro'), { extra: true });
+    await fs.setDoc(fs.doc(db, 'matches', 'sin-viewers'), { date: '2026-07-01', time: '21:00', note: 'viejo' });
+    await fs.setDoc(fs.doc(db, 'venues', 'borrar-sede'), { name: 'Otra', active: true, order: 9, createdAt: 1 });
+    await fs.setDoc(fs.doc(db, 'links', 'zzzzzzzz'), { m: 'm00', p: 'pl000', t: confirmToken(0) });
+    await fs.setDoc(fs.doc(db, 'confirmations', confirmToken(200)), {
+      playerId: 'pl000', matchId: 'm00', name: 'Jugador 0', date: '2026-08-01', time: '21:00', note: '',
+    });
+    await fs.setDoc(fs.doc(db, 'playerContacts', 'ajeno'), {
+      phone: '5491111114444', ownerUid: 'org-uid', visibleToAll: false, phoneKey: hex('e'), viewers: ['org-uid'],
+    });
+
+    for (const name of BACKUP_COLLECTIONS) await listOrThrow(fs, db, name);
+
+    const byEmail = testEnv.authenticatedContext('otro-uid', { email: 'gustavof.arg@gmail.com' }).firestore();
+    await assertFails(fs.getDocs(fs.collection(byEmail, 'links')));
+
+    const store = attachStore(db, fs);
+    const sizes = watchCommits(store);
+    const backup = gustavoSizedBackup();
+    assert.deepEqual(backup.collections && Object.fromEntries(BACKUP_COLLECTIONS.map((name) => [name, Object.keys(backup.collections[name]).length])), {
+      matches: 28,
+      players: 122,
+      roster: 61,
+      venues: 3,
+      organizers: 0,
+      settings: 0,
+      confirmations: 144,
+      playerContacts: 42,
+      rosterContacts: 18,
+      links: 478,
+      users: 3,
+    });
+    const summary = await store.importDatabase(backup);
+    assert.deepEqual(summary.counts, {
+      matches: 28, players: 122, roster: 61, venues: 3, organizers: 0, settings: 0,
+      confirmations: 144, playerContacts: 42, rosterContacts: 18, links: 478, users: 3,
+    });
+    assert.ok(sizes.length > 20);
+    assert.ok(sizes.every((n) => n === 1), `lotes: ${sizes.slice(0, 8).join(',')}… (${sizes.length})`);
+
+    assert.deepEqual((await fs.getDoc(fs.doc(db, 'users', 'admin-uid'))).data(), ADMIN);
+    assert.equal((await fs.getDoc(fs.doc(db, 'users', 'viejo'))).exists(), false);
+    assert.equal((await fs.getDoc(fs.doc(db, 'users', 'gustavof.arg@gmail.com'))).data().name, 'Por mail');
+    assert.equal((await fs.getDoc(fs.doc(db, 'users', 'org-uid'))).data().role, 'organizer');
+    assert.equal((await listOrThrow(fs, db, 'matches')).size, 28);
+    assert.equal((await listOrThrow(fs, db, 'players')).size, 122);
+    assert.equal((await listOrThrow(fs, db, 'links')).size, 478);
+    assert.equal((await fs.getDoc(fs.doc(db, 'links', 'corto'))).exists(), true);
+    assert.equal((await fs.getDoc(fs.doc(db, 'players', 'pl005'))).data().phone, '5491111111111');
+    assert.equal((await listOrThrow(fs, db, 'organizers')).size, 0);
+    assert.equal((await listOrThrow(fs, db, 'settings')).size, 0);
+    assert.equal((await fs.getDoc(fs.doc(db, 'matches', 'sin-viewers'))).exists(), false);
+    assert.equal((await fs.getDoc(fs.doc(db, 'links', 'zzzzzzzz'))).exists(), false);
+    await fs.setDoc(fs.doc(db, 'matches', 'despues'), matchDoc(1));
+    await assertFails(fs.getDocs(fs.collection(byEmail, 'links')));
   } finally {
     await testEnv.cleanup();
   }

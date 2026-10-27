@@ -28,12 +28,13 @@ import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } f
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
-import { BACKUP_COLLECTIONS, COLLECTION_LABELS, backupFilename, parseBackup } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
+const APP_VERSION = 'f7c-v54';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -109,9 +110,19 @@ function waHref(phone, text) {
 let toastTimer;
 function toast(msg, ms = 2600) {
   const t = $('#toast');
-  t.textContent = msg; t.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), ms);
+  t.textContent = msg;
+  t.hidden = false;
+  t.classList.toggle('ok', msg === BACKUP_LOADED_OK);
+  clearTimeout(toastTimer);
+  toastTimer = 0;
+  if (ms > 0) toastTimer = setTimeout(() => { t.hidden = true; t.classList.remove('ok'); }, ms);
 }
+$('#toast')?.addEventListener('click', () => {
+  const t = $('#toast');
+  t.hidden = true;
+  t.classList.remove('ok');
+  clearTimeout(toastTimer);
+});
 function showError(msg) {
   const b = $('#error-banner'); b.textContent = msg; b.hidden = !msg;
 }
@@ -1447,7 +1458,8 @@ function openSettings() {
       <button class="btn" id="set-logout">Cerrar sesión</button>
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
-    <p class="footer-note">Mis Partidos · ${esc(VENUE)} · v1</p>`);
+    <p class="footer-note">Mis Partidos · ${esc(VENUE)}</p>
+    <p class="footer-note" id="app-version">Versión ${APP_VERSION}</p>`);
   $('#price-form').onsubmit = (e) => {
     e.preventDefault();
     const form = e.target;
@@ -1521,7 +1533,7 @@ async function shareBackupFile(filename, text) {
 
 function failBackup(error) {
   console.error(error);
-  toast(error?.message || 'No se pudo hacer el backup.', 7000);
+  toast(backupSurfaceMessage(error, 'No se pudo hacer el backup.'), 7000);
 }
 
 async function currentBackupFile() {
@@ -1557,7 +1569,7 @@ function openResetDb() {
       toast('Base de datos vacía');
     }).catch((error) => {
       apply.disabled = false;
-      const msg = error?.message || 'No se pudo borrar.';
+      const msg = backupSurfaceMessage(error, 'No se pudo borrar.');
       $('#reset-err').textContent = msg;
       toast(msg, 7000);
     });
@@ -1578,6 +1590,7 @@ function openRestore() {
     <p class="backup-warn">Los datos de ahora se reemplazan por los del archivo. No se puede deshacer.</p>
     <label class="field"><span>Archivo JSON</span><input id="backup-file" type="file" accept="application/json,.json"></label>
     <div id="backup-summary"></div>
+    <p class="backup-status" id="backup-status" aria-live="polite"></p>
     <p class="err" id="backup-err"></p>
     <div class="menu">
       <button type="button" class="btn danger" id="backup-apply" disabled>Reemplazar los datos actuales</button>
@@ -1591,6 +1604,9 @@ function openRestore() {
     apply.disabled = true;
     $('#backup-summary').innerHTML = '';
     $('#backup-err').textContent = '';
+    const status = $('#backup-status');
+    status.textContent = '';
+    status.className = 'backup-status';
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
@@ -1606,13 +1622,26 @@ function openRestore() {
   apply.onclick = () => {
     if (!parsed?.ok) return;
     apply.disabled = true;
+    fileInput.disabled = true;
+    const status = $('#backup-status');
+    status.className = 'backup-status';
+    status.textContent = backupProgressText(0, 0);
+    $('#backup-err').textContent = '';
     const payload = parsed.backup;
-    app.store.importDatabase(payload).then(() => {
-      closeSheet();
-      toast('Base cargada desde el backup');
+    app.store.importDatabase(payload, ({ done, total }) => {
+      if (!status.isConnected || status.classList.contains('backup-ok')) return;
+      status.textContent = backupProgressText(done, total);
+    }).then(() => {
+      status.className = 'backup-status backup-ok';
+      status.textContent = BACKUP_LOADED_OK;
+      apply.hidden = true;
+      toast(BACKUP_LOADED_OK, 0);
     }).catch((error) => {
       apply.disabled = false;
-      const msg = error?.message || 'No se pudo cargar el backup.';
+      fileInput.disabled = false;
+      status.textContent = '';
+      status.className = 'backup-status';
+      const msg = backupSurfaceMessage(error, 'No se pudo cargar el backup.');
       $('#backup-err').textContent = msg;
       toast(msg, 7000);
     });
