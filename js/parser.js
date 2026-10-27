@@ -58,7 +58,7 @@ function findAnchors(line, refISO) {
   const reDM = /(?<![\d/:.])(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?(?![\d/:])/g;
   while ((mm = reDM.exec(line))) {
     const iso = resolveDM(Number(mm[1]), Number(mm[2]), mm[3]);
-    if (iso) tokens.push({ kind: 'date', date: iso, start: mm.index, end: mm.index + mm[0].length });
+    if (iso) tokens.push({ kind: 'date', date: iso, hasYear: !!mm[3], start: mm.index, end: mm.index + mm[0].length });
   }
   // "22 de octubre"
   const reDeMes = new RegExp(`\\b(\\d{1,2})\\s*(?:de\\s+)?(${Object.keys(MONTHS).join('|')})\\b`, 'g');
@@ -67,7 +67,7 @@ function findAnchors(line, refISO) {
     if (iso) tokens.push({ kind: 'date', date: iso, start: mm.index, end: mm.index + mm[0].length });
   }
   // días de la semana
-  const reDay = new RegExp(`\\b(${Object.keys(DAY_WORDS).join('|')})\\b\\.?(?:\\s+(\\d{1,2})(?![\\d/:.hH]|\\s*(?:hs|h|hrs|horas)\\b))?`, 'g');
+  const reDay = new RegExp(`\\b(${Object.keys(DAY_WORDS).join('|')})\\b\\.?(?:\\s+(\\d{1,2})(?![\\d/:.hH]|\\s*(?:hs|h|hrs|horas)\\b|\\s+a\\s+\\d))?`, 'g');
   while ((mm = reDay.exec(line))) {
     const weekday = DAY_WORDS[mm[1]];
     let date = null;
@@ -119,6 +119,12 @@ function findTimes(line) {
     out.push({ time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, start, end });
   };
   let mm;
+  // "20 a 21", "20hs a 21hs", "20:30 a 21:00": el partido arranca en la primera hora.
+  const reRange = /(?<![\d/])(\d{1,2})(?::(\d{2}))?\s*(?:hs|h|hrs|horas)?\s+a\s+(\d{1,2})(?::(\d{2}))?\s*(?:hs|h|hrs|horas)?(?![\d/])/g;
+  while ((mm = reRange.exec(line))) {
+    const end = mm.index + mm[0].length;
+    add(mm[1], mm[2], mm.index, end, line.slice(end, end + 16));
+  }
   const after = (i) => line.slice(i, i + 16);
   // 21:00, 21:30hs, 20.30 hs, 21 hs, 21h, 21hs
   const reHM = /(?<![\d/])(\d{1,2})(?::(\d{2})|\.(\d{2})(?=\s*(?:hs|h|hrs|horas)\b))?\s*(hs|h|hrs|horas|hr)?\b/g;
@@ -181,8 +187,17 @@ export function parseMatchesFromText(text, { now = new Date(), refDate } = {}) {
     }
     const n = norm(line);
     if (!n.trim()) continue;
-    const anchors = findAnchors(n, ref);
+    let anchors = findAnchors(n, ref);
     const times = findTimes(n);
+    if (anchors.some((anchor) => anchor.hasYear)) {
+      for (const date of anchors.filter((anchor) => anchor.hasYear)) {
+        const weekday = anchors.find((anchor) => anchor.kind === 'weekday' && anchor.start < date.start);
+        if (weekday && weekdayOf(date.date) !== weekday.weekday && !date.warning) {
+          date.warning = 'El día de la semana no coincide con la fecha';
+        }
+      }
+      anchors = anchors.filter((anchor) => anchor.kind === 'date');
+    }
     const src = rawLine.trim().slice(0, 140);
 
     if (!anchors.length) {

@@ -3,7 +3,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
@@ -21,12 +21,12 @@ import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, invit
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
-import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
+import { hasUnspecified, mineSummary, paymentLedger, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
-import { emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
@@ -316,8 +316,7 @@ function route() {
   if (name === 'partido' && id && extra === 'equipos') return { name: 'teams', id: decodeURIComponent(id) };
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'historial') return { name: 'history' };
-  if (name === 'jugadores') return { name: 'roster', pay: id === 'pagos' };
-  if (name === 'pagos') return { name: 'roster', pay: true };
+  if (name === 'jugadores' || name === 'pagos') return { name: 'roster' };
   if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
@@ -421,7 +420,7 @@ function render() {
   const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
   const brand = $('#venue-name');
   if (brand) brand.textContent = shownVenue;
-  const key = `${r.name}:${r.id || ''}:${r.pay ? 1 : 0}`;
+  const key = `${r.name}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
   const y = same ? (document.scrollingElement?.scrollTop || 0) : 0;
@@ -431,10 +430,7 @@ function render() {
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
-  else if (r.name === 'roster') {
-    if (r.pay) renderPagos();
-    else renderRoster();
-  }
+  else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'users') renderUsers();
   else renderHome();
@@ -453,20 +449,21 @@ function placeOf(match) {
 function capOf(match) {
   return matchCapacity(match);
 }
-function matchCard(m) {
+function matchCard(m, opts = {}) {
   const n = playersOf(m.id).length;
   const cap = capOf(m);
   const [, mo, d] = m.date.split('-').map(Number);
   const rel = relativeLabel(m.date);
+  const hour = shortHour(m.time) || '--:--';
+  const price = formatARS(priceOfMatch(m, livePrices()));
   return `
-  <li><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}">
+  <li><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}">
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
-      <div class="match-title">${esc(capitalize(labelDate(m.date)))}</div>
-      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(m.time || '--:--')} hs</span></div>
+      ${opts.fullDate ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : ''}
+      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(hour)} (${esc(price)})</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
-      ${m.score ? `<div class="match-note" data-score>${esc(scoreLine(m.score))}</div>` : ''}
       ${waitingOf(m.id).length ? `<div class="match-note">${waitingOf(m.id).length} en espera</div>` : ''}
     </div>
     <div class="count ${n >= cap ? 'full' : ''}" aria-label="${n} de ${cap} anotados">
@@ -474,13 +471,6 @@ function matchCard(m) {
       <div class="bar"><i style="width:${Math.min(100, (n / cap) * 100)}%"></i></div>
     </div>
   </a></li>`;
-}
-
-function rosterSwitch(pay) {
-  return `<div class="chips" id="roster-section">
-    <a class="btn chip ${pay ? '' : 'on'}" id="btn-roster-list" href="#/jugadores">Lista</a>
-    <a class="btn chip ${pay ? 'on' : ''}" id="btn-pagos" href="#/jugadores/pagos">Pagos</a>
-  </div>`;
 }
 
 function renderHome() {
@@ -535,7 +525,7 @@ function renderTeams(id) {
     for (let i = 0; i < count; i++) {
       const player = byId.get(list[i]);
       if (!player) {
-        rows.push('<li class="team-slot empty">Libre</li>');
+        rows.push(`<li class="team-slot empty" data-slot-index="${i}">Libre</li>`);
         continue;
       }
       const other = side === 'bib' ? 'plain' : 'bib';
@@ -548,50 +538,50 @@ function renderTeams(id) {
       const arco = readOnly
         ? (player.inGoal === true ? `<span class="arco-done">Fue al arco</span>` : '')
         : `<label class="arco"><input type="checkbox" data-arco ${player.inGoal === true ? 'checked' : ''}><span>Fue al arco</span></label>`;
+      const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
       rows.push(readOnly
         ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${arco}</li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${arco}<button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></li>`);
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${tools}${arco}</li>`);
     }
     return rows.join('');
   };
   const freeRows = free.map((player) => (readOnly
     ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span></li>`
-    : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></li>`)).join('');
+    : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span><span class="team-tools"><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></span></li>`)).join('');
   const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
   const score = normalizeScore(m.score);
   const share = teamsMessage({ when, venue: placeOf(m), players: main.map((player) => ({ ...player, name: shownName(player) })), teams, score: m.score ? score : null });
   const scoreSide = (side, label, value) => {
+    const icon = side === 'bib' ? vest : shirt;
     const n = `<strong id="score-${side}">${value}</strong>`;
-    if (readOnly) return `<div class="score-side"><span>${esc(label)}</span>${n}</div>`;
-    return `<div class="score-side"><span>${esc(label)}</span><div class="score-controls"><button type="button" class="score-btn" data-score="${side}" data-delta="-1" aria-label="Restar uno al marcador de ${esc(label)}">−1</button>${n}<button type="button" class="score-btn" data-score="${side}" data-delta="1" aria-label="Sumar uno al marcador de ${esc(label)}">+1</button></div></div>`;
+    const title = `<span class="score-label">${icon}<span>${esc(label)}</span></span>`;
+    if (readOnly) return `<div class="score-side">${title}${n}</div>`;
+    return `<div class="score-side">${title}<div class="score-controls"><button type="button" class="score-btn" data-score="${side}" data-delta="-1" aria-label="Restar uno al marcador de ${esc(label)}">−</button>${n}<button type="button" class="score-btn" data-score="${side}" data-delta="1" aria-label="Sumar uno al marcador de ${esc(label)}">+</button></div></div>`;
   };
+  const teamHeading = (side, title, count) => `${title} (<span id="team-${side}-count">${count}</span> ${count === 1 ? 'jugador' : 'jugadores'})`;
   if (!replaceView(`
     <section class="detail-head">
       <h1>Equipos</h1>
       <div class="when">${esc(when)} · ${esc(placeOf(m))}</div>
-      <p class="hint">Con los anotados. ${slots} por equipo. La lista de espera no entra.</p>
-      ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : '<p class="hint">Tocá la pechera o la camiseta. La ✕ lo devuelve a Sin asignar.</p>'}
+      ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : ''}
     </section>
     <div class="team-board" id="team-board">
-      <div class="scoreboard" id="scoreboard" aria-label="Marcador">
+      <h2 class="tanteador" id="tanteador">TANTEADOR</h2>
+      <div class="scoreboard" id="scoreboard" aria-label="Tanteador">
         ${scoreSide('bib', 'Con pechera', score.bib)}
         <span class="score-dash" aria-hidden="true">–</span>
         ${scoreSide('plain', 'Sin pechera', score.plain)}
-      </div>
-      <div class="team-counts">
-        <div class="team-count"><strong id="team-bib-count">${balance.bib}</strong><span>Con pechera</span></div>
-        <div class="team-count"><strong id="team-plain-count">${balance.plain}</strong><span>Sin pechera</span></div>
       </div>
       ${balance.balanced ? '' : '<p class="team-warn" id="team-balance">Está desbalanceado</p>'}
       ${main.length ? '' : '<p class="empty-wait">No hay jugadores anotados.</p>'}
       <div class="team-columns">
         <section id="team-bib" data-drop-side="bib">
-          <h2 class="section">Con pechera</h2>
+          <h2 class="section team-heading">${teamHeading('bib', 'CON PECHERA', balance.bib)}</h2>
           <p class="arco-left" id="arco-bib">Faltan ir al arco: ${goaliesLeft(teams.bib, teams.bib.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('bib', teams.bib)}</ul>
         </section>
         <section id="team-plain" data-drop-side="plain">
-          <h2 class="section">Sin pechera</h2>
+          <h2 class="section team-heading">${teamHeading('plain', 'SIN PECHERA', balance.plain)}</h2>
           <p class="arco-left" id="arco-plain">Faltan ir al arco: ${goaliesLeft(teams.plain, teams.plain.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('plain', teams.plain)}</ul>
         </section>
@@ -601,7 +591,7 @@ function renderTeams(id) {
         ${free.length ? `<ul class="team-list">${freeRows}</ul>` : '<p class="empty-wait">Nadie</p>'}
       </section>
       <div class="team-actions">
-        ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Limpiar</button>'}
+        ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Reset</button>'}
         <a class="btn nav-wide" id="btn-teams-wa" href="${esc(waHref('', share))}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
       </div>
     </div>`)) return;
@@ -640,6 +630,31 @@ function renderTeams(id) {
     };
     let dragId = '';
     let pointer = null;
+    const rated = () => main.map((player) => {
+      const person = player.rosterId ? (app.roster || []).find((item) => item.id === player.rosterId) : null;
+      return { id: player.id, level: person?.level ?? player.level };
+    });
+    const release = (playerId, hit) => {
+      if (!playerId || !hit?.closest) return;
+      const row = hit.closest('[data-drag-player]');
+      const targetId = row?.dataset?.dragPlayer;
+      const zone = hit.closest('[data-drop-side]');
+      if (!(targetId && targetId !== playerId) && !zone) return;
+      const dropped = targetId && targetId !== playerId
+        ? dropPlayerOn(teams, playerId, { targetId, allowedIds: ids, cap: slots })
+        : dropPlayerOn(teams, playerId, {
+          side: zone.dataset.dropSide,
+          index: hit.closest('[data-slot-index]') ? Number(hit.closest('[data-slot-index]').dataset.slotIndex) : null,
+          allowedIds: ids,
+          cap: slots,
+        });
+      if (!dropped) return;
+      if (!dropped.ok && dropped.reason === 'full') {
+        toast(dropped.side === 'plain' ? 'Sin pechera está completo' : 'Con pechera está completo');
+        return;
+      }
+      if (dropped.ok) save(dropped.teams);
+    };
     $('#team-board').addEventListener('dragstart', (e) => {
       const row = e.target.closest('[data-drag-player]');
       if (!row) return;
@@ -653,8 +668,7 @@ function renderTeams(id) {
       const zone = e.target.closest('[data-drop-side]');
       if (!zone) return;
       e.preventDefault();
-      const playerId = dragId || e.dataTransfer?.getData('text/plain');
-      if (playerId) assign(playerId, zone.dataset.dropSide);
+      release(dragId || e.dataTransfer?.getData('text/plain'), e.target);
     });
     $('#team-board').addEventListener('pointerdown', (e) => {
       if (e.target.closest('button, label, input')) return;
@@ -668,12 +682,16 @@ function renderTeams(id) {
       const playerId = pointer.id;
       pointer = null;
       if (!moved) return;
-      const hit = document.elementFromPoint(e.clientX, e.clientY);
-      const zone = hit?.closest?.('[data-drop-side]');
-      if (zone) assign(playerId, zone.dataset.dropSide);
+      release(playerId, document.elementFromPoint(e.clientX, e.clientY));
     });
-    $('#btn-teams-shuffle').onclick = () => save(shuffleTeams(ids), 'Equipos mezclados');
-    $('#btn-teams-clear').onclick = () => save(emptyTeams(), 'Equipos limpios');
+    $('#btn-teams-shuffle').onclick = () => {
+      if (!confirm('¿Seguro que querés rearmar los equipos al azar?')) return;
+      save(balanceTeams(rated(), { cap: slots }), 'Equipos mezclados');
+    };
+    $('#btn-teams-clear').onclick = () => {
+      if (!confirm('¿Seguro que querés resetear los equipos?')) return;
+      save(emptyTeams(), 'Equipos limpios');
+    };
   }
 }
 
@@ -722,7 +740,7 @@ function renderHistory() {
     <p class="hint" id="hist-caption">${esc(caption)}</p>
     <button type="button" class="btn block" id="btn-hist-import">Importar partidos desde texto</button>
     ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
-    ${past.length ? `<ul class="match-list" id="list-history">${past.map(matchCard).join('')}</ul>` : `
+    ${past.length ? `<ul class="match-list" id="list-history">${past.map((item) => matchCard(item, { fullDate: true })).join('')}</ul>` : `
       <div class="empty" id="list-history"><div class="big">📅</div><p><b>${esc(emptyLead)}</b></p>
       <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}`)) return;
   $('#history-filter').onsubmit = (e) => {
@@ -825,13 +843,13 @@ function renderMatch(id) {
   const signed = everyone.length + waitingOf(id).length;
   const canEdit = canEditMatch(m, who.uid);
   const notesText = String(m.notes || '').trim();
+  const hour = shortHour(m.time) || '--:--';
+  const priceText = formatARS(priceOfMatch(m, livePrices()));
   if (!replaceView(`
     <section class="detail-head">
-      <h1>${esc(capitalize(labelDate(m.date)))}</h1>
-      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(placeOf(m))}${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</div>
-      <p class="hint" id="match-size">${esc(footballLabel(m))}</p>
-      ${Number.isInteger(m.price) ? `<p class="hint" id="match-price">Valor: ${esc(formatARS(m.price))}</p>` : ''}
-      ${m.score ? `<p class="hint" id="match-score">${esc(scoreLine(m.score))}</p>` : ''}
+      <h1 id="match-date">${esc(numericDate(m.date))}</h1>
+      <div class="when" id="match-when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</div>
+      <p class="hint" id="match-place">${esc(placeOf(m))} (F${perTeamOf(m)})${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
       <div class="match-notes" id="match-notes">
@@ -847,7 +865,6 @@ function renderMatch(id) {
         ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
         ${canDelete(m, who.uid) && signed === 0 ? `<button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>` : ''}
       </div>
-      ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger block" id="btn-cancel-match">Cancelar partido</button>' : ''}
       ${canEdit && m.cancelled ? '<button type="button" class="btn block" id="btn-reactivate-match">Reactivar partido</button>' : ''}
       <button type="button" class="btn block" id="btn-teams">Equipos${teamCount ? ` · ${assigned.bib.length}-${assigned.plain.length}` : ''}</button>
     </section>
@@ -858,6 +875,7 @@ function renderMatch(id) {
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
+    ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
     <div class="actionbar"><div class="actionbar-inner match-actions">
       <button class="btn share-btn" id="btn-share" aria-label="Compartir lista">${ICON.share}</button>
       ${readOnly ? '' : `<button class="btn add-choice" id="btn-add-wait" ${block ? 'disabled' : ''}>${block ? esc(block) : 'Anotar en lista de espera'}</button>
@@ -905,7 +923,10 @@ function renderMatch(id) {
   $('#btn-teams').onclick = () => { location.hash = `#/partido/${encodeURIComponent(m.id)}/equipos`; };
   if ($('#btn-edit-match')) $('#btn-edit-match').onclick = () => openMatchForm(m);
   if ($('#btn-notes')) $('#btn-notes').onclick = () => openNotes(m);
-  if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = () => openCancel(m);
+  if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = () => {
+    if (!confirm('¿Seguro que querés cancelar el partido?')) return;
+    openCancel(m);
+  };
   if ($('#btn-reactivate-match')) $('#btn-reactivate-match').onclick = () => reactivateMatch(m);
   if ($('#btn-del-match')) $('#btn-del-match').onclick = () => {
     if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs?`)) return;
@@ -1388,7 +1409,7 @@ function openSettings() {
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
     <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
     <label class="checkline" id="set-mine-line"><input type="checkbox" id="set-mine"${app.mine ? ' checked' : ''}><span>Solo lo que anoté y lo que cobré</span></label>
-    <p class="hint">Oculta en Próximos partidos, el partido y Pagos lo de los demás organizadores. El cupo del partido no cambia.</p>
+    <p class="hint">Oculta en Próximos partidos y en el partido lo de los demás organizadores. El cupo del partido no cambia.</p>
     <form id="price-form" novalidate>
       <p class="hint">Precios. Los ven todos al toque.</p>
       ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
@@ -1765,7 +1786,7 @@ function openHistoryImportPreview(text, found) {
   const cards = items.map((item, i) => {
     const names = item.players.length ? item.players.map((player) => player.name).join(', ') : 'Sin jugadores';
     return `<li data-i="${i}">
-      <div class="top"><input type="checkbox" ${item.on ? 'checked' : ''} ${item.duplicate ? 'disabled' : ''} aria-label="Importar partido"><b class="lbl">${esc(capitalize(labelDate(item.date)))} · ${esc(item.time)} hs</b></div>
+      <div class="top"><input type="checkbox" ${item.on ? 'checked' : ''} ${item.duplicate ? 'disabled' : ''} aria-label="Importar partido"><b class="lbl">${esc(numericDate(item.date))} · ${esc(shortHour(item.time) || item.time)}</b></div>
       <div class="sub">Polideportivo Colegiales</div>
       <div class="sub">${esc(names)}</div>
       ${item.duplicate ? '<div class="err">Ya hay un partido a esa hora en Polideportivo Colegiales.</div>' : ''}
@@ -1837,8 +1858,6 @@ function renderRoster() {
   }).join('');
   if (!replaceView(`
     <h2 class="section">Jugadores</h2>
-    ${rosterSwitch(false)}
-    <p class="hint roster-lead">Lista guardada de nombre y WhatsApp. Se comparte entre los dos.</p>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
     <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.'}</p>`}
@@ -1865,7 +1884,6 @@ function renderRoster() {
     const open = e.target.closest('[data-roster-open]');
     if (open) {
       app.profileMatchId = null;
-      app.profilePay = false;
       location.hash = `#/jugador/${encodeURIComponent(open.dataset.rosterOpen)}`;
     }
   };
@@ -1956,7 +1974,6 @@ function deleteRosterPlayer(person) {
 
 const noteId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 app.profileMatchId = null;
-app.profilePay = false;
 app.wantPhoneForm = false;
 
 async function ensureRoster({ name, phone, rosterId, phoneKey: key, phoneShared }) {
@@ -1982,7 +1999,6 @@ async function ensureRoster({ name, phone, rosterId, phoneKey: key, phoneShared 
 
 async function openPlayerProfile(player, matchId) {
   if (!player) return;
-  app.profilePay = false;
   app.profileMatchId = matchId || null;
   try {
     let id = player.rosterId && app.roster.some((person) => person.id === player.rosterId) ? player.rosterId : '';
@@ -2106,53 +2122,6 @@ function renderUsers() {
     const user = app.users.find((item) => item.uid === del.dataset.userDel);
     if (!user || !confirm(`¿Borrar a ${user.name}? La cuenta de acceso queda en Firebase hasta que la borres en la consola.`)) return;
     Promise.resolve(app.session.deleteOrganizer(user.uid)).then(() => renderUsers()).catch((error) => toast(error?.message || 'No se pudo borrar'));
-  };
-}
-
-function renderPagos() {
-  const organizer = app.mine ? app.who : (app.payFilter || null);
-  const rows = paymentsSummary({ players: app.players, roster: app.roster, organizer });
-  const totals = organizerTotals(app.players);
-  const pending = pendingTransfers({ players: app.players, roster: app.roster, organizer });
-  const body = rows.length ? `<ul class="slots" id="pay-summary">${rows.map((row) => {
-    const personId = row.rosterId || '';
-    const paid = row.paid.length
-      ? row.paid.map((item) => `<div class="sub">${esc(item.name)}: ${esc(formatARS(item.amount))}</div>`).join('')
-      : '<div class="sub">Sin pagos</div>';
-    const signed = row.signups.length
-      ? row.signups.map((item) => `<div class="sub">Anotó ${esc(item.name)}: ${timesLabel(item.count)}</div>`).join('')
-      : '<div class="sub">Sin anotaciones</div>';
-    const later = row.pending > 0 ? `<div class="pay-pending">Transfiere después ${esc(formatARS(row.pending))}</div>` : '';
-    const open = personId ? ` data-pay-open="${esc(personId)}"` : '';
-    return `<li class="slot pay-row"><button type="button" class="who"${open}><div class="name">${esc(row.name)}</div>${paid}${signed}${later}</button></li>`;
-  }).join('')}</ul>` : '<p class="empty-wait" id="pay-summary">Nadie en este filtro.</p>';
-  const pendingBody = pending.rows.length
-    ? `<ul class="slots" id="pending-list">${pending.rows.map((row) => `<li class="slot"><div class="who"><div class="name">${esc(row.name)}</div><div class="pay-pending">Transfiere después ${esc(formatARS(row.amount))}</div><div class="sub">${row.by.map((item) => `${esc(item.name)}: ${esc(formatARS(item.amount))}`).join(' · ')}</div></div></li>`).join('')}</ul>`
-    : '<p class="empty-wait" id="pending-list">Nadie tiene una transferencia pendiente.</p>';
-  const orgLine = totals.map((item) => {
-    const later = item.pending > 0 ? ` · por transferir ${formatARS(item.pending)}` : '';
-    return `${esc(item.name)}: ${esc(formatARS(item.collected))} · anotó ${item.added}${later}`;
-  }).join(' · ');
-  if (!replaceView(`
-    <h2 class="section">Jugadores</h2>
-    ${rosterSwitch(true)}
-    <h2 class="section">Pagos</h2>
-    <p class="hint roster-lead">Cuánto le pagó cada jugador a cada organizador, y quién lo anotó. Transfiere después no entra en lo cobrado hasta marcarlo.</p>
-    <p class="mine-line" id="mine-stats">${esc(mineSummary(app.players, app.who).text)}</p>
-    <p class="hint" id="org-totals">${orgLine}</p>
-    <p class="hint" id="pending-total">Transfiere después: ${esc(formatARS(pending.total))}</p>
-    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : payFilterChips(null)}
-    ${body}
-    <h2 class="section">Transfiere después</h2>
-    ${pendingBody}`)) return;
-  bindPayFilter();
-  const list = $('#pay-summary');
-  if (list) list.onclick = (e) => {
-    const open = e.target.closest('[data-pay-open]');
-    if (!open) return;
-    app.profileMatchId = null;
-    app.profilePay = true;
-    location.hash = `#/jugador/${encodeURIComponent(open.dataset.payOpen)}`;
   };
 }
 
@@ -3281,7 +3250,7 @@ async function boot() {
     }
     if (r.name === 'profile') {
       if (app.profileMatchId) { location.hash = `#/partido/${encodeURIComponent(app.profileMatchId)}`; return; }
-      location.hash = app.profilePay ? '#/jugadores/pagos' : '#/jugadores';
+      location.hash = '#/jugadores';
       return;
     }
     if (r.name === 'users') { location.hash = hashForTab(savedTab()); return; }

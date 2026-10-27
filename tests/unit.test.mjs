@@ -13,7 +13,7 @@ import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummar
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { addDays, toEpoch } from '../js/dates.js';
+import { addDays, numericDate, shortHour, toEpoch } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -24,7 +24,7 @@ import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
-import { bumpGoals, bumpScore, cyclePlayer, dropPlayer, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import { APP_INSTALL_URL, appShareMessage } from '../js/share.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
@@ -34,6 +34,20 @@ import {
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
 const dt = (r) => r.map((x) => `${x.date} ${x.time}`);
+
+test('fecha numérica dd/mm/aaaa', () => {
+  assert.equal(numericDate('2023-12-12'), '12/12/2023');
+  assert.equal(numericDate('2026-10-08'), '08/10/2026');
+  assert.equal(numericDate(''), '');
+});
+
+test('hora corta de la lista', () => {
+  assert.equal(shortHour('20:00'), '20hs');
+  assert.equal(shortHour('09:00'), '9hs');
+  assert.equal(shortHour('19:30'), '19:30hs');
+  assert.equal(shortHour(''), '');
+  assert.equal(shortHour('25:00'), '');
+});
 
 test('jueves 22/10 21hs', () => assert.deepEqual(dt(p('jueves 22/10 21hs', { now })), ['2026-10-22 21:00']));
 test('miércoles 20:00', () => assert.deepEqual(dt(p('Miércoles 20:00', { now })), ['2026-10-21 20:00']));
@@ -1510,6 +1524,32 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.match(teamsMessage({ when: 'Martes', venue: 'Sede', players: [], teams: { bib: [], plain: [] }, score: { bib: 2, plain: 1 } }), /Marcador: Con pechera 2 – Sin pechera 1/);
 });
 
+test('equipos equilibrados por nivel y cambio de lugar', () => {
+  const even = balanceTeams([
+    { id: 'a', level: 10 },
+    { id: 'b', level: 1 },
+    { id: 'c', level: 9 },
+    { id: 'd', level: 2 },
+  ], { cap: 2, rng: () => 0 });
+  const sum = (ids) => ids.reduce((total, id) => total + ({ a: 10, b: 1, c: 9, d: 2 }[id]), 0);
+  assert.equal(even.bib.length, 2);
+  assert.equal(even.plain.length, 2);
+  assert.equal(sum(even.bib), sum(even.plain));
+  const capped = balanceTeams([
+    { id: 'a', level: 10 },
+    { id: 'b', level: 9 },
+    { id: 'c', level: 1 },
+  ], { cap: 1, rng: () => 0 });
+  assert.deepEqual([...capped.bib, ...capped.plain].sort(), ['a', 'b']);
+  const defaults = balanceTeams([{ id: 'a' }, { id: 'b', level: 10 }, { id: 'c' }, { id: 'd', level: 10 }], { cap: 2, rng: () => 0 });
+  const side = (id) => (defaults.bib.includes(id) ? 'bib' : 'plain');
+  assert.notEqual(side('b'), side('d'));
+  assert.deepEqual(dropPlayerOn({ bib: ['a', 'b'], plain: ['c'] }, 'a', { targetId: 'c', allowedIds: ['a', 'b', 'c'] }).teams, { bib: ['c', 'b'], plain: ['a'] });
+  assert.deepEqual(dropPlayerOn({ bib: ['a', 'b', 'c'], plain: [] }, 'a', { targetId: 'c', allowedIds: ['a', 'b', 'c'] }).teams.bib, ['c', 'b', 'a']);
+  assert.deepEqual(dropPlayerOn({ bib: ['a'], plain: [] }, 'x', { side: 'plain', allowedIds: ['a', 'x'], cap: 2 }).teams, { bib: ['a'], plain: ['x'] });
+  assert.equal(dropPlayerOn({ bib: ['a'], plain: [] }, 'x', { side: 'bib', allowedIds: ['a', 'x'], cap: 1 }).ok, false);
+});
+
 test('importar historial lee fecha, hora y jugadores de varios partidos', () => {
   const text = `Jueves 16/10 21hs
 1. Juan Pérez
@@ -1529,6 +1569,25 @@ test('importar historial lee fecha, hora y jugadores de varios partidos', () => 
   assert.equal(blocks[1].time, '19:30');
   assert.deepEqual(blocks[1].players.map((player) => player.name), ['Pedro', 'Luis']);
   assert.equal(p('jueves 22/10 21hs', { now: new Date('2026-10-19T13:00:00-03:00') })[0].date, '2026-10-22');
+});
+
+test('importar historial: rango de hora y fecha con año', () => {
+  const now = new Date('2026-10-19T13:00:00-03:00');
+  const rows = parsePlayedMatchesFromText('Martes 20 a 21 12/12/2023\n1. Juan Pérez\n2. Ana', { now });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].date, '2023-12-12');
+  assert.equal(rows[0].time, '20:00');
+  assert.deepEqual(rows[0].players.map((player) => player.name), ['Juan Pérez', 'Ana']);
+  const withHs = parsePlayedMatchesFromText('Martes 20hs a 21hs 12/12/23\n1. Ana', { now });
+  assert.equal(withHs[0].date, '2023-12-12');
+  assert.equal(withHs[0].time, '20:00');
+  const minutes = parsePlayedMatchesFromText('12/12/2023 20:30 a 21:15\n1. Ana', { now });
+  assert.equal(minutes[0].date, '2023-12-12');
+  assert.equal(minutes[0].time, '20:30');
+  const mismatch = p('Lunes 20 a 21 12/12/2023', { now });
+  assert.equal(mismatch[0].date, '2023-12-12');
+  assert.equal(mismatch[0].time, '20:00');
+  assert.ok(mismatch[0].warning);
 });
 
 test('compartir la app nombra el link de instalación', () => {
