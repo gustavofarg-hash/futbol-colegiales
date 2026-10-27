@@ -709,8 +709,20 @@ await page.waitForSelector('.match-card');
 await page.click('.match-card[data-date="2026-10-26"]');
 await page.waitForSelector('#btn-cancel-match');
 check('Con jugadores no aparece Borrar', await page.locator('#btn-del-match').count() === 0);
+check('Cancelar partido está al final y en rojo', await page.evaluate(() => {
+  const btn = document.querySelector('#btn-cancel-match');
+  const slots = document.querySelector('#slots');
+  if (!btn || !slots) return false;
+  const after = (btn.compareDocumentPosition(slots) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+  return after && btn.classList.contains('solid') && getComputedStyle(btn).backgroundColor === 'rgb(198, 40, 40)';
+}));
+let cancelAsk = '';
+const onCancelAsk = (d) => { if (d.message().includes('cancelar el partido')) cancelAsk = d.message(); };
+page.on('dialog', onCancelAsk);
 await page.click('#btn-cancel-match');
 await page.waitForSelector('#cancel-notes');
+check('Pide confirmación antes de cancelar', cancelAsk === '¿Seguro que querés cancelar el partido?', cancelAsk);
+page.off('dialog', onCancelAsk);
 check('Al cancelar se sugiere el motivo en las notas', (await page.textContent('#cancel-form')).includes('motivo'));
 await page.fill('#cancel-notes', 'Se inundó la cancha');
 await page.click('#cancel-form button[type=submit]');
@@ -902,7 +914,7 @@ await page.click('#btn-edit-match');
 await page.fill('#match-form [name=date]', '2026-10-15');
 await page.fill('#match-form [name=time]', '21:00');
 await page.click('#match-form button[type=submit]');
-await page.waitForFunction(() => document.querySelector('h1')?.textContent.includes('Jueves 15/10'));
+await page.waitForFunction(() => document.querySelector('h1')?.textContent.includes('15/10/2026'));
 await page.locator('#slots .who', { hasText: 'Ernesto P.' }).click();
 await page.waitForSelector('#profile');
 check('Tocarlo abre el perfil con WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491122223333'));
@@ -1121,7 +1133,7 @@ const sabadoCard = await page.evaluate((token) => JSON.parse(localStorage.getIte
 check('La ficha del sábado no tiene teléfono', sabadoCard && sabadoCard.name === 'Juan Pérez' && sabadoCard.phone == null && !JSON.stringify(sabadoCard).includes('549'));
 await page.locator('#signup-list .signup-row', { hasText: 'Sábado 24/10' }).locator('[data-open-match]').click();
 await page.waitForSelector('#slots .name:text-is("Juan Pérez")');
-check('Tocar el sábado abre el partido', (await page.textContent('h1')).includes('Sábado 24/10'));
+check('Tocar el sábado abre el partido', (await page.textContent('h1')).includes('24/10/2026'));
 check('En el sábado se ve el lugar reservado', (await page.locator('#slots .slot', { hasText: 'Juan Pérez' }).innerText()).includes('Reservado · a confirmar'));
 await page.evaluate(() => { location.hash = '#/jugadores'; });
 await page.locator('#roster-list .who', { hasText: 'Juan Pérez' }).click();
@@ -1570,10 +1582,12 @@ await page.evaluate(() => { location.hash = '#/historial'; });
 await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
 check('La lista del historial no muestra el marcador', await page.locator('#list-history .match-card:has-text("Ayer") [data-score]').count() === 0);
 await page.click('#list-history .match-card:has-text("Ayer")');
-await page.waitForSelector('#match-score');
-check('El detalle muestra el marcador', (await page.textContent('#match-score')).includes('Con pechera 2') && (await page.textContent('#match-score')).includes('1 Sin pechera'));
+await page.waitForSelector('#match-date');
+check('El detalle no muestra el marcador', await page.locator('#match-score').count() === 0);
 await page.waitForSelector('#btn-teams');
 await page.click('#btn-teams');
+await page.waitForSelector('#score-bib');
+check('El marcador se ve solo en Equipos', (await page.textContent('#score-bib')) === '2' && (await page.textContent('#score-plain')) === '1');
 await page.waitForSelector('#team-bib:has-text("Histórico Pérez")');
 check('Desde el historial se consultan los equipos', (await page.textContent('#team-bib-count')) === '1');
 await page.click('#btn-back');
@@ -1843,8 +1857,17 @@ await page.waitForSelector('.match-card[data-date="2026-11-08"]');
 const norteCard = (await page.locator('.match-card[data-date="2026-11-08"]').innerText()).replace(/\s+/g, ' ');
 check('La tarjeta muestra la sede y el cupo de 6 por equipo', norteCard.includes('Club Norte Sur') && /0\/12/.test(norteCard), norteCard);
 await page.click('.match-card[data-date="2026-11-08"]');
-await page.waitForSelector('#slot-count');
-check('El detalle usa la sede y Faltan 12', (await page.textContent('.when')).includes('Club Norte Sur') && (await page.textContent('#slot-count')) === '0/12' && (await page.textContent('#match-size')).trim() === 'Fútbol 6' && (await page.textContent('#match-court')).trim() === 'Cancha 3' && (await page.textContent('#match-price')).includes('$8.000'));
+await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.trim() === '08/11/2026');
+const norteDetail = {
+  date: (await page.textContent('#match-date'))?.trim(),
+  when: await page.textContent('#match-when'),
+  place: await page.textContent('#match-place'),
+  slots: await page.textContent('#slot-count'),
+  size: await page.locator('#match-size').count(),
+  court: (await page.textContent('#match-court'))?.trim(),
+  price: await page.textContent('#match-price'),
+};
+check('El detalle usa la sede y Faltan 12', norteDetail.date === '08/11/2026' && (norteDetail.when || '').includes('19:30hs ($8.000)') && (norteDetail.place || '').includes('Club Norte Sur (F6)') && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'));
 await page.click('#btn-copy');
 const norteCopy = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada nombra la sede', norteCopy.includes('Club Norte Sur') && norteCopy.includes('Faltan 12') && norteCopy.includes('⚽ Fútbol 6') && norteCopy.includes('Cancha 3'), norteCopy.split('\n').slice(0, 4).join(' | '));
@@ -1870,7 +1893,7 @@ check('Una sede inactiva no sale en un partido nuevo', await page.locator('#matc
 await page.click('#match-form [data-close]');
 await page.click('.match-card[data-date="2026-11-08"]');
 await page.waitForSelector('.when');
-check('El partido que ya la usa sigue mostrando el nombre nuevo', (await page.textContent('.when')).includes('Club Norte Sur'));
+check('El partido que ya la usa sigue mostrando el nombre nuevo', (await page.textContent('#match-place')).includes('Club Norte Sur'));
 await page.click('#btn-back');
 await page.waitForSelector('#list-next');
 

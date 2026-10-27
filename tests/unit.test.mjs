@@ -13,7 +13,7 @@ import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummar
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { addDays, shortHour, toEpoch } from '../js/dates.js';
+import { addDays, numericDate, shortHour, toEpoch } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -34,6 +34,12 @@ import {
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
 const dt = (r) => r.map((x) => `${x.date} ${x.time}`);
+
+test('fecha numérica dd/mm/aaaa', () => {
+  assert.equal(numericDate('2023-12-12'), '12/12/2023');
+  assert.equal(numericDate('2026-10-08'), '08/10/2026');
+  assert.equal(numericDate(''), '');
+});
 
 test('hora corta de la lista', () => {
   assert.equal(shortHour('20:00'), '20hs');

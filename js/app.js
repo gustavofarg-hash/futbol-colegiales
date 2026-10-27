@@ -3,7 +3,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, shortHour, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
@@ -26,7 +26,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
-import { emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import { emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
@@ -825,13 +825,13 @@ function renderMatch(id) {
   const signed = everyone.length + waitingOf(id).length;
   const canEdit = canEditMatch(m, who.uid);
   const notesText = String(m.notes || '').trim();
+  const hour = shortHour(m.time) || '--:--';
+  const priceText = formatARS(priceOfMatch(m, livePrices()));
   if (!replaceView(`
     <section class="detail-head">
-      <h1>${esc(capitalize(labelDate(m.date)))}</h1>
-      <div class="when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(m.time || '--:--')} hs · ${esc(placeOf(m))}${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</div>
-      <p class="hint" id="match-size">${esc(footballLabel(m))}</p>
-      ${Number.isInteger(m.price) ? `<p class="hint" id="match-price">Valor: ${esc(formatARS(m.price))}</p>` : ''}
-      ${m.score ? `<p class="hint" id="match-score">${esc(scoreLine(m.score))}</p>` : ''}
+      <h1 id="match-date">${esc(numericDate(m.date))}</h1>
+      <div class="when" id="match-when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</div>
+      <p class="hint" id="match-place">${esc(placeOf(m))} (F${perTeamOf(m)})${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
       <div class="match-notes" id="match-notes">
@@ -847,7 +847,6 @@ function renderMatch(id) {
         ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
         ${canDelete(m, who.uid) && signed === 0 ? `<button class="btn danger" id="btn-del-match">${ICON.trash}Borrar</button>` : ''}
       </div>
-      ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger block" id="btn-cancel-match">Cancelar partido</button>' : ''}
       ${canEdit && m.cancelled ? '<button type="button" class="btn block" id="btn-reactivate-match">Reactivar partido</button>' : ''}
       <button type="button" class="btn block" id="btn-teams">Equipos${teamCount ? ` · ${assigned.bib.length}-${assigned.plain.length}` : ''}</button>
     </section>
@@ -858,6 +857,7 @@ function renderMatch(id) {
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
+    ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
     <div class="actionbar"><div class="actionbar-inner match-actions">
       <button class="btn share-btn" id="btn-share" aria-label="Compartir lista">${ICON.share}</button>
       ${readOnly ? '' : `<button class="btn add-choice" id="btn-add-wait" ${block ? 'disabled' : ''}>${block ? esc(block) : 'Anotar en lista de espera'}</button>
@@ -905,7 +905,10 @@ function renderMatch(id) {
   $('#btn-teams').onclick = () => { location.hash = `#/partido/${encodeURIComponent(m.id)}/equipos`; };
   if ($('#btn-edit-match')) $('#btn-edit-match').onclick = () => openMatchForm(m);
   if ($('#btn-notes')) $('#btn-notes').onclick = () => openNotes(m);
-  if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = () => openCancel(m);
+  if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = () => {
+    if (!confirm('¿Seguro que querés cancelar el partido?')) return;
+    openCancel(m);
+  };
   if ($('#btn-reactivate-match')) $('#btn-reactivate-match').onclick = () => reactivateMatch(m);
   if ($('#btn-del-match')) $('#btn-del-match').onclick = () => {
     if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs?`)) return;

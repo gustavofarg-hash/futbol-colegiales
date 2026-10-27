@@ -164,6 +164,9 @@ h2.section:first-child { margin-top: 4px; }
 .btn.primary { background: var(--green); border-color: var(--green); color: #fff; }
 @media (prefers-color-scheme: dark) { .btn.primary { color: #06210f; } }
 .btn.danger { color: var(--danger); }
+.btn.danger.solid { background: #c62828; border-color: #c62828; color: #fff; }
+#btn-cancel-match { margin-top: 18px; }
+.btn.danger.solid:active { filter: brightness(.92); }
 .btn.ghost { background: transparent; border-color: transparent; }
 .btn.block { width: 100%; }
 .btn:active { filter: brightness(.95); }
