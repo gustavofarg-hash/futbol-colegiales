@@ -556,15 +556,19 @@ function renderTeams(id) {
         : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
       const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
       const controls = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
+      const name = `<button type="button" class="team-name" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
       rows.push(readOnly
-        ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span><span class="team-side">${goalBox}${arco}</span></li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${controls}</li>`);
+        ? `<li class="team-row" data-team-player="${esc(player.id)}">${name}<span class="team-side">${goalBox}${arco}</span></li>`
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}" data-team-player="${esc(player.id)}">${name}${controls}</li>`);
     }
     return rows.join('');
   };
-  const freeRows = free.map((player) => (readOnly
-    ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span></li>`
-    : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span><span class="team-tools"><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></span></li>`)).join('');
+  const freeRows = free.map((player) => {
+    const name = `<button type="button" class="team-name" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
+    return readOnly
+      ? `<li class="team-row" data-team-player="${esc(player.id)}">${name}</li>`
+      : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}" data-team-player="${esc(player.id)}">${name}<span class="team-tools"><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></span></li>`;
+  }).join('');
   const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
   const score = normalizeScore(m.score);
   const share = teamsMessage({ when, venue: placeOf(m), players: main.map((player) => ({ ...player, name: shownName(player) })), teams, score: m.score ? score : null });
@@ -628,8 +632,17 @@ function renderTeams(id) {
     }
     if (moved.ok) save(moved.teams);
   };
-  if (!readOnly) {
-    $('#team-board').onclick = (e) => {
+  let nameDragged = false;
+  const openNamedPlayer = (e) => {
+    const name = e.target.closest('[data-team-name]');
+    if (!name) return false;
+    if (nameDragged) { nameDragged = false; return true; }
+    const player = app.players.find((item) => item.id === name.dataset.teamName);
+    if (player) openPlayerMenu(m, player);
+    return true;
+  };
+  $('#team-board').onclick = (e) => {
+    if (!readOnly) {
       const row = e.target.closest('[data-drag-player]');
       const goal = e.target.closest('[data-goal]');
       if (goal && row) {
@@ -642,9 +655,14 @@ function renderTeams(id) {
         return;
       }
       const btn = e.target.closest('[data-assign]');
-      if (!btn || !row) return;
-      assign(row.dataset.dragPlayer, btn.dataset.assign);
-    };
+      if (btn && row) {
+        assign(row.dataset.dragPlayer, btn.dataset.assign);
+        return;
+      }
+    }
+    openNamedPlayer(e);
+  };
+  if (!readOnly) {
     let dragId = '';
     let pointer = null;
     const rated = () => main.map((player) => {
@@ -676,6 +694,7 @@ function renderTeams(id) {
       const row = e.target.closest('[data-drag-player]');
       if (!row) return;
       dragId = row.dataset.dragPlayer;
+      nameDragged = true;
       e.dataTransfer?.setData('text/plain', dragId);
     });
     $('#team-board').addEventListener('dragover', (e) => {
@@ -688,9 +707,11 @@ function renderTeams(id) {
       release(dragId || e.dataTransfer?.getData('text/plain'), e.target);
     });
     $('#team-board').addEventListener('pointerdown', (e) => {
-      if (e.target.closest('button, label, input')) return;
+      const onName = !!e.target.closest('[data-team-name]');
+      if (!onName && e.target.closest('button, a, label, input')) return;
       const row = e.target.closest('[data-drag-player]');
       if (!row) return;
+      nameDragged = false;
       pointer = { id: row.dataset.dragPlayer, x: e.clientX, y: e.clientY };
     });
     $('#team-board').addEventListener('pointerup', (e) => {
@@ -699,6 +720,7 @@ function renderTeams(id) {
       const playerId = pointer.id;
       pointer = null;
       if (!moved) return;
+      nameDragged = true;
       release(playerId, document.elementFromPoint(e.clientX, e.clientY));
     });
     $('#btn-teams-shuffle').onclick = () => {
@@ -3219,14 +3241,36 @@ function roundMoney(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+function debtSubject(player) {
+  if (!player) return null;
+  if (player.rosterId) {
+    const found = (app.roster || []).find((item) => item.id === player.rosterId);
+    if (found) return found;
+    return { id: player.rosterId, name: player.name || '', phone: player.phone || '' };
+  }
+  const phone = canonicalPhone(player.phone || '');
+  if (phone) {
+    const found = rosterByPhone(app.roster || [], phone);
+    if (found) return found;
+    return { id: '', name: player.name || '', phone };
+  }
+  return { id: '', name: player.name || '' };
+}
+
 function openPlayerMenu(m, p) {
   if (!p) return;
   const own = canEditPlayer(p, actor());
+  const debt = playerDebt({ person: debtSubject(p), players: app.players, matches: app.matches, prices: livePrices() });
+  const payLine = payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>';
+  const debtLine = debt.total > 0 ? `<p class="debt-total" id="menu-debt">${esc(debt.text)}</p>` : '';
+  const paidAlready = p.paid === true || paymentParts(p).received > 0;
   openSheet(`
-    <h3>${esc(p.name)}</h3>
+    <h3>${esc(shownName(p))}</h3>
     <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <div class="menu-pay" id="menu-pay">${payLine}${debtLine}</div>
     ${canAdd(m, actor().uid) ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
+      ${canAdd(m, actor().uid) ? `<button class="btn" id="pm-pay">${paidAlready ? 'Editar pago' : 'Cargar pago'}</button>` : ''}
       ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
@@ -3239,6 +3283,8 @@ function openPlayerMenu(m, p) {
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, m.id); };
+  const payBtn = $('#pm-pay');
+  if (payBtn) payBtn.onclick = () => openPaymentForm(m, p);
   const signupBox = $('#signed-up-with');
   if (signupBox) signupBox.onchange = () => {
     const signup = readSignup(signupBox);

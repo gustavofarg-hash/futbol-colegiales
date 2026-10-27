@@ -376,6 +376,13 @@ h2.section.team-heading .vest { width: 20px; height: 20px; flex: none; }
 .arco-tick svg { width: 14px; height: 14px; display: block; }
 .arco-left { margin: 0 0 6px; color: var(--muted); font-size: 0.75rem; font-weight: 700; }
 .team-name { flex: 1 1 4.5rem; min-width: min(100%, 4.5rem); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.team-name {
+  border: 0; background: transparent; color: inherit; font: inherit; font-weight: 700;
+  text-align: left; padding: 0; cursor: pointer;
+}
+.menu-pay { margin: 0 0 10px; }
+.menu-pay .hint { margin: 0 0 4px; }
+.menu-pay .pay-line { white-space: normal; }
 .team-tools { display: flex; gap: 4px; flex: none; }
 .goal-box { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .goal-box button, .goal-n {
