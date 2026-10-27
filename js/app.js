@@ -21,7 +21,7 @@ import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, invit
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
-import { hasUnspecified, mineSummary, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, signupLedger } from './ledger.js';
+import { hasUnspecified, mineSummary, paymentLedger, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -316,8 +316,7 @@ function route() {
   if (name === 'partido' && id && extra === 'equipos') return { name: 'teams', id: decodeURIComponent(id) };
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'historial') return { name: 'history' };
-  if (name === 'jugadores') return { name: 'roster', pay: id === 'pagos' };
-  if (name === 'pagos') return { name: 'roster', pay: true };
+  if (name === 'jugadores' || name === 'pagos') return { name: 'roster' };
   if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
@@ -421,7 +420,7 @@ function render() {
   const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
   const brand = $('#venue-name');
   if (brand) brand.textContent = shownVenue;
-  const key = `${r.name}:${r.id || ''}:${r.pay ? 1 : 0}`;
+  const key = `${r.name}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
   const y = same ? (document.scrollingElement?.scrollTop || 0) : 0;
@@ -431,10 +430,7 @@ function render() {
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
-  else if (r.name === 'roster') {
-    if (r.pay) renderPagos();
-    else renderRoster();
-  }
+  else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'users') renderUsers();
   else renderHome();
@@ -475,13 +471,6 @@ function matchCard(m, opts = {}) {
       <div class="bar"><i style="width:${Math.min(100, (n / cap) * 100)}%"></i></div>
     </div>
   </a></li>`;
-}
-
-function rosterSwitch(pay) {
-  return `<div class="chips" id="roster-section">
-    <a class="btn chip ${pay ? '' : 'on'}" id="btn-roster-list" href="#/jugadores">Lista</a>
-    <a class="btn chip ${pay ? 'on' : ''}" id="btn-pagos" href="#/jugadores/pagos">Pagos</a>
-  </div>`;
 }
 
 function renderHome() {
@@ -1420,7 +1409,7 @@ function openSettings() {
     <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
     <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
     <label class="checkline" id="set-mine-line"><input type="checkbox" id="set-mine"${app.mine ? ' checked' : ''}><span>Solo lo que anoté y lo que cobré</span></label>
-    <p class="hint">Oculta en Próximos partidos, el partido y Pagos lo de los demás organizadores. El cupo del partido no cambia.</p>
+    <p class="hint">Oculta en Próximos partidos y en el partido lo de los demás organizadores. El cupo del partido no cambia.</p>
     <form id="price-form" novalidate>
       <p class="hint">Precios. Los ven todos al toque.</p>
       ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
@@ -1869,8 +1858,6 @@ function renderRoster() {
   }).join('');
   if (!replaceView(`
     <h2 class="section">Jugadores</h2>
-    ${rosterSwitch(false)}
-    <p class="hint roster-lead">Lista guardada de nombre y WhatsApp. Se comparte entre los dos.</p>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
     <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.'}</p>`}
@@ -1897,7 +1884,6 @@ function renderRoster() {
     const open = e.target.closest('[data-roster-open]');
     if (open) {
       app.profileMatchId = null;
-      app.profilePay = false;
       location.hash = `#/jugador/${encodeURIComponent(open.dataset.rosterOpen)}`;
     }
   };
@@ -1988,7 +1974,6 @@ function deleteRosterPlayer(person) {
 
 const noteId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 app.profileMatchId = null;
-app.profilePay = false;
 app.wantPhoneForm = false;
 
 async function ensureRoster({ name, phone, rosterId, phoneKey: key, phoneShared }) {
@@ -2014,7 +1999,6 @@ async function ensureRoster({ name, phone, rosterId, phoneKey: key, phoneShared 
 
 async function openPlayerProfile(player, matchId) {
   if (!player) return;
-  app.profilePay = false;
   app.profileMatchId = matchId || null;
   try {
     let id = player.rosterId && app.roster.some((person) => person.id === player.rosterId) ? player.rosterId : '';
@@ -2138,53 +2122,6 @@ function renderUsers() {
     const user = app.users.find((item) => item.uid === del.dataset.userDel);
     if (!user || !confirm(`¿Borrar a ${user.name}? La cuenta de acceso queda en Firebase hasta que la borres en la consola.`)) return;
     Promise.resolve(app.session.deleteOrganizer(user.uid)).then(() => renderUsers()).catch((error) => toast(error?.message || 'No se pudo borrar'));
-  };
-}
-
-function renderPagos() {
-  const organizer = app.mine ? app.who : (app.payFilter || null);
-  const rows = paymentsSummary({ players: app.players, roster: app.roster, organizer });
-  const totals = organizerTotals(app.players);
-  const pending = pendingTransfers({ players: app.players, roster: app.roster, organizer });
-  const body = rows.length ? `<ul class="slots" id="pay-summary">${rows.map((row) => {
-    const personId = row.rosterId || '';
-    const paid = row.paid.length
-      ? row.paid.map((item) => `<div class="sub">${esc(item.name)}: ${esc(formatARS(item.amount))}</div>`).join('')
-      : '<div class="sub">Sin pagos</div>';
-    const signed = row.signups.length
-      ? row.signups.map((item) => `<div class="sub">Anotó ${esc(item.name)}: ${timesLabel(item.count)}</div>`).join('')
-      : '<div class="sub">Sin anotaciones</div>';
-    const later = row.pending > 0 ? `<div class="pay-pending">Transfiere después ${esc(formatARS(row.pending))}</div>` : '';
-    const open = personId ? ` data-pay-open="${esc(personId)}"` : '';
-    return `<li class="slot pay-row"><button type="button" class="who"${open}><div class="name">${esc(row.name)}</div>${paid}${signed}${later}</button></li>`;
-  }).join('')}</ul>` : '<p class="empty-wait" id="pay-summary">Nadie en este filtro.</p>';
-  const pendingBody = pending.rows.length
-    ? `<ul class="slots" id="pending-list">${pending.rows.map((row) => `<li class="slot"><div class="who"><div class="name">${esc(row.name)}</div><div class="pay-pending">Transfiere después ${esc(formatARS(row.amount))}</div><div class="sub">${row.by.map((item) => `${esc(item.name)}: ${esc(formatARS(item.amount))}`).join(' · ')}</div></div></li>`).join('')}</ul>`
-    : '<p class="empty-wait" id="pending-list">Nadie tiene una transferencia pendiente.</p>';
-  const orgLine = totals.map((item) => {
-    const later = item.pending > 0 ? ` · por transferir ${formatARS(item.pending)}` : '';
-    return `${esc(item.name)}: ${esc(formatARS(item.collected))} · anotó ${item.added}${later}`;
-  }).join(' · ');
-  if (!replaceView(`
-    <h2 class="section">Jugadores</h2>
-    ${rosterSwitch(true)}
-    <h2 class="section">Pagos</h2>
-    <p class="hint roster-lead">Cuánto le pagó cada jugador a cada organizador, y quién lo anotó. Transfiere después no entra en lo cobrado hasta marcarlo.</p>
-    <p class="mine-line" id="mine-stats">${esc(mineSummary(app.players, app.who).text)}</p>
-    <p class="hint" id="org-totals">${orgLine}</p>
-    <p class="hint" id="pending-total">Transfiere después: ${esc(formatARS(pending.total))}</p>
-    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : payFilterChips(null)}
-    ${body}
-    <h2 class="section">Transfiere después</h2>
-    ${pendingBody}`)) return;
-  bindPayFilter();
-  const list = $('#pay-summary');
-  if (list) list.onclick = (e) => {
-    const open = e.target.closest('[data-pay-open]');
-    if (!open) return;
-    app.profileMatchId = null;
-    app.profilePay = true;
-    location.hash = `#/jugador/${encodeURIComponent(open.dataset.payOpen)}`;
   };
 }
 
@@ -3313,7 +3250,7 @@ async function boot() {
     }
     if (r.name === 'profile') {
       if (app.profileMatchId) { location.hash = `#/partido/${encodeURIComponent(app.profileMatchId)}`; return; }
-      location.hash = app.profilePay ? '#/jugadores/pagos' : '#/jugadores';
+      location.hash = '#/jugadores';
       return;
     }
     if (r.name === 'users') { location.hash = hashForTab(savedTab()); return; }

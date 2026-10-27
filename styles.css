@@ -366,8 +366,6 @@ h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
 }
 .ledger-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
 .ledger-list li { font-weight: 700; font-variant-numeric: tabular-nums; }
-.pay-row .who { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-.pay-row .sub { display: block; }
 .roster-lead { margin: 0 16px 10px; color: var(--muted); font-size: 0.875rem; }
 .roster-search { margin: 0 0 12px; }
 .roster-error { border-radius: 12px; margin-bottom: 12px; }
