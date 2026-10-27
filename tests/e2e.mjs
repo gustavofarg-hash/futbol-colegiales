@@ -117,6 +117,7 @@ check('Ajustes no pregunta desde qué WhatsApp', (await page.locator('#wa-choice
 await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
+check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -922,6 +923,25 @@ await page.evaluate(() => window.scrollTo(0, 80));
 await assertStill('La búsqueda de Jugadores se queda quieta');
 await assertRepaintKeeps('La búsqueda de Jugadores conserva el texto y el scroll');
 check('La búsqueda sigue en jose', (await page.inputValue('#roster-q')) === 'jose' && await page.locator('#roster-list .name').count() === 1);
+await page.fill('#roster-q', '');
+const scrollIds = await page.evaluate(async () => {
+  const ids = [];
+  for (let i = 0; i < 28; i++) ids.push(await window.__app.store.addRoster({ name: `Scroll ${String(i).padStart(2, '0')} Jugador`, phone: '' }, window.__app.who));
+  return ids;
+});
+await page.waitForFunction(() => document.querySelectorAll('#roster-list .slot').length >= 20);
+await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+const stickySearch = await page.evaluate(() => {
+  const r = document.querySelector('#roster-q').getBoundingClientRect();
+  const bar = document.querySelector('.topstack').getBoundingClientRect().bottom;
+  return { top: Math.round(r.top), h: Math.round(r.height), bar: Math.round(bar), vh: innerHeight };
+});
+check('La búsqueda de Jugadores sigue visible al bajar',
+  stickySearch.top >= stickySearch.bar - 2 && stickySearch.top < stickySearch.vh - 40 && stickySearch.h >= 30,
+  JSON.stringify(stickySearch));
+await page.evaluate(async (ids) => {
+  for (const id of ids) await window.__app.store.deleteRoster(id);
+}, scrollIds);
 await page.evaluate(() => window.scrollTo(0, 0));
 await page.setViewportSize({ width: 390, height: 844 });
 await page.click('#tab-proximos');
@@ -1083,6 +1103,7 @@ check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-
 
 await page.click('#btn-settings');
 check('Un organizador no administra usuarios', (await page.locator('#set-organizers').count()) === 0 && await page.isVisible('#set-venues'));
+check('Un organizador no ve el backup', (await page.locator('#set-backup, #set-restore, #set-reset-db').count()) === 0);
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
@@ -1572,6 +1593,11 @@ await page.waitForSelector('#team-unassigned');
 check('La lista de espera no entra en los equipos', !(await page.locator('#team-board').innerText()).includes('Equipo Espera') && (await page.locator('#team-unassigned').innerText()).includes('Equipo Ana'));
 const teamsIntro = await page.locator('#view').innerText();
 check('Equipos no repite la ayuda ni el cupo', !teamsIntro.includes('Con los anotados') && !teamsIntro.includes('Tocá la pechera') && (await page.locator('#tanteador').innerText()) === 'TANTEADOR' && (await page.locator('#scoreboard svg').count()) === 2 && (await page.locator('#scoreboard [data-delta="1"]').first().innerText()) === '+' && (await page.locator('#scoreboard [data-delta="-1"]').first().innerText()) === '−' && (await page.locator('#btn-teams-clear').innerText()) === 'Reset');
+const bibFill = await page.locator('#scoreboard .vest-bib path').evaluate((el) => getComputedStyle(el).fill);
+const plainFill = await page.locator('#scoreboard .vest-plain path').evaluate((el) => getComputedStyle(el).fill);
+check('Con pechera es una musculosa naranja', bibFill === 'rgb(255, 106, 0)', bibFill);
+check('Los títulos de equipo llevan la musculosa', (await page.locator('#team-bib h2 .vest-bib').count()) === 1 && (await page.locator('#team-plain h2 .vest-plain').count()) === 1);
+check('Sin pechera es la misma musculosa en contorno', plainFill === 'none' || plainFill === 'rgba(0, 0, 0, 0)', plainFill);
 check('El marcador arranca en cero', (await page.textContent('#score-bib')) === '0' && (await page.textContent('#score-plain')) === '0');
 await page.locator('#scoreboard [data-score="bib"][data-delta="1"]').click();
 await page.locator('#scoreboard [data-score="bib"][data-delta="1"]').click();
@@ -1603,6 +1629,18 @@ const arcoState = await page.evaluate((ids) => {
   return { inGoal: db.players[ids.ana].inGoal, inGoalAt: db.players[ids.ana].inGoalAt, score: db.matches[ids.id].score };
 }, equipos);
 check('Fue al arco queda guardado y no toca el marcador', arcoState.inGoal === true && typeof arcoState.inGoalAt === 'number' && arcoState.score.bib === 0 && arcoState.score.plain === 1, JSON.stringify(arcoState));
+const arcoRow = await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).evaluate((row) => {
+  const name = row.querySelector('.team-name').getBoundingClientRect();
+  const btn = row.querySelector('[data-arco]').getBoundingClientRect();
+  const box = row.getBoundingClientRect();
+  return {
+    rowH: Math.round(box.height),
+    same: Math.abs((name.top + name.height / 2) - (btn.top + btn.height / 2)) < 10,
+    w: Math.round(btn.width),
+    on: row.querySelector('[data-arco]').getAttribute('aria-pressed') === 'true',
+  };
+});
+check('Fue al arco queda a la derecha de la fila', arcoRow.same && arcoRow.rowH <= 56 && arcoRow.w >= 40 && arcoRow.on, JSON.stringify(arcoRow));
 check('Avisa si está desbalanceado', (await page.textContent('#team-balance')).includes('desbalanceado'));
 await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Beto' }).locator('[data-assign="bib"]').click();
 await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Ciro' }).locator('[data-assign="bib"]').click();
@@ -2443,6 +2481,54 @@ await page.waitForSelector('#debt-total');
 const debtText = (await page.locator('#debt').innerText()).replace(/\s+/g, ' ');
 const debtColor = await page.$eval('#debt-total', (el) => getComputedStyle(el).color);
 check('El perfil muestra lo que debe, en rojo', debtText.includes('Debe en total: $11.000') && debtText.includes('18/10/2026 · 20hs · $3.000') && debtText.includes('02/11/2026 · 21hs · $8.000') && !debtText.includes('05/11/2026') && !debtText.includes('04/11/2026') && (debtColor === 'rgb(198, 40, 40)' || debtColor === 'rgb(255, 107, 107)'), `${debtText} ${debtColor}`);
+
+await page.evaluate(() => { location.hash = '#/'; });
+await page.click('#btn-settings');
+await page.waitForSelector('#set-backup');
+await page.click('#set-backup');
+await page.waitForSelector('#backup-download');
+check('Hacer backup ofrece el celular y Drive', (await page.locator('#backup-download').innerText()) === 'Guardar en el celular' && (await page.locator('#backup-drive').innerText()) === 'Guardar en Google Drive');
+const [backupDownload] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('#backup-download'),
+]);
+const backupName = backupDownload.suggestedFilename();
+check('El archivo de backup lleva la fecha local', /^Mis_partidos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.json$/.test(backupName), backupName);
+const { readFileSync } = await import('node:fs');
+const backupJson = JSON.parse(readFileSync(await backupDownload.path(), 'utf8'));
+check('El backup descargado es de Mis Partidos', backupJson.format === 'mis-partidos-backup' && backupJson.collections && typeof backupJson.collections.matches === 'object');
+await page.evaluate(() => {
+  navigator.canShare = () => true;
+  navigator.share = async (payload) => { window.__sharedBackup = payload?.files?.[0]?.name || ''; };
+});
+await page.click('#backup-drive');
+await page.waitForFunction(() => window.__sharedBackup);
+check('Guardar en Drive abre el menú de compartir con el archivo', /^Mis_partidos_/.test(await page.evaluate(() => window.__sharedBackup)));
+await page.evaluate(async () => {
+  await window.__app.store.addMatch({ date: '2026-12-01', time: '21:00', note: 'No debe quedar' }, window.__app.who);
+});
+await page.click('[data-close]');
+await page.click('#btn-settings');
+await page.click('#set-restore');
+await page.waitForSelector('#backup-file');
+await page.setInputFiles('#backup-file', { name: backupName, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backupJson)) });
+await page.waitForSelector('#backup-summary li');
+const summaryText = await page.locator('#backup-summary').innerText();
+check('Cargar backup muestra la fecha y cuántos partidos trae', summaryText.includes('Fecha del backup') && summaryText.includes('Partidos') && (await page.locator('.backup-warn').innerText()).includes('reemplazan'));
+await page.click('#backup-apply');
+await page.waitForFunction(() => !document.querySelector('#sheet')?.open && !window.__app.matches.some((match) => match.note === 'No debe quedar'));
+check('Cargar el backup saca lo que se agregó después', await page.evaluate(() => !window.__app.matches.some((match) => match.note === 'No debe quedar') && window.__app.matches.some((match) => match.note === 'Para equipos' || match.note === 'Ayer' || match.date)));
+await page.click('#btn-settings');
+await page.click('#set-reset-db');
+await page.waitForSelector('#reset-word');
+check('Resetear pide escribir BORRAR y ofrece un backup', (await page.locator('#reset-go-backup').innerText()) === 'Hacer backup' && await page.locator('#reset-apply').isDisabled() && (await page.locator('.backup-warn').innerText()).includes('Conviene hacer un backup'));
+await page.fill('#reset-word', 'nada');
+check('Otra palabra no habilita el borrado', await page.locator('#reset-apply').isDisabled());
+await page.fill('#reset-word', 'BORRAR');
+check('Recién con BORRAR se puede borrar', await page.locator('#reset-apply').isEnabled());
+await page.click('#reset-apply');
+await page.waitForFunction(() => !document.querySelector('#sheet')?.open && window.__app.matches.length === 0);
+check('Resetear deja la base vacía', await page.evaluate(() => window.__app.matches.length === 0 && window.__app.players.length === 0 && window.__app.roster.length === 0));
 
 const fresh = await ctx.newPage();
 fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

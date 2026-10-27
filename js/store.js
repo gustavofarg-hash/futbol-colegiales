@@ -105,6 +105,7 @@ import { canEditPlayer, canEditRoster, editLockedError, playerPatchEditsIdentity
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
+import { BACKUP_COLLECTIONS, buildBackup, parseBackup, plainValue, requireAdmin, reviveValue } from './backup.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
@@ -456,12 +457,33 @@ function countPatch(fs, match, delta, localCount) {
   return { playerCount: fallback };
 }
 
+function actorRecord(user) {
+  const role = user?.role === 'admin' ? 'admin' : (user?.role === 'organizer' ? 'organizer' : '');
+  return { uid: user?.uid || '', name: user?.name || '', role };
+}
+
+function localCollections(db) {
+  return {
+    matches: db.matches || {},
+    players: db.players || {},
+    roster: db.roster || {},
+    venues: db.venues || {},
+    organizers: db.organizers || {},
+    settings: db.settings || {},
+    confirmations: db.confirmations || {},
+    playerContacts: db.contacts?.players || {},
+    rosterContacts: db.contacts?.roster || {},
+    links: db.links || {},
+    users: {},
+  };
+}
+
 /* ───────────── Modo demo (localStorage) ───────────── */
 class LocalStore {
   constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; this._historyFilter = null; this._queryDay = todayISO(); }
   setActor(user) {
-    const next = { uid: user?.uid || '', name: user?.name || '' };
-    if (this.actor?.uid === next.uid && this.actor?.name === next.name) return;
+    const next = actorRecord(user);
+    if (this.actor?.uid === next.uid && this.actor?.name === next.name && this.actor?.role === next.role) return;
     this.actor = next;
     if (this.listeners.size) this._emit();
   }
@@ -980,6 +1002,43 @@ class LocalStore {
     if ('active' in (patch || {})) cur.active = patch.active !== false;
     this._save(db);
   }
+  async exportDatabase(opts = {}) {
+    requireAdmin(this.actor);
+    return buildBackup(localCollections(this._load()), opts.when);
+  }
+  async importDatabase(payload) {
+    requireAdmin(this.actor);
+    const parsed = parseBackup(payload);
+    if (!parsed.ok) throw Object.assign(new Error(parsed.error), { code: 'invalid-backup' });
+    if (Object.keys(parsed.backup.subcollections).length) {
+      throw Object.assign(new Error('Este backup tiene subcolecciones y la demo no las puede guardar.'), { code: 'invalid-backup' });
+    }
+    const db = this._load();
+    const docs = parsed.backup.collections;
+    db.matches = structuredClone(docs.matches);
+    db.players = structuredClone(docs.players);
+    db.roster = structuredClone(docs.roster);
+    db.venues = structuredClone(docs.venues);
+    db.organizers = structuredClone(docs.organizers);
+    db.settings = structuredClone(docs.settings);
+    db.confirmations = structuredClone(docs.confirmations);
+    db.links = structuredClone(docs.links);
+    ensureContacts(db);
+    db.contacts.players = structuredClone(docs.playerContacts);
+    db.contacts.roster = structuredClone(docs.rosterContacts);
+    this._save(db);
+    return parsed.summary;
+  }
+  async resetDatabase() {
+    requireAdmin(this.actor);
+    const db = {
+      matches: {}, players: {}, roster: {}, organizers: {}, venues: {},
+      confirmations: {}, settings: {}, links: {},
+      contacts: { players: {}, roster: {} },
+    };
+    localStorage.setItem(this.key, JSON.stringify(db));
+    this._emit();
+  }
   async clearAll() {
     localStorage.removeItem(this.key);
     const db = this._load();
@@ -1045,10 +1104,71 @@ class FirebaseStore {
     }
   }
   setActor(user) {
-    const next = { uid: user?.uid || '', name: user?.name || '' };
-    if (this.actor?.uid === next.uid && this.actor?.name === next.name) return;
+    const next = actorRecord(user);
+    if (this.actor?.uid === next.uid && this.actor?.name === next.name && this.actor?.role === next.role) return;
     this.actor = next;
     if (this.fs) this._listen();
+  }
+  async exportDatabase(opts = {}) {
+    requireAdmin(this.actor);
+    const collections = {};
+    for (const name of BACKUP_COLLECTIONS) collections[name] = await this._readCollection(name);
+    return buildBackup(collections, opts.when);
+  }
+  async importDatabase(payload) {
+    requireAdmin(this.actor);
+    const parsed = parseBackup(payload);
+    if (!parsed.ok) throw Object.assign(new Error(parsed.error), { code: 'invalid-backup' });
+    const Timestamp = this.fs.Timestamp;
+    const keepUser = this.actor?.uid || '';
+    const ops = [];
+    for (const name of BACKUP_COLLECTIONS) {
+      const current = await this._readCollection(name);
+      const next = parsed.backup.collections[name] || {};
+      for (const id of Object.keys(current)) {
+        if (name === 'users' && id === keepUser) continue;
+        if (!Object.prototype.hasOwnProperty.call(next, id)) ops.push({ kind: 'delete', segments: [name, id] });
+      }
+      for (const [id, data] of Object.entries(next)) {
+        if (name === 'users' && id === keepUser) continue;
+        ops.push({ kind: 'set', segments: [name, id], data: reviveValue(data, Timestamp) });
+      }
+    }
+    for (const [path, data] of Object.entries(parsed.backup.subcollections || {})) {
+      ops.push({ kind: 'set', segments: path.split('/'), data: reviveValue(data, Timestamp) });
+    }
+    await this._commitOps(ops);
+    return parsed.summary;
+  }
+  async resetDatabase() {
+    requireAdmin(this.actor);
+    const ops = [];
+    for (const name of BACKUP_COLLECTIONS) {
+      if (name === 'users') continue;
+      const current = await this._readCollection(name);
+      for (const id of Object.keys(current)) ops.push({ kind: 'delete', segments: [name, id] });
+    }
+    await this._commitOps(ops);
+  }
+  async _commitOps(ops) {
+    const { writeBatch, doc } = this.fs;
+    const size = 400;
+    for (let i = 0; i < ops.length; i += size) {
+      const batch = writeBatch(this.db);
+      for (const op of ops.slice(i, i + size)) {
+        const ref = doc(this.db, ...op.segments);
+        if (op.kind === 'delete') batch.delete(ref);
+        else batch.set(ref, op.data);
+      }
+      await batch.commit();
+    }
+  }
+  async _readCollection(name) {
+    const { collection, getDocs } = this.fs;
+    const snap = await getDocs(collection(this.db, name));
+    const out = {};
+    snap.forEach((item) => { out[item.id] = plainValue(item.data()); });
+    return out;
   }
   async init(onError) {
     const ready = await initFirebase();

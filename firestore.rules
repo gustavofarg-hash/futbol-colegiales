@@ -8,8 +8,10 @@ rules_version = '2';
 // admin (con las reglas viejas todavía publicadas, o con estas: el alta del
 // admin sigue permitida) y recién ahí publicar. Publicar esto no borra datos.
 //
-// La única diferencia de rol en users: el admin crea, desactiva y borra
-// organizadores. Nadie cambia el rol. En partidos no hay excepción de admin.
+// La única diferencia de rol en la app: el admin crea, desactiva y borra
+// organizadores. Nadie cambia el rol desde la pantalla de un partido.
+// Para backup, carga y reset, el admin activo sí puede leer y escribir
+// cualquier documento, incluidas subcolecciones. Un organizador no.
 // Sin viewers, o con `*`, lo ven todos los activos. Con una lista de uids,
 // solo esas cuentas (y el creador) lo leen. Quien no está en adders lo ve
 // y no anota. Sin sesión no hay escrituras, salvo confirmed/confirmedAt
@@ -675,6 +677,12 @@ service cloud.firestore {
           && request.resource.data.t == resource.data.t
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shortUrl', 'shortProvider', 'shortAt']);
       allow delete: if isActiveStaff();
+    }
+
+    // Backup, carga y reset. isAdmin() exige cuenta activa con role == admin.
+    // Un organizador no entra: sigue sin ver un Solo yo ajeno ni un teléfono privado.
+    match /{document=**} {
+      allow read, write: if isAdmin();
     }
 
     match /{document=**} {

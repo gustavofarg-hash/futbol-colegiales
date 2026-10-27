@@ -28,6 +28,7 @@ import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } f
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
+import { BACKUP_COLLECTIONS, COLLECTION_LABELS, backupFilename, parseBackup } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -516,8 +517,9 @@ function renderTeams(id) {
   const readOnly = !canAdd(m, actor().uid);
   const byId = new Map(main.map((p) => [p.id, p]));
   const slots = perTeamOf(m);
-  const vest = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4 4 7v3l3-1v11h10V9l3 1V7l-4-3-2 3h-4Z" fill="currentColor" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>';
-  const shirt = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4 4 7v3l3-1v11h10V9l3 1V7l-4-3-2 3h-4Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  const vestPath = 'M8.1 3.1h7.8l1.15 2.35c.45.9 1.35 1.55 2.35 1.85l1.1.35v2.15h-2.15c-.15.85-.25 1.7-.25 2.35V20.7H6.9V12.15c0-.65-.1-1.5-.25-2.35H4.5V7.65l1.1-.35c1-.3 1.9-.95 2.35-1.85L8.1 3.1z';
+  const vest = `<svg class="vest vest-bib" viewBox="0 0 24 24" aria-hidden="true"><path d="${vestPath}"/></svg>`;
+  const shirt = `<svg class="vest vest-plain" viewBox="0 0 24 24" aria-hidden="true"><path d="${vestPath}"/></svg>`;
   const slotRows = (side, list) => {
     const count = Math.max(slots, list.length);
     const rows = [];
@@ -534,13 +536,18 @@ function renderTeams(id) {
       const goalBox = readOnly
         ? `<span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span>`
         : `<span class="goal-box"><button type="button" data-goal="-1" aria-label="Restar un gol de ${esc(player.name)}">−</button><span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span><button type="button" data-goal="1" aria-label="Sumar un gol de ${esc(player.name)}">+</button></span>`;
+      const goalMark = player.inGoal === true
+        ? '<span class="arco-tick" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#0f7a3d"/><path d="M4.6 8.2 7 10.6 11.6 5.4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
+        : '';
+      const goalIco = '<svg class="goal-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 18.5V6.2h17v12.3"/><path d="M3.5 10.2h17M7.4 6.2v4M12 6.2v4M16.6 6.2v4"/></svg>';
       const arco = readOnly
-        ? (player.inGoal === true ? `<span class="arco-done">Fue al arco</span>` : '')
-        : `<label class="arco"><input type="checkbox" data-arco ${player.inGoal === true ? 'checked' : ''}><span>Fue al arco</span></label>`;
+        ? (player.inGoal === true ? `<span class="arco-mark on" aria-label="Fue al arco">${goalIco}${goalMark}</span>` : '')
+        : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
       const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
+      const controls = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
       rows.push(readOnly
-        ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${arco}</li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${tools}${arco}</li>`);
+        ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span><span class="team-side">${goalBox}${arco}</span></li>`
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${controls}</li>`);
     }
     return rows.join('');
   };
@@ -575,12 +582,12 @@ function renderTeams(id) {
       ${main.length ? '' : '<p class="empty-wait">No hay jugadores anotados.</p>'}
       <div class="team-columns">
         <section id="team-bib" data-drop-side="bib">
-          <h2 class="section team-heading">${teamHeading('bib', 'CON PECHERA', balance.bib)}</h2>
+          <h2 class="section team-heading">${vest}${teamHeading('bib', 'CON PECHERA', balance.bib)}</h2>
           <p class="arco-left" id="arco-bib">Faltan ir al arco: ${goaliesLeft(teams.bib, teams.bib.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('bib', teams.bib)}</ul>
         </section>
         <section id="team-plain" data-drop-side="plain">
-          <h2 class="section team-heading">${teamHeading('plain', 'SIN PECHERA', balance.plain)}</h2>
+          <h2 class="section team-heading">${shirt}${teamHeading('plain', 'SIN PECHERA', balance.plain)}</h2>
           <p class="arco-left" id="arco-plain">Faltan ir al arco: ${goaliesLeft(teams.plain, teams.plain.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('plain', teams.plain)}</ul>
         </section>
@@ -618,9 +625,9 @@ function renderTeams(id) {
         run(app.store.adjustGoals(row.dataset.dragPlayer, Number(goal.dataset.goal)));
         return;
       }
-      const arco = e.target.closest('.arco');
+      const arco = e.target.closest('[data-arco]');
       if (arco && row) {
-        run(app.store.setInGoal(row.dataset.dragPlayer, !!arco.querySelector('[data-arco]')?.checked));
+        run(app.store.setInGoal(row.dataset.dragPlayer, arco.getAttribute('aria-pressed') !== 'true'));
         return;
       }
       const btn = e.target.closest('[data-assign]');
@@ -1427,6 +1434,12 @@ function openSettings() {
       <button type="button" class="btn" id="set-venues">Sedes</button>
       ${app.role === 'admin' ? '<a class="btn" id="set-organizers" href="#/usuarios">Organizadores</a>' : ''}
     </div>
+    ${app.role === 'admin' ? `<div class="menu" id="set-db">
+      <p class="hint">Base de datos</p>
+      <button type="button" class="btn" id="set-backup">Hacer backup</button>
+      <button type="button" class="btn" id="set-restore">Cargar base de datos desde un backup</button>
+      <button type="button" class="btn danger" id="set-reset-db">Resetear base de datos</button>
+    </div>` : ''}
     <div class="menu">
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -1453,6 +1466,12 @@ function openSettings() {
   if (venuesBtn) venuesBtn.onclick = () => openVenues();
   const shareAppBtn = $('#set-share-app');
   if (shareAppBtn) shareAppBtn.onclick = () => { void shareApp(); };
+  const backupBtn = $('#set-backup');
+  if (backupBtn) backupBtn.onclick = () => openBackup();
+  const restoreBtn = $('#set-restore');
+  if (restoreBtn) restoreBtn.onclick = () => openRestore();
+  const resetDbBtn = $('#set-reset-db');
+  if (resetDbBtn) resetDbBtn.onclick = () => openResetDb();
   const users = $('#set-organizers');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
@@ -1470,6 +1489,155 @@ function openSettings() {
   $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
   const mine = $('#set-mine');
   if (mine) mine.onchange = () => { app.mine = mine.checked; render(); };
+}
+
+function saveBackupFile(filename, text) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+async function shareBackupFile(filename, text) {
+  const file = new File([text], filename, { type: 'application/json' });
+  const payload = { files: [file], title: 'Backup de Mis Partidos' };
+  const can = typeof navigator.share === 'function' && (typeof navigator.canShare !== 'function' || navigator.canShare(payload));
+  if (can) {
+    try {
+      await navigator.share(payload);
+      return 'shared';
+    } catch (error) {
+      if (error?.name === 'AbortError') return 'cancelled';
+    }
+  }
+  saveBackupFile(filename, text);
+  return 'downloaded';
+}
+
+async function currentBackupFile() {
+  const when = new Date();
+  const backup = await app.store.exportDatabase({ when });
+  return { filename: backupFilename(when), text: JSON.stringify(backup, null, 2) };
+}
+
+function openResetDb() {
+  if (app.role !== 'admin') return;
+  openSheet(`
+    <h3>Resetear base de datos</h3>
+    <p class="backup-warn">Se borra todo lo cargado: partidos, jugadores, plantel, pagos, sedes, precios, teléfonos y links. Las cuentas para entrar quedan. Conviene hacer un backup antes.</p>
+    <p class="hint">Si después no hay sedes, al abrir de nuevo vuelve Polideportivo Colegiales.</p>
+    <div class="menu">
+      <button type="button" class="btn" id="reset-go-backup">Hacer backup</button>
+    </div>
+    <label class="field"><span>Escribí BORRAR para confirmar</span><input id="reset-word" autocomplete="off" autocapitalize="characters"></label>
+    <p class="err" id="reset-err"></p>
+    <div class="menu">
+      <button type="button" class="btn danger" id="reset-apply" disabled>Borrar todo</button>
+      <button type="button" class="btn ghost" data-close>Cerrar</button>
+    </div>`);
+  const word = $('#reset-word');
+  const apply = $('#reset-apply');
+  word.oninput = () => { apply.disabled = word.value.trim() !== 'BORRAR'; };
+  $('#reset-go-backup').onclick = () => openBackup();
+  apply.onclick = () => {
+    if (word.value.trim() !== 'BORRAR') return;
+    apply.disabled = true;
+    app.store.resetDatabase().then(() => {
+      closeSheet();
+      toast('Base de datos vacía');
+    }).catch((error) => {
+      apply.disabled = false;
+      const msg = error?.message || 'No se pudo borrar.';
+      $('#reset-err').textContent = msg;
+      toast(msg);
+    });
+  };
+}
+
+function backupSummaryHtml(summary) {
+  const rows = BACKUP_COLLECTIONS.map((name) => `<li><span>${esc(COLLECTION_LABELS[name])}</span><b>${summary.counts[name]}</b></li>`).join('');
+  const sub = summary.subcollections ? `<li><span>Subcolecciones</span><b>${summary.subcollections}</b></li>` : '';
+  return `<p class="hint">Fecha del backup: ${esc(summary.exportedAt)}</p><ul class="backup-summary">${rows}${sub}</ul>`;
+}
+
+function openRestore() {
+  if (app.role !== 'admin') return;
+  let parsed = null;
+  openSheet(`
+    <h3>Cargar base de datos desde un backup</h3>
+    <p class="backup-warn">Los datos de ahora se reemplazan por los del archivo. No se puede deshacer.</p>
+    <label class="field"><span>Archivo JSON</span><input id="backup-file" type="file" accept="application/json,.json"></label>
+    <div id="backup-summary"></div>
+    <p class="err" id="backup-err"></p>
+    <div class="menu">
+      <button type="button" class="btn danger" id="backup-apply" disabled>Reemplazar los datos actuales</button>
+      <button type="button" class="btn ghost" data-close>Cerrar</button>
+    </div>`);
+  const fileInput = $('#backup-file');
+  const apply = $('#backup-apply');
+  fileInput.onchange = () => {
+    const file = fileInput.files?.[0];
+    parsed = null;
+    apply.disabled = true;
+    $('#backup-summary').innerHTML = '';
+    $('#backup-err').textContent = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = parseBackup(String(reader.result || ''));
+      if (!result.ok) { $('#backup-err').textContent = result.error; return; }
+      parsed = result;
+      $('#backup-summary').innerHTML = backupSummaryHtml(result.summary);
+      apply.disabled = false;
+    };
+    reader.onerror = () => { $('#backup-err').textContent = 'No se pudo leer el archivo.'; };
+    reader.readAsText(file);
+  };
+  apply.onclick = () => {
+    if (!parsed?.ok) return;
+    apply.disabled = true;
+    const payload = parsed.backup;
+    app.store.importDatabase(payload).then(() => {
+      closeSheet();
+      toast('Base cargada desde el backup');
+    }).catch((error) => {
+      apply.disabled = false;
+      const msg = error?.message || 'No se pudo cargar el backup.';
+      $('#backup-err').textContent = msg;
+      toast(msg);
+    });
+  };
+}
+
+function openBackup() {
+  if (app.role !== 'admin') return;
+  openSheet(`
+    <h3>Hacer backup</h3>
+    <p class="hint">Un archivo JSON con partidos, jugadores, plantel, pagos, sedes, precios, confirmaciones y teléfonos.</p>
+    <div class="menu">
+      <button type="button" class="btn primary" id="backup-download">Guardar en el celular</button>
+      <button type="button" class="btn" id="backup-drive">Guardar en Google Drive</button>
+      <button type="button" class="btn ghost" data-close>Cerrar</button>
+    </div>
+    <p class="hint">Drive abre el menú del teléfono para elegir dónde guardarlo. Si ese menú no está, se descarga el archivo.</p>`);
+  $('#backup-download').onclick = () => {
+    run(currentBackupFile().then(({ filename, text }) => {
+      saveBackupFile(filename, text);
+      toast('Backup guardado en el celular');
+    }));
+  };
+  $('#backup-drive').onclick = () => {
+    run(currentBackupFile().then(async ({ filename, text }) => {
+      const how = await shareBackupFile(filename, text);
+      if (how === 'shared') toast('Elegí Drive en el menú para guardarlo');
+      else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo');
+    }));
+  };
 }
 
 function accessEditor(m) {
