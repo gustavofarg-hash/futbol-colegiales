@@ -581,12 +581,12 @@ function renderTeams(id) {
       ${main.length ? '' : '<p class="empty-wait">No hay jugadores anotados.</p>'}
       <div class="team-columns">
         <section id="team-bib" data-drop-side="bib">
-          <h2 class="section team-heading">${teamHeading('bib', 'CON PECHERA', balance.bib)}</h2>
+          <h2 class="section team-heading">${vest}${teamHeading('bib', 'CON PECHERA', balance.bib)}</h2>
           <p class="arco-left" id="arco-bib">Faltan ir al arco: ${goaliesLeft(teams.bib, teams.bib.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('bib', teams.bib)}</ul>
         </section>
         <section id="team-plain" data-drop-side="plain">
-          <h2 class="section team-heading">${teamHeading('plain', 'SIN PECHERA', balance.plain)}</h2>
+          <h2 class="section team-heading">${shirt}${teamHeading('plain', 'SIN PECHERA', balance.plain)}</h2>
           <p class="arco-left" id="arco-plain">Faltan ir al arco: ${goaliesLeft(teams.plain, teams.plain.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('plain', teams.plain)}</ul>
         </section>

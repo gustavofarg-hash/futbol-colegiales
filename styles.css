@@ -343,7 +343,8 @@ button.team-player { color: inherit; cursor: pointer; }
 .team-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-actions .btn { min-width: 0; white-space: normal; text-align: center; line-height: 1.15; }
 .team-actions a { grid-column: 1 / -1; }
-h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
+h2.section.team-heading { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: .02em; }
+h2.section.team-heading .vest { width: 20px; height: 20px; flex: none; }
 .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-columns section, .team-row, .team-slot { min-width: 0; }
 .team-row {
