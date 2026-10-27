@@ -2516,7 +2516,7 @@ await page.waitForSelector('#backup-summary li');
 const summaryText = await page.locator('#backup-summary').innerText();
 check('Cargar backup muestra la fecha y cuántos partidos trae', summaryText.includes('Fecha del backup') && summaryText.includes('Partidos') && (await page.locator('.backup-warn').innerText()).includes('reemplazan'));
 await page.click('#backup-apply');
-await page.waitForFunction(() => !document.querySelector('#backup-apply'));
+await page.waitForFunction(() => !document.querySelector('#sheet')?.open && !window.__app.matches.some((match) => match.note === 'No debe quedar'));
 check('Cargar el backup saca lo que se agregó después', await page.evaluate(() => !window.__app.matches.some((match) => match.note === 'No debe quedar') && window.__app.matches.some((match) => match.note === 'Para equipos' || match.note === 'Ayer' || match.date)));
 await page.click('#btn-settings');
 await page.click('#set-reset-db');
@@ -2527,7 +2527,7 @@ check('Otra palabra no habilita el borrado', await page.locator('#reset-apply').
 await page.fill('#reset-word', 'BORRAR');
 check('Recién con BORRAR se puede borrar', await page.locator('#reset-apply').isEnabled());
 await page.click('#reset-apply');
-await page.waitForFunction(() => !document.querySelector('#reset-apply'));
+await page.waitForFunction(() => !document.querySelector('#sheet')?.open && window.__app.matches.length === 0);
 check('Resetear deja la base vacía', await page.evaluate(() => window.__app.matches.length === 0 && window.__app.players.length === 0 && window.__app.roster.length === 0));
 
 const fresh = await ctx.newPage();
