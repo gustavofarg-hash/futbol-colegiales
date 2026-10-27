@@ -13,7 +13,7 @@ import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummar
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { addDays, toEpoch } from '../js/dates.js';
+import { addDays, shortHour, toEpoch } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -34,6 +34,14 @@ import {
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
 const dt = (r) => r.map((x) => `${x.date} ${x.time}`);
+
+test('hora corta de la lista', () => {
+  assert.equal(shortHour('20:00'), '20hs');
+  assert.equal(shortHour('09:00'), '9hs');
+  assert.equal(shortHour('19:30'), '19:30hs');
+  assert.equal(shortHour(''), '');
+  assert.equal(shortHour('25:00'), '');
+});
 
 test('jueves 22/10 21hs', () => assert.deepEqual(dt(p('jueves 22/10 21hs', { now })), ['2026-10-22 21:00']));
 test('miércoles 20:00', () => assert.deepEqual(dt(p('Miércoles 20:00', { now })), ['2026-10-21 20:00']));

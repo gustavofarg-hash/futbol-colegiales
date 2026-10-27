@@ -43,6 +43,15 @@ export function diffDays(isoA, isoB) {
   return Math.round((Date.parse(isoB + 'T00:00:00Z') - Date.parse(isoA + 'T00:00:00Z')) / 86400000);
 }
 
+/** "20hs" si es en punto, "19:30hs" si no. Vacío sin hora válida. */
+export function shortHour(time) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(time || '').trim());
+  if (!match) return '';
+  const hour = String(Number(match[1]));
+  if (Number(match[1]) > 23 || Number(match[2]) > 59) return '';
+  return match[2] === '00' ? `${hour}hs` : `${hour}:${match[2]}hs`;
+}
+
 /** "jueves 22/10" */
 export function labelDate(iso) {
   const [, m, d] = iso.split('-').map(Number);

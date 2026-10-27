@@ -3,7 +3,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
@@ -458,15 +458,15 @@ function matchCard(m) {
   const cap = capOf(m);
   const [, mo, d] = m.date.split('-').map(Number);
   const rel = relativeLabel(m.date);
+  const hour = shortHour(m.time) || '--:--';
+  const price = formatARS(priceOfMatch(m, livePrices()));
   return `
-  <li><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}">
+  <li><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}">
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
-      <div class="match-title">${esc(capitalize(labelDate(m.date)))}</div>
-      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(m.time || '--:--')} hs</span></div>
+      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(hour)} (${esc(price)})</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
-      ${m.score ? `<div class="match-note" data-score>${esc(scoreLine(m.score))}</div>` : ''}
       ${waitingOf(m.id).length ? `<div class="match-note">${waitingOf(m.id).length} en espera</div>` : ''}
     </div>
     <div class="count ${n >= cap ? 'full' : ''}" aria-label="${n} de ${cap} anotados">
