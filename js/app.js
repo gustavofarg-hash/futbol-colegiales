@@ -490,7 +490,6 @@ function renderHome() {
       <p class="small">${emptyHint}</p></div>`}
     ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
     ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
-    <p class="footer-note">${esc(VENUE)} · Fútbol 7 contra 7</p>
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn" id="btn-import">${ICON.paste}Importar desde texto</button>
       <button class="btn primary" id="btn-add-match">${ICON.plus}Agregar partido</button>
