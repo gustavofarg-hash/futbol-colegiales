@@ -28,6 +28,7 @@ import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } f
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
+import { backupFilename } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -1433,6 +1434,10 @@ function openSettings() {
       <button type="button" class="btn" id="set-venues">Sedes</button>
       ${app.role === 'admin' ? '<a class="btn" id="set-organizers" href="#/usuarios">Organizadores</a>' : ''}
     </div>
+    ${app.role === 'admin' ? `<div class="menu" id="set-db">
+      <p class="hint">Base de datos</p>
+      <button type="button" class="btn" id="set-backup">Hacer backup</button>
+    </div>` : ''}
     <div class="menu">
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -1459,6 +1464,8 @@ function openSettings() {
   if (venuesBtn) venuesBtn.onclick = () => openVenues();
   const shareAppBtn = $('#set-share-app');
   if (shareAppBtn) shareAppBtn.onclick = () => { void shareApp(); };
+  const backupBtn = $('#set-backup');
+  if (backupBtn) backupBtn.onclick = () => openBackup();
   const users = $('#set-organizers');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
@@ -1476,6 +1483,66 @@ function openSettings() {
   $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
   const mine = $('#set-mine');
   if (mine) mine.onchange = () => { app.mine = mine.checked; render(); };
+}
+
+function saveBackupFile(filename, text) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+async function shareBackupFile(filename, text) {
+  const file = new File([text], filename, { type: 'application/json' });
+  const payload = { files: [file], title: 'Backup de Mis Partidos' };
+  const can = typeof navigator.share === 'function' && (typeof navigator.canShare !== 'function' || navigator.canShare(payload));
+  if (can) {
+    try {
+      await navigator.share(payload);
+      return 'shared';
+    } catch (error) {
+      if (error?.name === 'AbortError') return 'cancelled';
+    }
+  }
+  saveBackupFile(filename, text);
+  return 'downloaded';
+}
+
+async function currentBackupFile() {
+  const when = new Date();
+  const backup = await app.store.exportDatabase({ when });
+  return { filename: backupFilename(when), text: JSON.stringify(backup, null, 2) };
+}
+
+function openBackup() {
+  if (app.role !== 'admin') return;
+  openSheet(`
+    <h3>Hacer backup</h3>
+    <p class="hint">Un archivo JSON con partidos, jugadores, plantel, pagos, sedes, precios, confirmaciones y teléfonos.</p>
+    <div class="menu">
+      <button type="button" class="btn primary" id="backup-download">Guardar en el celular</button>
+      <button type="button" class="btn" id="backup-drive">Guardar en Google Drive</button>
+      <button type="button" class="btn ghost" data-close>Cerrar</button>
+    </div>
+    <p class="hint">Drive abre el menú del teléfono para elegir dónde guardarlo. Si ese menú no está, se descarga el archivo.</p>`);
+  $('#backup-download').onclick = () => {
+    run(currentBackupFile().then(({ filename, text }) => {
+      saveBackupFile(filename, text);
+      toast('Backup guardado en el celular');
+    }));
+  };
+  $('#backup-drive').onclick = () => {
+    run(currentBackupFile().then(async ({ filename, text }) => {
+      const how = await shareBackupFile(filename, text);
+      if (how === 'shared') toast('Elegí Drive en el menú para guardarlo');
+      else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo');
+    }));
+  };
 }
 
 function accessEditor(m) {

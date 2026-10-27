@@ -117,6 +117,7 @@ check('Ajustes no pregunta desde qué WhatsApp', (await page.locator('#wa-choice
 await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
+check('El admin ve hacer backup', await page.isVisible('#set-backup'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -1102,6 +1103,7 @@ check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-
 
 await page.click('#btn-settings');
 check('Un organizador no administra usuarios', (await page.locator('#set-organizers').count()) === 0 && await page.isVisible('#set-venues'));
+check('Un organizador no ve el backup', (await page.locator('#set-backup').count()) === 0);
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
@@ -2479,6 +2481,29 @@ await page.waitForSelector('#debt-total');
 const debtText = (await page.locator('#debt').innerText()).replace(/\s+/g, ' ');
 const debtColor = await page.$eval('#debt-total', (el) => getComputedStyle(el).color);
 check('El perfil muestra lo que debe, en rojo', debtText.includes('Debe en total: $11.000') && debtText.includes('18/10/2026 · 20hs · $3.000') && debtText.includes('02/11/2026 · 21hs · $8.000') && !debtText.includes('05/11/2026') && !debtText.includes('04/11/2026') && (debtColor === 'rgb(198, 40, 40)' || debtColor === 'rgb(255, 107, 107)'), `${debtText} ${debtColor}`);
+
+await page.evaluate(() => { location.hash = '#/'; });
+await page.click('#btn-settings');
+await page.waitForSelector('#set-backup');
+await page.click('#set-backup');
+await page.waitForSelector('#backup-download');
+check('Hacer backup ofrece el celular y Drive', (await page.locator('#backup-download').innerText()) === 'Guardar en el celular' && (await page.locator('#backup-drive').innerText()) === 'Guardar en Google Drive');
+const [backupDownload] = await Promise.all([
+  page.waitForEvent('download'),
+  page.click('#backup-download'),
+]);
+const backupName = backupDownload.suggestedFilename();
+check('El archivo de backup lleva la fecha local', /^Mis_partidos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.json$/.test(backupName), backupName);
+const { readFileSync } = await import('node:fs');
+const backupJson = JSON.parse(readFileSync(await backupDownload.path(), 'utf8'));
+check('El backup descargado es de Mis Partidos', backupJson.format === 'mis-partidos-backup' && backupJson.collections && typeof backupJson.collections.matches === 'object');
+await page.evaluate(() => {
+  navigator.canShare = () => true;
+  navigator.share = async (payload) => { window.__sharedBackup = payload?.files?.[0]?.name || ''; };
+});
+await page.click('#backup-drive');
+await page.waitForFunction(() => window.__sharedBackup);
+check('Guardar en Drive abre el menú de compartir con el archivo', /^Mis_partidos_/.test(await page.evaluate(() => window.__sharedBackup)));
 
 const fresh = await ctx.newPage();
 fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

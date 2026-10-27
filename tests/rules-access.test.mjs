@@ -5,13 +5,13 @@ import { readFileSync } from 'node:fs';
 
 const MATCH = '2026-11-04_1800';
 
-test('solo yo: el admin no ve el partido de otro ni anota', async (t) => {
+test('backup: el admin lee un Solo yo ajeno y otro organizador no', async (t) => {
   if (!process.env.FIRESTORE_EMULATOR_HOST) {
     t.skip('sin emulador de Firestore');
     return;
   }
   const { initializeTestEnvironment, assertFails, assertSucceeds } = await import('@firebase/rules-unit-testing');
-  const { doc, getDoc, setDoc, updateDoc, getDocs, query, collection, where } = await import('firebase/firestore');
+  const { doc, getDoc, setDoc, getDocs, query, collection, where } = await import('firebase/firestore');
 
   const host = process.env.FIRESTORE_EMULATOR_HOST;
   const [hostname, portRaw] = host.split(':');
@@ -53,21 +53,28 @@ test('solo yo: el admin no ve el partido de otro ni anota', async (t) => {
       viewers: ['org-uid'],
     }));
 
-    const adminDb = admin.firestore();
-    await assertFails(getDoc(doc(adminDb, 'matches', MATCH)));
-    await assertFails(getDoc(doc(adminDb, 'players', 'privado')));
-    await assertFails(setDoc(doc(adminDb, 'players', 'intruso'), {
-      matchId: MATCH, matchDate: '2026-11-04', name: 'Intruso', phone: '',
-      addedBy: 'Gustavo', addedByUid: 'admin-uid', createdAt: 2, updatedAt: 2,
-      viewers: ['org-uid'], adders: ['org-uid'],
+    await assertSucceeds(setDoc(doc(admin.firestore(), 'users', 'other-uid'), {
+      role: 'organizer', name: 'Otro', email: 'otro@demo.local', active: true, createdAt: 1,
     }));
-    await assertFails(updateDoc(doc(adminDb, 'matches', MATCH), { note: 'no' }));
-    const hidden = await getDocs(query(collection(adminDb, 'matches'), where('viewers', 'array-contains-any', ['admin-uid', '*'])));
-    assert.equal(hidden.docs.some((item) => item.id === MATCH), false);
+    await assertSucceeds(setDoc(doc(org.firestore(), 'playerContacts', 'privado'), {
+      phone: '5491111111111', ownerUid: 'org-uid', visibleToAll: false,
+      phoneKey: 'a'.repeat(64), viewers: ['org-uid'],
+    }));
+    const stranger = testEnv.authenticatedContext('other-uid', { email: 'otro@demo.local' });
+    const adminDb = admin.firestore();
+    await assertSucceeds(getDoc(doc(adminDb, 'matches', MATCH)));
+    await assertSucceeds(getDoc(doc(adminDb, 'players', 'privado')));
+    await assertSucceeds(getDoc(doc(adminDb, 'playerContacts', 'privado')));
+    await assertFails(getDoc(doc(stranger.firestore(), 'matches', MATCH)));
+    await assertFails(getDoc(doc(stranger.firestore(), 'players', 'privado')));
+    await assertFails(getDoc(doc(stranger.firestore(), 'playerContacts', 'privado')));
+    const all = await getDocs(collection(adminDb, 'matches'));
+    assert.equal(all.docs.some((item) => item.id === MATCH), true);
+    await assertFails(getDocs(collection(stranger.firestore(), 'matches')));
     const listed = await getDocs(query(collection(org.firestore(), 'matches'), where('viewers', 'array-contains-any', ['org-uid', '*'])));
     assert.equal(listed.docs.some((item) => item.id === MATCH), true);
-    const adminList = await getDocs(query(collection(adminDb, 'confirmations'), where('viewers', 'array-contains-any', ['admin-uid', '*'])));
-    assert.equal(adminList.docs.some((item) => item.id === 'token-privado-1234567890'), false);
+    const adminCards = await getDocs(collection(adminDb, 'confirmations'));
+    assert.equal(adminCards.docs.some((item) => item.id === 'token-privado-1234567890'), true);
 
     await assertSucceeds(setDoc(doc(org.firestore(), 'matches', 'viejo'), {
       date: '2026-11-05', time: '19:00', note: '',

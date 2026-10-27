@@ -30,6 +30,7 @@ import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
+import { backupFilename, buildBackup, parseBackup } from '../js/backup.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -2059,4 +2060,32 @@ test('se anotó con queda en el jugador y se puede cambiar sin tocar el nombre',
   const guest = JSON.parse(mem.get(store.key)).players[amigo];
   assert.equal(guest.signedUpWith, 'gustavo');
   assert.equal(guest.signedUpWithName, 'Gustavo');
+});
+
+test('el backup se nombra con la hora de Buenos Aires y solo lo exporta el admin', async () => {
+  const when = new Date('2026-10-27T18:05:30Z');
+  assert.equal(backupFilename(when), 'Mis_partidos_2026-10-27_15-05.json');
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-backup';
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await assert.rejects(() => store.exportDatabase(), (error) => error.code === 'admin-only');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addMatch({ date: '2026-11-02', time: '21:00', note: 'Backup' }, 'Gustavo');
+  const backup = await store.exportDatabase({ when });
+  assert.equal(backup.format, 'mis-partidos-backup');
+  assert.equal(backup.version, 1);
+  assert.equal(backup.exportedAt, '2026-10-27T15:05:30-03:00');
+  assert.equal(backup.collections.matches[id].note, 'Backup');
+  assert.equal(backup.collections.users && typeof backup.collections.users, 'object');
+  const parsed = parseBackup(JSON.stringify(backup));
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.summary.counts.matches, 1);
+  const built = buildBackup({ matches: { a: { date: '2026-11-02' } } }, when);
+  assert.deepEqual(parseBackup(built).backup.collections.matches, built.collections.matches);
 });
