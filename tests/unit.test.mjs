@@ -24,7 +24,7 @@ import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, indexFromStored, readTextSize, stepTextSize, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
-import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, nextInGoalAt, normalizeScore, normalizeTeams, orderByGoal, orderTeamsByGoal, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import { APP_INSTALL_URL, appShareMessage } from '../js/share.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
@@ -1608,6 +1608,82 @@ test('equipos equilibrados por nivel y cambio de lugar', () => {
   assert.deepEqual(dropPlayerOn({ bib: ['a', 'b', 'c'], plain: [] }, 'a', { targetId: 'c', allowedIds: ['a', 'b', 'c'] }).teams.bib, ['c', 'b', 'a']);
   assert.deepEqual(dropPlayerOn({ bib: ['a'], plain: [] }, 'x', { side: 'plain', allowedIds: ['a', 'x'], cap: 2 }).teams, { bib: ['a'], plain: ['x'] });
   assert.equal(dropPlayerOn({ bib: ['a'], plain: [] }, 'x', { side: 'bib', allowedIds: ['a', 'x'], cap: 1 }).ok, false);
+});
+
+test('fue al arco sube arriba en el orden en que se marcó y el cambio de lugar sigue', async () => {
+  assert.deepEqual(orderByGoal(['a', 'b', 'c', 'd'], [
+    { id: 'a' },
+    { id: 'b', inGoal: true, inGoalAt: 200 },
+    { id: 'c', inGoal: true, inGoalAt: 100 },
+    { id: 'd' },
+  ]), ['c', 'b', 'a', 'd']);
+  assert.deepEqual(orderByGoal(['c', 'b', 'a'], [
+    { id: 'a', inGoal: true },
+    { id: 'b', inGoal: true, inGoalAt: 50 },
+    { id: 'c' },
+  ]), ['a', 'b', 'c']);
+  assert.deepEqual(orderByGoal(['a', 'b', 'c', 'd'], [
+    { id: 'a' },
+    { id: 'b' },
+    { id: 'c', inGoal: true, inGoalAt: 100 },
+    { id: 'd' },
+  ]), ['c', 'a', 'b', 'd']);
+  assert.deepEqual(orderByGoal(['b', 'a'], [
+    { id: 'a', inGoal: true, inGoalAt: 5 },
+    { id: 'b', inGoal: true, inGoalAt: 5 },
+  ]), ['b', 'a']);
+  assert.equal(nextInGoalAt([{ inGoal: true, inGoalAt: 10 }, { inGoal: false, inGoalAt: 99 }], 12), 12);
+  assert.equal(nextInGoalAt([{ inGoal: true, inGoalAt: 12 }], 12), 13);
+  const marked = [
+    { id: 'c', inGoal: true, inGoalAt: 100 },
+    { id: 'b', inGoal: true, inGoalAt: 200 },
+    { id: 'a' },
+    { id: 'd' },
+  ];
+  const shown = orderTeamsByGoal({ bib: ['a', 'b', 'c', 'd'], plain: [] }, marked);
+  assert.deepEqual(shown.bib, ['c', 'b', 'a', 'd']);
+  const swapped = dropPlayerOn(shown, 'a', { targetId: 'd', allowedIds: ['a', 'b', 'c', 'd'] });
+  assert.deepEqual(orderTeamsByGoal(swapped.teams, marked).bib, ['c', 'b', 'd', 'a']);
+  const across = dropPlayerOn(
+    orderTeamsByGoal({ bib: ['c', 'a'], plain: ['d'] }, marked),
+    'a',
+    { targetId: 'd', allowedIds: ['a', 'c', 'd'] },
+  );
+  assert.deepEqual(orderTeamsByGoal(across.teams, marked), { bib: ['c', 'd'], plain: ['a'] });
+
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-arco';
+  const mid = await store.addMatch({ date: '2026-11-20', time: '21:00' }, 'Gustavo');
+  const match = { id: mid, date: '2026-11-20', capacity: 14 };
+  const ana = await store.addPlayer(match, { name: 'Ana', phone: '' }, 'Gustavo');
+  const beto = await store.addPlayer(match, { name: 'Beto', phone: '' }, 'Gustavo');
+  const ciro = await store.addPlayer(match, { name: 'Ciro', phone: '' }, 'Gustavo');
+  await store.setTeams(mid, { bib: [ana, beto, ciro], plain: [] }, 'Gustavo');
+  await store.setInGoal(ciro, true);
+  await store.setInGoal(ana, true);
+  let db = JSON.parse(mem.get('f7c-test-arco'));
+  const anaAt = db.players[ana].inGoalAt;
+  assert.equal(db.players[ciro].inGoal, true);
+  assert.equal(db.players[ana].inGoal, true);
+  assert.equal(db.players[beto].inGoal, undefined);
+  assert.ok(db.players[ciro].inGoalAt < anaAt);
+  await store.setInGoal(ana, true);
+  db = JSON.parse(mem.get('f7c-test-arco'));
+  assert.equal(db.players[ana].inGoalAt, anaAt);
+  const players = [ana, beto, ciro].map((id) => ({ id, ...db.players[id] }));
+  assert.deepEqual(orderByGoal([ana, beto, ciro], players), [ciro, ana, beto]);
+  await store.setInGoal(ana, false);
+  db = JSON.parse(mem.get('f7c-test-arco'));
+  assert.equal(db.players[ana].inGoal, false);
+  assert.equal('inGoalAt' in db.players[ana], false);
+  const after = [ana, beto, ciro].map((id) => ({ id, ...db.players[id] }));
+  assert.deepEqual(orderByGoal(db.matches[mid].teams.bib, after), [ciro, ana, beto]);
 });
 
 test('importar historial lee fecha, hora y jugadores de varios partidos', () => {

@@ -26,6 +26,7 @@
 //    signedUpWith, signedUpWithName: organizador con quien se anotó (uid + nombre)
 //    goals: int opcional 0..99. Goles de ese jugador en el partido. No cambia matches.score.
 //    inGoal: bool opcional. Marcó que fue al arco. No cambia el marcador.
+//    inGoalAt: number opcional. Cuándo lo marcó. Ordena a los que ya fueron: el primero arriba.
 //    createdAt, updatedAt
 //    paid: bool                         (opcional)
 //    amount: number|null                (pesos; solo si paid)
@@ -89,7 +90,7 @@ import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
-import { bumpGoals, bumpScore, dropPlayer, scoreRecord, teamsRecord } from './teams.js';
+import { bumpGoals, bumpScore, dropPlayer, nextInGoalAt, scoreRecord, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
@@ -738,8 +739,19 @@ class LocalStore {
     const db = this._load();
     const player = db.players[playerId];
     if (!player) return;
-    player.inGoal = on === true;
-    player.updatedAt = Date.now();
+    const now = Date.now();
+    if (on === true) {
+      const keep = player.inGoal === true && Number.isFinite(Number(player.inGoalAt));
+      if (!keep) {
+        const mates = Object.values(db.players).filter((row) => row !== player && row.matchId === player.matchId);
+        player.inGoalAt = nextInGoalAt(mates, now);
+      }
+      player.inGoal = true;
+    } else {
+      player.inGoal = false;
+      delete player.inGoalAt;
+    }
+    player.updatedAt = now;
     this._save(db);
   }
   async updatePlayer(id, data) {
@@ -1674,8 +1686,23 @@ class FirebaseStore {
     await updateDoc(ref, { goals, updatedAt: Date.now() });
   }
   async setInGoal(playerId, on) {
-    const { doc, updateDoc } = this.fs;
-    await updateDoc(doc(this.db, 'players', playerId), { inGoal: on === true, updatedAt: Date.now() });
+    const { doc, getDoc, updateDoc, deleteField } = this.fs;
+    const ref = doc(this.db, 'players', playerId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) return;
+    const cur = snap.data() || {};
+    const now = Date.now();
+    if (on === true) {
+      const keep = cur.inGoal === true && Number.isFinite(Number(cur.inGoalAt));
+      let at = Number(cur.inGoalAt);
+      if (!keep) {
+        const mates = this.state.players.filter((row) => row.matchId === cur.matchId && row.id !== playerId);
+        at = nextInGoalAt(mates, now);
+      }
+      await updateDoc(ref, { inGoal: true, inGoalAt: at, updatedAt: now });
+    } else {
+      await updateDoc(ref, { inGoal: false, inGoalAt: deleteField(), updatedAt: now });
+    }
   }
   async updatePlayer(id, data) {
     const { doc, updateDoc, writeBatch, deleteField } = this.fs;
