@@ -5,6 +5,11 @@
 export const BACKUP_FORMAT = 'mis-partidos-backup';
 export const BACKUP_VERSION = 1;
 export const BACKUP_ZONE = 'America/Buenos_Aires';
+// Una escritura por vez. Un lote grande suma los get() de las reglas (la cuenta
+// del admin, cada partido, cada teléfono) y Firestore niega el lote entero al
+// pasar de 20 lecturas o de 1000 expresiones. El mensaje es el de permisos.
+// El emulador no aplica ese tope, por eso allá un lote de 400 parece andar.
+export const BACKUP_WRITE_BATCH = 1;
 
 export const BACKUP_COLLECTIONS = Object.freeze([
   'matches',
@@ -196,6 +201,39 @@ export function parseBackup(raw) {
   }
   const backup = { format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: data.exportedAt, collections, subcollections };
   return { ok: true, backup, summary: summarizeBackup(backup) };
+}
+
+export function isFirebasePermissionDenied(error) {
+  const code = String(error?.code || '');
+  const message = String(error?.message || '');
+  return code === 'permission-denied'
+    || code === 'permission_denied'
+    || code.endsWith('/permission-denied')
+    || /insufficient permissions/i.test(message);
+}
+
+function backupDenyText(error) {
+  if (isFirebasePermissionDenied(error)) return 'Firebase rechazó el permiso.';
+  const clean = String(error?.message || '').replace(/^FirebaseError:\s*/i, '').trim();
+  return clean || 'Error de Firebase.';
+}
+
+/** El toast dice qué documento falló. Sin eso solo se ve "insufficient permissions". */
+export function backupWriteError(op, error) {
+  const path = Array.isArray(op?.segments) && op.segments.length ? op.segments.join('/') : 'documento';
+  const action = op?.kind === 'delete' ? 'borrar' : 'guardar';
+  return Object.assign(new Error(`No se pudo ${action} ${path}. ${backupDenyText(error)}`), {
+    code: error?.code || 'backup-write',
+    path,
+  });
+}
+
+export function backupReadError(collectionName, error) {
+  const label = COLLECTION_LABELS[collectionName] || collectionName;
+  return Object.assign(new Error(`No se pudo leer ${label} (${collectionName}). ${backupDenyText(error)}`), {
+    code: error?.code || 'backup-read',
+    path: collectionName,
+  });
 }
 
 /** Vuelve a armar un Timestamp si el que escribe conoce la clase. */

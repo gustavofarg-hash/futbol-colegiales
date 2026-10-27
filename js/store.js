@@ -105,7 +105,7 @@ import { canEditPlayer, canEditRoster, editLockedError, playerPatchEditsIdentity
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
-import { BACKUP_COLLECTIONS, buildBackup, parseBackup, plainValue, requireAdmin, reviveValue } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, parseBackup, plainValue, requireAdmin, reviveValue } from './backup.js';
 
 export const DEMO_STORAGE_KEY = 'f7c-demo-db';
 
@@ -1049,8 +1049,12 @@ class LocalStore {
   }
 }
 
+function isOwnUserDoc(segments, uid) {
+  return !!uid && Array.isArray(segments) && segments.length === 2 && segments[0] === 'users' && segments[1] === uid;
+}
+
 /* ───────────── Firebase / Firestore ───────────── */
-class FirebaseStore {
+export class FirebaseStore {
   constructor() {
     this.mode = 'firebase';
     this.listeners = new Set();
@@ -1119,23 +1123,26 @@ class FirebaseStore {
     requireAdmin(this.actor);
     const parsed = parseBackup(payload);
     if (!parsed.ok) throw Object.assign(new Error(parsed.error), { code: 'invalid-backup' });
-    const Timestamp = this.fs.Timestamp;
     const keepUser = this.actor?.uid || '';
+    if (!keepUser) throw Object.assign(new Error('No hay sesión de administrador.'), { code: 'admin-only' });
+    const Timestamp = this.fs.Timestamp;
     const ops = [];
     for (const name of BACKUP_COLLECTIONS) {
       const current = await this._readCollection(name);
       const next = parsed.backup.collections[name] || {};
       for (const id of Object.keys(current)) {
-        if (name === 'users' && id === keepUser) continue;
+        if (isOwnUserDoc([name, id], keepUser)) continue;
         if (!Object.prototype.hasOwnProperty.call(next, id)) ops.push({ kind: 'delete', segments: [name, id] });
       }
       for (const [id, data] of Object.entries(next)) {
-        if (name === 'users' && id === keepUser) continue;
+        if (isOwnUserDoc([name, id], keepUser)) continue;
         ops.push({ kind: 'set', segments: [name, id], data: reviveValue(data, Timestamp) });
       }
     }
     for (const [path, data] of Object.entries(parsed.backup.subcollections || {})) {
-      ops.push({ kind: 'set', segments: path.split('/'), data: reviveValue(data, Timestamp) });
+      const segments = path.split('/');
+      if (isOwnUserDoc(segments, keepUser)) continue;
+      ops.push({ kind: 'set', segments, data: reviveValue(data, Timestamp) });
     }
     await this._commitOps(ops);
     return parsed.summary;
@@ -1152,23 +1159,34 @@ class FirebaseStore {
   }
   async _commitOps(ops) {
     const { writeBatch, doc } = this.fs;
-    const size = 400;
+    const uid = this.actor?.uid || '';
+    const size = BACKUP_WRITE_BATCH;
     for (let i = 0; i < ops.length; i += size) {
+      const slice = ops.slice(i, i + size).filter((op) => !isOwnUserDoc(op.segments, uid));
+      if (!slice.length) continue;
       const batch = writeBatch(this.db);
-      for (const op of ops.slice(i, i + size)) {
+      for (const op of slice) {
         const ref = doc(this.db, ...op.segments);
         if (op.kind === 'delete') batch.delete(ref);
         else batch.set(ref, op.data);
       }
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch (error) {
+        throw backupWriteError(slice[0], error);
+      }
     }
   }
   async _readCollection(name) {
     const { collection, getDocs } = this.fs;
-    const snap = await getDocs(collection(this.db, name));
-    const out = {};
-    snap.forEach((item) => { out[item.id] = plainValue(item.data()); });
-    return out;
+    try {
+      const snap = await getDocs(collection(this.db, name));
+      const out = {};
+      snap.forEach((item) => { out[item.id] = plainValue(item.data()); });
+      return out;
+    } catch (error) {
+      throw backupReadError(name, error);
+    }
   }
   async init(onError) {
     const ready = await initFirebase();

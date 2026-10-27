@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
-import { createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
+import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
@@ -30,7 +30,7 @@ import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
-import { backupFilename, buildBackup, parseBackup } from '../js/backup.js';
+import { BACKUP_WRITE_BATCH, backupFilename, backupReadError, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -2060,6 +2060,26 @@ test('se anotó con queda en el jugador y se puede cambiar sin tocar el nombre',
   const guest = JSON.parse(mem.get(store.key)).players[amigo];
   assert.equal(guest.signedUpWith, 'gustavo');
   assert.equal(guest.signedUpWithName, 'Gustavo');
+});
+
+test('el error del backup nombra la colección y el documento', () => {
+  assert.equal(BACKUP_WRITE_BATCH, 1);
+  const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+  const write = backupWriteError({ kind: 'set', segments: ['players', 'ana'] }, denied);
+  assert.match(write.message, /guardar players\/ana/);
+  assert.match(write.message, /Firebase rechazó el permiso/);
+  const read = backupReadError('matches', denied);
+  assert.match(read.message, /leer Partidos \(matches\)/);
+  assert.match(read.message, /Firebase rechazó el permiso/);
+});
+
+test('sin uid no se carga el backup y un organizador tampoco', async () => {
+  const store = new FirebaseStore();
+  const backup = buildBackup({ matches: { a: { date: '2026-11-02', time: '21:00' } } }, new Date('2026-10-27T18:05:30Z'));
+  store.actor = { uid: 'martin', name: 'Martín', role: 'organizer' };
+  await assert.rejects(() => store.importDatabase(backup), (error) => error.code === 'admin-only');
+  store.actor = { uid: '', name: 'Gustavo', role: 'admin' };
+  await assert.rejects(() => store.importDatabase(backup), (error) => error.code === 'admin-only' && /sesión/.test(error.message));
 });
 
 test('el backup se nombra con la hora de Buenos Aires y solo lo exporta el admin', async () => {
