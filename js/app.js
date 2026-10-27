@@ -543,10 +543,10 @@ function renderTeams(id) {
         ? (player.inGoal === true ? `<span class="arco-mark on" aria-label="Fue al arco">${goalIco}${goalMark}</span>` : '')
         : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
       const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
-      const side = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
+      const controls = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
       rows.push(readOnly
         ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span><span class="team-side">${goalBox}${arco}</span></li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${side}</li>`);
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${controls}</li>`);
     }
     return rows.join('');
   };
