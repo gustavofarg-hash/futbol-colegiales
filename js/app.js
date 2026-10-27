@@ -34,7 +34,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v55';
+const APP_VERSION = 'f7c-v56';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1458,10 +1458,11 @@ function openSettings() {
       <div class="err" id="price-err"></div>
       <button class="btn" type="submit">Guardar precios</button>
     </form>
-    <p class="hint">Tamaño del texto</p>
-    <div class="text-size-choice" role="group" aria-label="Tamaño del texto">
-      ${TEXT_SIZES.map((step, i) => `<button type="button" class="btn${i === readTextSize() ? ' primary' : ''}" data-text-size="${i}" aria-pressed="${i === readTextSize() ? 'true' : 'false'}">${esc(step.label)}</button>`).join('')}
-    </div>
+    <label class="field" id="text-size-field"><span>Tamaño del texto</span>
+      <select id="set-text-size" aria-label="Tamaño del texto">
+        ${TEXT_SIZES.map((step, i) => `<option value="${i}"${i === readTextSize() ? ' selected' : ''}>${esc(step.label)}</option>`).join('')}
+      </select>
+    </label>
     <div class="menu" id="set-sections">
       <button type="button" class="btn" id="set-share-app">Compartir app</button>
       <button type="button" class="btn" id="set-venues">Sedes</button>
@@ -1493,9 +1494,8 @@ function openSettings() {
       else $('#price-err').textContent = error?.message || 'No se pudieron guardar los precios.';
     });
   };
-  sheet.querySelectorAll('[data-text-size]').forEach((btn) => {
-    btn.onclick = () => { saveTextSize(Number(btn.dataset.textSize)); syncTextSize(); };
-  });
+  const sizePick = $('#set-text-size');
+  if (sizePick) sizePick.onchange = () => { saveTextSize(Number(sizePick.value)); syncTextSize(); };
   const venuesBtn = $('#set-venues');
   if (venuesBtn) venuesBtn.onclick = () => openVenues();
   const shareAppBtn = $('#set-share-app');
@@ -3457,11 +3457,8 @@ function syncTextSize() {
   const plus = $('#btn-text-bigger');
   if (minus) minus.disabled = i === 0;
   if (plus) plus.disabled = i === TEXT_SIZES.length - 1;
-  document.querySelectorAll('[data-text-size]').forEach((btn) => {
-    const on = Number(btn.dataset.textSize) === i;
-    btn.classList.toggle('primary', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
+  const pick = $('#set-text-size');
+  if (pick && pick.value !== String(i)) pick.value = String(i);
   requestAnimationFrame(placeBars);
 }
 

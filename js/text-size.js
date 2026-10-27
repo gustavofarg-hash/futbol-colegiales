@@ -5,15 +5,15 @@
 export const TEXT_SIZE_KEY = 'f7c-text-size';
 
 export const TEXT_SIZES = [
-  { id: 'minima', label: 'Mínima', px: 8 },
-  { id: 'muy-chica', label: 'Muy chica', px: 10 },
-  { id: 'mas-chica', label: 'Más chica', px: 12 },
-  { id: 'chiquita', label: 'Chiquita', px: 14 },
-  { id: 'chica', label: 'Chica', px: 16 },
-  { id: 'normal', label: 'Normal', px: 18 },
-  { id: 'grande', label: 'Grande', px: 20 },
-  { id: 'muy-grande', label: 'Muy grande', px: 22 },
-  { id: 'enorme', label: 'Enorme', px: 24 },
+  { id: 'minima', label: '8 px', px: 8 },
+  { id: 'muy-chica', label: '10 px', px: 10 },
+  { id: 'mas-chica', label: '12 px', px: 12 },
+  { id: 'chiquita', label: '14 px', px: 14 },
+  { id: 'chica', label: '16 px', px: 16 },
+  { id: 'normal', label: '18 px (normal)', px: 18 },
+  { id: 'grande', label: '20 px', px: 20 },
+  { id: 'muy-grande', label: '22 px', px: 22 },
+  { id: 'enorme', label: '24 px', px: 24 },
 ];
 
 const LEGACY_PX = [16, 18, 20, 22, 24];

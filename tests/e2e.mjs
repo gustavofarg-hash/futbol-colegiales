@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v55');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v56');
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -2395,9 +2395,13 @@ check('A− y A+ están en el encabezado', await page.isVisible('#btn-text-small
 await page.click('#btn-text-bigger');
 check('A+ pasa a Grande y se guarda en el teléfono', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '20px' && localStorage.getItem('f7c-text-size') === '20'));
 await page.click('#btn-settings');
-await page.click('dialog.sheet [data-text-size="8"]');
-check('En Ajustes, Enorme agranda al instante', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '24px' && localStorage.getItem('f7c-text-size') === '24'));
-check('A+ queda deshabilitado en Enorme', await page.locator('#btn-text-bigger').isDisabled());
+await page.waitForSelector('#set-text-size');
+const sizeOptions = await page.locator('#set-text-size option').allTextContents();
+const sizeValue = await page.locator('#set-text-size').inputValue();
+check('Ajustes elige el tamaño en una lista', sizeOptions.join('|') === '8 px|10 px|12 px|14 px|16 px|18 px (normal)|20 px|22 px|24 px' && sizeValue === '6' && await page.locator('dialog.sheet [data-text-size], dialog.sheet .text-size-choice').count() === 0 && await page.locator('#btn-text-smaller').count() === 1, `${sizeOptions.join('|')} valor=${sizeValue}`);
+await page.selectOption('#set-text-size', '8');
+check('En Ajustes, 24 px agranda al instante', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize === '24px' && localStorage.getItem('f7c-text-size') === '24' && document.querySelector('#set-text-size').value === '8'));
+check('A+ queda deshabilitado en 24 px', await page.locator('#btn-text-bigger').isDisabled());
 await page.click('dialog.sheet [data-close]');
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card');
