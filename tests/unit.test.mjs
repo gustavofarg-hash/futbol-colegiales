@@ -1143,9 +1143,9 @@ test('el sí de la ficha gana y un sí viejo no se borra si la ficha no contest�
 });
 
 test('tamaño de texto: cuatro pasos menos que 16px, y lo viejo sigue', () => {
-  assert.deepEqual(TEXT_SIZES.map((s) => s.label), ['Mínima', 'Muy chica', 'Más chica', 'Chiquita', 'Chica', 'Normal', 'Grande', 'Muy grande', 'Enorme']);
+  assert.deepEqual(TEXT_SIZES.map((s) => s.label), ['8 px', '10 px', '12 px', '14 px', '16 px', '18 px (normal)', '20 px', '22 px', '24 px']);
   assert.deepEqual(TEXT_SIZES.map((s) => s.px), [8, 10, 12, 14, 16, 18, 20, 22, 24]);
-  assert.equal(TEXT_SIZES[TEXT_SIZE_DEFAULT].label, 'Normal');
+  assert.equal(TEXT_SIZES[TEXT_SIZE_DEFAULT].label, '18 px (normal)');
   assert.equal(TEXT_SIZES[TEXT_SIZE_DEFAULT].px, 18);
   assert.equal(TEXT_SIZES[0].px, 8);
   assert.equal(TEXT_SIZES[4].px, 16);
@@ -2081,7 +2081,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const sw = readFileSync(new URL('../sw.js', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v55');
+  assert.equal(version, 'f7c-v56');
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
   assert.match(app, /id="app-version">Versión \$\{APP_VERSION\}/);
 });
