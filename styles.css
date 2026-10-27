@@ -348,7 +348,13 @@ button.team-player { color: inherit; cursor: pointer; }
 .team-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-actions .btn { min-width: 0; white-space: normal; text-align: center; line-height: 1.15; }
 .team-actions a { grid-column: 1 / -1; }
-h2.section.team-heading { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: .02em; }
+h2.section.team-heading {
+  display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: .02em;
+  position: sticky; top: calc(var(--header-h, 64px) + var(--tabbar-h, 56px)); z-index: 4;
+  margin: 0 0 8px; padding: 8px 2px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
 h2.section.team-heading .vest { width: 20px; height: 20px; flex: none; }
 .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-columns section, .team-row, .team-slot { min-width: 0; }
@@ -585,7 +591,7 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--actionbar-h, 0px) + 16px + var(--safe-b)); transform: translateX(-50%);
-  background: #111; color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 0.90625rem; z-index: 50;
+  background: #111; color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 0.90625rem; font-weight: 700; z-index: 50;
   max-width: calc(100% - 32px); box-shadow: 0 6px 20px rgba(0,0,0,.25);
 }
 @media (prefers-color-scheme: dark) { .toast { background: #e8f2ec; color: #0b1510; } }
