@@ -98,6 +98,68 @@ export function goaliesLeft(playerIds, flaggedIds) {
   return (playerIds || []).filter((id) => !done.has(String(id))).length;
 }
 
+function playersById(players) {
+  const map = new Map();
+  if (players instanceof Map) {
+    for (const [key, value] of players) map.set(String(key), value);
+    return map;
+  }
+  for (const player of players || []) {
+    if (player && player.id != null) map.set(String(player.id), player);
+  }
+  return map;
+}
+
+function goalStamp(player) {
+  const at = Number(player?.inGoalAt);
+  return Number.isFinite(at) ? at : null;
+}
+
+/**
+ * Los que ya fueron al arco van primero, del más antiguo al más reciente.
+ * Sin hora (marcado antes de guardar inGoalAt) queda arriba de los que sí tienen.
+ * El resto conserva el orden de la lista.
+ */
+export function orderByGoal(ids, players) {
+  const map = playersById(players);
+  const goal = [];
+  const rest = [];
+  (ids || []).forEach((id, index) => {
+    const key = String(id || '').trim();
+    if (!key) return;
+    const player = map.get(key);
+    if (player?.inGoal === true) goal.push({ id: key, index, at: goalStamp(player) });
+    else rest.push(key);
+  });
+  goal.sort((a, b) => {
+    if (a.at == null && b.at == null) return a.index - b.index;
+    if (a.at == null) return -1;
+    if (b.at == null) return 1;
+    return a.at - b.at || a.index - b.index;
+  });
+  return [...goal.map((row) => row.id), ...rest];
+}
+
+export function orderTeamsByGoal(teams, players) {
+  const base = normalizeTeams(teams, null);
+  return {
+    bib: orderByGoal(base.bib, players),
+    plain: orderByGoal(base.plain, players),
+  };
+}
+
+/** Hora del próximo que marca el arco. Si dos clics caen en el mismo ms, el segundo va después. */
+export function nextInGoalAt(players, now = Date.now()) {
+  let at = Number(now);
+  if (!Number.isFinite(at)) at = Date.now();
+  for (const player of players || []) {
+    if (player?.inGoal !== true) continue;
+    const stamp = goalStamp(player);
+    if (stamp != null && stamp >= at) at = stamp + 1;
+  }
+  return at;
+}
+
 /** Saca a quien se bajó. changed es false si no estaba en ningún equipo. */
 export function dropPlayer(teams, playerId) {
   if (!teams || typeof teams !== 'object') return { changed: false, teams: null };

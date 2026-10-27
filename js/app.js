@@ -26,7 +26,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
-import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, teamsBalance, teamsMessage } from './teams.js';
+import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
@@ -509,7 +509,7 @@ function renderTeams(id) {
   }
   const main = playersOf(id);
   const ids = main.map((p) => p.id);
-  const teams = normalizeTeams(m.teams, ids);
+  const teams = orderTeamsByGoal(normalizeTeams(m.teams, ids), main);
   const balance = teamsBalance(teams);
   const taken = new Set([...teams.bib, ...teams.plain]);
   const free = main.filter((p) => !taken.has(p.id));
@@ -594,7 +594,7 @@ function renderTeams(id) {
         <a class="btn nav-wide" id="btn-teams-wa" href="${esc(waHref('', share))}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
       </div>
     </div>`)) return;
-  const save = (next, msg) => run(app.store.setTeams(m.id, normalizeTeams(next, ids), app.who), msg);
+  const save = (next, msg) => run(app.store.setTeams(m.id, orderTeamsByGoal(normalizeTeams(next, ids), main), app.who), msg);
   if (!readOnly) {
     $('#scoreboard').onclick = (e) => {
       const btn = e.target.closest('[data-score]');

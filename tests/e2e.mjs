@@ -1527,10 +1527,37 @@ await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[d
 await page.waitForFunction(() => document.querySelector('#arco-bib')?.textContent === 'Faltan ir al arco: 0');
 const arcoState = await page.evaluate((ids) => {
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
-  return { inGoal: db.players[ids.ana].inGoal, score: db.matches[ids.id].score };
+  return { inGoal: db.players[ids.ana].inGoal, inGoalAt: db.players[ids.ana].inGoalAt, score: db.matches[ids.id].score };
 }, equipos);
-check('Fue al arco queda guardado y no toca el marcador', arcoState.inGoal === true && arcoState.score.bib === 0 && arcoState.score.plain === 1, JSON.stringify(arcoState));
+check('Fue al arco queda guardado y no toca el marcador', arcoState.inGoal === true && typeof arcoState.inGoalAt === 'number' && arcoState.score.bib === 0 && arcoState.score.plain === 1, JSON.stringify(arcoState));
 check('Avisa si está desbalanceado', (await page.textContent('#team-balance')).includes('desbalanceado'));
+await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Beto' }).locator('[data-assign="bib"]').click();
+await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Ciro' }).locator('[data-assign="bib"]').click();
+await page.waitForFunction(() => document.querySelector('#team-bib-count')?.textContent === '3');
+await page.locator('#team-bib .team-row', { hasText: 'Equipo Ciro' }).locator('[data-arco]').click();
+await page.locator('#team-bib .team-row', { hasText: 'Equipo Beto' }).locator('[data-arco]').click();
+await page.waitForFunction(() => [...document.querySelectorAll('#team-bib .team-name')].map((el) => el.textContent).join('|') === 'Equipo Ana|Equipo Ciro|Equipo Beto');
+check('Quienes fueron al arco suben arriba, primero el que se marcó antes', (await page.locator('#team-bib .team-name').allTextContents()).join('|') === 'Equipo Ana|Equipo Ciro|Equipo Beto');
+const arcoOrder = await page.evaluate((ids) => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  return {
+    ana: db.players[ids.ana].inGoalAt,
+    ciro: db.players[ids.ciro].inGoalAt,
+    beto: db.players[ids.beto].inGoalAt,
+  };
+}, equipos);
+check('El orden del arco queda guardado en cada jugador', typeof arcoOrder.ana === 'number' && arcoOrder.ana <= arcoOrder.ciro && arcoOrder.ciro <= arcoOrder.beto, JSON.stringify(arcoOrder));
+await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[data-arco]').click();
+await page.waitForFunction(() => [...document.querySelectorAll('#team-bib .team-name')].map((el) => el.textContent).join('|') === 'Equipo Ciro|Equipo Beto|Equipo Ana');
+check('Al desmarcar vuelve debajo de los que siguen en el arco', (await page.locator('#team-bib .team-name').allTextContents()).join('|') === 'Equipo Ciro|Equipo Beto|Equipo Ana');
+const anaOff = await page.evaluate((id) => {
+  const row = JSON.parse(localStorage.getItem('f7c-demo-db')).players[id];
+  return { inGoal: row.inGoal, at: row.inGoalAt ?? null };
+}, equipos.ana);
+check('Desmarcar borra la hora del arco', anaOff.inGoal === false && anaOff.at == null, JSON.stringify(anaOff));
+await page.locator('#team-bib .team-row', { hasText: 'Equipo Beto' }).locator('[data-assign="none"]').click();
+await page.locator('#team-bib .team-row', { hasText: 'Equipo Ciro' }).locator('[data-assign="none"]').click();
+await page.waitForFunction(() => document.querySelector('#team-bib-count')?.textContent === '1');
 await page.locator('#team-bib .team-row', { hasText: 'Equipo Ana' }).locator('[data-assign="plain"]').click();
 await page.waitForSelector('#team-plain:has-text("Equipo Ana")');
 check('Otro toque lo pasa a sin pechera', (await page.textContent('#team-plain-count')) === '1' && (await page.textContent('#team-bib-count')) === '0');
