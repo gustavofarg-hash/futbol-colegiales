@@ -1600,6 +1600,12 @@ const bibBtnBg = await page.locator('#team-unassigned [data-assign="bib"]').firs
 check('El botón de pechera no parece seleccionado', bibBtnBg === 'rgba(0, 0, 0, 0)' || bibBtnBg === 'transparent', bibBtnBg);
 check('Los títulos de equipo llevan la musculosa', (await page.locator('#team-bib h2 .vest-bib').count()) === 1 && (await page.locator('#team-plain h2 .vest-plain').count()) === 1);
 check('Sin pechera es la misma musculosa en contorno', plainFill === 'none' || plainFill === 'rgba(0, 0, 0, 0)', plainFill);
+const vestShape = await page.locator('.vest path').evaluateAll((els) => {
+  const ds = els.map((el) => el.getAttribute('d'));
+  const box = els[0].getBBox();
+  return { same: new Set(ds).size === 1, n: ds.length, x: box.x, w: box.width };
+});
+check('Todas las pecheras son la misma musculosa sin mangas', vestShape.same && vestShape.n >= 4 && vestShape.x > 5 && vestShape.w < 14, JSON.stringify(vestShape));
 check('El marcador arranca en cero', (await page.textContent('#score-bib')) === '0' && (await page.textContent('#score-plain')) === '0');
 await page.locator('#scoreboard [data-score="bib"][data-delta="1"]').click();
 await page.locator('#scoreboard [data-score="bib"][data-delta="1"]').click();

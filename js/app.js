@@ -517,7 +517,7 @@ function renderTeams(id) {
   const readOnly = !canAdd(m, actor().uid);
   const byId = new Map(main.map((p) => [p.id, p]));
   const slots = perTeamOf(m);
-  const vestPath = 'M8.1 3.1h7.8l1.15 2.35c.45.9 1.35 1.55 2.35 1.85l1.1.35v2.15h-2.15c-.15.85-.25 1.7-.25 2.35V20.7H6.9V12.15c0-.65-.1-1.5-.25-2.35H4.5V7.65l1.1-.35c1-.3 1.9-.95 2.35-1.85L8.1 3.1z';
+  const vestPath = 'M8.15 2.15H10.35C10.7 4 11.35 5.4 12 6.15C12.65 5.4 13.3 4 13.65 2.15H15.85C17.05 4.5 18.25 7.2 18.5 10.6C18.65 12.4 18.4 13.6 18.2 14.4V21.55H5.8V14.4C5.6 13.6 5.35 12.4 5.5 10.6C5.75 7.2 6.95 4.5 8.15 2.15Z';
   const vest = `<svg class="vest vest-bib" viewBox="0 0 24 24" aria-hidden="true"><path d="${vestPath}"/></svg>`;
   const shirt = `<svg class="vest vest-plain" viewBox="0 0 24 24" aria-hidden="true"><path d="${vestPath}"/></svg>`;
   const slotRows = (side, list) => {
