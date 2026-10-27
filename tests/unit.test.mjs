@@ -2124,3 +2124,34 @@ test('cargar un backup reemplaza los datos y un organizador no puede', async () 
   assert.equal(Object.values(db.matches).some((match) => match.note === 'Extra'), false);
   assert.equal(db.settings.prices.matchPrice, 5000);
 });
+
+test('resetear la base la deja vacía y un organizador no puede', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-reset';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addMatch({ date: '2026-11-02', time: '21:00', note: 'Se borra' }, 'Gustavo');
+  await store.addPlayer({ id, date: '2026-11-02', capacity: 14 }, { name: 'Ana Reset', phone: '11 5555-0199' }, 'Gustavo');
+  await store.addRoster({ name: 'Plantel Reset', phone: '11 5555-0188' }, 'Gustavo');
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await assert.rejects(() => store.resetDatabase(), (error) => error.code === 'admin-only');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  await store.resetDatabase();
+  const db = JSON.parse(mem.get(store.key));
+  assert.deepEqual(db.matches, {});
+  assert.deepEqual(db.players, {});
+  assert.deepEqual(db.roster, {});
+  assert.deepEqual(db.venues, {});
+  assert.deepEqual(db.organizers, {});
+  assert.deepEqual(db.settings, {});
+  assert.deepEqual(db.contacts.players, {});
+  assert.deepEqual(db.contacts.roster, {});
+  const again = await store.exportDatabase();
+  assert.equal(again.collections.matches && Object.keys(again.collections.matches).length, 0);
+  assert.equal(Object.keys(again.collections.players).length, 0);
+});

@@ -117,7 +117,7 @@ check('Ajustes no pregunta desde qué WhatsApp', (await page.locator('#wa-choice
 await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
-check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore'));
+check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -1103,7 +1103,7 @@ check('Martín sigue pudiendo agregar partidos', await page.isVisible('#btn-add-
 
 await page.click('#btn-settings');
 check('Un organizador no administra usuarios', (await page.locator('#set-organizers').count()) === 0 && await page.isVisible('#set-venues'));
-check('Un organizador no ve el backup', (await page.locator('#set-backup').count()) === 0 && (await page.locator('#set-restore').count()) === 0);
+check('Un organizador no ve el backup', (await page.locator('#set-backup, #set-restore, #set-reset-db').count()) === 0);
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');
 await page.fill('#login-email', 'gustavo@demo.local');
@@ -2518,6 +2518,17 @@ check('Cargar backup muestra la fecha y cuántos partidos trae', summaryText.inc
 await page.click('#backup-apply');
 await page.waitForFunction(() => !document.querySelector('#backup-apply'));
 check('Cargar el backup saca lo que se agregó después', await page.evaluate(() => !window.__app.matches.some((match) => match.note === 'No debe quedar') && window.__app.matches.some((match) => match.note === 'Para equipos' || match.note === 'Ayer' || match.date)));
+await page.click('#btn-settings');
+await page.click('#set-reset-db');
+await page.waitForSelector('#reset-word');
+check('Resetear pide escribir BORRAR y ofrece un backup', (await page.locator('#reset-go-backup').innerText()) === 'Hacer backup' && await page.locator('#reset-apply').isDisabled() && (await page.locator('.backup-warn').innerText()).includes('Conviene hacer un backup'));
+await page.fill('#reset-word', 'nada');
+check('Otra palabra no habilita el borrado', await page.locator('#reset-apply').isDisabled());
+await page.fill('#reset-word', 'BORRAR');
+check('Recién con BORRAR se puede borrar', await page.locator('#reset-apply').isEnabled());
+await page.click('#reset-apply');
+await page.waitForFunction(() => !document.querySelector('#reset-apply'));
+check('Resetear deja la base vacía', await page.evaluate(() => window.__app.matches.length === 0 && window.__app.players.length === 0 && window.__app.roster.length === 0));
 
 const fresh = await ctx.newPage();
 fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

@@ -1438,6 +1438,7 @@ function openSettings() {
       <p class="hint">Base de datos</p>
       <button type="button" class="btn" id="set-backup">Hacer backup</button>
       <button type="button" class="btn" id="set-restore">Cargar base de datos desde un backup</button>
+      <button type="button" class="btn danger" id="set-reset-db">Resetear base de datos</button>
     </div>` : ''}
     <div class="menu">
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
@@ -1469,6 +1470,8 @@ function openSettings() {
   if (backupBtn) backupBtn.onclick = () => openBackup();
   const restoreBtn = $('#set-restore');
   if (restoreBtn) restoreBtn.onclick = () => openRestore();
+  const resetDbBtn = $('#set-reset-db');
+  if (resetDbBtn) resetDbBtn.onclick = () => openResetDb();
   const users = $('#set-organizers');
   if (users) users.onclick = () => closeSheet();
   $('#set-notify').onclick = async () => {
@@ -1520,6 +1523,40 @@ async function currentBackupFile() {
   const when = new Date();
   const backup = await app.store.exportDatabase({ when });
   return { filename: backupFilename(when), text: JSON.stringify(backup, null, 2) };
+}
+
+function openResetDb() {
+  if (app.role !== 'admin') return;
+  openSheet(`
+    <h3>Resetear base de datos</h3>
+    <p class="backup-warn">Se borra todo lo cargado: partidos, jugadores, plantel, pagos, sedes, precios, teléfonos y links. Las cuentas para entrar quedan. Conviene hacer un backup antes.</p>
+    <p class="hint">Si después no hay sedes, al abrir de nuevo vuelve Polideportivo Colegiales.</p>
+    <div class="menu">
+      <button type="button" class="btn" id="reset-go-backup">Hacer backup</button>
+    </div>
+    <label class="field"><span>Escribí BORRAR para confirmar</span><input id="reset-word" autocomplete="off" autocapitalize="characters"></label>
+    <p class="err" id="reset-err"></p>
+    <div class="menu">
+      <button type="button" class="btn danger" id="reset-apply" disabled>Borrar todo</button>
+      <button type="button" class="btn ghost" data-close>Cerrar</button>
+    </div>`);
+  const word = $('#reset-word');
+  const apply = $('#reset-apply');
+  word.oninput = () => { apply.disabled = word.value.trim() !== 'BORRAR'; };
+  $('#reset-go-backup').onclick = () => openBackup();
+  apply.onclick = () => {
+    if (word.value.trim() !== 'BORRAR') return;
+    apply.disabled = true;
+    app.store.resetDatabase().then(() => {
+      closeSheet();
+      toast('Base de datos vacía');
+    }).catch((error) => {
+      apply.disabled = false;
+      const msg = error?.message || 'No se pudo borrar.';
+      $('#reset-err').textContent = msg;
+      toast(msg);
+    });
+  };
 }
 
 function backupSummaryHtml(summary) {

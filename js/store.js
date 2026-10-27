@@ -1029,6 +1029,16 @@ class LocalStore {
     this._save(db);
     return parsed.summary;
   }
+  async resetDatabase() {
+    requireAdmin(this.actor);
+    const db = {
+      matches: {}, players: {}, roster: {}, organizers: {}, venues: {},
+      confirmations: {}, settings: {}, links: {},
+      contacts: { players: {}, roster: {} },
+    };
+    localStorage.setItem(this.key, JSON.stringify(db));
+    this._emit();
+  }
   async clearAll() {
     localStorage.removeItem(this.key);
     const db = this._load();
@@ -1129,6 +1139,16 @@ class FirebaseStore {
     }
     await this._commitOps(ops);
     return parsed.summary;
+  }
+  async resetDatabase() {
+    requireAdmin(this.actor);
+    const ops = [];
+    for (const name of BACKUP_COLLECTIONS) {
+      if (name === 'users') continue;
+      const current = await this._readCollection(name);
+      for (const id of Object.keys(current)) ops.push({ kind: 'delete', segments: [name, id] });
+    }
+    await this._commitOps(ops);
   }
   async _commitOps(ops) {
     const { writeBatch, doc } = this.fs;
