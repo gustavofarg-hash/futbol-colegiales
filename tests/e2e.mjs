@@ -705,6 +705,42 @@ await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#wait-list .name:text-is("Avisa Teo")');
 const teoWait = (await page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).innerText()).replace(/\s+/g, ' ');
 check('En espera no figura sin respuesta', !teoWait.includes('Sin respuesta') && !teoWait.includes('Confirmó'), teoWait);
+async function waitLayout(width, px) {
+  await page.setViewportSize({ width, height: 844 });
+  await page.evaluate((size) => { document.documentElement.style.fontSize = size + 'px'; }, px);
+  return page.evaluate(() => {
+    const row = [...document.querySelectorAll('#wait-list .slot')].find((el) => el.querySelector('.name')?.textContent === 'Avisa Teo');
+    const name = row.querySelector('.name').getBoundingClientRect();
+    const box = row.getBoundingClientRect();
+    const promote = row.querySelector('.promote-btn').getBoundingClientRect();
+    const skinny = [...row.querySelectorAll('*')].some((el) => {
+      const r = el.getBoundingClientRect();
+      const text = (el.textContent || '').trim();
+      return text.length > 8 && r.width > 0 && r.width < 16 && r.height > r.width * 3;
+    });
+    return {
+      nameW: Math.round(name.width),
+      rowH: Math.round(box.height),
+      promoteW: Math.round(promote.width),
+      promoteH: Math.round(promote.height),
+      skinny,
+    };
+  });
+}
+const wait18 = await waitLayout(390, 18);
+check('La fila de espera no se aplasta a 390px',
+  wait18.nameW >= 90 && wait18.rowH <= 280 && wait18.promoteW >= 180 && wait18.promoteH <= 52 && !wait18.skinny,
+  JSON.stringify(wait18));
+const wait24 = await waitLayout(360, 24);
+check('La fila de espera no se aplasta con letra de 24px',
+  wait24.nameW >= 90 && wait24.rowH <= 360 && wait24.promoteW >= 180 && wait24.promoteH <= 52 && !wait24.skinny,
+  JSON.stringify(wait24));
+const wait8 = await waitLayout(360, 8);
+check('La fila de espera no se aplasta con letra de 8px',
+  wait8.nameW >= 90 && wait8.rowH <= 200 && wait8.promoteW >= 180 && wait8.promoteH <= 52 && !wait8.skinny,
+  JSON.stringify(wait8));
+await page.setViewportSize({ width: 390, height: 844 });
+await page.evaluate((font) => { document.documentElement.style.fontSize = font; }, fontBefore);
 const teoSum = await page.textContent('#confirm-sum');
 check('En espera no entra en el resumen', teoSum.includes('Sin respuesta: 0') && teoSum.includes('No juegan: 1'), teoSum);
 const [teoPopup] = await Promise.all([
