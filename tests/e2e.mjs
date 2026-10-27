@@ -642,6 +642,43 @@ check('Reservado ocupa cupo, no va a la espera y no figura confirmado',
   && !luisRow.includes('Confirmó')
   && !luisRow.includes('Sin respuesta'), luisRow);
 check('El resumen cuenta A confirmar', (await page.textContent('#confirm-sum')).includes('A confirmar: 1') && (await page.textContent('#confirm-sum')).includes('Sin respuesta: 0'));
+const fontBefore = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
+async function tentativeLayout(width, px) {
+  await page.setViewportSize({ width, height: 844 });
+  await page.evaluate((size) => { document.documentElement.style.fontSize = size + 'px'; }, px);
+  return page.evaluate(() => {
+    const row = [...document.querySelectorAll('#slots .slot')].find((el) => el.querySelector('.name')?.textContent === 'Reserva Luis');
+    const name = row.querySelector('.name').getBoundingClientRect();
+    const box = row.getBoundingClientRect();
+    const badge = row.querySelector('.reserved-badge').getBoundingClientRect();
+    const skinny = [...row.querySelectorAll('*')].some((el) => {
+      const r = el.getBoundingClientRect();
+      const text = (el.textContent || '').trim();
+      return text.length > 8 && r.width > 0 && r.width < 16 && r.height > r.width * 3;
+    });
+    return {
+      nameW: Math.round(name.width),
+      rowH: Math.round(box.height),
+      badgeW: Math.round(badge.width),
+      badgeH: Math.round(badge.height),
+      skinny,
+    };
+  });
+}
+const layout18 = await tentativeLayout(390, 18);
+check('La fila pendiente no se aplasta a 390px',
+  layout18.nameW >= 90 && layout18.rowH <= 320 && layout18.badgeW >= 80 && layout18.badgeH <= 32 && !layout18.skinny,
+  JSON.stringify(layout18));
+const layout24 = await tentativeLayout(360, 24);
+check('La fila pendiente no se aplasta con letra de 24px',
+  layout24.nameW >= 90 && layout24.rowH <= 420 && layout24.badgeW >= 80 && layout24.badgeH <= 40 && !layout24.skinny,
+  JSON.stringify(layout24));
+const layout8 = await tentativeLayout(360, 8);
+check('La fila pendiente no se aplasta con letra de 8px',
+  layout8.nameW >= 90 && layout8.rowH <= 220 && layout8.badgeW >= 60 && layout8.badgeH <= 18 && !layout8.skinny,
+  JSON.stringify(layout8));
+await page.setViewportSize({ width: 390, height: 844 });
+await page.evaluate((font) => { document.documentElement.style.fontSize = font; }, fontBefore);
 const luisStored = await page.evaluate(() => {
   const person = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Reserva Luis');
   return { tentative: person.tentative, at: typeof person.tentativeAt === 'number', waiting: person.waiting, token: person.confirmToken };

@@ -186,15 +186,16 @@ h2.section:first-child { margin-top: 4px; }
 
 .slots { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
 .slot {
-  display: flex; align-items: center; gap: 10px; background: var(--card);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--card);
   border: 1px solid var(--line); border-radius: 14px; padding: 8px 8px 8px 10px; min-height: 60px;
   min-width: 0; max-width: 100%;
 }
 .slot .n { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 0.8125rem; font-weight: 800; background: var(--green-soft); color: var(--green); flex: none; }
-.slot .who { flex: 1; min-width: 0; }
+.slot .who { flex: 1; min-width: 0; max-width: 100%; display: flex; flex-direction: column; align-items: stretch; }
+.slot .who > * { min-width: 0; max-width: 100%; }
 button.who { text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
-.name-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.slot .name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.name-row { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.slot .name { flex: 1 1 auto; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 100%; }
 .level-badge {
   flex: none; font-size: 0.75rem; font-weight: 800; line-height: 1;
   padding: 3px 6px; border-radius: 999px;
@@ -205,8 +206,11 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
   border: 1px solid var(--line); border-radius: 12px; background: var(--bg); padding: 4px 8px;
 }
 .stepper input:disabled { opacity: .7; }
-.slot .sub { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
-.private-wa { overflow-wrap: anywhere; min-width: 0; }
+.slot .sub { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; max-width: 100%; }
+.slot .sub > * { max-width: 100%; }
+.slot .sub > .reserved-badge,
+.slot .sub > .friend-tag { flex: 0 1 auto; min-width: 0; }
+.private-wa { overflow-wrap: break-word; min-width: 0; max-width: 100%; }
 .edit-lock { overflow-wrap: anywhere; min-width: 0; }
 .slot .sub .edit-lock { flex: 1 1 100%; }
 .tag { font-size: 0.71875rem; font-weight: 700; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
@@ -216,13 +220,13 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .slot.free { border-style: dashed; background: transparent; color: var(--muted); width: 100%; text-align: left; font-size: 0.9375rem; }
 .slot.free .n { background: transparent; border: 1px dashed var(--line); color: var(--muted); }
 .slot.extra { border-color: var(--danger); }
-.pay-line { font-size: 0.8125rem; font-weight: 700; margin-top: 1px; font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
+.pay-line { font-size: 0.8125rem; font-weight: 700; margin-top: 1px; font-variant-numeric: tabular-nums; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pay-line.ok { color: var(--green); }
 .pay-line.no { color: var(--muted); font-weight: 600; }
 .pay-pending {
   display: inline-block; margin-top: 3px; font-size: 0.75rem; font-weight: 800;
   color: var(--warn-text); background: var(--warn-bg); border-radius: 99px; padding: 1px 8px;
-  white-space: normal; overflow-wrap: anywhere;
+  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .signup-check { flex: none; display: grid; place-items: center; }
 .signup-check input { width: 1.375rem; height: 1.375rem; margin: 0; }
@@ -251,7 +255,7 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .reserved-badge {
   display: inline-block; margin-top: 4px; font-size: 0.75rem; font-weight: 800;
   color: #1e3a8a; background: #dbeafe; border-radius: 99px; padding: 1px 8px;
-  white-space: normal;
+  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .reserved-badge.declined { outline: 2px solid var(--danger); }
 .reserved-free { display: block; color: var(--danger); font-size: 0.75rem; font-weight: 800; }
@@ -261,6 +265,11 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 .confirm-spot, .promote-btn {
   flex: 0 1 76px; max-width: 92px; min-width: 0; min-height: 44px; padding: 4px 6px;
   font-size: 0.72rem; line-height: 1.1; white-space: normal; text-align: center;
+}
+/* El botón de confirmar no comparte la fila: si no, aplasta el nombre y los carteles letra por letra. */
+.slot > .confirm-spot {
+  order: 1; flex: 1 0 100%; max-width: 100%; min-width: 0; margin: 0;
+  white-space: nowrap;
 }
 .checkline { display: flex; align-items: flex-start; gap: 10px; margin: 4px 0 12px; font-weight: 700; }
 .checkline span { min-width: 0; overflow-wrap: anywhere; }
@@ -397,7 +406,7 @@ h2.section.team-heading { text-transform: none; letter-spacing: .02em; }
 }
 .friend-row input:focus { outline: 2px solid var(--green-2); outline-offset: 1px; border-color: transparent; }
 .friend-remove { flex: 0 0 auto; width: 3rem; min-width: 3rem; padding: 0; font-size: 1.4rem; line-height: 1; }
-.friend-tag { overflow-wrap: anywhere; white-space: normal; }
+.friend-tag { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slot.host-row,
 .slot.guest-row {
   border-left-width: 4px;
@@ -505,7 +514,7 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 .promo-badge {
   display: inline-block; margin-top: 4px; font-size: 0.75rem; font-weight: 800;
   color: #8a5a00; background: #fff4d6; border-radius: 99px; padding: 1px 8px;
-  white-space: normal; overflow-wrap: anywhere;
+  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 @media (prefers-color-scheme: dark) {
   .promo-badge { color: #fbbf72; background: rgba(180, 83, 9, .18); }
