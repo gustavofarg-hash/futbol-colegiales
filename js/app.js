@@ -26,7 +26,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
-import { emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, shuffleTeams, teamsBalance, teamsMessage } from './teams.js';
+import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
@@ -536,7 +536,7 @@ function renderTeams(id) {
     for (let i = 0; i < count; i++) {
       const player = byId.get(list[i]);
       if (!player) {
-        rows.push('<li class="team-slot empty">Libre</li>');
+        rows.push(`<li class="team-slot empty" data-slot-index="${i}">Libre</li>`);
         continue;
       }
       const other = side === 'bib' ? 'plain' : 'bib';
@@ -549,50 +549,50 @@ function renderTeams(id) {
       const arco = readOnly
         ? (player.inGoal === true ? `<span class="arco-done">Fue al arco</span>` : '')
         : `<label class="arco"><input type="checkbox" data-arco ${player.inGoal === true ? 'checked' : ''}><span>Fue al arco</span></label>`;
+      const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
       rows.push(readOnly
         ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${arco}</li>`
-        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${arco}<button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></li>`);
+        : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span>${goalBox}${tools}${arco}</li>`);
     }
     return rows.join('');
   };
   const freeRows = free.map((player) => (readOnly
     ? `<li class="team-row"><span class="team-name">${esc(shownName(player))}</span></li>`
-    : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></li>`)).join('');
+    : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}"><span class="team-name">${esc(shownName(player))}</span><span class="team-tools"><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></span></li>`)).join('');
   const when = `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
   const score = normalizeScore(m.score);
   const share = teamsMessage({ when, venue: placeOf(m), players: main.map((player) => ({ ...player, name: shownName(player) })), teams, score: m.score ? score : null });
   const scoreSide = (side, label, value) => {
+    const icon = side === 'bib' ? vest : shirt;
     const n = `<strong id="score-${side}">${value}</strong>`;
-    if (readOnly) return `<div class="score-side"><span>${esc(label)}</span>${n}</div>`;
-    return `<div class="score-side"><span>${esc(label)}</span><div class="score-controls"><button type="button" class="score-btn" data-score="${side}" data-delta="-1" aria-label="Restar uno al marcador de ${esc(label)}">−1</button>${n}<button type="button" class="score-btn" data-score="${side}" data-delta="1" aria-label="Sumar uno al marcador de ${esc(label)}">+1</button></div></div>`;
+    const title = `<span class="score-label">${icon}<span>${esc(label)}</span></span>`;
+    if (readOnly) return `<div class="score-side">${title}${n}</div>`;
+    return `<div class="score-side">${title}<div class="score-controls"><button type="button" class="score-btn" data-score="${side}" data-delta="-1" aria-label="Restar uno al marcador de ${esc(label)}">−</button>${n}<button type="button" class="score-btn" data-score="${side}" data-delta="1" aria-label="Sumar uno al marcador de ${esc(label)}">+</button></div></div>`;
   };
+  const teamHeading = (side, title, count) => `${title} (<span id="team-${side}-count">${count}</span> ${count === 1 ? 'jugador' : 'jugadores'})`;
   if (!replaceView(`
     <section class="detail-head">
       <h1>Equipos</h1>
       <div class="when">${esc(when)} · ${esc(placeOf(m))}</div>
-      <p class="hint">Con los anotados. ${slots} por equipo. La lista de espera no entra.</p>
-      ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : '<p class="hint">Tocá la pechera o la camiseta. La ✕ lo devuelve a Sin asignar.</p>'}
+      ${readOnly ? '<p class="hint" id="teams-readonly">Solo lectura. No podés cambiar los equipos.</p>' : ''}
     </section>
     <div class="team-board" id="team-board">
-      <div class="scoreboard" id="scoreboard" aria-label="Marcador">
+      <h2 class="tanteador" id="tanteador">TANTEADOR</h2>
+      <div class="scoreboard" id="scoreboard" aria-label="Tanteador">
         ${scoreSide('bib', 'Con pechera', score.bib)}
         <span class="score-dash" aria-hidden="true">–</span>
         ${scoreSide('plain', 'Sin pechera', score.plain)}
-      </div>
-      <div class="team-counts">
-        <div class="team-count"><strong id="team-bib-count">${balance.bib}</strong><span>Con pechera</span></div>
-        <div class="team-count"><strong id="team-plain-count">${balance.plain}</strong><span>Sin pechera</span></div>
       </div>
       ${balance.balanced ? '' : '<p class="team-warn" id="team-balance">Está desbalanceado</p>'}
       ${main.length ? '' : '<p class="empty-wait">No hay jugadores anotados.</p>'}
       <div class="team-columns">
         <section id="team-bib" data-drop-side="bib">
-          <h2 class="section">Con pechera</h2>
+          <h2 class="section team-heading">${teamHeading('bib', 'CON PECHERA', balance.bib)}</h2>
           <p class="arco-left" id="arco-bib">Faltan ir al arco: ${goaliesLeft(teams.bib, teams.bib.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('bib', teams.bib)}</ul>
         </section>
         <section id="team-plain" data-drop-side="plain">
-          <h2 class="section">Sin pechera</h2>
+          <h2 class="section team-heading">${teamHeading('plain', 'SIN PECHERA', balance.plain)}</h2>
           <p class="arco-left" id="arco-plain">Faltan ir al arco: ${goaliesLeft(teams.plain, teams.plain.filter((id) => byId.get(id)?.inGoal === true))}</p>
           <ul class="team-list">${slotRows('plain', teams.plain)}</ul>
         </section>
@@ -602,7 +602,7 @@ function renderTeams(id) {
         ${free.length ? `<ul class="team-list">${freeRows}</ul>` : '<p class="empty-wait">Nadie</p>'}
       </section>
       <div class="team-actions">
-        ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Limpiar</button>'}
+        ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Reset</button>'}
         <a class="btn nav-wide" id="btn-teams-wa" href="${esc(waHref('', share))}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
       </div>
     </div>`)) return;
@@ -641,6 +641,31 @@ function renderTeams(id) {
     };
     let dragId = '';
     let pointer = null;
+    const rated = () => main.map((player) => {
+      const person = player.rosterId ? (app.roster || []).find((item) => item.id === player.rosterId) : null;
+      return { id: player.id, level: person?.level ?? player.level };
+    });
+    const release = (playerId, hit) => {
+      if (!playerId || !hit?.closest) return;
+      const row = hit.closest('[data-drag-player]');
+      const targetId = row?.dataset?.dragPlayer;
+      const zone = hit.closest('[data-drop-side]');
+      if (!(targetId && targetId !== playerId) && !zone) return;
+      const dropped = targetId && targetId !== playerId
+        ? dropPlayerOn(teams, playerId, { targetId, allowedIds: ids, cap: slots })
+        : dropPlayerOn(teams, playerId, {
+          side: zone.dataset.dropSide,
+          index: hit.closest('[data-slot-index]') ? Number(hit.closest('[data-slot-index]').dataset.slotIndex) : null,
+          allowedIds: ids,
+          cap: slots,
+        });
+      if (!dropped) return;
+      if (!dropped.ok && dropped.reason === 'full') {
+        toast(dropped.side === 'plain' ? 'Sin pechera está completo' : 'Con pechera está completo');
+        return;
+      }
+      if (dropped.ok) save(dropped.teams);
+    };
     $('#team-board').addEventListener('dragstart', (e) => {
       const row = e.target.closest('[data-drag-player]');
       if (!row) return;
@@ -654,8 +679,7 @@ function renderTeams(id) {
       const zone = e.target.closest('[data-drop-side]');
       if (!zone) return;
       e.preventDefault();
-      const playerId = dragId || e.dataTransfer?.getData('text/plain');
-      if (playerId) assign(playerId, zone.dataset.dropSide);
+      release(dragId || e.dataTransfer?.getData('text/plain'), e.target);
     });
     $('#team-board').addEventListener('pointerdown', (e) => {
       if (e.target.closest('button, label, input')) return;
@@ -669,12 +693,16 @@ function renderTeams(id) {
       const playerId = pointer.id;
       pointer = null;
       if (!moved) return;
-      const hit = document.elementFromPoint(e.clientX, e.clientY);
-      const zone = hit?.closest?.('[data-drop-side]');
-      if (zone) assign(playerId, zone.dataset.dropSide);
+      release(playerId, document.elementFromPoint(e.clientX, e.clientY));
     });
-    $('#btn-teams-shuffle').onclick = () => save(shuffleTeams(ids), 'Equipos mezclados');
-    $('#btn-teams-clear').onclick = () => save(emptyTeams(), 'Equipos limpios');
+    $('#btn-teams-shuffle').onclick = () => {
+      if (!confirm('¿Seguro que querés rearmar los equipos al azar?')) return;
+      save(balanceTeams(rated(), { cap: slots }), 'Equipos mezclados');
+    };
+    $('#btn-teams-clear').onclick = () => {
+      if (!confirm('¿Seguro que querés resetear los equipos?')) return;
+      save(emptyTeams(), 'Equipos limpios');
+    };
   }
 }
 

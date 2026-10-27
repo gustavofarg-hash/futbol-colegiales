@@ -24,7 +24,7 @@ import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
-import { bumpGoals, bumpScore, cyclePlayer, dropPlayer, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
+import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import { APP_INSTALL_URL, appShareMessage } from '../js/share.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
@@ -1522,6 +1522,32 @@ test('equipos: toque, azar, baja y mensaje', () => {
   assert.equal(scoreLine({ bib: 2, plain: 0 }), 'Con pechera 2 – 0 Sin pechera');
   assert.equal(goaliesLeft(['a', 'b'], ['b']), 1);
   assert.match(teamsMessage({ when: 'Martes', venue: 'Sede', players: [], teams: { bib: [], plain: [] }, score: { bib: 2, plain: 1 } }), /Marcador: Con pechera 2 – Sin pechera 1/);
+});
+
+test('equipos equilibrados por nivel y cambio de lugar', () => {
+  const even = balanceTeams([
+    { id: 'a', level: 10 },
+    { id: 'b', level: 1 },
+    { id: 'c', level: 9 },
+    { id: 'd', level: 2 },
+  ], { cap: 2, rng: () => 0 });
+  const sum = (ids) => ids.reduce((total, id) => total + ({ a: 10, b: 1, c: 9, d: 2 }[id]), 0);
+  assert.equal(even.bib.length, 2);
+  assert.equal(even.plain.length, 2);
+  assert.equal(sum(even.bib), sum(even.plain));
+  const capped = balanceTeams([
+    { id: 'a', level: 10 },
+    { id: 'b', level: 9 },
+    { id: 'c', level: 1 },
+  ], { cap: 1, rng: () => 0 });
+  assert.deepEqual([...capped.bib, ...capped.plain].sort(), ['a', 'b']);
+  const defaults = balanceTeams([{ id: 'a' }, { id: 'b', level: 10 }, { id: 'c' }, { id: 'd', level: 10 }], { cap: 2, rng: () => 0 });
+  const side = (id) => (defaults.bib.includes(id) ? 'bib' : 'plain');
+  assert.notEqual(side('b'), side('d'));
+  assert.deepEqual(dropPlayerOn({ bib: ['a', 'b'], plain: ['c'] }, 'a', { targetId: 'c', allowedIds: ['a', 'b', 'c'] }).teams, { bib: ['c', 'b'], plain: ['a'] });
+  assert.deepEqual(dropPlayerOn({ bib: ['a', 'b', 'c'], plain: [] }, 'a', { targetId: 'c', allowedIds: ['a', 'b', 'c'] }).teams.bib, ['c', 'b', 'a']);
+  assert.deepEqual(dropPlayerOn({ bib: ['a'], plain: [] }, 'x', { side: 'plain', allowedIds: ['a', 'x'], cap: 2 }).teams, { bib: ['a'], plain: ['x'] });
+  assert.equal(dropPlayerOn({ bib: ['a'], plain: [] }, 'x', { side: 'bib', allowedIds: ['a', 'x'], cap: 1 }).ok, false);
 });
 
 test('importar historial lee fecha, hora y jugadores de varios partidos', () => {
