@@ -1777,9 +1777,10 @@ check('El archivo .txt llena el texto', true);
 await page.click('#hist-imp-next');
 await page.waitForSelector('#hist-imp-list');
 const preview = await page.locator('#hist-imp-list').innerText();
-check('La vista previa muestra fecha, sede y jugadores', preview.includes('08/10') && preview.includes('21:00') && preview.includes('Polideportivo Colegiales') && preview.includes('Juan Pérez') && preview.includes('Visitante Importado') && preview.includes('Ana Sola'), preview.slice(0, 180));
+check('La vista previa muestra fecha, sede y jugadores', preview.includes('08/10/2026') && preview.includes('21hs') && preview.includes('09/10/2026') && preview.includes('19:30hs') && preview.includes('Polideportivo Colegiales') && preview.includes('Juan Pérez') && preview.includes('Visitante Importado') && preview.includes('Ana Sola'), preview.slice(0, 220));
 await page.click('#hist-imp-save');
 await page.waitForSelector('#list-history .match-card[data-date="2026-10-08"]');
+check('El historial muestra la fecha con año', (await page.textContent('#list-history .match-card[data-date="2026-10-08"]')).includes('08/10/2026'));
 await page.click('#list-history .match-card[data-date="2026-10-08"]');
 await page.waitForSelector('#slots .name:text-is("Juan Pérez")');
 const imported = await page.evaluate(() => {

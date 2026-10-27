@@ -115,6 +115,7 @@ h2.section:first-child { margin-top: 4px; }
 .datebox .dd { font-size: 1.5rem; font-weight: 800; line-height: 1; }
 .datebox .dm { font-size: 0.6875rem; font-weight: 700; opacity: .8; }
 .match-info { flex: 1; min-width: 0; }
+.match-day { font-weight: 700; font-variant-numeric: tabular-nums; }
 .match-time { font-weight: 700; font-size: 1.03125rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .match-when { font-variant-numeric: tabular-nums; }
 .match-note { color: var(--muted); font-size: 0.84375rem; overflow-wrap: anywhere; }

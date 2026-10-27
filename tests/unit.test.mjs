@@ -1545,6 +1545,25 @@ test('importar historial lee fecha, hora y jugadores de varios partidos', () => 
   assert.equal(p('jueves 22/10 21hs', { now: new Date('2026-10-19T13:00:00-03:00') })[0].date, '2026-10-22');
 });
 
+test('importar historial: rango de hora y fecha con año', () => {
+  const now = new Date('2026-10-19T13:00:00-03:00');
+  const rows = parsePlayedMatchesFromText('Martes 20 a 21 12/12/2023\n1. Juan Pérez\n2. Ana', { now });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].date, '2023-12-12');
+  assert.equal(rows[0].time, '20:00');
+  assert.deepEqual(rows[0].players.map((player) => player.name), ['Juan Pérez', 'Ana']);
+  const withHs = parsePlayedMatchesFromText('Martes 20hs a 21hs 12/12/23\n1. Ana', { now });
+  assert.equal(withHs[0].date, '2023-12-12');
+  assert.equal(withHs[0].time, '20:00');
+  const minutes = parsePlayedMatchesFromText('12/12/2023 20:30 a 21:15\n1. Ana', { now });
+  assert.equal(minutes[0].date, '2023-12-12');
+  assert.equal(minutes[0].time, '20:30');
+  const mismatch = p('Lunes 20 a 21 12/12/2023', { now });
+  assert.equal(mismatch[0].date, '2023-12-12');
+  assert.equal(mismatch[0].time, '20:00');
+  assert.ok(mismatch[0].warning);
+});
+
 test('compartir la app nombra el link de instalación', () => {
   const text = appShareMessage();
   assert.match(text, /Anotate con Mis Partidos/);

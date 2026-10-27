@@ -453,7 +453,7 @@ function placeOf(match) {
 function capOf(match) {
   return matchCapacity(match);
 }
-function matchCard(m) {
+function matchCard(m, opts = {}) {
   const n = playersOf(m.id).length;
   const cap = capOf(m);
   const [, mo, d] = m.date.split('-').map(Number);
@@ -464,6 +464,7 @@ function matchCard(m) {
   <li><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}">
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
+      ${opts.fullDate ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : ''}
       <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(hour)} (${esc(price)})</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
@@ -722,7 +723,7 @@ function renderHistory() {
     <p class="hint" id="hist-caption">${esc(caption)}</p>
     <button type="button" class="btn block" id="btn-hist-import">Importar partidos desde texto</button>
     ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
-    ${past.length ? `<ul class="match-list" id="list-history">${past.map(matchCard).join('')}</ul>` : `
+    ${past.length ? `<ul class="match-list" id="list-history">${past.map((item) => matchCard(item, { fullDate: true })).join('')}</ul>` : `
       <div class="empty" id="list-history"><div class="big">📅</div><p><b>${esc(emptyLead)}</b></p>
       <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}`)) return;
   $('#history-filter').onsubmit = (e) => {
@@ -1768,7 +1769,7 @@ function openHistoryImportPreview(text, found) {
   const cards = items.map((item, i) => {
     const names = item.players.length ? item.players.map((player) => player.name).join(', ') : 'Sin jugadores';
     return `<li data-i="${i}">
-      <div class="top"><input type="checkbox" ${item.on ? 'checked' : ''} ${item.duplicate ? 'disabled' : ''} aria-label="Importar partido"><b class="lbl">${esc(capitalize(labelDate(item.date)))} · ${esc(item.time)} hs</b></div>
+      <div class="top"><input type="checkbox" ${item.on ? 'checked' : ''} ${item.duplicate ? 'disabled' : ''} aria-label="Importar partido"><b class="lbl">${esc(numericDate(item.date))} · ${esc(shortHour(item.time) || item.time)}</b></div>
       <div class="sub">Polideportivo Colegiales</div>
       <div class="sub">${esc(names)}</div>
       ${item.duplicate ? '<div class="err">Ya hay un partido a esa hora en Polideportivo Colegiales.</div>' : ''}
