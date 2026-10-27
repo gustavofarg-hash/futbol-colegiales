@@ -1519,6 +1519,11 @@ async function shareBackupFile(filename, text) {
   return 'downloaded';
 }
 
+function failBackup(error) {
+  console.error(error);
+  toast(error?.message || 'No se pudo hacer el backup.', 7000);
+}
+
 async function currentBackupFile() {
   const when = new Date();
   const backup = await app.store.exportDatabase({ when });
@@ -1554,7 +1559,7 @@ function openResetDb() {
       apply.disabled = false;
       const msg = error?.message || 'No se pudo borrar.';
       $('#reset-err').textContent = msg;
-      toast(msg);
+      toast(msg, 7000);
     });
   };
 }
@@ -1609,7 +1614,7 @@ function openRestore() {
       apply.disabled = false;
       const msg = error?.message || 'No se pudo cargar el backup.';
       $('#backup-err').textContent = msg;
-      toast(msg);
+      toast(msg, 7000);
     });
   };
 }
@@ -1626,17 +1631,17 @@ function openBackup() {
     </div>
     <p class="hint">Drive abre el menú del teléfono para elegir dónde guardarlo. Si ese menú no está, se descarga el archivo.</p>`);
   $('#backup-download').onclick = () => {
-    run(currentBackupFile().then(({ filename, text }) => {
+    currentBackupFile().then(({ filename, text }) => {
       saveBackupFile(filename, text);
       toast('Backup guardado en el celular');
-    }));
+    }).catch(failBackup);
   };
   $('#backup-drive').onclick = () => {
-    run(currentBackupFile().then(async ({ filename, text }) => {
+    currentBackupFile().then(async ({ filename, text }) => {
       const how = await shareBackupFile(filename, text);
       if (how === 'shared') toast('Elegí Drive en el menú para guardarlo');
       else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo');
-    }));
+    }).catch(failBackup);
   };
 }
 
