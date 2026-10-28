@@ -2,7 +2,7 @@
 // Puro: las pruebas no necesitan Firebase. Un pago sin receivedBy cuenta como "Sin especificar".
 import { MESES_CORTOS, numericDate, shortHour } from './dates.js';
 import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
-import { priceOfMatch } from './prices.js';
+import { priceOfMatch, promoForPlayer } from './prices.js';
 import { UNSPECIFIED, sameOrganizer } from './organizers.js';
 import { foldText, phoneIdentity, playerMatchesPerson } from './roster.js';
 
@@ -267,10 +267,55 @@ export function pendingTransfers({ players, roster, organizer = null }) {
   return { total, rows };
 }
 
+function organizerOf(organizer) {
+  if (typeof organizer === 'string') return { uid: '', name: organizer };
+  return { uid: String(organizer?.uid || '').trim(), name: String(organizer?.name || '').trim() };
+}
+
+/** Lo anotó este organizador: el uid con el que entró, o el nombre de Agregó. */
+export function addedByOrganizer(player, organizer) {
+  const who = organizerOf(organizer);
+  if (!who.uid && !who.name) return false;
+  if (who.uid && player?.addedByUid && player.addedByUid === who.uid) return true;
+  return !!who.name && sameOrganizer(player?.addedBy, who.name);
+}
+
+/**
+ * Lo que falta en este partido.
+ * Con promo de 2 o 3, el precio de este partido es la parte del día
+ * (promoForPlayer), no el precio suelto. Transfiere después no está cobrado.
+ * Juega gratis, la lista de espera y un partido cancelado no deben.
+ */
+export function amountOwed(player, { players, matches, prices } = {}) {
+  if (!player || player.waiting === true || isFreePlay(player)) return 0;
+  const list = Array.isArray(matches) ? matches : [];
+  const match = list.find((item) => item.id === player.matchId);
+  if (!match || match.cancelled === true) return 0;
+  const promo = promoForPlayer({ player, players, matches: list, prices });
+  const due = promo ? Number(promo.share) : priceOfMatch(match, prices);
+  const owed = roundARS(due - paymentParts(player).received);
+  return owed > 0 ? owed : 0;
+}
+
+/** Lo que falta cobrar en un partido, solo de quien anotó el organizador. */
+export function organizerMatchDebt({ match, players, matches, prices, organizer }) {
+  if (!match || match.cancelled === true) return { total: 0, rows: [] };
+  const rows = [];
+  for (const player of players || []) {
+    if (player.matchId !== match.id || !addedByOrganizer(player, organizer)) continue;
+    const owed = amountOwed(player, { players, matches, prices });
+    if (!(owed > 0)) continue;
+    rows.push({ id: player.id || '', name: String(player.name || 'Sin nombre'), owed });
+  }
+  rows.sort((a, b) => b.owed - a.owed || a.name.localeCompare(b.name, 'es'));
+  const total = roundARS(rows.reduce((sum, row) => sum + row.owed, 0));
+  return { total, rows };
+}
+
 /**
  * Lo que le falta pagar, partido por partido.
  * Debe el precio del partido menos lo ya cobrado (efectivo + transferencia).
- * Transfiere después no está cobrado, así que entra en ese resto.
+ * Con promo, el precio es la parte de ese día. Transfiere después entra en el resto.
  * Juega gratis, la lista de espera y un partido cancelado no suman.
  */
 export function playerDebt({ person, players, matches, prices }) {
@@ -278,11 +323,10 @@ export function playerDebt({ person, players, matches, prices }) {
   const rows = [];
   for (const player of players || []) {
     if (!playerMatchesPerson(player, person)) continue;
-    if (player.waiting === true || isFreePlay(player)) continue;
-    const match = byId.get(player.matchId);
-    if (!match || match.cancelled === true) continue;
-    const owed = roundARS(priceOfMatch(match, prices) - paymentParts(player).received);
+    const owed = amountOwed(player, { players, matches, prices });
     if (!(owed > 0)) continue;
+    const match = byId.get(player.matchId);
+    if (!match) continue;
     const when = [numericDate(match.date), shortHour(match.time)].filter(Boolean).join(' · ');
     rows.push({
       matchId: match.id,

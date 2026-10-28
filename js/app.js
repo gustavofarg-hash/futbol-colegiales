@@ -21,7 +21,7 @@ import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, invit
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
-import { hasUnspecified, mineSummary, paymentLedger, playerDebt, signupLedger } from './ledger.js';
+import { hasUnspecified, mineSummary, organizerMatchDebt, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -94,6 +94,8 @@ const app = {
   historyVenues: null,
   historyMeta: null,
   historyError: '',
+  historyDebtors: false,
+  oweOpen: new Set(),
   matchMiss: {},
   showLater: false,
 };
@@ -461,6 +463,38 @@ function placeOf(match) {
 function capOf(match) {
   return matchCapacity(match);
 }
+function knownMatches() {
+  const byId = new Map();
+  for (const match of [...(app.matches || []), ...(app.history || [])]) {
+    if (match?.id) byId.set(match.id, match);
+  }
+  return [...byId.values()];
+}
+
+function oweBox(m) {
+  const debt = organizerMatchDebt({
+    match: m,
+    players: app.players,
+    matches: knownMatches(),
+    prices: livePrices(),
+    organizer: { uid: actor().uid, name: actor().name },
+  });
+  if (!(debt.total > 0)) return '';
+  const open = app.oweOpen?.has(m.id) === true;
+  const rows = debt.rows.map((row) => {
+    const player = app.players.find((item) => item.id === row.id);
+    const name = player ? shownName(player) : row.name;
+    return `<li><span>${esc(name)}</span><b>${esc(formatARS(row.owed))}</b></li>`;
+  }).join('');
+  return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
+    <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
+      <span>Faltan pagar: ${esc(formatARS(debt.total))}</span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <ul class="owe-list"${open ? '' : ' hidden'}>${rows}</ul>
+  </div>`;
+}
+
 function matchCard(m, opts = {}) {
   const n = playersOf(m.id).length;
   const cap = capOf(m);
@@ -468,21 +502,25 @@ function matchCard(m, opts = {}) {
   const rel = relativeLabel(m.date);
   const hour = shortHour(m.time) || '--:--';
   const price = formatARS(priceOfMatch(m, livePrices()));
+  const history = opts.fullDate === true;
+  const note = history || !m.note ? '' : `<div class="match-note">${esc(m.note)}</div>`;
+  const waiting = history || !waitingOf(m.id).length ? '' : `<div class="match-note">${waitingOf(m.id).length} en espera</div>`;
+  const debt = history ? oweBox(m) : '';
   return `
-  <li><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}">
+  <li class="match-item"><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}" data-note="${esc(m.note || '')}">
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
-      ${opts.fullDate ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : ''}
+      ${history ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : ''}
       <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(hour)} (${esc(price)})</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
-      ${m.note ? `<div class="match-note">${esc(m.note)}</div>` : ''}
-      ${waitingOf(m.id).length ? `<div class="match-note">${waitingOf(m.id).length} en espera</div>` : ''}
+      ${note}
+      ${waiting}
     </div>
     <div class="count ${n >= cap ? 'full' : ''}" aria-label="${n} de ${cap} anotados">
       <div class="num">${n}<small>/${cap}</small></div>
       <div class="bar"><i style="width:${Math.min(100, (n / cap) * 100)}%"></i></div>
     </div>
-  </a></li>`;
+  </a>${debt}</li>`;
 }
 
 function renderHome() {
@@ -3482,6 +3520,17 @@ async function boot() {
     location.hash = '#/';
   };
   window.addEventListener('resize', placeBars);
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-owe-toggle]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const id = btn.dataset.oweToggle;
+    if (!app.oweOpen) app.oweOpen = new Set();
+    if (app.oweOpen.has(id)) app.oweOpen.delete(id);
+    else app.oweOpen.add(id);
+    render();
+  });
   $('#btn-text-smaller').onclick = () => { stepTextSize(-1); syncTextSize(); };
   $('#btn-text-bigger').onclick = () => { stepTextSize(1); syncTextSize(); };
   syncTextSize();

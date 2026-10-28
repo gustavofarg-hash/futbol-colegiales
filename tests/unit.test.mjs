@@ -10,7 +10,7 @@ import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, roster
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
-import { mineSummary, monthLabel, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
+import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -1245,6 +1245,41 @@ test('la deuda es el precio menos lo cobrado, sin gratis ni cancelados', () => {
     '02/11/2026 · 21hs · $8.000',
   ]);
   assert.equal(playerDebt({ person, players: players.filter((p) => p.matchId === 'saldado'), matches, prices }).text, '');
+  const promoMatches = [
+    { id: 'p-a', date: '2026-10-22', time: '19:00' },
+    { id: 'p-b', date: '2026-10-22', time: '21:00' },
+  ];
+  const promoPlayers = [
+    { id: 'pa', matchId: 'p-a', name: 'Promo Ana', phone: '5491111111111', addedBy: 'Gustavo', addedByUid: 'g' },
+    { id: 'pb', matchId: 'p-b', name: 'Promo Ana', phone: '5491111111111', addedBy: 'Gustavo', addedByUid: 'g' },
+  ];
+  const promoDebt = playerDebt({ person: { name: 'Promo Ana', phone: '5491111111111' }, players: promoPlayers, matches: promoMatches, prices });
+  assert.equal(promoDebt.total, 9000);
+  assert.deepEqual(promoDebt.rows.map((row) => row.owed), [4500, 4500]);
+  const day = [
+    { id: 'a', date: '2026-10-18', time: '21:00', price: 5000 },
+    { id: 'b', date: '2026-10-18', time: '19:00', price: 5000 },
+    { id: 'c', date: '2026-10-18', time: '18:00', price: 5000, cancelled: true },
+  ];
+  const rows = [
+    { id: 'ana', matchId: 'a', name: 'Ana Debe', addedBy: 'Gustavo', addedByUid: 'g' },
+    { id: 'beto', matchId: 'a', name: 'Beto Mitad', addedBy: 'Gustavo', addedByUid: 'g', paid: true, amount: 2000, cash: 2000, transfer: 0 },
+    { id: 'ajeno', matchId: 'a', name: 'De Martín', addedBy: 'Martín', addedByUid: 'm' },
+    { id: 'espera', matchId: 'a', name: 'Espera Fuera', addedBy: 'Gustavo', waiting: true },
+    { id: 'gratis', matchId: 'a', name: 'Gratis', addedBy: 'Gustavo', freePlay: true, paid: true },
+    { id: 'promo-a', matchId: 'a', name: 'Promo', phone: '5491100009999', addedBy: 'Gustavo', addedByUid: 'g' },
+    { id: 'promo-b', matchId: 'b', name: 'Promo', phone: '5491100009999', addedBy: 'Gustavo', addedByUid: 'g', paid: true, amount: 2000, cash: 2000, transfer: 0 },
+    { id: 'cancelado', matchId: 'c', name: 'Cancelado', addedBy: 'Gustavo' },
+  ];
+  const mine = organizerMatchDebt({ match: day[0], players: rows, matches: day, prices, organizer: { uid: 'g', name: 'Gustavo' } });
+  assert.equal(mine.total, 12500);
+  assert.deepEqual(mine.rows.map((row) => [row.name, row.owed]), [['Ana Debe', 5000], ['Promo', 4500], ['Beto Mitad', 3000]]);
+  assert.equal(addedByOrganizer(rows[2], { uid: 'g', name: 'Gustavo' }), false);
+  const other = organizerMatchDebt({ match: day[1], players: rows, matches: day, prices, organizer: 'Gustavo' });
+  assert.equal(other.total, 2500);
+  assert.equal(other.rows[0].owed, 2500);
+  assert.equal(organizerMatchDebt({ match: day[2], players: rows, matches: day, prices, organizer: 'Gustavo' }).total, 0);
+  assert.equal(amountOwed(rows[1], { players: rows, matches: day, prices }), 3000);
 });
 
 test('Mis y totales por organizador', () => {
