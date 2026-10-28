@@ -478,6 +478,14 @@ button.team-name {
 .friend-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; min-width: 0; }
 .friend-head > span { font-weight: 800; min-width: 0; }
 .friend-head .btn { flex: 0 1 auto; min-width: 0; min-height: 44px; padding: 6px 12px; white-space: normal; text-align: center; line-height: 1.15; }
+.friend-qty { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; min-width: 0; }
+.friend-qty > span { font-weight: 800; min-width: 0; }
+.friend-qty .qty { display: flex; align-items: center; gap: 6px; flex: none; }
+.friend-qty input {
+  width: 3.4rem; min-height: 44px; text-align: center; font-weight: 800;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg); font-size: 1.05rem;
+}
+.friend-qty .btn { min-width: 44px; min-height: 44px; padding: 0; }
 .friend-row { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; min-width: 0; }
 .friend-row input {
   flex: 1 1 auto; min-width: 0; width: auto; min-height: 48px; padding: 10px 12px;

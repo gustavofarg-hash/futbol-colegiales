@@ -2739,6 +2739,49 @@ function guestsOf(matchId, hostId) {
   return mates.filter((player) => rootInviterId(player, byId) === hostId);
 }
 
+function guestQtyHtml(value) {
+  return `<div class="friend-qty">
+    <span>Cuántos invitados</span>
+    <div class="qty">
+      <button type="button" class="btn" id="friend-minus" aria-label="Menos invitados">−</button>
+      <input id="friend-count" inputmode="numeric" value="${value}" aria-label="Cantidad de invitados">
+      <button type="button" class="btn" id="friend-plus" aria-label="Más invitados">+</button>
+    </div>
+  </div>`;
+}
+
+function bindGuestQty({ min = 0, value = 0, taken = [] } = {}) {
+  const input = $('#friend-count');
+  const rows = $('#friend-rows');
+  if (!input || !rows) return;
+  const clamp = (n) => Math.min(20, Math.max(min, Number.isFinite(n) ? n : min));
+  const paint = (n, focus) => {
+    const count = clamp(Math.floor(Number(n) || 0));
+    const kept = [...rows.querySelectorAll('input')].map((el) => el.value);
+    input.value = String(count);
+    rows.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      const row = document.createElement('div');
+      row.className = 'friend-row';
+      row.innerHTML = `<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado ${i + 1}">`;
+      rows.appendChild(row);
+      row.querySelector('input').value = kept[i] || '';
+    }
+    const names = resolveFriendNames(Array.from({ length: count }, () => ''), taken);
+    const hint = $('#friend-hint');
+    if (hint) {
+      hint.textContent = names.length
+        ? `Si dejás el nombre vacío: ${names.map((item) => item.name).join(', ')}.`
+        : 'Sin invitados entra solo él.';
+    }
+    if (focus) rows.querySelector('input')?.focus();
+  };
+  paint(value, false);
+  $('#friend-plus').onclick = () => paint(Number(input.value) + 1, true);
+  $('#friend-minus').onclick = () => paint(Number(input.value) - 1, false);
+  input.addEventListener('change', () => paint(parseInt(input.value, 10), false));
+}
+
 function friendNamesOf(matchId, hostId) {
   return guestsOf(matchId, hostId).map((player) => player.name);
 }
@@ -2924,7 +2967,7 @@ function openPlayerForm(m, p, opts = {}) {
       ${offerRoster ? '<label class="checkline" id="save-roster-line"><input type="checkbox" id="save-roster" name="saveRoster"><span>Guardar en Jugadores</span></label>' : ''}
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Anotar como pendiente de confirmación</label>' : ''}
       ${p ? '' : `<div class="friend-box" id="friend-box">
-        <div class="friend-head"><span>Invitados</span><button type="button" class="btn" id="btn-add-friend">Agregar invitado</button></div>
+        ${guestQtyHtml(0)}
         <div id="friend-rows"></div>
         <p class="hint" id="friend-hint">Si dejás el nombre vacío, queda como Invitado 1, Invitado 2…</p>
       </div>`}
@@ -2993,20 +3036,7 @@ function openPlayerForm(m, p, opts = {}) {
     });
     setTimeout(() => find.focus(), 50);
   }
-  const friendAdd = $('#btn-add-friend');
-  if (friendAdd) {
-    friendAdd.onclick = () => {
-      const row = document.createElement('div');
-      row.className = 'friend-row';
-      row.innerHTML = '<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado"><button type="button" class="btn friend-remove" aria-label="Quitar invitado">×</button>';
-      $('#friend-rows').appendChild(row);
-      row.querySelector('input').focus();
-    };
-    $('#friend-rows').addEventListener('click', (e) => {
-      const btn = e.target.closest('.friend-remove');
-      if (btn) btn.closest('.friend-row')?.remove();
-    });
-  }
+  if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [] });
   form.onsubmit = (e) => {
     e.preventDefault();
     const name = form.name.value.trim();
@@ -3409,26 +3439,15 @@ function openFriendForm(m, host) {
       <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Cuentan para el cupo como cualquier jugador.</p>
       ${signupFields(null)}
       <div class="friend-box">
-        <div class="friend-head"><span>Invitados</span><button type="button" class="btn" id="btn-add-friend">Agregar invitado</button></div>
+        ${guestQtyHtml(1)}
         <div id="friend-rows"></div>
+        <p class="hint" id="friend-hint"></p>
       </div>
       <div class="field"><div class="err" id="friend-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Agregar</button></div>
     </form>`);
   const form = $('#friend-form');
-  const addRow = () => {
-    const row = document.createElement('div');
-    row.className = 'friend-row';
-    row.innerHTML = '<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado"><button type="button" class="btn friend-remove" aria-label="Quitar invitado">×</button>';
-    $('#friend-rows').appendChild(row);
-    row.querySelector('input').focus();
-  };
-  $('#btn-add-friend').onclick = () => addRow();
-  $('#friend-rows').addEventListener('click', (e) => {
-    const btn = e.target.closest('.friend-remove');
-    if (btn) btn.closest('.friend-row')?.remove();
-  });
-  addRow();
+  bindGuestQty({ min: 1, value: 1, taken: friendNamesOf(m.id, host.id) });
   form.onsubmit = (e) => {
     e.preventDefault();
     const rows = friendRowValues();

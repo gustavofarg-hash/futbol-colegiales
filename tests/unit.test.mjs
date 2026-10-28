@@ -347,6 +347,11 @@ test('no se anota dos veces y Amigo N es de quien invita', () => {
   assert.equal(alreadyInMatch(mates, { name: 'Pedro', phone: '5491155550181' }, { exceptId: 'a1' }), null);
   assert.equal(alreadyInMatch(mates, { name: 'Juan Pérez' }, { exceptId: 'a1' })?.id, 'juan');
   assert.deepEqual(resolveFriendNames([''], ['Pedro', 'Amigo 2']), [{ name: 'Invitado 3', guestAuto: true }]);
+  assert.deepEqual(resolveFriendNames(['', '', ''], []), [
+    { name: 'Invitado 1', guestAuto: true },
+    { name: 'Invitado 2', guestAuto: true },
+    { name: 'Invitado 3', guestAuto: true },
+  ]);
   assert.equal(isAutoGuestName('Amigo 2'), true);
   assert.equal(isAutoGuestName('Invitado 1'), true);
   assert.equal(isAutoGuestName('Pedro'), false);

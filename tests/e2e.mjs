@@ -2140,8 +2140,8 @@ await page.waitForFunction(() => {
 check('Sin coincidencias, el botón es Agregar como nuevo', await page.getAttribute('#roster-add-new', 'aria-label') === 'Agregar como nuevo');
 await page.click('#roster-add-new');
 check('El + copia el texto recortado y enfoca Nombre', (await page.inputValue('#player-name')) === 'zzz nuevo' && await page.evaluate(() => document.activeElement?.id === 'player-name'));
-await page.click('#btn-add-friend');
-await page.click('#btn-add-friend');
+await page.click('#friend-plus');
+await page.click('#friend-plus');
 await page.locator('#friend-rows input').nth(1).fill('Pedro Tipo');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Pedro Tipo")');
@@ -2159,7 +2159,7 @@ check('En guardados figura Ya anotado', (await page.locator('#roster-hits small.
 await page.click('#player-form [data-close]');
 await page.click('#btn-add-player');
 await page.fill('#player-name', 'Segundo');
-await page.click('#btn-add-friend');
+await page.click('#friend-plus');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Segundo")');
 const amigoTags = await page.locator('#slots .slot', { has: page.locator('.name:text-is("Invitado 1")') }).locator('.friend-tag').allInnerTexts();
@@ -2191,8 +2191,8 @@ const grabCupo = (dialog) => { if (/lista de espera/.test(dialog.message())) cup
 page.on('dialog', grabCupo);
 await page.click('#btn-add-player');
 await page.fill('#player-name', 'Casi Lleno');
-await page.click('#btn-add-friend');
-await page.click('#btn-add-friend');
+await page.click('#friend-plus');
+await page.click('#friend-plus');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#wait-list .name:text-is("Invitado 2")');
 check('Avisa los lugares que faltan', cupoWarnings[0] === 'Queda 1 lugar: 2 van a quedar en lista de espera', cupoWarnings.join(' | '));
@@ -2370,7 +2370,7 @@ await page.setViewportSize({ width: 360, height: 740 });
 await page.click('#btn-add-player');
 await page.fill('#roster-find', 'nadieconestenombre');
 await page.waitForSelector('#roster-add-new:not([hidden])');
-await page.click('#btn-add-friend');
+await page.click('#friend-plus');
 const hugeForm = await page.evaluate(() => ({
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   plus: !!document.querySelector('#roster-add-new') && !document.querySelector('#roster-add-new').hidden,
