@@ -593,6 +593,9 @@ await pageWait.close();
 
 await page.locator('#slots .slot', { hasText: 'Jugador 14' }).locator('.more-btn').click();
 await page.click('#pm-del');
+await page.waitForSelector('#ask-yes');
+check('Subir de la espera pregunta con Sí y No', (await page.locator('#ask-yes').innerText()) === 'Sí' && (await page.locator('#ask-no').innerText()) === 'No');
+await page.click('#ask-yes');
 await page.waitForSelector('#slots .name:text-is("Espera Beto")');
 check('Subir al partido se lleva al primero de la espera', !(await page.locator('#wait-list').getByText('Espera Beto', { exact: true }).count()) && (await page.textContent('#slot-count')) === '14/14');
 const left = await page.$$eval('#wait-list .name', (els) => els.map((e) => e.textContent));
@@ -2201,6 +2204,8 @@ const waitTags = await page.locator('#wait-list .friend-tag').allInnerTexts();
 check('En la espera también son amigos', waitTags.length === 2 && waitTags.every((text) => text.includes('invitado de Casi Lleno')), waitTags.join(' | '));
 await page.locator('#slots .slot', { hasText: 'Relleno 1' }).locator('[data-menu]').click();
 await page.click('#pm-del');
+await page.waitForSelector('#ask-yes');
+await page.click('#ask-yes');
 await page.waitForFunction(() => {
   const names = [...document.querySelectorAll('#slots .name')].map((el) => el.textContent);
   return names.indexOf('Invitado 1') === names.indexOf('Casi Lleno') + 1;

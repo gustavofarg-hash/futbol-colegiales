@@ -3461,6 +3461,27 @@ function openPlayerMenu(m, p) {
   $('#pm-del').onclick = () => removeMatchPlayer(m, p);
 }
 
+function askYesNo(title) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (yes) => {
+      if (settled) return;
+      settled = true;
+      resolve(!!yes);
+      closeSheet();
+    };
+    openSheet(`
+      <h3>${esc(title)}</h3>
+      <div class="choice">
+        <button type="button" class="btn primary" id="ask-yes">Sí</button>
+        <button type="button" class="btn" id="ask-no">No</button>
+      </div>`);
+    $('#ask-yes').onclick = () => finish(true);
+    $('#ask-no').onclick = () => finish(false);
+    sheet.addEventListener('close', () => finish(false), { once: true });
+  });
+}
+
 function removeMatchPlayer(m, p, { asked = false } = {}) {
   const fromMain = !isWaiting(p);
   const friends = guestsOf(m.id, p.id);
@@ -3469,16 +3490,22 @@ function removeMatchPlayer(m, p, { asked = false } = {}) {
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
   const mainLeft = playersOf(m.id).filter((item) => !dropping.has(item.id)).length;
-  const promote = fromMain && top && mainLeft < capOf(m)
-    && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
-  closeSheet();
-  const job = (async () => {
-    for (const id of dropping) await app.store.deletePlayer(id);
-    if (!promote) return;
-    await app.store.promoteFromWaiting(top.id);
-    await offerPromotionWhatsApp(top, m);
-  })();
-  run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);
+  const needsPromote = fromMain && !!top && mainLeft < capOf(m);
+  const go = (promote) => {
+    const job = (async () => {
+      for (const id of dropping) await app.store.deletePlayer(id);
+      if (!promote) return;
+      await app.store.promoteFromWaiting(top.id);
+      await offerPromotionWhatsApp(top, m);
+    })();
+    run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);
+  };
+  if (!needsPromote) {
+    closeSheet();
+    go(false);
+    return;
+  }
+  askYesNo(`¿Subir a ${top.name}, el primero de la lista de espera?`).then(go);
 }
 
 function demoteToWait(m, p) {
