@@ -34,7 +34,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v56';
+const APP_VERSION = 'f7c-v57';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -785,18 +785,26 @@ function renderHistory() {
   const caption = app.historyMeta?.caption || 'Partidos pasados, los más recientes primero.';
   const active = !!(filter.day || filter.from || filter.to);
   const venues = historyVenueState();
-  const past = filterHistoryByVenues(app.history || [], venues.all ? null : venues.selected);
+  const debtOn = app.historyDebtors === true;
+  let past = filterHistoryByVenues(app.history || [], venues.all ? null : venues.selected);
+  if (debtOn) {
+    const matches = knownMatches();
+    const organizer = { uid: actor().uid, name: actor().name };
+    const prices = livePrices();
+    past = past.filter((match) => organizerMatchDebt({ match, players: app.players, matches, prices, organizer }).total > 0);
+  }
   const venueNarrow = !venues.all;
-  const filtering = active || venueNarrow;
+  const filtering = active || venueNarrow || debtOn;
   const emptyLead = venueNarrow && !(venues.selected || []).length
     ? 'Elegí una sede o Todas.'
     : (filtering ? 'Nada en ese filtro.' : 'Todavía no hay partidos pasados.');
-  const chips = `<div class="chips history-venues" id="hist-venues" role="group" aria-label="Sedes">
+  const chips = `<div class="chips history-venues" id="hist-venues" role="group" aria-label="Filtros del historial">
       <button type="button" class="btn chip${venues.all ? ' on' : ''}" data-venue="all" aria-pressed="${venues.all ? 'true' : 'false'}">Todas</button>
       ${venues.options.map((venue) => {
         const on = !venues.all && (venues.selected || []).includes(venue.id);
         return `<button type="button" class="btn chip${on ? ' on' : ''}" data-venue="${esc(venue.id)}" aria-pressed="${on ? 'true' : 'false'}">${esc(venue.name)}</button>`;
       }).join('')}
+      <button type="button" class="btn chip${debtOn ? ' on' : ''}" id="hist-debtors" aria-pressed="${debtOn ? 'true' : 'false'}">Partidos con deudores</button>
     </div>`;
   if (!replaceView(`
     <h2 class="section">Historial de partidos</h2>
@@ -838,6 +846,11 @@ function renderHistory() {
   };
   const venueBox = $('#hist-venues');
   if (venueBox) venueBox.onclick = (e) => {
+    if (e.target.closest('#hist-debtors')) {
+      app.historyDebtors = !app.historyDebtors;
+      renderHistory();
+      return;
+    }
     const btn = e.target.closest('[data-venue]');
     if (!btn) return;
     const id = btn.dataset.venue;

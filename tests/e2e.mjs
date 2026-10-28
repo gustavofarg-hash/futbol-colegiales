@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v56');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v57');
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -1524,6 +1524,13 @@ const openedDebt = await page.evaluate(() => ({
   open: document.querySelector('#list-history .match-item:has([data-note="Ayer"]) .owe-box')?.classList.contains('open') === true,
 }));
 check('La flecha muestra quién debe y no abre el partido', openedDebt.hash === '#/historial' && openedDebt.open && openedDebt.text.includes('Histórico Pérez') && openedDebt.text.includes('$5.000') && !openedDebt.text.includes('Espera Vieja'), openedDebt.text);
+await page.click('#hist-debtors');
+await page.waitForFunction(() => document.querySelector('#hist-debtors')?.getAttribute('aria-pressed') === 'true');
+const debtorDates = await page.$$eval('#list-history .match-card', (els) => els.map((el) => el.dataset.date));
+check('Partidos con deudores deja solo los que deben', debtorDates.includes('2026-10-18') && !debtorDates.includes('2026-10-12'), debtorDates.join(','));
+await page.click('#hist-debtors');
+await page.waitForSelector('#list-history .match-card[data-note="Solo viejo"]');
+check('El filtro de deudores se apaga', (await page.locator('#hist-debtors').getAttribute('aria-pressed')) === 'false');
 check('Hoy no entra al historial', await page.locator('#list-history .match-card:has-text("Hoy temprano")').count() === 0);
 await page.click('#list-history .match-card[data-note="Ayer"]');
 await page.waitForSelector('#slots .name:text-is("Histórico Pérez")');
