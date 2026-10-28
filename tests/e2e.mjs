@@ -1463,7 +1463,7 @@ await page.evaluate(async () => {
 await page.waitForSelector('#list-next .match-card[data-note="Hoy deuda"]');
 const hoyText = (await page.locator('#list-next .match-item:has([data-note="Hoy deuda"])').innerText()).replace(/\s+/g, ' ');
 const mananaText = (await page.locator('#list-next .match-item:has([data-note="Mañana no"])').innerText()).replace(/\s+/g, ' ');
-check('Hoy muestra lo que falta pagar y conserva la nota', hoyText.includes('Faltan pagar: $5.000') && hoyText.includes('Hoy deuda') && !hoyText.includes('Debe Hoy'), hoyText);
+check('Hoy muestra lo que falta pagar y conserva la nota', hoyText.includes('Faltan pagar (que anoté yo): $5.000') && hoyText.includes('Hoy deuda') && !hoyText.includes('Debe Hoy'), hoyText);
 check('Mañana no muestra la deuda y conserva la nota', !mananaText.includes('Faltan pagar') && mananaText.includes('Mañana no'), mananaText);
 await page.click('#list-next .match-item:has([data-note="Hoy deuda"]) [data-owe-toggle]');
 const hoyOpen = await page.evaluate(() => ({
@@ -1516,7 +1516,7 @@ await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/historial-todas
 const ayerCard = (await page.textContent('#list-history .match-card[data-note="Ayer"]')).replace(/\s+/g, ' ');
 check('La tarjeta del historial no muestra la nota ni la espera', /21hs \(\$5\.000\)/.test(ayerCard) && !/Con pechera/.test(ayerCard) && /1\/14/.test(ayerCard) && !/en espera/.test(ayerCard) && !/\bAyer\b/.test(ayerCard), ayerCard.trim());
 const ayerItem = (await page.locator('#list-history .match-item:has([data-note="Ayer"])').innerText()).replace(/\s+/g, ' ');
-check('El historial avisa lo que falta pagar', ayerItem.includes('Faltan pagar: $5.000') && !ayerItem.includes('Histórico Pérez'), ayerItem);
+check('El historial avisa lo que falta pagar', ayerItem.includes('Faltan pagar (que anoté yo): $5.000') && !ayerItem.includes('Histórico Pérez'), ayerItem);
 await page.click('#list-history .match-item:has([data-note="Ayer"]) [data-owe-toggle]');
 const openedDebt = await page.evaluate(() => ({
   hash: location.hash,

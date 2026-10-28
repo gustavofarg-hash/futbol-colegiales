@@ -496,7 +496,7 @@ function oweBox(m) {
   }).join('');
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
-      <span>Faltan pagar: ${esc(formatARS(debt.total))}</span>
+      <span>Faltan pagar (que anoté yo): ${esc(formatARS(debt.total))}</span>
       <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <ul class="owe-list"${open ? '' : ' hidden'}>${rows}</ul>
