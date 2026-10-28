@@ -34,6 +34,21 @@ export function roundARS(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+/**
+ * Reparte un monto en orden. Cada uno recibe como máximo lo que debe.
+ * Lo que no alcanza deja en cero a los últimos. Lo que sobra no se asigna.
+ */
+export function allocateAcrossDebts(amount, dues) {
+  let left = roundARS(Math.max(0, Number(amount) || 0));
+  const parts = (dues || []).map((due) => {
+    const cap = Math.max(0, roundARS(Number(due) || 0));
+    const give = Math.min(cap, left);
+    left = roundARS(left - give);
+    return give;
+  });
+  return { parts, left };
+}
+
 /** "$5.000" / "$5.000,50" — separador de miles "." y decimales ",". */
 export function formatARS(amount) {
   const n = roundARS(amount);

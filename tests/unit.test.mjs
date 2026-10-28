@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
@@ -110,6 +110,13 @@ test('WhatsApp: siempre wa.me, sin package', () => {
   const url = waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: true });
   assert.equal(url.includes('package='), false);
   assert.equal(url.startsWith('intent://'), false);
+});
+
+test('el pago se reparte hasta lo que debe cada uno', () => {
+  assert.deepEqual(allocateAcrossDebts(12000, [5000, 5000, 5000]), { parts: [5000, 5000, 2000], left: 0 });
+  assert.deepEqual(allocateAcrossDebts(4000, [5000, 5000, 5000]), { parts: [4000, 0, 0], left: 0 });
+  assert.deepEqual(allocateAcrossDebts(16000, [4500, 4500]), { parts: [4500, 4500], left: 7000 });
+  assert.deepEqual(allocateAcrossDebts(3000, [0, 5000]), { parts: [0, 3000], left: 0 });
 });
 
 test('montos en pesos', () => {

@@ -2665,7 +2665,37 @@ const fila22 = await filaLayout(22);
 const filaOk = (row) => row.name === 'Facundo Aguirre' && row.phone === '+54 9 11 2799-3830' && row.pay.includes('Pagó $4.500') && row.pay.includes('Efectivo') && row.promo === 'Promo 2 partidos por $9.000' && row.nameFull && row.payFull && row.promoFull && row.phoneOne && row.stacked && row.targets && row.inside;
 check('A 18px la fila muestra el texto y apila WhatsApp sobre el pago', filaOk(fila18), JSON.stringify(fila18));
 check('A 22px la fila sigue entera', filaOk(fila22), JSON.stringify(fila22));
-await page.evaluate(() => { document.documentElement.style.fontSize = '18px'; location.hash = '#/'; });
+await page.evaluate(() => { document.documentElement.style.fontSize = '18px'; });
+await page.evaluate(async () => {
+  const who = window.__app.who;
+  const id = await window.__app.store.addMatch({ date: '2026-10-23', time: '21:00', note: 'Pago grupo', capacity: 14 }, who);
+  const match = window.__app.matches.find((item) => item.id === id);
+  const host = await window.__app.store.addPlayer(match, { name: 'Paga Grupo', phone: '' }, who);
+  await window.__app.store.addPlayer(match, { name: 'Invitado 1', invitedBy: host, invitedByName: 'Paga Grupo', guestAuto: true }, who);
+  await window.__app.store.addPlayer(match, { name: 'Invitado 2', invitedBy: host, invitedByName: 'Paga Grupo', guestAuto: true }, who);
+  location.hash = `#/partido/${encodeURIComponent(id)}`;
+});
+await page.waitForSelector('#slots .name:text-is("Paga Grupo")');
+await page.locator('#slots .slot', { has: page.locator('.name:text-is("Paga Grupo")') }).locator('.pay-btn').click();
+await page.waitForSelector('#pay-split-guests');
+await page.check('#pay-split-guests');
+await page.fill('#pay-form [name=cash]', '7000');
+await page.fill('#pay-form [name=transfer]', '0');
+await page.fill('#pay-form [name=pending]', '0');
+const splitPreview = (await page.locator('#pay-split-preview').innerText()).replace(/\s+/g, ' ');
+check('El pago muestra cómo se reparte entre él y los invitados', splitPreview.includes('Paga Grupo') && splitPreview.includes('Efectivo $5.000') && splitPreview.includes('Invitado 1') && splitPreview.includes('Efectivo $2.000') && splitPreview.includes('Invitado 2') && splitPreview.includes('sin pago'), splitPreview);
+await page.click('#pay-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('dialog.sheet[open]'));
+const splitStored = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const money = (name) => {
+    const row = Object.values(db.players).find((player) => player.name === name && (name === 'Paga Grupo' ? !player.invitedBy : player.invitedByName === 'Paga Grupo'));
+    return row ? (row.cash || 0) : null;
+  };
+  return { host: money('Paga Grupo'), one: money('Invitado 1'), two: money('Invitado 2') };
+});
+check('El dividido guarda la parte de cada uno', splitStored.host === 5000 && splitStored.one === 2000 && (splitStored.two === 0 || splitStored.two === null), JSON.stringify(splitStored));
+await page.evaluate(() => { location.hash = '#/'; });
 await page.click('#btn-settings');
 await page.click('#set-reset-db');
 await page.waitForSelector('#reset-word');

@@ -6,7 +6,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -21,7 +21,7 @@ import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, invit
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
-import { hasUnspecified, mineSummary, organizerMatchDebt, paymentLedger, playerDebt, signupLedger } from './ledger.js';
+import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -3161,6 +3161,8 @@ function openPaymentForm(m, p) {
       <div id="pay-details">
         <div class="price-picks" id="pay-prices"></div>
         ${promo ? `<label class="pay-apply"><input type="checkbox" id="pay-apply-promo"><span id="pay-apply-label">Aplicar a los ${promo.count} partidos</span></label>` : ''}
+        <label class="pay-apply" id="pay-split-guests-line" hidden><input type="checkbox" id="pay-split-guests"><span>Dividir entre él y sus invitados</span></label>
+        <div id="pay-split-preview" hidden></div>
         <div class="field"><span>Efectivo</span>
           <div class="pay-money">
             <input name="cash" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(cashStart)}" aria-label="Efectivo">
@@ -3241,6 +3243,56 @@ function openPaymentForm(m, p) {
   for (const input of [form.cash, form.transfer, form.pending]) {
     input.addEventListener('focus', () => fillMatchPrice(input));
   }
+  const splitBox = $('#pay-split-guests');
+  const splitLine = $('#pay-split-guests-line');
+  const guestPayees = () => [p, ...guestsOf(m.id, p.id).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || String(a.id).localeCompare(String(b.id)))];
+  const guestSplit = () => {
+    const people = guestPayees();
+    const dues = people.map((person) => amountOwed(person, { players: app.players, matches: knownMatches(), prices: livePrices() }));
+    const cash = readMoney(form.cash.value);
+    const transfer = readMoney(form.transfer.value);
+    const pending = readMoney(form.pending.value);
+    if (!cash.ok || !transfer.ok || !pending.ok) return null;
+    const cashSplit = allocateAcrossDebts(cash.amount, dues);
+    const transferSplit = allocateAcrossDebts(transfer.amount, dues);
+    const pendingSplit = allocateAcrossDebts(pending.amount, dues);
+    const rows = people.map((person, i) => ({
+      person,
+      owed: dues[i],
+      cash: cashSplit.parts[i],
+      transfer: transferSplit.parts[i],
+      pending: pendingSplit.parts[i],
+    }));
+    return {
+      rows,
+      left: roundMoney(cashSplit.left + transferSplit.left + pendingSplit.left),
+    };
+  };
+  const paintGuestSplit = () => {
+    const guests = guestsOf(m.id, p.id);
+    if (splitLine) splitLine.hidden = guests.length === 0;
+    const preview = $('#pay-split-preview');
+    if (!preview) return;
+    if (!splitBox?.checked || !guests.length) { preview.hidden = true; preview.innerHTML = ''; return; }
+    const plan = guestSplit();
+    if (!plan) { preview.hidden = true; return; }
+    const lines = plan.rows.map((row) => {
+      const bits = [];
+      if (row.cash > 0) bits.push(`Efectivo ${formatARS(row.cash)}`);
+      if (row.transfer > 0) bits.push(`Transferencia ${formatARS(row.transfer)}`);
+      if (row.pending > 0) bits.push(`Transfiere después ${formatARS(row.pending)}`);
+      const money = bits.length ? bits.join(' · ') : 'sin pago';
+      return `<li><span>${esc(shownName(row.person))}</span><b>${esc(money)}</b></li>`;
+    }).join('');
+    const extra = plan.left > 0 ? `<p class="hint">Sobra ${esc(formatARS(plan.left))}: no entra porque ya cubre lo que deben.</p>` : '';
+    preview.hidden = false;
+    preview.innerHTML = `<ul class="pay-split-preview">${lines}</ul>${extra}`;
+  };
+  if (splitBox) {
+    splitBox.onchange = paintGuestSplit;
+    for (const input of [form.cash, form.transfer, form.pending]) input.addEventListener('input', paintGuestSplit);
+    paintGuestSplit();
+  }
   const applyBox = $('#pay-apply-promo');
   if (applyBox) applyBox.onchange = () => {
     const fresh = promoOf(p);
@@ -3288,6 +3340,25 @@ function openPaymentForm(m, p) {
     const pending = readMoney(form.pending.value);
     if (!pending.ok) { $('#pay-err').textContent = pending.error; return; }
     if (cash.amount + transfer.amount + pending.amount <= 0) { $('#pay-err').textContent = 'Poné un monto.'; return; }
+    if (splitBox?.checked && guestsOf(m.id, p.id).length) {
+      const plan = guestSplit();
+      const rows = (plan?.rows || []).filter((row) => row.cash + row.transfer + row.pending > 0);
+      if (!rows.length) { $('#pay-err').textContent = 'Con ese monto no le toca a nadie.'; return; }
+      const jobs = rows.map((row) => app.store.setPayment(row.person.id, {
+        paid: true,
+        split: true,
+        freePlay: false,
+        cash: row.cash,
+        transfer: row.transfer,
+        pendingTransfer: row.pending,
+        cashTo: row.cash > 0 ? form.cashTo.value : null,
+        transferTo: row.transfer > 0 ? form.transferTo.value : null,
+        pendingTo: row.pending > 0 ? form.pendingTo.value : null,
+      }, app.who));
+      closeSheet();
+      run(Promise.all(jobs), 'Pago dividido', PAY_RULES_MSG);
+      return;
+    }
     const freshPromo = promoOf(p);
     const applyAll = !!applyBox?.checked && freshPromo && freshPromo.rows.length >= 2;
     if (applyAll) {
