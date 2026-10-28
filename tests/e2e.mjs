@@ -1451,6 +1451,26 @@ await page.evaluate(async () => {
 });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
 check('Hoy temprano sigue en la lista principal', await page.locator('#list-next .match-card:has-text("Hoy temprano")').count() === 1);
+await page.evaluate(async () => {
+  const who = window.__app.who;
+  const hoy = await window.__app.store.addMatch({ date: '2026-10-19', time: '21:00', note: 'Hoy deuda', capacity: 14 }, who);
+  const hoyMatch = window.__app.matches.find((m) => m.id === hoy);
+  await window.__app.store.addPlayer(hoyMatch, { name: 'Debe Hoy', phone: '5491100002222' }, who);
+  const manana = await window.__app.store.addMatch({ date: '2026-10-20', time: '21:00', note: 'Mañana no', capacity: 14 }, who);
+  const mananaMatch = window.__app.matches.find((m) => m.id === manana);
+  await window.__app.store.addPlayer(mananaMatch, { name: 'Debe Mañana', phone: '5491100003333' }, who);
+});
+await page.waitForSelector('#list-next .match-card[data-note="Hoy deuda"]');
+const hoyText = (await page.locator('#list-next .match-item:has([data-note="Hoy deuda"])').innerText()).replace(/\s+/g, ' ');
+const mananaText = (await page.locator('#list-next .match-item:has([data-note="Mañana no"])').innerText()).replace(/\s+/g, ' ');
+check('Hoy muestra lo que falta pagar y conserva la nota', hoyText.includes('Faltan pagar: $5.000') && hoyText.includes('Hoy deuda') && !hoyText.includes('Debe Hoy'), hoyText);
+check('Mañana no muestra la deuda y conserva la nota', !mananaText.includes('Faltan pagar') && mananaText.includes('Mañana no'), mananaText);
+await page.click('#list-next .match-item:has([data-note="Hoy deuda"]) [data-owe-toggle]');
+const hoyOpen = await page.evaluate(() => ({
+  hash: location.hash,
+  text: (document.querySelector('#list-next .match-item:has([data-note="Hoy deuda"])')?.innerText || '').replace(/\s+/g, ' '),
+}));
+check('En Hoy la flecha no abre el partido', (hoyOpen.hash === '#/' || hoyOpen.hash === '') && hoyOpen.text.includes('Debe Hoy') && hoyOpen.text.includes('$5.000'), `${hoyOpen.hash} ${hoyOpen.text}`);
 check('El de ayer no aparece en el inicio', await page.locator('#list-next .match-card:has-text("Ayer"), #list-later .match-card:has-text("Ayer")').count() === 0);
 check('El Solo yo viejo tampoco está en el inicio', await page.locator('.match-card:has-text("Solo viejo")').count() === 0);
 const kept = await page.evaluate(() => {

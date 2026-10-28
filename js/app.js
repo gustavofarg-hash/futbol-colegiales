@@ -505,7 +505,7 @@ function matchCard(m, opts = {}) {
   const history = opts.fullDate === true;
   const note = history || !m.note ? '' : `<div class="match-note">${esc(m.note)}</div>`;
   const waiting = history || !waitingOf(m.id).length ? '' : `<div class="match-note">${waitingOf(m.id).length} en espera</div>`;
-  const debt = history ? oweBox(m) : '';
+  const debt = history || rel === 'Hoy' ? oweBox(m) : '';
   return `
   <li class="match-item"><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}" data-note="${esc(m.note || '')}">
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
