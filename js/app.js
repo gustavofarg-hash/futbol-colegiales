@@ -34,16 +34,24 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v57';
+const APP_VERSION = 'f7c-v58';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
   return !!(p && !String(p.phone || '').trim() && (p.phonePrivate || p.hasPhone));
 }
 function phoneSub(p) {
-  if (p?.phone) return `<span>${esc(displayFromWa(p.phone))}</span>`;
+  if (p?.phone) return `<span class="phone-line">${esc(displayFromWa(p.phone))}</span>`;
   if (phoneHidden(p)) return `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>`;
   return '<span>Sin número</span>';
+}
+function slotSide(p, m, readOnly, payText) {
+  const pay = readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? ' on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>`;
+  const wa = waButton(p, waMessage(m, p));
+  const more = readOnly ? '' : `<button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>`;
+  const stack = (wa || pay) ? `<div class="slot-actions">${wa}${pay}</div>` : '';
+  if (!stack && !more) return '';
+  return `<div class="slot-side">${stack}${more}</div>`;
 }
 function waButton(p, text) {
   if (p?.phone) {
@@ -920,9 +928,7 @@ function renderMatch(id) {
           ${promoBadge(p)}
         </button>
         ${readOnly ? '' : confirmSpotButton(p)}
-        ${readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? 'on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>`}
-        ${waButton(p, waMessage(m, p))}
-        ${readOnly ? '' : `<button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>`}
+        ${slotSide(p, m, readOnly, payText)}
       </li>`);
   }
   const full = everyone.length >= cap;

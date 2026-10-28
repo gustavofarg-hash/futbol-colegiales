@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v57');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v58');
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -2618,6 +2618,54 @@ await page.click('[data-close]');
 await page.waitForFunction(() => !document.querySelector('#sheet')?.open && document.querySelector('#toast')?.textContent === 'Todos los datos fueron cargados con éxito');
 await page.click('#toast');
 await page.waitForFunction(() => document.querySelector('#toast')?.hidden);
+await page.setViewportSize({ width: 390, height: 844 });
+await page.evaluate(async () => {
+  const who = window.__app.who;
+  const early = await window.__app.store.addMatch({ date: '2026-10-22', time: '19:00', capacity: 14 }, who);
+  const late = await window.__app.store.addMatch({ date: '2026-10-22', time: '21:00', capacity: 14 }, who);
+  const match = window.__app.matches.find((item) => item.id === early);
+  const other = window.__app.matches.find((item) => item.id === late);
+  const pid = await window.__app.store.addPlayer(match, { name: 'Facundo Aguirre', phone: '11 2799-3830' }, who);
+  await window.__app.store.addPlayer(other, { name: 'Facundo Aguirre', phone: '11 2799-3830' }, who);
+  await window.__app.store.setPayment(pid, { paid: true, split: true, cash: 4500, transfer: 0, pendingTransfer: 0, cashTo: who }, who);
+  location.hash = `#/partido/${encodeURIComponent(early)}`;
+});
+await page.waitForSelector('#slots .promo-badge');
+async function filaLayout(px) {
+  await page.evaluate((size) => { document.documentElement.style.fontSize = `${size}px`; }, px);
+  return page.evaluate(() => {
+    const row = document.querySelector('#slots .slot');
+    const name = row.querySelector('.name');
+    const phone = row.querySelector('.phone-line');
+    const pay = row.querySelector('.pay-line');
+    const promo = row.querySelector('.promo-badge');
+    const wa = row.querySelector('.wa-btn').getBoundingClientRect();
+    const money = row.querySelector('.pay-btn').getBoundingClientRect();
+    const more = row.querySelector('.more-btn').getBoundingClientRect();
+    const full = (el) => getComputedStyle(el).textOverflow !== 'ellipsis' && el.scrollWidth <= el.clientWidth + 2;
+    const phoneStyle = getComputedStyle(phone);
+    const phoneBox = phone.getBoundingClientRect();
+    return {
+      name: name.textContent,
+      phone: phone.textContent,
+      pay: pay.textContent,
+      promo: promo.textContent,
+      nameFull: full(name),
+      payFull: full(pay),
+      promoFull: full(promo),
+      phoneOne: phoneStyle.whiteSpace === 'nowrap' && phoneBox.height <= parseFloat(phoneStyle.fontSize) * 1.6,
+      stacked: money.top >= wa.bottom - 2 && Math.abs(wa.left - money.left) < 6 && more.left >= wa.right - 1,
+      targets: [wa, money, more].every((box) => box.width >= 40 && box.height >= 40),
+      inside: row.getBoundingClientRect().right <= window.innerWidth + 1,
+    };
+  });
+}
+const fila18 = await filaLayout(18);
+const fila22 = await filaLayout(22);
+const filaOk = (row) => row.name === 'Facundo Aguirre' && row.phone === '+54 9 11 2799-3830' && row.pay.includes('Pagó $4.500') && row.pay.includes('Efectivo') && row.promo === 'Promo 2 partidos por $9.000' && row.nameFull && row.payFull && row.promoFull && row.phoneOne && row.stacked && row.targets && row.inside;
+check('A 18px la fila muestra el texto y apila WhatsApp sobre el pago', filaOk(fila18), JSON.stringify(fila18));
+check('A 22px la fila sigue entera', filaOk(fila22), JSON.stringify(fila22));
+await page.evaluate(() => { document.documentElement.style.fontSize = '18px'; location.hash = '#/'; });
 await page.click('#btn-settings');
 await page.click('#set-reset-db');
 await page.waitForSelector('#reset-word');
