@@ -50,6 +50,23 @@ export function rosterHit(person, query) {
   return false;
 }
 
+/**
+ * La agenda de cada organizador. Sin createdBy ni createdByUid es un jugador
+ * de antes: sigue visible para todos, porque no se sabe de quién era.
+ */
+export function rosterForOrganizer(roster, actor) {
+  const uid = String(actor?.uid || '').trim();
+  const name = String(actor?.name || '').trim();
+  return (roster || []).filter((person) => {
+    const ownerUid = String(person?.createdByUid || '').trim();
+    const ownerName = String(person?.createdBy || '').trim();
+    if (!ownerUid && !ownerName) return true;
+    if (uid && ownerUid === uid) return true;
+    const owner = foldText(ownerName);
+    return owner !== '' && owner === foldText(name);
+  });
+}
+
 export function searchRoster(roster, query) {
   const list = [...(roster || [])].sort((a, b) => foldText(a.name).localeCompare(foldText(b.name), 'es') || String(a.id).localeCompare(String(b.id)));
   const q = String(query || '').trim();

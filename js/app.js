@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -2122,7 +2122,7 @@ function renderRoster() {
   const searchFocused = !!(prevSearch && document.activeElement === prevSearch);
   const selStart = searchFocused ? prevSearch.selectionStart : 0;
   const selEnd = searchFocused ? prevSearch.selectionEnd : 0;
-  const people = searchRoster(app.roster, q);
+  const people = searchRoster(rosterForOrganizer(app.roster, actor()), q);
   const rows = people.map((person) => {
     const locked = !canEditRoster(person, actor());
     return `
@@ -3007,7 +3007,7 @@ function openPlayerForm(m, p, opts = {}) {
       const hits = $('#roster-hits');
       const addNew = $('#roster-add-new');
       const q = find.value.trim();
-      const found = q ? searchRoster(app.roster, q).slice(0, 8) : [];
+      const found = q ? searchRoster(rosterForOrganizer(app.roster, actor()), q).slice(0, 8) : [];
       if (addNew) addNew.hidden = !q || found.length > 0;
       hits.hidden = !found.length;
       hits.innerHTML = found.map((person) => {
