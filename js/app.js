@@ -34,7 +34,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v58';
+const APP_VERSION = 'f7c-v59';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1538,7 +1538,6 @@ function openSettings() {
       <button class="btn" id="set-logout">Cerrar sesión</button>
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
-    <p class="footer-note">Mis Partidos · ${esc(VENUE)}</p>
     <p class="footer-note" id="app-version">Versión ${APP_VERSION}</p>`);
   $('#price-form').onsubmit = (e) => {
     e.preventDefault();
