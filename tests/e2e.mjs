@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v56');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v57');
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -1451,6 +1451,26 @@ await page.evaluate(async () => {
 });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
 check('Hoy temprano sigue en la lista principal', await page.locator('#list-next .match-card:has-text("Hoy temprano")').count() === 1);
+await page.evaluate(async () => {
+  const who = window.__app.who;
+  const hoy = await window.__app.store.addMatch({ date: '2026-10-19', time: '21:00', note: 'Hoy deuda', capacity: 14 }, who);
+  const hoyMatch = window.__app.matches.find((m) => m.id === hoy);
+  await window.__app.store.addPlayer(hoyMatch, { name: 'Debe Hoy', phone: '5491100002222' }, who);
+  const manana = await window.__app.store.addMatch({ date: '2026-10-20', time: '21:00', note: 'Mañana no', capacity: 14 }, who);
+  const mananaMatch = window.__app.matches.find((m) => m.id === manana);
+  await window.__app.store.addPlayer(mananaMatch, { name: 'Debe Mañana', phone: '5491100003333' }, who);
+});
+await page.waitForSelector('#list-next .match-card[data-note="Hoy deuda"]');
+const hoyText = (await page.locator('#list-next .match-item:has([data-note="Hoy deuda"])').innerText()).replace(/\s+/g, ' ');
+const mananaText = (await page.locator('#list-next .match-item:has([data-note="Mañana no"])').innerText()).replace(/\s+/g, ' ');
+check('Hoy muestra lo que falta pagar y conserva la nota', hoyText.includes('Faltan pagar: $5.000') && hoyText.includes('Hoy deuda') && !hoyText.includes('Debe Hoy'), hoyText);
+check('Mañana no muestra la deuda y conserva la nota', !mananaText.includes('Faltan pagar') && mananaText.includes('Mañana no'), mananaText);
+await page.click('#list-next .match-item:has([data-note="Hoy deuda"]) [data-owe-toggle]');
+const hoyOpen = await page.evaluate(() => ({
+  hash: location.hash,
+  text: (document.querySelector('#list-next .match-item:has([data-note="Hoy deuda"])')?.innerText || '').replace(/\s+/g, ' '),
+}));
+check('En Hoy la flecha no abre el partido', (hoyOpen.hash === '#/' || hoyOpen.hash === '') && hoyOpen.text.includes('Debe Hoy') && hoyOpen.text.includes('$5.000'), `${hoyOpen.hash} ${hoyOpen.text}`);
 check('El de ayer no aparece en el inicio', await page.locator('#list-next .match-card:has-text("Ayer"), #list-later .match-card:has-text("Ayer")').count() === 0);
 check('El Solo yo viejo tampoco está en el inicio', await page.locator('.match-card:has-text("Solo viejo")').count() === 0);
 const kept = await page.evaluate(() => {
@@ -1477,7 +1497,7 @@ await page.click('#hist-apply');
 await page.waitForFunction(() => [...document.querySelectorAll('#list-history .match-card')].map((el) => el.dataset.date).join('|') === '2026-10-18');
 check('Filtrar por una fecha deja ese día', (await page.textContent('#hist-caption')).includes('Domingo 18/10'));
 await page.click('#hist-clear');
-await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+await page.waitForSelector('#list-history .match-card[data-note="Ayer"]');
 await page.fill('#hist-from', '2026-10-12');
 await page.fill('#hist-to', '2026-10-15');
 await page.click('#hist-apply');
@@ -1487,16 +1507,32 @@ await page.waitForFunction(() => {
 });
 check('Filtrar por rango desde-hasta', true);
 await page.click('#hist-clear');
-await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
+await page.waitForSelector('#list-history .match-card[data-note="Ayer"]');
 check('Limpiar vuelve a los últimos partidos', await page.locator('#hist-clear').isHidden() && (await page.textContent('#hist-caption')).includes('más recientes primero'));
 check('El aviso del historial no incluye una fecha', (await page.locator('#history-filter .roster-lead').innerText()).trim() === 'Por defecto muestra los últimos 30 partidos');
 check('Historial no muestra sede y formato al pie', await page.locator('#view .footer-note').count() === 0);
 check('Todas arranca elegida', await page.locator('#hist-venues [data-venue="all"]').evaluate((el) => el.classList.contains('on')));
 await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/historial-todas.png' });
-const ayerCard = (await page.textContent('#list-history .match-card:has-text("Ayer")')).replace(/\s+/g, ' ');
-check('La tarjeta trae hora y cantidad de jugadores', /21hs \(\$5\.000\)/.test(ayerCard) && !/Con pechera/.test(ayerCard) && /1\/14/.test(ayerCard) && /1 en espera/.test(ayerCard), ayerCard.trim());
+const ayerCard = (await page.textContent('#list-history .match-card[data-note="Ayer"]')).replace(/\s+/g, ' ');
+check('La tarjeta del historial no muestra la nota ni la espera', /21hs \(\$5\.000\)/.test(ayerCard) && !/Con pechera/.test(ayerCard) && /1\/14/.test(ayerCard) && !/en espera/.test(ayerCard) && !/\bAyer\b/.test(ayerCard), ayerCard.trim());
+const ayerItem = (await page.locator('#list-history .match-item:has([data-note="Ayer"])').innerText()).replace(/\s+/g, ' ');
+check('El historial avisa lo que falta pagar', ayerItem.includes('Faltan pagar: $5.000') && !ayerItem.includes('Histórico Pérez'), ayerItem);
+await page.click('#list-history .match-item:has([data-note="Ayer"]) [data-owe-toggle]');
+const openedDebt = await page.evaluate(() => ({
+  hash: location.hash,
+  text: (document.querySelector('#list-history .match-item:has([data-note="Ayer"])')?.innerText || '').replace(/\s+/g, ' '),
+  open: document.querySelector('#list-history .match-item:has([data-note="Ayer"]) .owe-box')?.classList.contains('open') === true,
+}));
+check('La flecha muestra quién debe y no abre el partido', openedDebt.hash === '#/historial' && openedDebt.open && openedDebt.text.includes('Histórico Pérez') && openedDebt.text.includes('$5.000') && !openedDebt.text.includes('Espera Vieja'), openedDebt.text);
+await page.click('#hist-debtors');
+await page.waitForFunction(() => document.querySelector('#hist-debtors')?.getAttribute('aria-pressed') === 'true');
+const debtorDates = await page.$$eval('#list-history .match-card', (els) => els.map((el) => el.dataset.date));
+check('Partidos con deudores deja solo los que deben', debtorDates.includes('2026-10-18') && !debtorDates.includes('2026-10-12'), debtorDates.join(','));
+await page.click('#hist-debtors');
+await page.waitForSelector('#list-history .match-card[data-note="Solo viejo"]');
+check('El filtro de deudores se apaga', (await page.locator('#hist-debtors').getAttribute('aria-pressed')) === 'false');
 check('Hoy no entra al historial', await page.locator('#list-history .match-card:has-text("Hoy temprano")').count() === 0);
-await page.click('#list-history .match-card:has-text("Ayer")');
+await page.click('#list-history .match-card[data-note="Ayer"]');
 await page.waitForSelector('#slots .name:text-is("Histórico Pérez")');
 check('El detalle muestra jugadores y la lista de espera', await page.locator('#wait-list .name:text-is("Espera Vieja")').count() === 1 && await page.isVisible('#btn-add-player'));
 check('Un partido ya jugado no muestra Cancelar partido', await page.locator('#btn-cancel-match').count() === 0);
@@ -1533,8 +1569,8 @@ await page.waitForFunction(() => {
 });
 check('Una sede, aunque esté inactiva, filtra el historial', !(await page.locator('#hist-venues [data-venue="all"]').evaluate((el) => el.classList.contains('on'))));
 await page.click('#hist-venues [data-venue="colegiales"]');
-await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
-check('Se pueden elegir dos sedes', await page.locator('#list-history .match-card:has-text("Otra sede")').count() === 1 && await page.locator('#list-history .match-card:has-text("Ayer")').count() === 1);
+await page.waitForSelector('#list-history .match-card[data-note="Ayer"]');
+check('Se pueden elegir dos sedes', await page.locator('#list-history .match-card[data-note="Otra sede"]').count() === 1 && await page.locator('#list-history .match-card[data-note="Ayer"]').count() === 1);
 await page.click('#hist-venues [data-venue="all"]');
 await page.waitForFunction(() => document.querySelector('#hist-venues [data-venue="all"]')?.classList.contains('on'));
 check('Todas vuelve a mostrar los partidos', await page.locator('#list-history .match-card').count() > 2);
@@ -1551,8 +1587,9 @@ await page.waitForSelector('#list-next');
 check('Martín ve el de hoy en el inicio', await page.locator('#list-next .match-card:has-text("Hoy temprano")').count() === 1);
 await page.click('#btn-historial');
 await page.waitForSelector('#list-history');
-check('Martín ve el partido de ayer', await page.locator('#list-history .match-card:has-text("Ayer")').count() === 1);
-check('Martín no ve el Solo yo viejo', await page.locator('#list-history .match-card:has-text("Solo viejo")').count() === 0 && !(await page.locator('body').innerText()).includes('Solo viejo'));
+check('Martín ve el partido de ayer', await page.locator('#list-history .match-card[data-note="Ayer"]').count() === 1);
+check('Martín no ve la deuda de los jugadores de Gustavo', !(await page.locator('#list-history .match-item:has([data-note="Ayer"])').innerText()).includes('Faltan pagar'));
+check('Martín no ve el Solo yo viejo', await page.locator('#list-history .match-card[data-note="Solo viejo"]').count() === 0 && !(await page.locator('body').innerText()).includes('Solo viejo'));
 await page.click('#btn-settings');
 await page.click('#set-logout');
 await page.waitForSelector('#login-form');
@@ -1755,9 +1792,9 @@ await page.waitForFunction(() => !document.body.innerText.includes('Equipo Ciro'
 const storedTeams = await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).matches[id].teams, equipos.id);
 check('Al bajarse sale del equipo guardado', storedTeams.bib.includes(equipos.ana) && !storedTeams.bib.concat(storedTeams.plain).includes(equipos.ciro) && !storedTeams.bib.concat(storedTeams.plain).includes(equipos.beto), JSON.stringify(storedTeams));
 await page.evaluate(() => { location.hash = '#/historial'; });
-await page.waitForSelector('#list-history .match-card:has-text("Ayer")');
-check('La lista del historial no muestra el marcador', await page.locator('#list-history .match-card:has-text("Ayer") [data-score]').count() === 0);
-await page.click('#list-history .match-card:has-text("Ayer")');
+await page.waitForSelector('#list-history .match-card[data-note="Ayer"]');
+check('La lista del historial no muestra el marcador', await page.locator('#list-history .match-card[data-note="Ayer"] [data-score]').count() === 0);
+await page.click('#list-history .match-card[data-note="Ayer"]');
 await page.waitForSelector('#match-date');
 check('El detalle no muestra el marcador', await page.locator('#match-score').count() === 0);
 await page.waitForSelector('#btn-teams');
@@ -1942,13 +1979,13 @@ await page.evaluate(async () => {
   window.__app.store._emit();
 });
 await page.evaluate(() => { location.hash = '#/historial'; });
-await page.waitForSelector('#list-history .match-card:has-text("Viejo cancelable")');
-await page.click('#list-history .match-card:has-text("Viejo cancelable")');
+await page.waitForSelector('#list-history .match-card[data-note="Viejo cancelable"]');
+await page.click('#list-history .match-card[data-note="Viejo cancelable"]');
 await page.waitForSelector('#match-cancelled');
 check('Un partido del historial no ofrece Cancelar partido', await page.locator('#btn-cancel-match').count() === 0 && await page.locator('#btn-reactivate-match').count() === 1);
 await page.click('#btn-back');
-await page.waitForSelector('#list-history .match-card:has-text("Viejo cancelable")');
-check('El historial muestra Cancelado', (await page.textContent('#list-history .match-card:has-text("Viejo cancelable")')).includes('Cancelado'));
+await page.waitForSelector('#list-history .match-card[data-note="Viejo cancelable"]');
+check('El historial muestra Cancelado', (await page.textContent('#list-history .match-card[data-note="Viejo cancelable"]')).includes('Cancelado'));
 await page.click('#btn-hist-import');
 await page.waitForSelector('#hist-imp-text');
 const playedText = `Jueves 08/10 21hs\n1. Juan Pérez\n2. Visitante Importado\n\nViernes 09/10 19:30\n1. Ana Sola`;
@@ -2418,7 +2455,7 @@ await page.evaluate(() => { location.hash = '#/historial'; });
 await page.waitForSelector('#list-history');
 const overflowHistory = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('Enorme en 360px no desborda el historial', overflowHistory <= 1, String(overflowHistory));
-await page.click('#list-history .match-card:has-text("Viejo cancelable")');
+await page.click('#list-history .match-card[data-note="Viejo cancelable"]');
 await page.waitForSelector('#btn-reactivate-match');
 check('En el historial se leen las notas', (await page.textContent('#match-notes')).includes('Se suspendió'));
 await page.click('#btn-reactivate-match');
@@ -2427,7 +2464,7 @@ check('Reactivar conserva las notas', (await page.textContent('#match-notes')).i
 check('Después de reactivar, un partido jugado sigue sin Cancelar', await page.locator('#btn-cancel-match').count() === 0);
 await page.click('#btn-back');
 await page.waitForSelector('#list-history');
-check('Al reactivar sale el badge del historial', !(await page.textContent('#list-history .match-card:has-text("Viejo cancelable")')).includes('Cancelado'));
+check('Al reactivar sale el badge del historial', !(await page.textContent('#list-history .match-card[data-note="Viejo cancelable"]')).includes('Cancelado'));
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('#list-next .match-card');
 await page.click('#list-next .match-card[data-date="2026-10-22"]');
