@@ -229,6 +229,16 @@ h2.section:first-child { margin-top: 4px; }
 button.who { text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; }
 .name-row { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .slot .name { flex: 1 1 auto; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 100%; }
+#slots .name { white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: break-word; }
+#slots .phone-line { white-space: nowrap; flex: 0 0 auto; }
+#slots .pay-line,
+#slots .promo-badge,
+#slots .tag { white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: anywhere; }
+#slots .slot-side { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; }
+#slots .slot-actions { display: flex; flex-direction: column; gap: 4px; flex: none; }
+#slots .slot-actions .wa-btn,
+#slots .slot-actions .pay-btn { width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
+#slots .slot-side .more-btn { width: 40px; min-width: 40px; min-height: 40px; height: auto; align-self: stretch; }
 .level-badge {
   flex: none; font-size: 0.75rem; font-weight: 800; line-height: 1;
   padding: 3px 6px; border-radius: 999px;
