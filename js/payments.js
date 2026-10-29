@@ -523,3 +523,35 @@ export function receivePendingTransfer(player, who, now = Date.now()) {
     },
   };
 }
+
+/**
+ * Varios jugadores (él y cada invitado, o los partidos de una promo) no van
+ * en un lote: cada updateDoc es un request aparte, uno después del otro.
+ * Un lote suma los get() de las reglas y Firestore lo niega al pasar de 20.
+ * El emulador no aplica ese tope.
+ */
+export async function writePaymentsInOrder(entries, write) {
+  for (const entry of entries || []) {
+    try {
+      await write(entry);
+    } catch (error) {
+      const fail = error instanceof Error ? error : new Error(String(error?.message || error || 'error'));
+      fail.playerId = entry?.id || '';
+      fail.paymentWrite = true;
+      if (error && error.code && !fail.code) fail.code = error.code;
+      throw fail;
+    }
+  }
+}
+
+/** El aviso dice el documento y el código de Firestore, no un texto genérico de reglas. */
+export function paymentFailureText(error, playerId) {
+  const code = String(error?.code || 'error').replace(/^firestore\//, '');
+  const id = String(playerId || error?.playerId || '').trim();
+  const where = id ? ` en players/${id}` : '';
+  const raw = String(error?.message || '').replace(/^FirebaseError:\s*/i, '').trim();
+  const generic = !raw || raw === code || /missing or insufficient permissions/i.test(raw);
+  if (code === 'invalid-payment' && !generic) return raw;
+  if (!generic) return `No se pudo guardar el pago${where} (${code}). ${raw}`;
+  return `No se pudo guardar el pago${where} (${code}).`;
+}

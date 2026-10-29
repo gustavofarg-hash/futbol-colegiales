@@ -1937,14 +1937,21 @@ export class FirebaseStore {
   async setPayment(id, input, who) {
     const rec = paymentRecord(input, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
-    await this.updatePlayer(id, rec.patch);
+    await this._writePayment(id, rec.patch);
   }
   async markTransferReceived(id, who) {
     const player = this.state.players.find((item) => item.id === id);
     if (!player) throw new Error('Jugador inexistente');
     const rec = receivePendingTransfer(player, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
-    await this.updatePlayer(id, rec.patch);
+    await this._writePayment(id, rec.patch);
+  }
+  // Solo los campos del pago. updatePlayer además migra el teléfono y reescribe
+  // la confirmación: en un pago partido (él y sus invitados) eso suma get() de
+  // las reglas y Firestore niega el request. Cada jugador se escribe solo.
+  async _writePayment(id, patch) {
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'players', id), { ...patch, updatedAt: Date.now() });
   }
   async setWaitOrders(updates) {
     const { doc, writeBatch } = this.fs;

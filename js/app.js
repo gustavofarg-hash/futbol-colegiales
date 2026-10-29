@@ -6,7 +6,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, writePaymentsInOrder } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -34,7 +34,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v59';
+const APP_VERSION = 'f7c-v60';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -138,7 +138,6 @@ function showError(msg) {
 }
 // Las escrituras a Firestore resuelven cuando el servidor confirma; con caché
 // offline la UI no espera: se cierra el formulario y se avisa si falla.
-const PAY_RULES_MSG = 'No se pudo guardar el pago. Hay que volver a publicar firestore.rules para efectivo, transferencia y Transfiere después.';
 const RULES_MSG = 'Firebase rechazó el acceso. Hay que actualizar las reglas de Firestore (publicar firestore.rules).';
 function isPermissionDenied(error) {
   const code = error?.code || '';
@@ -149,9 +148,13 @@ function run(p, okMsg, deniedMsg) {
   return Promise.resolve(p).catch((e) => {
     console.error(e);
     if (e?.code === 'already-in-match') toast(e.message || ALREADY_IN_MATCH);
+    else if (e?.paymentWrite) toast(paymentFailureText(e, e.playerId), 4500);
     else if (deniedMsg && isPermissionDenied(e)) toast(deniedMsg);
     else toast('No se pudo guardar: ' + (e.code || e.message || e));
   });
+}
+function savePayments(entries, okMsg) {
+  return run(writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who)), okMsg);
 }
 
 /* ───────── datos derivados ───────── */
@@ -3311,7 +3314,13 @@ function openPaymentForm(m, p) {
   const receive = $('#btn-receive-pending');
   if (receive) receive.onclick = () => {
     closeSheet();
-    run(app.store.markTransferReceived(p.id, app.who), 'Transferencia marcada como cobrada', PAY_RULES_MSG);
+    run(Promise.resolve(app.store.markTransferReceived(p.id, app.who)).catch((error) => {
+      const fail = error instanceof Error ? error : new Error(String(error?.message || error));
+      fail.playerId = p.id;
+      fail.paymentWrite = true;
+      if (error?.code) fail.code = error.code;
+      throw fail;
+    }), 'Transferencia marcada como cobrada');
   };
   const freeBox = $('#pay-free');
   const paintFree = () => {
@@ -3329,7 +3338,7 @@ function openPaymentForm(m, p) {
     e.preventDefault();
     if (freeBox?.checked) {
       closeSheet();
-      run(app.store.setPayment(p.id, { freePlay: true, paid: true, split: true }, app.who), 'Juega gratis', PAY_RULES_MSG);
+      savePayments([{ id: p.id, input: { freePlay: true, paid: true, split: true } }], 'Juega gratis');
       return;
     }
     const cash = readMoney(form.cash.value);
@@ -3343,38 +3352,44 @@ function openPaymentForm(m, p) {
       const plan = guestSplit();
       const rows = (plan?.rows || []).filter((row) => row.cash + row.transfer + row.pending > 0);
       if (!rows.length) { $('#pay-err').textContent = 'Con ese monto no le toca a nadie.'; return; }
-      const jobs = rows.map((row) => app.store.setPayment(row.person.id, {
-        paid: true,
-        split: true,
-        freePlay: false,
-        cash: row.cash,
-        transfer: row.transfer,
-        pendingTransfer: row.pending,
-        cashTo: row.cash > 0 ? form.cashTo.value : null,
-        transferTo: row.transfer > 0 ? form.transferTo.value : null,
-        pendingTo: row.pending > 0 ? form.pendingTo.value : null,
-      }, app.who));
+      const entries = rows.map((row) => ({
+        id: row.person.id,
+        input: {
+          paid: true,
+          split: true,
+          freePlay: false,
+          cash: row.cash,
+          transfer: row.transfer,
+          pendingTransfer: row.pending,
+          cashTo: row.cash > 0 ? form.cashTo.value : null,
+          transferTo: row.transfer > 0 ? form.transferTo.value : null,
+          pendingTo: row.pending > 0 ? form.pendingTo.value : null,
+        },
+      }));
       closeSheet();
-      run(Promise.all(jobs), 'Pago dividido', PAY_RULES_MSG);
+      savePayments(entries, 'Pago dividido');
       return;
     }
     const freshPromo = promoOf(p);
     const applyAll = !!applyBox?.checked && freshPromo && freshPromo.rows.length >= 2;
     if (applyAll) {
       const shares = splitPaymentAcross({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount }, freshPromo.rows.length);
-      const jobs = freshPromo.rows.map((row, i) => app.store.setPayment(row.player.id, {
-        paid: true,
-        split: true,
-        freePlay: false,
-        cash: shares[i].cash,
-        transfer: shares[i].transfer,
-        pendingTransfer: shares[i].pending,
-        cashTo: shares[i].cash > 0 ? form.cashTo.value : null,
-        transferTo: shares[i].transfer > 0 ? form.transferTo.value : null,
-        pendingTo: shares[i].pending > 0 ? form.pendingTo.value : null,
-      }, app.who));
+      const entries = freshPromo.rows.map((row, i) => ({
+        id: row.player.id,
+        input: {
+          paid: true,
+          split: true,
+          freePlay: false,
+          cash: shares[i].cash,
+          transfer: shares[i].transfer,
+          pendingTransfer: shares[i].pending,
+          cashTo: shares[i].cash > 0 ? form.cashTo.value : null,
+          transferTo: shares[i].transfer > 0 ? form.transferTo.value : null,
+          pendingTo: shares[i].pending > 0 ? form.pendingTo.value : null,
+        },
+      }));
       closeSheet();
-      run(Promise.all(jobs), 'Promo aplicada', PAY_RULES_MSG);
+      savePayments(entries, 'Promo aplicada');
       return;
     }
     const keepParts = roundMoney(transfer.amount) === parts.transfer && Array.isArray(p.transferParts) && p.transferParts.length > 1;
@@ -3391,7 +3406,7 @@ function openPaymentForm(m, p) {
       transferParts: keepParts ? p.transferParts : null,
     };
     closeSheet();
-    run(app.store.setPayment(p.id, rec, app.who), 'Pago guardado', PAY_RULES_MSG);
+    savePayments([{ id: p.id, input: rec }], 'Pago guardado');
   };
 }
 function roundMoney(n) {

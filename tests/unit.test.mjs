@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
@@ -110,6 +110,35 @@ test('WhatsApp: siempre wa.me, sin package', () => {
   const url = waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: true });
   assert.equal(url.includes('package='), false);
   assert.equal(url.startsWith('intent://'), false);
+});
+
+test('un pago partido se escribe de a un jugador y el error nombra el documento', async () => {
+  const seen = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const pending = writePaymentsInOrder([{ id: 'host' }, { id: 'guest' }], async (entry) => {
+    seen.push('start:' + entry.id);
+    if (entry.id === 'host') await gate;
+    seen.push('end:' + entry.id);
+    if (entry.id === 'guest') throw Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+  });
+  assert.deepEqual(seen, ['start:host']);
+  release();
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.playerId, 'guest');
+    assert.equal(error.paymentWrite, true);
+    assert.equal(error.code, 'permission-denied');
+    assert.equal(paymentFailureText(error, error.playerId), 'No se pudo guardar el pago en players/guest (permission-denied).');
+    assert.equal(/volver a publicar firestore\.rules/i.test(paymentFailureText(error, error.playerId)), false);
+    return true;
+  });
+  assert.deepEqual(seen, ['start:host', 'end:host', 'start:guest', 'end:guest']);
+  const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
+  assert.equal(app.includes('Promise.all(jobs)'), false);
+  assert.match(app, /savePayments\(entries, 'Pago dividido'\)/);
+  assert.match(store, /async _writePayment\(id, patch\)/);
+  assert.equal(paymentFailureText(Object.assign(new Error('Poné un monto.'), { code: 'invalid-payment' })), 'Poné un monto.');
 });
 
 test('el pago se reparte hasta lo que debe cada uno', () => {
@@ -2139,7 +2168,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v59');
+  assert.equal(version, 'f7c-v60');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
