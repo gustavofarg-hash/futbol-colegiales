@@ -118,7 +118,8 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v58');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v59');
+check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
   const { waSendUrl } = await import('./js/phone.js');
@@ -593,6 +594,9 @@ await pageWait.close();
 
 await page.locator('#slots .slot', { hasText: 'Jugador 14' }).locator('.more-btn').click();
 await page.click('#pm-del');
+await page.waitForSelector('#ask-yes');
+check('Subir de la espera pregunta con Sí y No', (await page.locator('#ask-yes').innerText()) === 'Sí' && (await page.locator('#ask-no').innerText()) === 'No');
+await page.click('#ask-yes');
 await page.waitForSelector('#slots .name:text-is("Espera Beto")');
 check('Subir al partido se lleva al primero de la espera', !(await page.locator('#wait-list').getByText('Espera Beto', { exact: true }).count()) && (await page.textContent('#slot-count')) === '14/14');
 const left = await page.$$eval('#wait-list .name', (els) => els.map((e) => e.textContent));
@@ -970,9 +974,10 @@ await page.click('#btn-back');
 await page.click('#btn-roster');
 await page.waitForSelector('#roster-list .name:text-is("Luis Gómez")');
 check('El jugador nuevo del partido quedó en Jugadores', (await page.$$eval('#roster-list .name', (els) => els.map((e) => e.textContent).sort().join(','))).includes('Ernesto Pereira') && (await page.locator('#roster-list .name', { hasText: 'Luis Gómez' }).count()) === 1);
-const juanRoster = page.locator('#roster-list .slot', { hasText: 'Juan Pérez' });
-check('En Jugadores, Martín no edita a quien agregó Gustavo', await juanRoster.locator('[data-roster-edit]').isDisabled() && (await juanRoster.locator('.edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
-check('Borrar de Jugadores no es la edición', !(await juanRoster.locator('[data-roster-del]').isDisabled()));
+await page.fill('#roster-q', 'juan');
+check('Martín no ve en Jugadores a quien anotó Gustavo', !(await page.locator('#roster-list').innerText()).includes('Juan Pérez'));
+await page.fill('#roster-q', '');
+await page.waitForSelector('#roster-list .name:text-is("Luis Gómez")');
 await page.locator('#roster-list .slot', { hasText: 'Ernesto Pereira' }).locator('[data-roster-edit]').click();
 await page.fill('#roster-form [name=name]', 'Ernesto P.');
 await page.click('#roster-form button[type=submit]');
@@ -1079,7 +1084,10 @@ await page.click('#btn-roster');
 await page.waitForSelector('#roster-list');
 const rosterText = (await page.locator('#view').innerText()).replace(/\s+/g, ' ');
 check('Jugadores muestra solo la lista', (await page.locator('#btn-pagos').count()) === 0 && (await page.locator('#btn-roster-list').count()) === 0 && (await page.locator('#roster-section').count()) === 0 && !/Lista guardada/i.test(rosterText) && !/se comparte entre los dos/i.test(rosterText) && await page.isVisible('#roster-list'), rosterText.slice(0, 180));
-await page.locator('#roster-list .who', { hasText: 'Juan Pérez' }).click();
+const juanMatch = await page.evaluate(() => window.__app.players.find((item) => item.name === 'Juan Pérez')?.matchId || '');
+await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, juanMatch);
+await page.waitForSelector('#slots .name:text-is("Juan Pérez")');
+await page.locator('#slots .who', { hasText: 'Juan Pérez' }).click();
 await page.waitForSelector('#ledger-total');
 const ledgerText = (await page.locator('#ledger').innerText()).replace(/\s+/g, ' ');
 check('El perfil suma el mes y el cobrador', ledgerText.includes('Pagó $4.500') && ledgerText.includes('Oct 2026: $4.500') && ledgerText.includes('Martín: $4.500') && ledgerText.includes('Anotó Gustavo: 1 vez'), ledgerText);
@@ -1090,9 +1098,9 @@ await page.waitForFunction(() => {
   return by.includes('Martín: $4.500') && signed.includes('Anotó Martín: 1 vez') && !signed.includes('Gustavo') && !by.includes('Gustavo');
 });
 check('El filtro del perfil deja el cobro y las anotaciones de Martín', (await page.textContent('#ledger-months')).includes('Oct 2026: $4.500'));
-await page.click('#btn-back');
+await page.click('#btn-roster');
 await page.waitForFunction(() => location.hash === '#/jugadores' && document.querySelector('#roster-list') && !document.querySelector('#btn-pagos'));
-check('Volver del perfil abre la lista de jugadores', true);
+check('Desde el perfil de un partido se vuelve a Jugadores', true);
 
 await page.evaluate(() => { location.hash = '#/usuarios'; });
 await page.waitForFunction(() => (document.body.innerText || '').includes('Solo el administrador puede crear o desactivar organizadores'));
@@ -1463,7 +1471,7 @@ await page.evaluate(async () => {
 await page.waitForSelector('#list-next .match-card[data-note="Hoy deuda"]');
 const hoyText = (await page.locator('#list-next .match-item:has([data-note="Hoy deuda"])').innerText()).replace(/\s+/g, ' ');
 const mananaText = (await page.locator('#list-next .match-item:has([data-note="Mañana no"])').innerText()).replace(/\s+/g, ' ');
-check('Hoy muestra lo que falta pagar y conserva la nota', hoyText.includes('Faltan pagar: $5.000') && hoyText.includes('Hoy deuda') && !hoyText.includes('Debe Hoy'), hoyText);
+check('Hoy muestra lo que falta pagar y conserva la nota', hoyText.includes('Faltan pagar (que anoté yo): $5.000') && hoyText.includes('Hoy deuda') && !hoyText.includes('Debe Hoy'), hoyText);
 check('Mañana no muestra la deuda y conserva la nota', !mananaText.includes('Faltan pagar') && mananaText.includes('Mañana no'), mananaText);
 await page.click('#list-next .match-item:has([data-note="Hoy deuda"]) [data-owe-toggle]');
 const hoyOpen = await page.evaluate(() => ({
@@ -1516,7 +1524,7 @@ await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/historial-todas
 const ayerCard = (await page.textContent('#list-history .match-card[data-note="Ayer"]')).replace(/\s+/g, ' ');
 check('La tarjeta del historial no muestra la nota ni la espera', /21hs \(\$5\.000\)/.test(ayerCard) && !/Con pechera/.test(ayerCard) && /1\/14/.test(ayerCard) && !/en espera/.test(ayerCard) && !/\bAyer\b/.test(ayerCard), ayerCard.trim());
 const ayerItem = (await page.locator('#list-history .match-item:has([data-note="Ayer"])').innerText()).replace(/\s+/g, ' ');
-check('El historial avisa lo que falta pagar', ayerItem.includes('Faltan pagar: $5.000') && !ayerItem.includes('Histórico Pérez'), ayerItem);
+check('El historial avisa lo que falta pagar', ayerItem.includes('Faltan pagar (que anoté yo): $5.000') && !ayerItem.includes('Histórico Pérez'), ayerItem);
 await page.click('#list-history .match-item:has([data-note="Ayer"]) [data-owe-toggle]');
 const openedDebt = await page.evaluate(() => ({
   hash: location.hash,
@@ -2129,7 +2137,7 @@ await page.waitForSelector('#btn-add-player');
 await page.click('#btn-add-player');
 await page.waitForSelector('#roster-find');
 check('Sin texto, el + no está', await page.locator('#roster-add-new').isHidden());
-await page.fill('#roster-find', 'ERN');
+await page.fill('#roster-find', 'juan');
 await page.waitForSelector('#roster-hits .roster-hit');
 check('Con coincidencias, el + no está', await page.locator('#roster-add-new').isHidden() && (await page.locator('#roster-hits .roster-hit').count()) > 0);
 await page.fill('#roster-find', '  zzz nuevo  ');
@@ -2140,8 +2148,8 @@ await page.waitForFunction(() => {
 check('Sin coincidencias, el botón es Agregar como nuevo', await page.getAttribute('#roster-add-new', 'aria-label') === 'Agregar como nuevo');
 await page.click('#roster-add-new');
 check('El + copia el texto recortado y enfoca Nombre', (await page.inputValue('#player-name')) === 'zzz nuevo' && await page.evaluate(() => document.activeElement?.id === 'player-name'));
-await page.click('#btn-add-friend');
-await page.click('#btn-add-friend');
+await page.click('#friend-plus');
+await page.click('#friend-plus');
 await page.locator('#friend-rows input').nth(1).fill('Pedro Tipo');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Pedro Tipo")');
@@ -2159,7 +2167,7 @@ check('En guardados figura Ya anotado', (await page.locator('#roster-hits small.
 await page.click('#player-form [data-close]');
 await page.click('#btn-add-player');
 await page.fill('#player-name', 'Segundo');
-await page.click('#btn-add-friend');
+await page.click('#friend-plus');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Segundo")');
 const amigoTags = await page.locator('#slots .slot', { has: page.locator('.name:text-is("Invitado 1")') }).locator('.friend-tag').allInnerTexts();
@@ -2191,8 +2199,8 @@ const grabCupo = (dialog) => { if (/lista de espera/.test(dialog.message())) cup
 page.on('dialog', grabCupo);
 await page.click('#btn-add-player');
 await page.fill('#player-name', 'Casi Lleno');
-await page.click('#btn-add-friend');
-await page.click('#btn-add-friend');
+await page.click('#friend-plus');
+await page.click('#friend-plus');
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#wait-list .name:text-is("Invitado 2")');
 check('Avisa los lugares que faltan', cupoWarnings[0] === 'Queda 1 lugar: 2 van a quedar en lista de espera', cupoWarnings.join(' | '));
@@ -2201,6 +2209,8 @@ const waitTags = await page.locator('#wait-list .friend-tag').allInnerTexts();
 check('En la espera también son amigos', waitTags.length === 2 && waitTags.every((text) => text.includes('invitado de Casi Lleno')), waitTags.join(' | '));
 await page.locator('#slots .slot', { hasText: 'Relleno 1' }).locator('[data-menu]').click();
 await page.click('#pm-del');
+await page.waitForSelector('#ask-yes');
+await page.click('#ask-yes');
 await page.waitForFunction(() => {
   const names = [...document.querySelectorAll('#slots .name')].map((el) => el.textContent);
   return names.indexOf('Invitado 1') === names.indexOf('Casi Lleno') + 1;
@@ -2339,6 +2349,10 @@ await page.fill('#login-email', 'martin@demo.local');
 await page.fill('#login-password', 'demo-martin');
 await page.click('#login-form button[type=submit]');
 await page.waitForFunction(() => window.__app?.who === 'Martín');
+await page.evaluate(() => { location.hash = '#/jugadores'; });
+await page.waitForSelector('#roster-q');
+await page.fill('#roster-q', 'tito');
+check('Martín no encuentra en Jugadores a quien anotó Gustavo', !(await page.locator('#roster-list').innerText()).includes('Ernesto Apodo') && !(await page.locator('#roster-list').innerText()).includes('Tito'));
 await page.evaluate(() => { location.hash = '#/'; });
 const amigosOtraCuenta = page.locator('.match-card', { has: page.locator('.match-note', { hasText: /^Amigos$/ }) });
 await amigosOtraCuenta.waitFor();
@@ -2370,7 +2384,7 @@ await page.setViewportSize({ width: 360, height: 740 });
 await page.click('#btn-add-player');
 await page.fill('#roster-find', 'nadieconestenombre');
 await page.waitForSelector('#roster-add-new:not([hidden])');
-await page.click('#btn-add-friend');
+await page.click('#friend-plus');
 const hugeForm = await page.evaluate(() => ({
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   plus: !!document.querySelector('#roster-add-new') && !document.querySelector('#roster-add-new').hidden,
@@ -2665,7 +2679,37 @@ const fila22 = await filaLayout(22);
 const filaOk = (row) => row.name === 'Facundo Aguirre' && row.phone === '+54 9 11 2799-3830' && row.pay.includes('Pagó $4.500') && row.pay.includes('Efectivo') && row.promo === 'Promo 2 partidos por $9.000' && row.nameFull && row.payFull && row.promoFull && row.phoneOne && row.stacked && row.targets && row.inside;
 check('A 18px la fila muestra el texto y apila WhatsApp sobre el pago', filaOk(fila18), JSON.stringify(fila18));
 check('A 22px la fila sigue entera', filaOk(fila22), JSON.stringify(fila22));
-await page.evaluate(() => { document.documentElement.style.fontSize = '18px'; location.hash = '#/'; });
+await page.evaluate(() => { document.documentElement.style.fontSize = '18px'; });
+await page.evaluate(async () => {
+  const who = window.__app.who;
+  const id = await window.__app.store.addMatch({ date: '2026-10-23', time: '21:00', note: 'Pago grupo', capacity: 14 }, who);
+  const match = window.__app.matches.find((item) => item.id === id);
+  const host = await window.__app.store.addPlayer(match, { name: 'Paga Grupo', phone: '' }, who);
+  await window.__app.store.addPlayer(match, { name: 'Invitado 1', invitedBy: host, invitedByName: 'Paga Grupo', guestAuto: true }, who);
+  await window.__app.store.addPlayer(match, { name: 'Invitado 2', invitedBy: host, invitedByName: 'Paga Grupo', guestAuto: true }, who);
+  location.hash = `#/partido/${encodeURIComponent(id)}`;
+});
+await page.waitForSelector('#slots .name:text-is("Paga Grupo")');
+await page.locator('#slots .slot', { has: page.locator('.name:text-is("Paga Grupo")') }).locator('.pay-btn').click();
+await page.waitForSelector('#pay-split-guests');
+await page.check('#pay-split-guests');
+await page.fill('#pay-form [name=cash]', '7000');
+await page.fill('#pay-form [name=transfer]', '0');
+await page.fill('#pay-form [name=pending]', '0');
+const splitPreview = (await page.locator('#pay-split-preview').innerText()).replace(/\s+/g, ' ');
+check('El pago muestra cómo se reparte entre él y los invitados', splitPreview.includes('Paga Grupo') && splitPreview.includes('Efectivo $5.000') && splitPreview.includes('Invitado 1') && splitPreview.includes('Efectivo $2.000') && splitPreview.includes('Invitado 2') && splitPreview.includes('sin pago'), splitPreview);
+await page.click('#pay-form button[type=submit]');
+await page.waitForFunction(() => !document.querySelector('dialog.sheet[open]'));
+const splitStored = await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const money = (name) => {
+    const row = Object.values(db.players).find((player) => player.name === name && (name === 'Paga Grupo' ? !player.invitedBy : player.invitedByName === 'Paga Grupo'));
+    return row ? (row.cash || 0) : null;
+  };
+  return { host: money('Paga Grupo'), one: money('Invitado 1'), two: money('Invitado 2') };
+});
+check('El dividido guarda la parte de cada uno', splitStored.host === 5000 && splitStored.one === 2000 && (splitStored.two === 0 || splitStored.two === null), JSON.stringify(splitStored));
+await page.evaluate(() => { location.hash = '#/'; });
 await page.click('#btn-settings');
 await page.click('#set-reset-db');
 await page.waitForSelector('#reset-word');

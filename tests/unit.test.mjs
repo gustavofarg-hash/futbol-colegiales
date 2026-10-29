@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
+import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -110,6 +110,13 @@ test('WhatsApp: siempre wa.me, sin package', () => {
   const url = waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: true });
   assert.equal(url.includes('package='), false);
   assert.equal(url.startsWith('intent://'), false);
+});
+
+test('el pago se reparte hasta lo que debe cada uno', () => {
+  assert.deepEqual(allocateAcrossDebts(12000, [5000, 5000, 5000]), { parts: [5000, 5000, 2000], left: 0 });
+  assert.deepEqual(allocateAcrossDebts(4000, [5000, 5000, 5000]), { parts: [4000, 0, 0], left: 0 });
+  assert.deepEqual(allocateAcrossDebts(16000, [4500, 4500]), { parts: [4500, 4500], left: 7000 });
+  assert.deepEqual(allocateAcrossDebts(3000, [0, 5000]), { parts: [0, 3000], left: 0 });
 });
 
 test('montos en pesos', () => {
@@ -347,6 +354,11 @@ test('no se anota dos veces y Amigo N es de quien invita', () => {
   assert.equal(alreadyInMatch(mates, { name: 'Pedro', phone: '5491155550181' }, { exceptId: 'a1' }), null);
   assert.equal(alreadyInMatch(mates, { name: 'Juan Pérez' }, { exceptId: 'a1' })?.id, 'juan');
   assert.deepEqual(resolveFriendNames([''], ['Pedro', 'Amigo 2']), [{ name: 'Invitado 3', guestAuto: true }]);
+  assert.deepEqual(resolveFriendNames(['', '', ''], []), [
+    { name: 'Invitado 1', guestAuto: true },
+    { name: 'Invitado 2', guestAuto: true },
+    { name: 'Invitado 3', guestAuto: true },
+  ]);
   assert.equal(isAutoGuestName('Amigo 2'), true);
   assert.equal(isAutoGuestName('Invitado 1'), true);
   assert.equal(isAutoGuestName('Pedro'), false);
@@ -897,6 +909,16 @@ test('búsqueda del plantel: nombre, apellido y teléfono', () => {
   assert.equal(rosterHit(roster[0], 'eira'), false);
   assert.deepEqual(names('2222-3333'), ['Ernesto Pereira']);
   assert.deepEqual(searchRoster([{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }], 'tito').map((p) => p.name), ['Ernesto Pereira']);
+  const owned = [
+    { id: 'g', name: 'De Gustavo', createdBy: 'Gustavo', createdByUid: 'gustavo' },
+    { id: 'm', name: 'De Martín', createdBy: 'Martín', createdByUid: 'martin' },
+    { id: 'old', name: 'Sin dueño' },
+  ];
+  const gustavo = rosterForOrganizer(owned, { uid: 'gustavo', name: 'Gustavo' }).map((person) => person.name);
+  const martin = rosterForOrganizer(owned, { uid: 'martin', name: 'Martín' }).map((person) => person.name);
+  assert.deepEqual(gustavo, ['De Gustavo', 'Sin dueño']);
+  assert.deepEqual(martin, ['De Martín', 'Sin dueño']);
+  assert.deepEqual(searchRoster(rosterForOrganizer(owned, { uid: 'martin', name: 'Martín' }), 'gustavo'), []);
   assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }]), 'Tito');
   assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9', shortName: 'Viejo' }, [{ id: '9', name: 'Ernesto Pereira' }]), 'Ernesto Pereira');
   assert.equal(displayName({ name: 'Ernesto Pereira', shortName: 'Tito' }, []), 'Tito');
@@ -2117,7 +2139,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v58');
+  assert.equal(version, 'f7c-v59');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));

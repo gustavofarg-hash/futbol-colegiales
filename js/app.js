@@ -6,7 +6,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -16,12 +16,12 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
-import { hasUnspecified, mineSummary, organizerMatchDebt, paymentLedger, playerDebt, signupLedger } from './ledger.js';
+import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -34,7 +34,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v58';
+const APP_VERSION = 'f7c-v59';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -496,7 +496,7 @@ function oweBox(m) {
   }).join('');
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
-      <span>Faltan pagar: ${esc(formatARS(debt.total))}</span>
+      <span>Faltan pagar (que anoté yo): ${esc(formatARS(debt.total))}</span>
       <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <ul class="owe-list"${open ? '' : ' hidden'}>${rows}</ul>
@@ -1538,7 +1538,6 @@ function openSettings() {
       <button class="btn" id="set-logout">Cerrar sesión</button>
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
-    <p class="footer-note">Mis Partidos · ${esc(VENUE)}</p>
     <p class="footer-note" id="app-version">Versión ${APP_VERSION}</p>`);
   $('#price-form').onsubmit = (e) => {
     e.preventDefault();
@@ -2122,7 +2121,7 @@ function renderRoster() {
   const searchFocused = !!(prevSearch && document.activeElement === prevSearch);
   const selStart = searchFocused ? prevSearch.selectionStart : 0;
   const selEnd = searchFocused ? prevSearch.selectionEnd : 0;
-  const people = searchRoster(app.roster, q);
+  const people = searchRoster(rosterForOrganizer(app.roster, actor()), q);
   const rows = people.map((person) => {
     const locked = !canEditRoster(person, actor());
     return `
@@ -2739,6 +2738,49 @@ function guestsOf(matchId, hostId) {
   return mates.filter((player) => rootInviterId(player, byId) === hostId);
 }
 
+function guestQtyHtml(value) {
+  return `<div class="friend-qty">
+    <span>Cuántos invitados</span>
+    <div class="qty">
+      <button type="button" class="btn" id="friend-minus" aria-label="Menos invitados">−</button>
+      <input id="friend-count" inputmode="numeric" value="${value}" aria-label="Cantidad de invitados">
+      <button type="button" class="btn" id="friend-plus" aria-label="Más invitados">+</button>
+    </div>
+  </div>`;
+}
+
+function bindGuestQty({ min = 0, value = 0, taken = [] } = {}) {
+  const input = $('#friend-count');
+  const rows = $('#friend-rows');
+  if (!input || !rows) return;
+  const clamp = (n) => Math.min(20, Math.max(min, Number.isFinite(n) ? n : min));
+  const paint = (n, focus) => {
+    const count = clamp(Math.floor(Number(n) || 0));
+    const kept = [...rows.querySelectorAll('input')].map((el) => el.value);
+    input.value = String(count);
+    rows.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      const row = document.createElement('div');
+      row.className = 'friend-row';
+      row.innerHTML = `<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado ${i + 1}">`;
+      rows.appendChild(row);
+      row.querySelector('input').value = kept[i] || '';
+    }
+    const names = resolveFriendNames(Array.from({ length: count }, () => ''), taken);
+    const hint = $('#friend-hint');
+    if (hint) {
+      hint.textContent = names.length
+        ? `Si dejás el nombre vacío: ${names.map((item) => item.name).join(', ')}.`
+        : 'Sin invitados entra solo él.';
+    }
+    if (focus) rows.querySelector('input')?.focus();
+  };
+  paint(value, false);
+  $('#friend-plus').onclick = () => paint(Number(input.value) + 1, true);
+  $('#friend-minus').onclick = () => paint(Number(input.value) - 1, false);
+  input.addEventListener('change', () => paint(parseInt(input.value, 10), false));
+}
+
 function friendNamesOf(matchId, hostId) {
   return guestsOf(matchId, hostId).map((player) => player.name);
 }
@@ -2924,7 +2966,7 @@ function openPlayerForm(m, p, opts = {}) {
       ${offerRoster ? '<label class="checkline" id="save-roster-line"><input type="checkbox" id="save-roster" name="saveRoster"><span>Guardar en Jugadores</span></label>' : ''}
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Anotar como pendiente de confirmación</label>' : ''}
       ${p ? '' : `<div class="friend-box" id="friend-box">
-        <div class="friend-head"><span>Invitados</span><button type="button" class="btn" id="btn-add-friend">Agregar invitado</button></div>
+        ${guestQtyHtml(0)}
         <div id="friend-rows"></div>
         <p class="hint" id="friend-hint">Si dejás el nombre vacío, queda como Invitado 1, Invitado 2…</p>
       </div>`}
@@ -2964,7 +3006,7 @@ function openPlayerForm(m, p, opts = {}) {
       const hits = $('#roster-hits');
       const addNew = $('#roster-add-new');
       const q = find.value.trim();
-      const found = q ? searchRoster(app.roster, q).slice(0, 8) : [];
+      const found = q ? searchRoster(rosterForOrganizer(app.roster, actor()), q).slice(0, 8) : [];
       if (addNew) addNew.hidden = !q || found.length > 0;
       hits.hidden = !found.length;
       hits.innerHTML = found.map((person) => {
@@ -2993,20 +3035,7 @@ function openPlayerForm(m, p, opts = {}) {
     });
     setTimeout(() => find.focus(), 50);
   }
-  const friendAdd = $('#btn-add-friend');
-  if (friendAdd) {
-    friendAdd.onclick = () => {
-      const row = document.createElement('div');
-      row.className = 'friend-row';
-      row.innerHTML = '<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado"><button type="button" class="btn friend-remove" aria-label="Quitar invitado">×</button>';
-      $('#friend-rows').appendChild(row);
-      row.querySelector('input').focus();
-    };
-    $('#friend-rows').addEventListener('click', (e) => {
-      const btn = e.target.closest('.friend-remove');
-      if (btn) btn.closest('.friend-row')?.remove();
-    });
-  }
+  if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [] });
   form.onsubmit = (e) => {
     e.preventDefault();
     const name = form.name.value.trim();
@@ -3131,6 +3160,8 @@ function openPaymentForm(m, p) {
       <div id="pay-details">
         <div class="price-picks" id="pay-prices"></div>
         ${promo ? `<label class="pay-apply"><input type="checkbox" id="pay-apply-promo"><span id="pay-apply-label">Aplicar a los ${promo.count} partidos</span></label>` : ''}
+        <label class="pay-apply" id="pay-split-guests-line" hidden><input type="checkbox" id="pay-split-guests"><span>Dividir entre él y sus invitados</span></label>
+        <div id="pay-split-preview" hidden></div>
         <div class="field"><span>Efectivo</span>
           <div class="pay-money">
             <input name="cash" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(cashStart)}" aria-label="Efectivo">
@@ -3211,6 +3242,56 @@ function openPaymentForm(m, p) {
   for (const input of [form.cash, form.transfer, form.pending]) {
     input.addEventListener('focus', () => fillMatchPrice(input));
   }
+  const splitBox = $('#pay-split-guests');
+  const splitLine = $('#pay-split-guests-line');
+  const guestPayees = () => [p, ...guestsOf(m.id, p.id).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || String(a.id).localeCompare(String(b.id)))];
+  const guestSplit = () => {
+    const people = guestPayees();
+    const dues = people.map((person) => amountOwed(person, { players: app.players, matches: knownMatches(), prices: livePrices() }));
+    const cash = readMoney(form.cash.value);
+    const transfer = readMoney(form.transfer.value);
+    const pending = readMoney(form.pending.value);
+    if (!cash.ok || !transfer.ok || !pending.ok) return null;
+    const cashSplit = allocateAcrossDebts(cash.amount, dues);
+    const transferSplit = allocateAcrossDebts(transfer.amount, dues);
+    const pendingSplit = allocateAcrossDebts(pending.amount, dues);
+    const rows = people.map((person, i) => ({
+      person,
+      owed: dues[i],
+      cash: cashSplit.parts[i],
+      transfer: transferSplit.parts[i],
+      pending: pendingSplit.parts[i],
+    }));
+    return {
+      rows,
+      left: roundMoney(cashSplit.left + transferSplit.left + pendingSplit.left),
+    };
+  };
+  const paintGuestSplit = () => {
+    const guests = guestsOf(m.id, p.id);
+    if (splitLine) splitLine.hidden = guests.length === 0;
+    const preview = $('#pay-split-preview');
+    if (!preview) return;
+    if (!splitBox?.checked || !guests.length) { preview.hidden = true; preview.innerHTML = ''; return; }
+    const plan = guestSplit();
+    if (!plan) { preview.hidden = true; return; }
+    const lines = plan.rows.map((row) => {
+      const bits = [];
+      if (row.cash > 0) bits.push(`Efectivo ${formatARS(row.cash)}`);
+      if (row.transfer > 0) bits.push(`Transferencia ${formatARS(row.transfer)}`);
+      if (row.pending > 0) bits.push(`Transfiere después ${formatARS(row.pending)}`);
+      const money = bits.length ? bits.join(' · ') : 'sin pago';
+      return `<li><span>${esc(shownName(row.person))}</span><b>${esc(money)}</b></li>`;
+    }).join('');
+    const extra = plan.left > 0 ? `<p class="hint">Sobra ${esc(formatARS(plan.left))}: no entra porque ya cubre lo que deben.</p>` : '';
+    preview.hidden = false;
+    preview.innerHTML = `<ul class="pay-split-preview">${lines}</ul>${extra}`;
+  };
+  if (splitBox) {
+    splitBox.onchange = paintGuestSplit;
+    for (const input of [form.cash, form.transfer, form.pending]) input.addEventListener('input', paintGuestSplit);
+    paintGuestSplit();
+  }
   const applyBox = $('#pay-apply-promo');
   if (applyBox) applyBox.onchange = () => {
     const fresh = promoOf(p);
@@ -3258,6 +3339,25 @@ function openPaymentForm(m, p) {
     const pending = readMoney(form.pending.value);
     if (!pending.ok) { $('#pay-err').textContent = pending.error; return; }
     if (cash.amount + transfer.amount + pending.amount <= 0) { $('#pay-err').textContent = 'Poné un monto.'; return; }
+    if (splitBox?.checked && guestsOf(m.id, p.id).length) {
+      const plan = guestSplit();
+      const rows = (plan?.rows || []).filter((row) => row.cash + row.transfer + row.pending > 0);
+      if (!rows.length) { $('#pay-err').textContent = 'Con ese monto no le toca a nadie.'; return; }
+      const jobs = rows.map((row) => app.store.setPayment(row.person.id, {
+        paid: true,
+        split: true,
+        freePlay: false,
+        cash: row.cash,
+        transfer: row.transfer,
+        pendingTransfer: row.pending,
+        cashTo: row.cash > 0 ? form.cashTo.value : null,
+        transferTo: row.transfer > 0 ? form.transferTo.value : null,
+        pendingTo: row.pending > 0 ? form.pendingTo.value : null,
+      }, app.who));
+      closeSheet();
+      run(Promise.all(jobs), 'Pago dividido', PAY_RULES_MSG);
+      return;
+    }
     const freshPromo = promoOf(p);
     const applyAll = !!applyBox?.checked && freshPromo && freshPromo.rows.length >= 2;
     if (applyAll) {
@@ -3360,6 +3460,27 @@ function openPlayerMenu(m, p) {
   $('#pm-del').onclick = () => removeMatchPlayer(m, p);
 }
 
+function askYesNo(title) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (yes) => {
+      if (settled) return;
+      settled = true;
+      resolve(!!yes);
+      closeSheet();
+    };
+    openSheet(`
+      <h3>${esc(title)}</h3>
+      <div class="choice">
+        <button type="button" class="btn primary" id="ask-yes">Sí</button>
+        <button type="button" class="btn" id="ask-no">No</button>
+      </div>`);
+    $('#ask-yes').onclick = () => finish(true);
+    $('#ask-no').onclick = () => finish(false);
+    sheet.addEventListener('close', () => finish(false), { once: true });
+  });
+}
+
 function removeMatchPlayer(m, p, { asked = false } = {}) {
   const fromMain = !isWaiting(p);
   const friends = guestsOf(m.id, p.id);
@@ -3368,16 +3489,22 @@ function removeMatchPlayer(m, p, { asked = false } = {}) {
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
   const mainLeft = playersOf(m.id).filter((item) => !dropping.has(item.id)).length;
-  const promote = fromMain && top && mainLeft < capOf(m)
-    && confirm(`¿Subir a ${top.name}, el primero de la lista de espera?`);
-  closeSheet();
-  const job = (async () => {
-    for (const id of dropping) await app.store.deletePlayer(id);
-    if (!promote) return;
-    await app.store.promoteFromWaiting(top.id);
-    await offerPromotionWhatsApp(top, m);
-  })();
-  run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);
+  const needsPromote = fromMain && !!top && mainLeft < capOf(m);
+  const go = (promote) => {
+    const job = (async () => {
+      for (const id of dropping) await app.store.deletePlayer(id);
+      if (!promote) return;
+      await app.store.promoteFromWaiting(top.id);
+      await offerPromotionWhatsApp(top, m);
+    })();
+    run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);
+  };
+  if (!needsPromote) {
+    closeSheet();
+    go(false);
+    return;
+  }
+  askYesNo(`¿Subir a ${top.name}, el primero de la lista de espera?`).then(go);
 }
 
 function demoteToWait(m, p) {
@@ -3409,26 +3536,15 @@ function openFriendForm(m, host) {
       <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Cuentan para el cupo como cualquier jugador.</p>
       ${signupFields(null)}
       <div class="friend-box">
-        <div class="friend-head"><span>Invitados</span><button type="button" class="btn" id="btn-add-friend">Agregar invitado</button></div>
+        ${guestQtyHtml(1)}
         <div id="friend-rows"></div>
+        <p class="hint" id="friend-hint"></p>
       </div>
       <div class="field"><div class="err" id="friend-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Agregar</button></div>
     </form>`);
   const form = $('#friend-form');
-  const addRow = () => {
-    const row = document.createElement('div');
-    row.className = 'friend-row';
-    row.innerHTML = '<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado"><button type="button" class="btn friend-remove" aria-label="Quitar invitado">×</button>';
-    $('#friend-rows').appendChild(row);
-    row.querySelector('input').focus();
-  };
-  $('#btn-add-friend').onclick = () => addRow();
-  $('#friend-rows').addEventListener('click', (e) => {
-    const btn = e.target.closest('.friend-remove');
-    if (btn) btn.closest('.friend-row')?.remove();
-  });
-  addRow();
+  bindGuestQty({ min: 1, value: 1, taken: friendNamesOf(m.id, host.id) });
   form.onsubmit = (e) => {
     e.preventDefault();
     const rows = friendRowValues();
