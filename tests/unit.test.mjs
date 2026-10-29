@@ -10,7 +10,7 @@ import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, roster
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
-import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
+import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -1302,6 +1302,27 @@ test('la deuda es el precio menos lo cobrado, sin gratis ni cancelados', () => {
   assert.equal(other.rows[0].owed, 2500);
   assert.equal(organizerMatchDebt({ match: day[2], players: rows, matches: day, prices, organizer: 'Gustavo' }).total, 0);
   assert.equal(amountOwed(rows[1], { players: rows, matches: day, prices }), 3000);
+  const switched = [
+    { id: 'mio', matchId: 'a', name: 'Anotó Martín', addedBy: 'Martín', addedByUid: 'm', signedUpWith: 'g', signedUpWithName: 'Gustavo' },
+    { id: 'suyo', matchId: 'a', name: 'Anotó Gustavo', addedBy: 'Gustavo', addedByUid: 'g', signedUpWith: 'm', signedUpWithName: 'Martín' },
+    { id: 'viejo', matchId: 'a', name: 'Sin se anotó', addedBy: 'Gustavo', addedByUid: 'g' },
+  ];
+  const gustavo = { uid: 'g', name: 'Gustavo' };
+  assert.equal(owesOrganizer(switched[0], gustavo), true);
+  assert.equal(owesOrganizer(switched[1], gustavo), false);
+  assert.equal(owesOrganizer(switched[2], gustavo), true);
+  const owned = organizerMatchDebt({ match: day[0], players: switched, matches: day, prices, organizer: gustavo });
+  assert.deepEqual(owned.rows.map((row) => row.name), ['Anotó Martín', 'Sin se anotó']);
+  assert.equal(owned.total, 10000);
+  const mineDebt = playerDebt({
+    person: { name: 'Anotó Martín' },
+    players: switched,
+    matches: day,
+    prices,
+    organizer: gustavo,
+  });
+  assert.equal(mineDebt.total, 5000);
+  assert.equal(playerDebt({ person: { name: 'Anotó Gustavo' }, players: switched, matches: day, prices, organizer: gustavo }).total, 0);
 });
 
 test('Mis y totales por organizador', () => {

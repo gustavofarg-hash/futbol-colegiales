@@ -281,6 +281,20 @@ export function addedByOrganizer(player, organizer) {
 }
 
 /**
+ * La deuda es de quien se anotó (Se anotó con).
+ * Si ese dato no está (jugadores viejos), queda el de Agregó.
+ */
+export function owesOrganizer(player, organizer) {
+  const who = organizerOf(organizer);
+  if (!who.uid && !who.name) return false;
+  const uid = String(player?.signedUpWith || '').trim();
+  const name = String(player?.signedUpWithName || '').trim();
+  if (!uid && !name) return addedByOrganizer(player, organizer);
+  if (who.uid && uid) return uid === who.uid;
+  return !!who.name && !!name && sameOrganizer(name, who.name);
+}
+
+/**
  * Lo que falta en este partido.
  * Con promo de 2 o 3, el precio de este partido es la parte del día
  * (promoForPlayer), no el precio suelto. Transfiere después no está cobrado.
@@ -302,7 +316,7 @@ export function organizerMatchDebt({ match, players, matches, prices, organizer 
   if (!match || match.cancelled === true) return { total: 0, rows: [] };
   const rows = [];
   for (const player of players || []) {
-    if (player.matchId !== match.id || !addedByOrganizer(player, organizer)) continue;
+    if (player.matchId !== match.id || !owesOrganizer(player, organizer)) continue;
     const owed = amountOwed(player, { players, matches, prices });
     if (!(owed > 0)) continue;
     rows.push({ id: player.id || '', name: String(player.name || 'Sin nombre'), owed });
@@ -318,11 +332,12 @@ export function organizerMatchDebt({ match, players, matches, prices, organizer 
  * Con promo, el precio es la parte de ese día. Transfiere después entra en el resto.
  * Juega gratis, la lista de espera y un partido cancelado no suman.
  */
-export function playerDebt({ person, players, matches, prices }) {
+export function playerDebt({ person, players, matches, prices, organizer = null }) {
   const byId = new Map((matches || []).map((match) => [match.id, match]));
   const rows = [];
   for (const player of players || []) {
     if (!playerMatchesPerson(player, person)) continue;
+    if (organizer && !owesOrganizer(player, organizer)) continue;
     const owed = amountOwed(player, { players, matches, prices });
     if (!(owed > 0)) continue;
     const match = byId.get(player.matchId);
