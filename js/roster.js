@@ -28,17 +28,23 @@ export function cleanShortName(value) {
 
 /**
  * En la lista del partido y en Equipos se ve el apodo.
- * Si está en Jugadores, manda ese apodo. Si no, el que quedó copiado en el partido.
+ * Manda el apodo del jugador en ese partido (se carga en Editar jugador).
+ * Si no tiene, el de su ficha de Jugadores (por rosterId o, sin ficha
+ * vinculada, por el WhatsApp). Si nadie tiene apodo, el nombre.
  */
-export function displayName(player, roster) {
+export function nickOf(player, roster) {
+  const own = cleanShortName(player?.shortName);
+  if (own) return own;
   const list = roster || [];
   const person = player?.rosterId ? list.find((item) => item?.id === player.rosterId) : null;
-  if (person) return cleanShortName(person.shortName) || player?.name || person.name || '';
-  // Sin ficha vinculada (o la ficha ya no está): si el WhatsApp coincide con
-  // alguien de Jugadores que tiene apodo, se usa ese apodo.
+  if (person) return cleanShortName(person.shortName);
   const key = phoneIdentity(player);
   const same = key ? list.find((item) => item?.id && phoneIdentity(item) === key) : null;
-  return cleanShortName(same?.shortName) || cleanShortName(player?.shortName) || player?.name || '';
+  return cleanShortName(same?.shortName);
+}
+
+export function displayName(player, roster) {
+  return nickOf(player, roster) || player?.name || '';
 }
 
 /** El nombre completo, solo si en la lista se ve el apodo en su lugar. */

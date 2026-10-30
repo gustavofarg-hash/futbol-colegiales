@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v61');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v62');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -413,10 +413,25 @@ await page.click('dialog.sheet [data-close]');
 
 // Editar y quitar. Pedro lo agregó Gustavo: Martín no cambia el nombre.
 await page.click('.slot:has-text("Pedro Gómez") .more-btn');
-check('Martín no edita al jugador de Gustavo', await page.isDisabled('#pm-edit') && (await page.locator('#edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
+check('Martín ve que el jugador es de Gustavo', (await page.locator('#edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
 check('Quitar del partido no es editar al jugador', !(await page.isDisabled('#pm-del')));
 check('Ver perfil sigue habilitado', !(await page.isDisabled('#pm-profile')));
-await page.click('dialog.sheet [data-close]');
+// Martín no cambia nombre ni WhatsApp, pero sí el apodo de este jugador en el partido.
+check('Editar queda abierto para el apodo', !(await page.isDisabled('#pm-edit')));
+await page.click('#pm-edit');
+await page.waitForSelector('#player-form #player-nick');
+check('Martín no edita el nombre del jugador de Gustavo', await page.isDisabled('#player-form [name=name]') && !(await page.isDisabled('#player-nick')) && !(await page.isDisabled('#player-form button[type=submit]')));
+await page.fill('#player-nick', 'Pedrito');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Pedrito")');
+check('Martín le pone apodo al jugador de Gustavo', await page.evaluate(() => window.__app.players.find((p) => p.name === 'Pedro Gómez')?.shortName === 'Pedrito'));
+await page.click('.slot:has-text("Pedrito") .more-btn');
+await page.click('#pm-edit');
+await page.waitForSelector('#player-form #player-nick');
+await page.fill('#player-nick', '');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Pedro Gómez")');
+check('Borrar el apodo vuelve al nombre', true);
 const pedroMatch = await page.evaluate(() => location.hash);
 await page.locator('#slots .who', { hasText: 'Juan Pérez' }).click();
 await page.waitForSelector('#profile #edit-lock');
@@ -2317,6 +2332,7 @@ const apodo = await page.evaluate(async () => {
   const id = await window.__app.store.addMatch({ date: '2026-10-29', time: '20:00', note: 'Con apodo', capacity: 14 }, who);
   const match = window.__app.matches.find((item) => item.id === id);
   await window.__app.store.addPlayer(match, { name: 'Ernesto Apodo', rosterId, shortName: 'Tito', phone: '' }, who);
+  await window.__app.store.addPlayer(match, { name: 'Maximiliano Fernández Etcheverry Larralde', phone: '' }, who);
   return { rosterId, id };
 });
 await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, apodo.id);
@@ -2324,11 +2340,14 @@ await page.waitForSelector('#slots .name:text-is("Tito")');
 check('La lista del partido muestra el apodo', await page.locator('#slots .name:text-is("Ernesto Apodo")').count() === 0);
 {
   const row = page.locator('#slots li.slot', { hasText: 'Tito' });
-  const alt = (await row.locator('.alt-name').innerText()).trim();
-  const nameBox = await row.locator('.name').boundingBox();
-  const altBox = await row.locator('.alt-name').boundingBox();
-  check('Al lado del apodo se ve el nombre completo, en la misma línea', alt === 'Ernesto Apodo' && Math.abs(nameBox.y + nameBox.height - (altBox.y + altBox.height)) < 8, `alt=${alt}`);
-  check('Una fila sin apodo no repite el nombre', await page.locator('#slots li.slot .alt-name').count() === 1);
+  const alt = await page.locator('#slots .alt-name').count();
+  const nameText = (await row.locator('.name').innerText()).trim();
+  const lines = await row.locator('.name').evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+  });
+  check('La fila del partido muestra solo el apodo, en una línea', alt === 0 && nameText === 'Tito' && lines === 1, `alt=${alt} lines=${lines}`);
   await row.locator('[data-menu]').click();
   await page.waitForSelector('#menu-full-name');
   check('El menú del jugador muestra apodo y nombre', (await page.textContent('dialog.sheet h3')).trim() === 'Tito' && (await page.textContent('#menu-full-name')).trim() === 'Ernesto Apodo');
@@ -2339,15 +2358,42 @@ check('La lista del partido muestra el apodo', await page.locator('#slots .name:
   await page.click('#player-form button[type=submit]');
   await page.waitForSelector('#slots .name:text-is("Titi")');
   check('El apodo cambiado desde el partido queda en Jugadores', await page.evaluate((id) => window.__app.roster.find((p) => p.id === id)?.shortName, apodo.rosterId) === 'Titi');
-  await page.evaluate(async (id) => { await window.__app.store.patchRoster(id, { shortName: 'Tito' }); }, apodo.rosterId);
+  await page.evaluate(async (id) => { await window.__app.store.setRosterNick(id, 'Tito'); }, apodo.rosterId);
   await page.waitForSelector('#slots .name:text-is("Tito")');
+  // Sin apodo: el nombre largo baja de línea entre palabras, sin cortarse ni partir una palabra.
+  const long = await page.locator('#slots .name', { hasText: 'Maximiliano' }).evaluate((el) => {
+    const text = el.firstChild;
+    const broken = [];
+    let at = 0;
+    for (const word of el.textContent.split(' ')) {
+      const range = document.createRange();
+      range.setStart(text, at);
+      range.setEnd(text, at + word.length);
+      if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) broken.push(word);
+      at += word.length + 1;
+    }
+    return { text: el.textContent, broken, clipped: el.scrollWidth > el.clientWidth + 1 };
+  });
+  check('Un nombre largo sin apodo se ve entero y sin partir palabras', long.text === 'Maximiliano Fernández Etcheverry Larralde' && !long.broken.length && !long.clipped, JSON.stringify(long));
+  // Jugador sin ficha en Jugadores: igual se le puede poner apodo desde Editar.
+  await page.locator('#slots li.slot', { hasText: 'Maximiliano' }).locator('[data-menu]').click();
+  await page.click('#pm-edit');
+  await page.waitForSelector('#player-nick');
+  check('Editar jugador sin ficha también tiene el apodo', (await page.inputValue('#player-nick')) === '');
+  await page.fill('#player-nick', 'Maxi');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#slots .name:text-is("Maxi")');
+  check('El apodo nuevo se ve en la lista del partido', await page.locator('#slots .name:text-is("Maximiliano Fernández Etcheverry Larralde")').count() === 0);
 }
 await page.locator('#slots .who', { hasText: 'Tito' }).click();
 await page.waitForSelector('#profile h2.section');
 check('El perfil conserva el nombre completo', (await page.textContent('#profile h2.section')).trim() === 'Ernesto Apodo' && (await page.textContent('#profile-nick')).includes('Tito'));
 await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}/equipos`; }, apodo.id);
 await page.waitForSelector('#team-unassigned');
-check('Equipos muestra el apodo', (await page.locator('#team-unassigned').innerText()).includes('Tito') && !(await page.locator('#team-board').innerText()).includes('Ernesto Apodo'));
+{
+  const board = await page.locator('#team-board').innerText();
+  check('Equipos muestra el apodo', (await page.locator('#team-unassigned').innerText()).includes('Tito') && board.includes('Maxi') && !board.includes('Ernesto Apodo') && !board.includes('Etcheverry'), board.replace(/\s+/g, ' '));
+}
 await page.evaluate(() => { location.hash = '#/jugadores'; });
 await page.waitForSelector('#roster-q');
 await page.fill('#roster-q', 'tito');
@@ -2382,7 +2428,10 @@ await page.waitForSelector('#slots .name:text-is("Pedro Real")');
 const pedroPrivado = (await page.locator('#slots .slot', { has: page.locator('.name:text-is("Pedro Real")') }).innerText()).replace(/\s+/g, ' ');
 check('Otro organizador no ve el WhatsApp del amigo', !pedroPrivado.includes('5555') && pedroPrivado.includes('El WhatsApp de este jugador es privado'), pedroPrivado);
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("Pedro Real")') }).locator('[data-menu]').click();
-check('Solo lo edita quien lo agregó', await page.isDisabled('#pm-edit') && (await page.locator('#edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
+check('Solo lo edita quien lo agregó', (await page.locator('#edit-lock').innerText()).replace(/\s+/g, ' ').trim() === 'Solo lo puede editar el organizador que lo agregó');
+await page.click('#pm-edit');
+await page.waitForSelector('#player-form #player-nick');
+check('Del jugador ajeno solo se cambia el apodo', await page.isDisabled('#player-form [name=name]') && !(await page.isDisabled('#player-nick')));
 await page.click('dialog.sheet [data-close]');
 await page.click('#btn-settings');
 await page.click('#set-logout');
