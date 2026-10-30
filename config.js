@@ -31,3 +31,17 @@ export const CAPACITY = 14;
 
 // Nombre del lugar (aparece en la app y en los mensajes de WhatsApp).
 export const VENUE = "Polideportivo Colegiales";
+
+// Backup directo a Google Drive (opcional). Vacío: «Guardar en Google Drive»
+// abre el menú de compartir del teléfono (elegís Drive) o descarga el archivo.
+// Para que suba solo a tu Drive (carpeta «Mis Partidos - backups»):
+//  1) console.cloud.google.com → proyecto futbol-partidos → APIs y servicios →
+//     Biblioteca → «Google Drive API» → Habilitar.
+//  2) Pantalla de consentimiento de OAuth: tipo Externo, nombre «Mis Partidos»,
+//     tu mail; permiso (scope) .../auth/drive.file. Publicala («En producción»)
+//     o agregá como usuarios de prueba los mails que van a hacer backups.
+//  3) Credenciales → Crear credenciales → ID de cliente de OAuth → Aplicación web.
+//     Orígenes de JavaScript autorizados: la dirección donde está publicada la
+//     app: https://gustavofarg-hash.github.io (sin barra ni carpeta al final).
+//  4) Pegá acá el ID de cliente (termina en .apps.googleusercontent.com).
+export const GOOGLE_DRIVE_CLIENT_ID = "";

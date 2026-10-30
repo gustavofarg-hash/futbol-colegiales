@@ -152,20 +152,35 @@ service cloud.firestore {
           );
     }
 
+    // Los campos del jugador, por grupo. validPayment sigue siendo todo junto
+    // (el alta). El update valida cada grupo solo si cambió.
+    function moneyKeys() {
+      return ['paid', 'amount', 'method', 'paidUpdatedBy', 'paidUpdatedAt', 'receivedBy',
+          'cash', 'transfer', 'pendingTransfer', 'transferReceivedAt', 'transferReceivedBy',
+          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay'];
+    }
+    function waitKeys() {
+      return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt'];
+    }
+    function confirmKeys() {
+      return ['confirmToken', 'confirmed', 'confirmedAt', 'reminderSentAt'];
+    }
+    function goalKeys() {
+      return ['goals', 'inGoal', 'inGoalAt'];
+    }
+    function stampKeys() {
+      return ['viewers', 'adders', 'addedByUid', 'signedUpWith', 'signedUpWithName'];
+    }
     function validPayment(d) {
+      return validMoney(d) && validPlayerState(d);
+    }
+    function validMoney(d) {
       return (!('paid' in d) || d.paid is bool)
           && (!('amount' in d) || d.amount == null || (d.amount is number && d.amount >= 0 && d.amount <= 1000000000))
           && (!('method' in d) || d.method == null || d.method == 'efectivo' || d.method == 'transferencia')
           && (!('paidUpdatedBy' in d) || (d.paidUpdatedBy is string && d.paidUpdatedBy.size() <= 40))
           && (!('paidUpdatedAt' in d) || d.paidUpdatedAt is number)
           && (!('receivedBy' in d) || d.receivedBy == null || (d.receivedBy is string && d.receivedBy.size() > 0 && d.receivedBy.size() <= 40))
-          && (!('waiting' in d) || d.waiting is bool)
-          && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is number && d.waitOrder >= 0 && d.waitOrder <= 1000000))
-          && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
-          && (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
-          && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
-          && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number)
-          && (!('reminderSentAt' in d) || d.reminderSentAt == null || d.reminderSentAt is number)
           && (!('cash' in d) || d.cash == null || (d.cash is number && d.cash >= 0 && d.cash <= 1000000000))
           && (!('transfer' in d) || d.transfer == null || (d.transfer is number && d.transfer >= 0 && d.transfer <= 1000000000))
           && (!('pendingTransfer' in d) || d.pendingTransfer == null || (d.pendingTransfer is number && d.pendingTransfer >= 0 && d.pendingTransfer <= 1000000000))
@@ -175,17 +190,35 @@ service cloud.firestore {
           && (!('transferTo' in d) || d.transferTo == null || (d.transferTo is string && d.transferTo.size() > 0 && d.transferTo.size() <= 40))
           && (!('pendingTo' in d) || d.pendingTo == null || (d.pendingTo is string && d.pendingTo.size() > 0 && d.pendingTo.size() <= 40))
           && (!('transferParts' in d) || d.transferParts == null || transferPartsOk(d.transferParts))
+          && (!('freePlay' in d) || d.freePlay is bool);
+    }
+    function validPlayerState(d) {
+      return validWait(d) && validConfirm(d) && validGoals(d) && validStamp(d);
+    }
+    function validWait(d) {
+      return (!('waiting' in d) || d.waiting is bool)
+          && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is number && d.waitOrder >= 0 && d.waitOrder <= 1000000))
+          && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
           && (!('tentative' in d) || d.tentative == null || d.tentative is bool)
-          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number)
-          && (!('viewers' in d) || (d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30))
+          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number);
+    }
+    function validConfirm(d) {
+      return (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
+          && (!('confirmed' in d) || d.confirmed == null || d.confirmed == 'si' || d.confirmed == 'no')
+          && (!('confirmedAt' in d) || d.confirmedAt == null || d.confirmedAt is number)
+          && (!('reminderSentAt' in d) || d.reminderSentAt == null || d.reminderSentAt is number);
+    }
+    function validGoals(d) {
+      return (!('goals' in d) || (d.goals is int && d.goals >= 0 && d.goals <= 99))
+          && (!('inGoal' in d) || d.inGoal is bool)
+          && (!('inGoalAt' in d) || d.inGoalAt == null || d.inGoalAt is number);
+    }
+    function validStamp(d) {
+      return (!('viewers' in d) || (d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30))
           && (!('adders' in d) || (d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30))
           && (!('addedByUid' in d) || (d.addedByUid is string && d.addedByUid.size() <= 128))
           && (!('signedUpWith' in d) || (d.signedUpWith is string && d.signedUpWith.size() > 0 && d.signedUpWith.size() <= 128))
-          && (!('signedUpWithName' in d) || (d.signedUpWithName is string && d.signedUpWithName.size() > 0 && d.signedUpWithName.size() <= 40))
-          && (!('freePlay' in d) || d.freePlay is bool)
-          && (!('goals' in d) || (d.goals is int && d.goals >= 0 && d.goals <= 99))
-          && (!('inGoal' in d) || d.inGoal is bool)
-          && (!('inGoalAt' in d) || d.inGoalAt == null || d.inGoalAt is number);
+          && (!('signedUpWithName' in d) || (d.signedUpWithName is string && d.signedUpWithName.size() > 0 && d.signedUpWithName.size() <= 40));
     }
 
     function transferPartOk(p) {
@@ -307,6 +340,27 @@ service cloud.firestore {
           && (!('phoneOwnerUid' in d) || (d.phoneOwnerUid is string && d.phoneOwnerUid.size() <= 128));
     }
     function validPlayer(d) {
+      return validPlayerShape(d) && validPayment(d);
+    }
+    // Un update no vuelve a validar todo el documento: con un invitado con
+    // pago, validarlo entero más el resto de la regla pasaba el tope de 1000
+    // expresiones por request y Firestore lo negaba (también al admin). Lo
+    // que no cambia ya pasó estas mismas reglas al escribirse.
+    function validPlayerUpdate() {
+      let d = request.resource.data;
+      let changed = d.diff(resource.data).affectedKeys();
+      return d.matchId is string && d.name is string
+          && d.name.size() > 0 && d.name.size() <= 60
+          && phoneGone(d)
+          && (!changed.hasAny(['matchId', 'name', 'phone', 'phoneKey', 'hasPhone', 'phoneShared', 'phoneOwnerUid',
+              'shortCode', 'invitedBy', 'invitedByName', 'shortName']) || validPlayerShape(d))
+          && (!changed.hasAny(moneyKeys()) || validMoney(d))
+          && (!changed.hasAny(waitKeys()) || validWait(d))
+          && (!changed.hasAny(confirmKeys()) || validConfirm(d))
+          && (!changed.hasAny(goalKeys()) || validGoals(d))
+          && (!changed.hasAny(stampKeys()) || validStamp(d));
+    }
+    function validPlayerShape(d) {
       return d.matchId is string && d.name is string
           && d.name.size() > 0 && d.name.size() <= 60
           && phoneGone(d)
@@ -314,8 +368,7 @@ service cloud.firestore {
           && (!('shortCode' in d) || (d.shortCode is string && d.shortCode.matches('^[0-9A-Za-z]{8}$')))
           && (!('invitedBy' in d) || (d.invitedBy is string && d.invitedBy.size() > 0 && d.invitedBy.size() <= 128))
           && (!('invitedByName' in d) || (d.invitedByName is string && d.invitedByName.size() > 0 && d.invitedByName.size() <= 60))
-          && (!('shortName' in d) || (d.shortName is string && d.shortName.size() <= 40))
-          && validPayment(d);
+          && (!('shortName' in d) || (d.shortName is string && d.shortName.size() <= 40));
     }
 
     function posOk(x) {
@@ -479,7 +532,17 @@ service cloud.firestore {
           && invitedByOk()
           && isAdder(matchData(request.resource.data.matchId))
           && playerListsOk(request.resource.data.matchId);
-      allow update: if isActiveStaff() && validPlayer(request.resource.data) && invitedByOk() && confirmationWriteOk()
+      // Solo el pago (Guardar pago, pago dividido, promo, cobrar transferencia).
+      // Va primero y es corta: nombre, teléfono, invitado, respuesta y acceso
+      // no cambian, así que no hace falta revisarlos. Firestore corta en la
+      // primera regla que da true; la larga de abajo, más el cierre del admin,
+      // pasaban el tope de 1000 expresiones con un invitado.
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(moneyKeys().concat(['updatedAt']))
+          && isActiveStaff()
+          && (!('adders' in resource.data) || resource.data.adders.hasAny([request.auth.uid, '*']))
+          && phoneGone(request.resource.data)
+          && validMoney(request.resource.data);
+      allow update: if isActiveStaff() && validPlayerUpdate() && invitedByOk() && confirmationWriteOk()
           && playerStampSame()
           && (playerNameSame() || isPlayerCreator())
           && (playerPhoneMetaSame() || isPlayerCreator() || legacyPhoneMoveOk())

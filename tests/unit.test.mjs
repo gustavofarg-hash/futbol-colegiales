@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer } from '../js/payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
+import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -32,6 +32,7 @@ import {
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
 import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
+import { DRIVE_FOLDER, DRIVE_SCOPE, driveClientId, ensureBackupFolder, forgetDriveToken, multipartBody, requestDriveToken, shareableBackupName, uploadBackupToDrive } from '../js/drive.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -110,6 +111,35 @@ test('WhatsApp: siempre wa.me, sin package', () => {
   const url = waSendUrl({ phone: '5491112345678', text: 'Hola', choice: 'business', android: true });
   assert.equal(url.includes('package='), false);
   assert.equal(url.startsWith('intent://'), false);
+});
+
+test('un pago partido se escribe de a un jugador y el error nombra el documento', async () => {
+  const seen = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const pending = writePaymentsInOrder([{ id: 'host' }, { id: 'guest' }], async (entry) => {
+    seen.push('start:' + entry.id);
+    if (entry.id === 'host') await gate;
+    seen.push('end:' + entry.id);
+    if (entry.id === 'guest') throw Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+  });
+  assert.deepEqual(seen, ['start:host']);
+  release();
+  await assert.rejects(pending, (error) => {
+    assert.equal(error.playerId, 'guest');
+    assert.equal(error.paymentWrite, true);
+    assert.equal(error.code, 'permission-denied');
+    assert.equal(paymentFailureText(error, error.playerId), 'No se pudo guardar el pago en players/guest (permission-denied).');
+    assert.equal(/volver a publicar firestore\.rules/i.test(paymentFailureText(error, error.playerId)), false);
+    return true;
+  });
+  assert.deepEqual(seen, ['start:host', 'end:host', 'start:guest', 'end:guest']);
+  const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
+  assert.equal(app.includes('Promise.all(jobs)'), false);
+  assert.match(app, /savePayments\(entries, 'Pago dividido'\)/);
+  assert.match(store, /async _writePayment\(id, patch\)/);
+  assert.equal(paymentFailureText(Object.assign(new Error('Poné un monto.'), { code: 'invalid-payment' })), 'Poné un monto.');
 });
 
 test('el pago se reparte hasta lo que debe cada uno', () => {
@@ -920,8 +950,20 @@ test('búsqueda del plantel: nombre, apellido y teléfono', () => {
   assert.deepEqual(martin, ['De Martín', 'Sin dueño']);
   assert.deepEqual(searchRoster(rosterForOrganizer(owned, { uid: 'martin', name: 'Martín' }), 'gustavo'), []);
   assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }]), 'Tito');
-  assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9', shortName: 'Viejo' }, [{ id: '9', name: 'Ernesto Pereira' }]), 'Ernesto Pereira');
+  // El apodo cargado en el jugador del partido manda sobre el de la ficha (Editar jugador).
+  assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9', shortName: 'Viejo' }, [{ id: '9', name: 'Ernesto Pereira' }]), 'Viejo');
+  assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9', shortName: 'Ernes' }, [{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }]), 'Ernes');
+  assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9', shortName: '' }, [{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }]), 'Tito');
+  assert.equal(nickOf({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira' }]), '');
   assert.equal(displayName({ name: 'Ernesto Pereira', shortName: 'Tito' }, []), 'Tito');
+  // Sin rosterId, el apodo llega por el WhatsApp que coincide con la ficha.
+  assert.equal(displayName({ name: 'Facundo Aguirre', phone: '5491127993830' }, [{ id: '7', name: 'Facundo Aguirre', phone: '5491127993830', shortName: 'Facu' }]), 'Facu');
+  assert.equal(displayName({ name: 'Facundo Aguirre', rosterId: 'borrado', phone: '5491127993830' }, [{ id: '7', name: 'Facundo A.', phone: '5491127993830', shortName: 'Facu' }]), 'Facu');
+  assert.equal(displayName({ name: 'Otro', phone: '5491100000000' }, [{ id: '7', name: 'Facundo Aguirre', phone: '5491127993830', shortName: 'Facu' }]), 'Otro');
+  // El nombre completo se muestra al lado solo si en la fila se ve el apodo.
+  assert.equal(fullNameBehind({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }]), 'Ernesto Pereira');
+  assert.equal(fullNameBehind({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira' }]), '');
+  assert.equal(fullNameBehind({ name: 'Tito', rosterId: '9' }, [{ id: '9', name: 'Tito', shortName: 'tito' }]), '');
   assert.equal(cleanShortName('  Tito   '), 'Tito');
   assert.equal(rosterMatchCount([
     { matchId: 'a', rosterId: '1' },
@@ -1012,6 +1054,20 @@ test('plantel demo: no duplica por teléfono', async () => {
   const cleared = JSON.parse(mem.get('f7c-test-roster'));
   assert.equal(cleared.roster[id].shortName, undefined);
   assert.equal(cleared.players[playerId].shortName, '');
+  // Otro organizador: la ficha no es suya, pero el apodo del jugador en el partido sí.
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await assert.rejects(() => store.setRosterNick(id, 'Nope'), (error) => error.code === 'edit-locked');
+  await store.setPlayerShortName(playerId, '  Ernes ');
+  assert.equal(JSON.parse(mem.get('f7c-test-roster')).players[playerId].shortName, 'Ernes');
+  // El admin cambia el apodo de una ficha ajena y se copia al partido.
+  store.setActor({ uid: 'jefe', name: 'Jefe', role: 'admin' });
+  await store.setRosterNick(id, 'Vini');
+  const byAdmin = JSON.parse(mem.get('f7c-test-roster'));
+  assert.equal(byAdmin.roster[id].shortName, 'Vini');
+  assert.equal(byAdmin.players[playerId].shortName, 'Vini');
+  await store.setPlayerShortName(playerId, '');
+  assert.equal(JSON.parse(mem.get('f7c-test-roster')).players[playerId].shortName, undefined);
+  store.setActor({ uid: 'gustavo', name: 'Gustavo' });
   await assert.rejects(() => store.deleteRoster(id), (error) => error.code === 'roster-in-match');
   await store.deletePlayer(playerId);
   await store.deleteRoster(id);
@@ -1448,6 +1504,62 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(four.shares.reduce((sum, n) => sum + n, 0), 17000);
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).label, 'Promo 3 partidos por $10.000');
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).total, 10000);
+});
+
+test('promo de invitados: es quien invita + el nombre del invitado', () => {
+  const matches = [
+    { id: 'A', date: '2026-10-22', time: '19:00', startsAt: 1 },
+    { id: 'B', date: '2026-10-22', time: '21:00', startsAt: 2 },
+  ];
+  const base = { phone: '', waiting: false };
+  // Invitado 1 de Vinicio en A y de Ernesto en B: dos personas distintas, sin promo.
+  const distintos = [
+    { ...base, id: 'vA', matchId: 'A', name: 'Vinicio' },
+    { ...base, id: 'eB', matchId: 'B', name: 'Ernesto' },
+    { ...base, id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', guestAuto: true },
+    { ...base, id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'eB', guestAuto: true },
+  ];
+  assert.equal(promoForPlayer({ player: distintos[2], players: distintos, matches, prices: null }), null);
+  assert.equal(promoForPlayer({ player: distintos[3], players: distintos, matches, prices: null }), null);
+  assert.notEqual(playerPromoKey(distintos[2], distintos), playerPromoKey(distintos[3], distintos));
+  assert.equal(playerPromoKey(distintos[2], distintos), 'g:n:vinicio|invitado 1');
+  // El mismo Vinicio lleva a su Invitado 1 a los dos partidos del día: promo 2.
+  const mismo = [
+    { ...base, id: 'vA', matchId: 'A', name: 'Vinicio' },
+    { ...base, id: 'vB', matchId: 'B', name: 'Vinicio' },
+    { ...base, id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', guestAuto: true },
+    { ...base, id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'vB', guestAuto: true },
+  ];
+  const promo = promoForPlayer({ player: mismo[2], players: mismo, matches, prices: { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 } });
+  assert.equal(promo?.label, 'Promo 2 partidos por $9.000');
+  assert.equal(promo.share, 4500);
+  assert.deepEqual(promo.rows.map((row) => row.player.id), ['gA', 'gB']);
+  // Con el teléfono del anfitrión también: lo identifica igual en los dos partidos.
+  const conTel = mismo.map((p) => (p.invitedBy ? p : { ...p, phone: '5491122223333', name: p.id === 'vA' ? 'Vini' : 'Vinicio R.' }));
+  assert.equal(promoForPlayer({ player: conTel[3], players: conTel, matches, prices: null })?.count, 2);
+  // Si no está el anfitrión en la lista, el invitado queda solo en su partido.
+  assert.equal(personKey({ name: 'Invitado 1', invitedBy: 'borrado' }, []), 'g:id:borrado|invitado 1');
+  // Un invitado con teléfono o ficha es esa persona, lo invite quien lo invite.
+  assert.equal(personKey({ name: 'Juan', invitedBy: 'vA', rosterId: 'r9' }, mismo), 'r:r9');
+  // amountOwed usa la parte de la promo solo para el invitado del mismo anfitrión.
+  assert.equal(amountOwed(mismo[2], { players: mismo, matches, prices: null }), 4500);
+  assert.equal(amountOwed(distintos[2], { players: distintos, matches, prices: null }), 5000);
+});
+
+test('invitados con el mismo nombre no se mezclan en resúmenes ni en Jugadores', () => {
+  const players = [
+    { id: 'vA', matchId: 'A', name: 'Vinicio', phone: '' },
+    { id: 'eB', matchId: 'B', name: 'Ernesto', phone: '' },
+    { id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', phone: '', paid: true, cash: 5000, cashTo: 'Gus', pendingTransfer: 1000, pendingTo: 'Gus' },
+    { id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'eB', phone: '', paid: true, cash: 5000, cashTo: 'Gus', pendingTransfer: 1000, pendingTo: 'Gus' },
+  ];
+  const summary = paymentsSummary({ players, roster: [] });
+  assert.equal(summary.filter((row) => row.name === 'Invitado 1').length, 2);
+  const pending = pendingTransfers({ players, roster: [] });
+  assert.equal(pending.rows.filter((row) => row.name === 'Invitado 1').length, 2);
+  // Una ficha de Jugadores que se llama igual no se lleva a los invitados.
+  assert.equal(playerMatchesPerson(players[2], { id: 'r1', name: 'Invitado 1', phone: '' }), false);
+  assert.equal(playerMatchesPerson(players[0], { id: 'r2', name: 'Vinicio', phone: '' }), true);
 });
 
 test('permisos del partido: todos, solo yo, límite y sin excepción de admin', () => {
@@ -2160,7 +2272,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v59');
+  assert.equal(version, 'f7c-v63');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
@@ -2326,4 +2438,59 @@ test('resetear la base la deja vacía y un organizador no puede', async () => {
   const again = await store.exportDatabase();
   assert.equal(again.collections.matches && Object.keys(again.collections.matches).length, 0);
   assert.equal(Object.keys(again.collections.players).length, 0);
+});
+
+test('Drive: ID de config, nombre para compartir y cuerpo multipart', () => {
+  assert.equal(driveClientId({}), '');
+  assert.equal(driveClientId({ GOOGLE_DRIVE_CLIENT_ID: 'TU_ID' }), '');
+  assert.equal(driveClientId({ GOOGLE_DRIVE_CLIENT_ID: ' 123-abc.apps.googleusercontent.com ' }), '123-abc.apps.googleusercontent.com');
+  // Chrome no comparte .json: va como .txt con el mismo contenido.
+  assert.equal(shareableBackupName('Mis_partidos_2026-10-30_09-00.json'), 'Mis_partidos_2026-10-30_09-00.txt');
+  const body = multipartBody({ name: 'a.json', parents: ['f'] }, '{"x":1}', 'B');
+  assert.equal(body, '--B\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{"name":"a.json","parents":["f"]}\r\n--B\r\nContent-Type: application/json\r\n\r\n{"x":1}\r\n--B--\r\n');
+});
+
+test('Drive: permiso drive.file y subida a la carpeta de backups', async () => {
+  forgetDriveToken();
+  const asked = [];
+  globalThis.google = { accounts: { oauth2: { initTokenClient(cfg) {
+    return { requestAccessToken() { asked.push(cfg); cfg.callback({ access_token: 'tok', expires_in: 3600 }); } };
+  } } } };
+  try {
+    assert.equal(await requestDriveToken('id.apps.googleusercontent.com', { now: () => 0 }), 'tok');
+    assert.equal(await requestDriveToken('id.apps.googleusercontent.com', { now: () => 1000 }), 'tok');
+    assert.equal(asked.length, 1, 'el permiso vigente no se vuelve a pedir');
+    assert.equal(asked[0].scope, DRIVE_SCOPE);
+    assert.equal(DRIVE_SCOPE, 'https://www.googleapis.com/auth/drive.file');
+
+    forgetDriveToken();
+    globalThis.google.accounts.oauth2.initTokenClient = (cfg) => ({ requestAccessToken() { cfg.error_callback({ type: 'popup_closed' }); } });
+    await assert.rejects(requestDriveToken('id.apps.googleusercontent.com'), (e) => e.code === 'drive/cancelled');
+  } finally {
+    delete globalThis.google;
+    forgetDriveToken();
+  }
+
+  const calls = [];
+  const reply = (status, json) => ({ ok: status < 300, status, json: async () => json });
+  const fakeFetch = (existing) => async (url, init = {}) => {
+    calls.push({ url, method: init.method || 'GET', headers: init.headers || {}, body: init.body || '' });
+    if (!init.method) return reply(200, { files: existing ? [{ id: 'old-folder' }] : [] });
+    if (/upload/.test(url)) return reply(200, { id: 'file-9' });
+    return reply(200, { id: 'new-folder' });
+  };
+  assert.equal(await ensureBackupFolder('tok', fakeFetch(true)), 'old-folder');
+  assert.equal(calls.length, 1);
+  assert.match(decodeURIComponent(calls[0].url), new RegExp(`name='${DRIVE_FOLDER}'`));
+  calls.length = 0;
+  const saved = await uploadBackupToDrive({ token: 'tok', filename: 'b.json', text: '{"format":"mis-partidos-backup"}', fetchImpl: fakeFetch(false), boundary: 'Z' });
+  assert.equal(saved.id, 'file-9');
+  assert.deepEqual(calls.map((c) => c.method), ['GET', 'POST', 'POST']);
+  assert.equal(JSON.parse(calls[1].body).mimeType, 'application/vnd.google-apps.folder');
+  assert.equal(calls[2].headers['Content-Type'], 'multipart/related; boundary=Z');
+  assert.equal(calls[2].headers.Authorization, 'Bearer tok');
+  assert.ok(calls[2].body.includes('"parents":["new-folder"]') && calls[2].body.includes('{"format":"mis-partidos-backup"}'));
+
+  const denied = async () => ({ ok: false, status: 403, json: async () => ({ error: { message: 'Drive API has not been used in project' } }) });
+  await assert.rejects(ensureBackupFolder('tok', denied), (e) => e.code === 'drive/403' && /Drive API/.test(e.message));
 });

@@ -39,3 +39,20 @@ export function playerPatchEditsIdentity(data, player) {
   if ('name' in data && String(data.name ?? '').trim() !== String(player?.name ?? '').trim()) return true;
   return false;
 }
+
+/** El apodo de una ficha de Jugadores: quien la creó o el admin. */
+export function canEditRosterNick(person, actor) {
+  return canEditRoster(person, actor) || (!!person && actor?.role === 'admin');
+}
+
+/**
+ * Puede escribir en el documento del jugador (apodo, pago, espera): el admin
+ * o quien tiene permiso de anotar en ese partido. Es lo que pide la regla.
+ */
+export function canWritePlayer(player, actor) {
+  if (!player) return false;
+  if (actor?.role === 'admin') return true;
+  const adders = Array.isArray(player.adders) ? player.adders : null;
+  if (!adders || !adders.length) return true;
+  return adders.includes('*') || (!!actor?.uid && adders.includes(actor.uid));
+}

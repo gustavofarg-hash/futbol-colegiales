@@ -1,4 +1,6 @@
 import { ACCESS_CODE, VENUE } from '../config.js';
+import * as appConfig from '../config.js';
+import { DRIVE_FOLDER, driveClientId, loadGis, requestDriveToken, shareableBackupName, uploadBackupToDrive } from './drive.js';
 import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
@@ -6,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection } from './payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, writePaymentsInOrder } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -16,11 +18,11 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
-import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from './edit-lock.js';
+import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
@@ -34,7 +36,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v59';
+const APP_VERSION = 'f7c-v63';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -138,7 +140,6 @@ function showError(msg) {
 }
 // Las escrituras a Firestore resuelven cuando el servidor confirma; con caché
 // offline la UI no espera: se cierra el formulario y se avisa si falla.
-const PAY_RULES_MSG = 'No se pudo guardar el pago. Hay que volver a publicar firestore.rules para efectivo, transferencia y Transfiere después.';
 const RULES_MSG = 'Firebase rechazó el acceso. Hay que actualizar las reglas de Firestore (publicar firestore.rules).';
 function isPermissionDenied(error) {
   const code = error?.code || '';
@@ -149,14 +150,44 @@ function run(p, okMsg, deniedMsg) {
   return Promise.resolve(p).catch((e) => {
     console.error(e);
     if (e?.code === 'already-in-match') toast(e.message || ALREADY_IN_MATCH);
+    else if (e?.paymentWrite) toast(paymentFailureText(e, e.playerId), 4500);
     else if (deniedMsg && isPermissionDenied(e)) toast(deniedMsg);
     else toast('No se pudo guardar: ' + (e.code || e.message || e));
   });
+}
+function savePayments(entries, okMsg) {
+  return run(writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who)), okMsg);
 }
 
 /* ───────── datos derivados ───────── */
 const actor = () => ({ uid: app.session?.user?.uid || '', name: app.who || '' });
 const shownName = (player) => displayName(player, app.roster);
+/** Nombre en la fila del partido: solo el apodo; sin apodo, el nombre completo. El nombre completo va en el menú. */
+function nameRow(p) {
+  return `<div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>`;
+}
+/** actor() con el rol, para lo que el admin puede aunque no sea el creador. */
+const actorWithRole = () => ({ ...actor(), role: app.role || '' });
+/**
+ * Guarda el apodo de un jugador del partido. Si su ficha de Jugadores la
+ * puede tocar (la creó o es admin), va a la ficha y se copia a sus partidos.
+ * Si no, queda en este jugador: ahí manda sobre el de la ficha.
+ */
+async function saveNick(p, nick, rosterId) {
+  const person = rosterId ? app.roster.find((item) => item.id === rosterId) : null;
+  if (person && canEditRosterNick(person, actorWithRole())) {
+    if (nick !== cleanShortName(person.shortName)) await app.store.setRosterNick(person.id, nick);
+    const fresh = app.players.find((item) => item.id === p.id) || p;
+    if (cleanShortName(fresh.shortName) !== nick) await app.store.setPlayerShortName(p.id, nick);
+    return;
+  }
+  await app.store.setPlayerShortName(p.id, nick);
+}
+function nickField(p) {
+  const value = nickOf(p, app.roster);
+  return `<label class="field"><span>Nombre corto (o apodo)</span><input id="player-nick" name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Vini" value="${esc(value)}">
+        <div class="small muted" id="pf-nick">Es lo que se ve en la lista del partido y en Equipos.</div></label>`;
+}
 const addBlock = (m) => {
   const who = actor();
   if (!canAdd(m, who.uid)) return 'Este partido es de solo lectura.';
@@ -921,7 +952,7 @@ function renderMatch(id) {
       <li class="slot ${i >= cap ? 'extra' : ''}${inviteClass(p)}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
-          <div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>
+          ${nameRow(p)}
           <div class="sub">${phoneSub(p)}
             ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payMarkup(p)}
@@ -1095,7 +1126,7 @@ function waitingSection(m, full, readOnly) {
         </div>
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
-          <div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>
+          ${nameRow(p)}
           <div class="sub">${phoneSub(p)}
             ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}${confirmTag(p)}</div>
           ${payMarkup(p)}
@@ -1365,7 +1396,7 @@ async function offerPromotionWhatsApp(player, match) {
     return;
   }
   const token = await app.store.ensureConfirmToken(player.id);
-  if (!confirm(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`)) return;
+  if (!(await askYesNo(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`))) return;
   const pending = window.open('about:blank', '_blank');
   const code = await app.store.ensureShortLink(player.id);
   const external = isShortCode(code) ? await resolveExternalShort(code) : '';
@@ -1594,7 +1625,8 @@ function saveBackupFile(filename, text) {
 }
 
 async function shareBackupFile(filename, text) {
-  const file = new File([text], filename, { type: 'application/json' });
+  // Chrome solo comparte ciertos tipos y .json no está: va como .txt (adentro, el mismo JSON).
+  const file = new File([text], shareableBackupName(filename), { type: 'text/plain' });
   const payload = { files: [file], title: 'Backup de Mis Partidos' };
   const can = typeof navigator.share === 'function' && (typeof navigator.canShare !== 'function' || navigator.canShare(payload));
   if (can) {
@@ -1666,7 +1698,7 @@ function openRestore() {
   openSheet(`
     <h3>Cargar base de datos desde un backup</h3>
     <p class="backup-warn">Los datos de ahora se reemplazan por los del archivo. No se puede deshacer.</p>
-    <label class="field"><span>Archivo JSON</span><input id="backup-file" type="file" accept="application/json,.json"></label>
+    <label class="field"><span>Archivo de backup (.json o .txt)</span><input id="backup-file" type="file" accept="application/json,.json,text/plain,.txt"></label>
     <div id="backup-summary"></div>
     <p class="backup-status" id="backup-status" aria-live="polite"></p>
     <p class="err" id="backup-err"></p>
@@ -1728,6 +1760,7 @@ function openRestore() {
 
 function openBackup() {
   if (app.role !== 'admin') return;
+  const driveId = driveClientId(appConfig);
   openSheet(`
     <h3>Hacer backup</h3>
     <p class="hint">Un archivo JSON con partidos, jugadores, plantel, pagos, sedes, precios, confirmaciones y teléfonos.</p>
@@ -1736,18 +1769,47 @@ function openBackup() {
       <button type="button" class="btn" id="backup-drive">Guardar en Google Drive</button>
       <button type="button" class="btn ghost" data-close>Cerrar</button>
     </div>
-    <p class="hint">Drive abre el menú del teléfono para elegir dónde guardarlo. Si ese menú no está, se descarga el archivo.</p>`);
+    <p class="hint" id="backup-drive-hint">${driveId
+      ? `Drive: se sube a tu Google Drive, carpeta «${esc(DRIVE_FOLDER)}». La primera vez Google pide permiso.`
+      : 'Drive: se abre el menú del teléfono; elegí «Drive». Si no hay menú, se descarga el archivo.'}</p>`);
+  // El archivo se arma al abrir: compartir y el permiso de Google tienen que salir del toque, sin esperas largas.
+  let ready = null;
+  const prepare = () => { ready = currentBackupFile(); ready.catch(() => { ready = null; }); return ready; };
+  prepare();
+  if (driveId) loadGis().catch(() => {});
   $('#backup-download').onclick = () => {
-    currentBackupFile().then(({ filename, text }) => {
+    (ready || prepare()).then(({ filename, text }) => {
       saveBackupFile(filename, text);
       toast('Backup guardado en el celular');
     }).catch(failBackup);
   };
   $('#backup-drive').onclick = () => {
-    currentBackupFile().then(async ({ filename, text }) => {
+    const pending = ready || prepare();
+    if (driveId) {
+      // Pedir el permiso ya, dentro del toque (si no, el navegador bloquea la ventana de Google).
+      const token = loadGis().then(() => requestDriveToken(driveId, { hint: app.session?.user?.email || '' }));
+      Promise.all([pending, token]).then(async ([{ filename, text }, access]) => {
+        toast('Subiendo a Google Drive…', 0);
+        await uploadBackupToDrive({ token: access, filename, text });
+        toast(`Backup guardado en Google Drive («${DRIVE_FOLDER}»)`, 4500);
+        prepare();
+      }).catch(async (error) => {
+        if (error?.code === 'drive/cancelled') { toast('No se guardó en Drive'); return; }
+        console.error(error);
+        try {
+          const { filename, text } = await pending;
+          const how = await shareBackupFile(filename, text);
+          const why = error?.code === 'drive/403' ? 'Drive no dejó subir (¿API de Drive sin habilitar?)' : error?.code === 'drive/denied' ? 'Google no dio permiso' : 'No se pudo subir a Drive';
+          if (how === 'shared') toast(`${why}: elegí Drive en el menú`, 5000);
+          else if (how === 'downloaded') toast(`${why}: se descargó el archivo`, 5000);
+        } catch (fail) { failBackup(fail); }
+      });
+      return;
+    }
+    pending.then(async ({ filename, text }) => {
       const how = await shareBackupFile(filename, text);
       if (how === 'shared') toast('Elegí Drive en el menú para guardarlo');
-      else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo');
+      else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo: subilo a Drive');
     }).catch(failBackup);
   };
 }
@@ -2128,10 +2190,10 @@ function renderRoster() {
     <li class="slot" data-roster="${esc(person.id)}">
       <button type="button" class="who" data-roster-open="${esc(person.id)}">
         <div class="name">${esc(person.name)}</div>
-        <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
+        <div class="sub">${cleanShortName(person.shortName) ? `<span class="nick">“${esc(cleanShortName(person.shortName))}”</span>` : ''}${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
       </button>
       ${waButton(person)}
-      <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}"${locked ? ' disabled' : ''}>${ICON.edit}</button>
+      <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}"${locked && !canEditRosterNick(person, actorWithRole()) ? ' disabled' : ''}>${ICON.edit}</button>
       <button type="button" class="more-btn" data-roster-del="${esc(person.id)}" aria-label="Borrar ${esc(person.name)}">${ICON.trash}</button>
     </li>`;
   }).join('');
@@ -2155,7 +2217,7 @@ function renderRoster() {
     const edit = e.target.closest('[data-roster-edit]');
     if (edit) {
       const person = app.roster.find((r) => r.id === edit.dataset.rosterEdit);
-      if (!person || !canEditRoster(person, actor())) return;
+      if (!person || !canEditRosterNick(person, actorWithRole())) return;
       return openRosterForm(person);
     }
     const del = e.target.closest('[data-roster-del]');
@@ -2205,8 +2267,18 @@ function openRosterForm(person) {
     </form>`);
   const form = $('#roster-form');
   if (locked) {
-    form.querySelectorAll('input, textarea, select').forEach((el) => { el.disabled = true; });
-    form.onsubmit = (e) => e.preventDefault();
+    // El admin puede cambiar el apodo aunque la ficha sea de otro organizador.
+    const nickOk = canEditRosterNick(person, actorWithRole());
+    form.querySelectorAll('input, textarea, select').forEach((el) => { el.disabled = !(nickOk && el.name === 'shortName'); });
+    const save = form.querySelector('button[type=submit]');
+    if (save && nickOk) save.disabled = false;
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      if (!nickOk) return;
+      const nick = cleanShortName(form.shortName.value);
+      if (nick === cleanShortName(person.shortName)) { closeSheet(); return; }
+      Promise.resolve(app.store.setRosterNick(person.id, nick)).then(() => { closeSheet(); toast('Apodo actualizado'); }).catch((err) => rosterFormError(err, 'rf-err'));
+    };
     return;
   }
   const hint = $('#rf-phone');
@@ -2796,13 +2868,13 @@ function focusField(el) {
 }
 
 /** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
-function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
+function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
   const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
   if (guestBlock) { toast(guestBlock); return false; }
   const taken = host?.id ? friendNamesOf(m.id, host.id) : [];
-  const friends = resolveFriendNames(friendRows, taken).map((friend) => ({
+  const friends = (resolved || resolveFriendNames(friendRows, taken)).map((friend) => ({
     name: friend.name,
     guestAuto: friend.guestAuto,
     invitedBy: host?.id || (friend.guestAuto ? 'nuevo' : ''),
@@ -2873,8 +2945,75 @@ function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
       }, app.who, { waiting });
       offset += 1;
     }
+    if (also.length) {
+      const notes = await addGuestsToSameDay(also, friends, signup);
+      if (notes.length) toast(notes.join(' · '), 4500);
+    }
   })(), msg);
   return true;
+}
+
+/**
+ * Los otros partidos del mismo día en los que está anotado quien invita
+ * (misma persona: personKey). Para sumarle los mismos invitados ahí también.
+ */
+function sameDayHostMatches(m, host) {
+  if (!host?.id || host.invitedBy) return [];
+  const key = personKey(host, app.players);
+  if (!key) return [];
+  const out = [];
+  for (const match of app.matches || []) {
+    if (match.id === m.id || match.date !== m.date || match.cancelled === true) continue;
+    const there = matesOf(match.id).find((player) => !player.invitedBy && personKey(player, app.players) === key);
+    if (!there) continue;
+    const blocked = addBlock(match) || inviteBlock(matesOf(match.id), there.id);
+    out.push({ match, host: there, blocked });
+  }
+  return out.sort((a, b) => String(a.match.time || '').localeCompare(String(b.match.time || '')) || String(a.match.id).localeCompare(String(b.match.id)));
+}
+
+function sameDayLine({ match, host }, from) {
+  const free = Math.max(0, capOf(match) - playersOf(match.id).length);
+  const room = host.waiting === true ? 'él está en espera' : free === 0 ? 'completo: van a la espera' : free === 1 ? 'queda 1 lugar' : `quedan ${free} lugares`;
+  const place = placeOf(match);
+  return [`${match.time || '--:--'} hs`, place === placeOf(from) ? '' : place, room].filter(Boolean).join(' · ');
+}
+
+/**
+ * Suma los mismos invitados (mismo nombre, invitados por la misma persona)
+ * en cada partido elegido. De a un jugador, en orden. Lo que ya está no se
+ * repite; lo que no entra va a la espera, como en el partido de origen.
+ */
+async function addGuestsToSameDay(targets, friends, signup) {
+  const notes = [];
+  for (const { match, host } of targets) {
+    const label = `${match.time || '--:--'} hs`;
+    const blocked = addBlock(match) || inviteBlock(matesOf(match.id), host.id);
+    if (blocked) { notes.push(`${label}: ${blocked}`); continue; }
+    const there = new Set(friendNamesOf(match.id, host.id).map((name) => normName(name)));
+    const fresh = friends.filter((friend) => !there.has(normName(friend.name)));
+    const todo = fresh.filter((friend) => !firstDuplicate(matesOf(match.id), [{ name: friend.name, phone: '', guestAuto: friend.guestAuto === true }]));
+    const clash = fresh.filter((friend) => !todo.includes(friend)).map((friend) => friend.name);
+    if (clash.length) notes.push(`${label}: ${clash.join(', ')} ya figura${clash.length > 1 ? 'n' : ''} en ese partido`);
+    if (!todo.length) { if (!clash.length) notes.push(`${label}: ya estaban`); continue; }
+    const max = limitFor(match, actor().uid);
+    if (max != null && addedCount(matesOf(match.id), actor()) + todo.length > max) { notes.push(`${label}: ${limitMessage(max)}`); continue; }
+    const place = placeGroup({ mainCount: playersOf(match.id).length, capacity: capOf(match), count: todo.length, forceWait: host.waiting === true });
+    let offset = 0;
+    for (const friend of todo) {
+      await app.store.addPlayer(match, {
+        name: friend.name,
+        phone: '',
+        invitedBy: host.id,
+        invitedByName: host.name,
+        guestAuto: friend.guestAuto === true,
+        ...signup,
+      }, app.who, { waiting: offset >= place.main });
+      offset += 1;
+    }
+    notes.push(place.wait ? `${label}: también anotados · ${place.wait} en espera` : `${label}: también anotados`);
+  }
+  return notes;
 }
 
 function openPhoneForm(person) {
@@ -2950,6 +3089,9 @@ function openPlayerForm(m, p, opts = {}) {
     ? 'Opcional. Con el número se puede escribir. Si no lo marcás, el WhatsApp queda privado.'
     : 'Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.';
   const hostName = editingFriend ? friendHostName(p) : '';
+  // El apodo se puede cambiar en cualquier jugador ya anotado (ver saveNick).
+  const nickEditable = !!p && canWritePlayer(p, actorWithRole());
+  const nickBefore = p ? nickOf(p, app.roster) : '';
   openSheet(`
     <form id="player-form" novalidate>
       <h3>${editingFriend ? 'Editar invitado' : p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
@@ -2960,6 +3102,7 @@ function openPlayerForm(m, p, opts = {}) {
       ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
       <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
+      ${p ? nickField(p) : ''}
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
         <div class="small muted" id="pf-phone">${esc(emptyPhoneHint)}</div></label>`}
       ${(!p || editingFriend) && !lockPhone ? `<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"${p?.phoneShared === true ? ' checked' : ''}><span>Mostrar el WhatsApp para todos</span></label>` : ''}
@@ -2978,17 +3121,23 @@ function openPlayerForm(m, p, opts = {}) {
     const canChangeSignup = canAdd(m, actor().uid);
     form.querySelectorAll('input, textarea, select').forEach((el) => {
       if (canChangeSignup && el.name === 'signedUpWith') return;
+      if (nickEditable && el.name === 'shortName') return;
       el.disabled = true;
     });
     const save = form.querySelector('button[type=submit]');
-    if (save && canChangeSignup) save.disabled = false;
+    if (save && (canChangeSignup || nickEditable)) save.disabled = false;
     form.onsubmit = (e) => {
       e.preventDefault();
-      if (!canChangeSignup) return;
-      const signup = readSignup(form);
-      if (!signup.signedUpWith) return;
+      const signup = canChangeSignup ? readSignup(form) : {};
+      const nick = nickEditable && form.shortName ? cleanShortName(form.shortName.value) : nickBefore;
+      const nickChanged = nick !== nickBefore;
+      const signupChanged = !!signup.signedUpWith && signup.signedUpWith !== (p.signedUpWith || '');
+      if (!nickChanged && !signup.signedUpWith) return;
       closeSheet();
-      run(app.store.updatePlayer(p.id, signup), 'Se anotó con actualizado');
+      run((async () => {
+        if (signup.signedUpWith && (signupChanged || !nickChanged)) await app.store.updatePlayer(p.id, signup);
+        if (nickChanged) await saveNick(p, nick, p.rosterId || '');
+      })(), nickChanged ? 'Apodo actualizado' : 'Se anotó con actualizado');
     };
     return;
   }
@@ -3067,6 +3216,8 @@ function openPlayerForm(m, p, opts = {}) {
       }
       const savingNewRoster = offerRoster && $('#save-roster')?.checked === true;
       const signup = readSignup(form);
+      const nick = nickEditable && form.shortName ? cleanShortName(form.shortName.value) : nickBefore;
+      const nickChanged = nick !== nickBefore;
       if (savingNewRoster) {
         const known = rosterAlreadySaved(name, phoneForCheck);
         if (known && alreadyInMatch(matesOf(m.id), { name: known.name, phone: known.phone || phoneForCheck, phoneKey: known.phoneKey, hasPhone: known.hasPhone === true, rosterId: known.id }, { exceptId: p.id })) {
@@ -3096,6 +3247,7 @@ function openPlayerForm(m, p, opts = {}) {
         }
         Object.assign(patch, signup);
         await app.store.updatePlayer(p.id, patch);
+        if (nickChanged) await saveNick(p, nick, id || '');
       })(), editingFriend ? 'Invitado actualizado' : 'Jugador actualizado');
       return;
     }
@@ -3311,7 +3463,13 @@ function openPaymentForm(m, p) {
   const receive = $('#btn-receive-pending');
   if (receive) receive.onclick = () => {
     closeSheet();
-    run(app.store.markTransferReceived(p.id, app.who), 'Transferencia marcada como cobrada', PAY_RULES_MSG);
+    run(Promise.resolve(app.store.markTransferReceived(p.id, app.who)).catch((error) => {
+      const fail = error instanceof Error ? error : new Error(String(error?.message || error));
+      fail.playerId = p.id;
+      fail.paymentWrite = true;
+      if (error?.code) fail.code = error.code;
+      throw fail;
+    }), 'Transferencia marcada como cobrada');
   };
   const freeBox = $('#pay-free');
   const paintFree = () => {
@@ -3329,7 +3487,7 @@ function openPaymentForm(m, p) {
     e.preventDefault();
     if (freeBox?.checked) {
       closeSheet();
-      run(app.store.setPayment(p.id, { freePlay: true, paid: true, split: true }, app.who), 'Juega gratis', PAY_RULES_MSG);
+      savePayments([{ id: p.id, input: { freePlay: true, paid: true, split: true } }], 'Juega gratis');
       return;
     }
     const cash = readMoney(form.cash.value);
@@ -3343,38 +3501,44 @@ function openPaymentForm(m, p) {
       const plan = guestSplit();
       const rows = (plan?.rows || []).filter((row) => row.cash + row.transfer + row.pending > 0);
       if (!rows.length) { $('#pay-err').textContent = 'Con ese monto no le toca a nadie.'; return; }
-      const jobs = rows.map((row) => app.store.setPayment(row.person.id, {
-        paid: true,
-        split: true,
-        freePlay: false,
-        cash: row.cash,
-        transfer: row.transfer,
-        pendingTransfer: row.pending,
-        cashTo: row.cash > 0 ? form.cashTo.value : null,
-        transferTo: row.transfer > 0 ? form.transferTo.value : null,
-        pendingTo: row.pending > 0 ? form.pendingTo.value : null,
-      }, app.who));
+      const entries = rows.map((row) => ({
+        id: row.person.id,
+        input: {
+          paid: true,
+          split: true,
+          freePlay: false,
+          cash: row.cash,
+          transfer: row.transfer,
+          pendingTransfer: row.pending,
+          cashTo: row.cash > 0 ? form.cashTo.value : null,
+          transferTo: row.transfer > 0 ? form.transferTo.value : null,
+          pendingTo: row.pending > 0 ? form.pendingTo.value : null,
+        },
+      }));
       closeSheet();
-      run(Promise.all(jobs), 'Pago dividido', PAY_RULES_MSG);
+      savePayments(entries, 'Pago dividido');
       return;
     }
     const freshPromo = promoOf(p);
     const applyAll = !!applyBox?.checked && freshPromo && freshPromo.rows.length >= 2;
     if (applyAll) {
       const shares = splitPaymentAcross({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount }, freshPromo.rows.length);
-      const jobs = freshPromo.rows.map((row, i) => app.store.setPayment(row.player.id, {
-        paid: true,
-        split: true,
-        freePlay: false,
-        cash: shares[i].cash,
-        transfer: shares[i].transfer,
-        pendingTransfer: shares[i].pending,
-        cashTo: shares[i].cash > 0 ? form.cashTo.value : null,
-        transferTo: shares[i].transfer > 0 ? form.transferTo.value : null,
-        pendingTo: shares[i].pending > 0 ? form.pendingTo.value : null,
-      }, app.who));
+      const entries = freshPromo.rows.map((row, i) => ({
+        id: row.player.id,
+        input: {
+          paid: true,
+          split: true,
+          freePlay: false,
+          cash: shares[i].cash,
+          transfer: shares[i].transfer,
+          pendingTransfer: shares[i].pending,
+          cashTo: shares[i].cash > 0 ? form.cashTo.value : null,
+          transferTo: shares[i].transfer > 0 ? form.transferTo.value : null,
+          pendingTo: shares[i].pending > 0 ? form.pendingTo.value : null,
+        },
+      }));
       closeSheet();
-      run(Promise.all(jobs), 'Promo aplicada', PAY_RULES_MSG);
+      savePayments(entries, 'Promo aplicada');
       return;
     }
     const keepParts = roundMoney(transfer.amount) === parts.transfer && Array.isArray(p.transferParts) && p.transferParts.length > 1;
@@ -3391,7 +3555,7 @@ function openPaymentForm(m, p) {
       transferParts: keepParts ? p.transferParts : null,
     };
     closeSheet();
-    run(app.store.setPayment(p.id, rec, app.who), 'Pago guardado', PAY_RULES_MSG);
+    savePayments([{ id: p.id, input: rec }], 'Pago guardado');
   };
 }
 function roundMoney(n) {
@@ -3423,7 +3587,7 @@ function openPlayerMenu(m, p) {
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   openSheet(`
     <h3>${esc(shownName(p))}</h3>
-    <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}${debtLine}</div>
     ${canAdd(m, actor().uid) ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
@@ -3432,7 +3596,7 @@ function openPlayerMenu(m, p) {
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
-      <button class="btn" id="pm-edit"${own ? '' : ' disabled'}>${ICON.edit}Editar</button>
+      <button class="btn" id="pm-edit"${own || canAdd(m, actor().uid) || canWritePlayer(p, actorWithRole()) ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
       ${isGuest(p) ? '' : '<button class="btn" id="pm-friend">Agregar invitado</button>'}
       ${!isWaiting(p) && canAdd(m, actor().uid) ? '<button class="btn" id="pm-wait">Bajar a lista de espera</button>' : ''}
@@ -3452,7 +3616,7 @@ function openPlayerMenu(m, p) {
   if (loadPhone && own) loadPhone.onclick = () => { closeSheet(); app.wantPhoneForm = true; openPlayerProfile(p, m.id); };
   const spot = $('#pm-confirm-spot');
   if (spot) spot.onclick = () => { closeSheet(); clearReservedSpot(p); };
-  if (own) $('#pm-edit').onclick = () => openPlayerForm(m, p);
+  if (!$('#pm-edit').disabled) $('#pm-edit').onclick = () => openPlayerForm(m, p);
   const addGuest = $('#pm-friend');
   if (addGuest) addGuest.onclick = () => openFriendForm(m, p);
   const demote = $('#pm-wait');
@@ -3477,15 +3641,21 @@ function askYesNo(title) {
       </div>`);
     $('#ask-yes').onclick = () => finish(true);
     $('#ask-no').onclick = () => finish(false);
-    sheet.addEventListener('close', () => finish(false), { once: true });
+    // Si venimos de otra pregunta, su 'close' llega tarde con la hoja ya abierta: no cuenta como No.
+    const onClose = () => {
+      if (sheet.open) return;
+      sheet.removeEventListener('close', onClose);
+      finish(false);
+    };
+    sheet.addEventListener('close', onClose);
   });
 }
 
-function removeMatchPlayer(m, p, { asked = false } = {}) {
+async function removeMatchPlayer(m, p, { asked = false } = {}) {
   const fromMain = !isWaiting(p);
   const friends = guestsOf(m.id, p.id);
   if (!asked && !confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
-  const dropFriends = friends.length > 0 && confirm(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
+  const dropFriends = friends.length > 0 && await askYesNo(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
   const mainLeft = playersOf(m.id).filter((item) => !dropping.has(item.id)).length;
@@ -3507,10 +3677,10 @@ function removeMatchPlayer(m, p, { asked = false } = {}) {
   askYesNo(`¿Subir a ${top.name}, el primero de la lista de espera?`).then(go);
 }
 
-function demoteToWait(m, p) {
+async function demoteToWait(m, p) {
   if (!p || isWaiting(p) || !canAdd(m, actor().uid)) return;
   const guests = guestsOf(m.id, p.id).filter((item) => !isWaiting(item));
-  const also = guests.length > 0 && confirm(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
+  const also = guests.length > 0 && await askYesNo(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
   const moving = [p, ...(also ? guests : [])];
   closeSheet();
   let order = nextWaitOrder(waitingOf(m.id));
@@ -3530,6 +3700,7 @@ function openFriendForm(m, host) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return; }
   const next = resolveFriendNames([''], friendNamesOf(m.id, host.id))[0]?.name || 'Invitado 1';
+  const sameDay = sameDayHostMatches(m, host);
   openSheet(`
     <form id="friend-form" novalidate>
       <h3>Invitados de ${esc(host.name)}</h3>
@@ -3540,6 +3711,11 @@ function openFriendForm(m, host) {
         <div id="friend-rows"></div>
         <p class="hint" id="friend-hint"></p>
       </div>
+      ${sameDay.length ? `<fieldset class="access-box also-box" id="friend-also">
+        <legend>También en sus partidos del día</legend>
+        ${sameDay.map((row) => `<label class="checkline"><input type="checkbox" name="also" value="${esc(row.match.id)}"${row.blocked ? ' disabled' : ' checked'}><span>${esc(sameDayLine(row, m))}${row.blocked ? ` · ${esc(row.blocked)}` : ''}</span></label>`).join('')}
+        <p class="hint">Los mismos invitados quedan anotados ahí también, así les toca la promo del día.</p>
+      </fieldset>` : ''}
       <div class="field"><div class="err" id="friend-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Agregar</button></div>
     </form>`);
@@ -3549,7 +3725,11 @@ function openFriendForm(m, host) {
     e.preventDefault();
     const rows = friendRowValues();
     if (!rows.length) { $('#friend-err').textContent = 'Agregá al menos un invitado.'; return; }
-    const result = addSignedPlayer(m, host, host.waiting === true, false, rows);
+    const picked = new Set([...form.querySelectorAll('input[name=also]:checked')].map((input) => input.value));
+    const also = sameDay.filter((row) => !row.blocked && picked.has(row.match.id));
+    // Los nombres salen de este partido; en los otros van los mismos (mismo anfitrión + nombre = misma persona).
+    const resolved = resolveFriendNames(rows, friendNamesOf(m.id, host.id));
+    const result = addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also });
     if (result === ALREADY_IN_MATCH) $('#friend-err').textContent = result;
   };
 }
