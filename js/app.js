@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -160,6 +160,11 @@ function savePayments(entries, okMsg) {
 /* ───────── datos derivados ───────── */
 const actor = () => ({ uid: app.session?.user?.uid || '', name: app.who || '' });
 const shownName = (player) => displayName(player, app.roster);
+/** Nombre del jugador en la fila: el apodo en negrita y, al lado, el nombre completo más chico. */
+function nameRow(p) {
+  const full = fullNameBehind(p, app.roster);
+  return `<div class="name-row"><div class="name${full ? ' has-alt' : ''}">${esc(shownName(p))}</div>${full ? `<span class="alt-name">${esc(full)}</span>` : ''}${levelBadge(p)}</div>`;
+}
 const addBlock = (m) => {
   const who = actor();
   if (!canAdd(m, who.uid)) return 'Este partido es de solo lectura.';
@@ -924,7 +929,7 @@ function renderMatch(id) {
       <li class="slot ${i >= cap ? 'extra' : ''}${inviteClass(p)}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
-          <div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>
+          ${nameRow(p)}
           <div class="sub">${phoneSub(p)}
             ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}${confirmTag(p)}${i >= cap ? '<span class="tag">Excede el cupo</span>' : ''}</div>
           ${payMarkup(p)}
@@ -1098,7 +1103,7 @@ function waitingSection(m, full, readOnly) {
         </div>
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
-          <div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>
+          ${nameRow(p)}
           <div class="sub">${phoneSub(p)}
             ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}${confirmTag(p)}</div>
           ${payMarkup(p)}
@@ -2131,7 +2136,7 @@ function renderRoster() {
     <li class="slot" data-roster="${esc(person.id)}">
       <button type="button" class="who" data-roster-open="${esc(person.id)}">
         <div class="name">${esc(person.name)}</div>
-        <div class="sub">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
+        <div class="sub">${cleanShortName(person.shortName) ? `<span class="nick">“${esc(cleanShortName(person.shortName))}”</span>` : ''}${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
       </button>
       ${waButton(person)}
       <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}"${locked ? ' disabled' : ''}>${ICON.edit}</button>
@@ -2953,6 +2958,9 @@ function openPlayerForm(m, p, opts = {}) {
     ? 'Opcional. Con el número se puede escribir. Si no lo marcás, el WhatsApp queda privado.'
     : 'Opcional. Con el número se puede escribir y mandar el link. Igual se guarda en Jugadores.';
   const hostName = editingFriend ? friendHostName(p) : '';
+  // El apodo vive en la ficha de Jugadores: se edita acá solo si esa ficha es tuya.
+  const nickPerson = p?.rosterId && !editingFriend ? app.roster.find((person) => person.id === p.rosterId) : null;
+  const nickEditable = !!(nickPerson && canEditRoster(nickPerson, actor()));
   openSheet(`
     <form id="player-form" novalidate>
       <h3>${editingFriend ? 'Editar invitado' : p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
@@ -2963,6 +2971,7 @@ function openPlayerForm(m, p, opts = {}) {
       ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
       <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
+      ${nickEditable ? `<label class="field"><span>Apodo (opcional)</span><input id="player-nick" name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Tito" value="${esc(cleanShortName(nickPerson.shortName))}"></label>` : ''}
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
         <div class="small muted" id="pf-phone">${esc(emptyPhoneHint)}</div></label>`}
       ${(!p || editingFriend) && !lockPhone ? `<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"${p?.phoneShared === true ? ' checked' : ''}><span>Mostrar el WhatsApp para todos</span></label>` : ''}
@@ -3070,6 +3079,8 @@ function openPlayerForm(m, p, opts = {}) {
       }
       const savingNewRoster = offerRoster && $('#save-roster')?.checked === true;
       const signup = readSignup(form);
+      const nick = nickEditable && form.shortName ? cleanShortName(form.shortName.value) : null;
+      const nickChanged = nick !== null && nick !== cleanShortName(nickPerson.shortName);
       if (savingNewRoster) {
         const known = rosterAlreadySaved(name, phoneForCheck);
         if (known && alreadyInMatch(matesOf(m.id), { name: known.name, phone: known.phone || phoneForCheck, phoneKey: known.phoneKey, hasPhone: known.hasPhone === true, rosterId: known.id }, { exceptId: p.id })) {
@@ -3099,6 +3110,7 @@ function openPlayerForm(m, p, opts = {}) {
         }
         Object.assign(patch, signup);
         await app.store.updatePlayer(p.id, patch);
+        if (nickChanged && id === nickPerson.id) await app.store.patchRoster(nickPerson.id, { shortName: nick });
       })(), editingFriend ? 'Invitado actualizado' : 'Jugador actualizado');
       return;
     }
@@ -3438,7 +3450,7 @@ function openPlayerMenu(m, p) {
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   openSheet(`
     <h3>${esc(shownName(p))}</h3>
-    <p class="hint">${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}${debtLine}</div>
     ${canAdd(m, actor().uid) ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">

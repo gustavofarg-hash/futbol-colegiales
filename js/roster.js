@@ -31,11 +31,21 @@ export function cleanShortName(value) {
  * Si está en Jugadores, manda ese apodo. Si no, el que quedó copiado en el partido.
  */
 export function displayName(player, roster) {
-  const person = player?.rosterId
-    ? (roster || []).find((item) => item?.id === player.rosterId)
-    : null;
+  const list = roster || [];
+  const person = player?.rosterId ? list.find((item) => item?.id === player.rosterId) : null;
   if (person) return cleanShortName(person.shortName) || player?.name || person.name || '';
-  return cleanShortName(player?.shortName) || player?.name || '';
+  // Sin ficha vinculada (o la ficha ya no está): si el WhatsApp coincide con
+  // alguien de Jugadores que tiene apodo, se usa ese apodo.
+  const key = phoneIdentity(player);
+  const same = key ? list.find((item) => item?.id && phoneIdentity(item) === key) : null;
+  return cleanShortName(same?.shortName) || cleanShortName(player?.shortName) || player?.name || '';
+}
+
+/** El nombre completo, solo si en la lista se ve el apodo en su lugar. */
+export function fullNameBehind(player, roster) {
+  const name = String(player?.name || '').trim();
+  if (!name) return '';
+  return foldText(displayName(player, roster)) === foldText(name) ? '' : name;
 }
 
 /** true si el texto es el comienzo del nombre, del apodo, del apellido (cualquier palabra) o un tramo del teléfono. */

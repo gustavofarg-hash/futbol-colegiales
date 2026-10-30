@@ -2322,6 +2322,26 @@ const apodo = await page.evaluate(async () => {
 await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, apodo.id);
 await page.waitForSelector('#slots .name:text-is("Tito")');
 check('La lista del partido muestra el apodo', await page.locator('#slots .name:text-is("Ernesto Apodo")').count() === 0);
+{
+  const row = page.locator('#slots li.slot', { hasText: 'Tito' });
+  const alt = (await row.locator('.alt-name').innerText()).trim();
+  const nameBox = await row.locator('.name').boundingBox();
+  const altBox = await row.locator('.alt-name').boundingBox();
+  check('Al lado del apodo se ve el nombre completo, en la misma línea', alt === 'Ernesto Apodo' && Math.abs(nameBox.y + nameBox.height - (altBox.y + altBox.height)) < 8, `alt=${alt}`);
+  check('Una fila sin apodo no repite el nombre', await page.locator('#slots li.slot .alt-name').count() === 1);
+  await row.locator('[data-menu]').click();
+  await page.waitForSelector('#menu-full-name');
+  check('El menú del jugador muestra apodo y nombre', (await page.textContent('dialog.sheet h3')).trim() === 'Tito' && (await page.textContent('#menu-full-name')).trim() === 'Ernesto Apodo');
+  await page.click('#pm-edit');
+  await page.waitForSelector('#player-nick');
+  check('Editar jugador deja cambiar el apodo', (await page.inputValue('#player-nick')) === 'Tito');
+  await page.fill('#player-nick', 'Titi');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#slots .name:text-is("Titi")');
+  check('El apodo cambiado desde el partido queda en Jugadores', await page.evaluate((id) => window.__app.roster.find((p) => p.id === id)?.shortName, apodo.rosterId) === 'Titi');
+  await page.evaluate(async (id) => { await window.__app.store.patchRoster(id, { shortName: 'Tito' }); }, apodo.rosterId);
+  await page.waitForSelector('#slots .name:text-is("Tito")');
+}
 await page.locator('#slots .who', { hasText: 'Tito' }).click();
 await page.waitForSelector('#profile h2.section');
 check('El perfil conserva el nombre completo', (await page.textContent('#profile h2.section')).trim() === 'Ernesto Apodo' && (await page.textContent('#profile-nick')).includes('Tito'));
@@ -2333,6 +2353,7 @@ await page.waitForSelector('#roster-q');
 await page.fill('#roster-q', 'tito');
 await page.waitForSelector('#roster-list .name:text-is("Ernesto Apodo")');
 check('La búsqueda de Jugadores encuentra el apodo', true);
+check('Jugadores muestra el apodo debajo del nombre', (await page.locator('#roster-list .slot', { hasText: 'Ernesto Apodo' }).locator('.sub .nick').innerText()).includes('Tito'));
 await page.locator('#roster-list .slot', { hasText: 'Ernesto Apodo' }).locator('[data-roster-edit]').click();
 await page.waitForSelector('#roster-form [name=shortName]');
 check('El formulario tiene el nombre corto', (await page.inputValue('#roster-form [name=shortName]')) === 'Tito');

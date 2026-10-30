@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
+import { cleanShortName, displayName, fullNameBehind, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -951,6 +951,14 @@ test('búsqueda del plantel: nombre, apellido y teléfono', () => {
   assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }]), 'Tito');
   assert.equal(displayName({ name: 'Ernesto Pereira', rosterId: '9', shortName: 'Viejo' }, [{ id: '9', name: 'Ernesto Pereira' }]), 'Ernesto Pereira');
   assert.equal(displayName({ name: 'Ernesto Pereira', shortName: 'Tito' }, []), 'Tito');
+  // Sin rosterId, el apodo llega por el WhatsApp que coincide con la ficha.
+  assert.equal(displayName({ name: 'Facundo Aguirre', phone: '5491127993830' }, [{ id: '7', name: 'Facundo Aguirre', phone: '5491127993830', shortName: 'Facu' }]), 'Facu');
+  assert.equal(displayName({ name: 'Facundo Aguirre', rosterId: 'borrado', phone: '5491127993830' }, [{ id: '7', name: 'Facundo A.', phone: '5491127993830', shortName: 'Facu' }]), 'Facu');
+  assert.equal(displayName({ name: 'Otro', phone: '5491100000000' }, [{ id: '7', name: 'Facundo Aguirre', phone: '5491127993830', shortName: 'Facu' }]), 'Otro');
+  // El nombre completo se muestra al lado solo si en la fila se ve el apodo.
+  assert.equal(fullNameBehind({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira', shortName: 'Tito' }]), 'Ernesto Pereira');
+  assert.equal(fullNameBehind({ name: 'Ernesto Pereira', rosterId: '9' }, [{ id: '9', name: 'Ernesto Pereira' }]), '');
+  assert.equal(fullNameBehind({ name: 'Tito', rosterId: '9' }, [{ id: '9', name: 'Tito', shortName: 'tito' }]), '');
   assert.equal(cleanShortName('  Tito   '), 'Tito');
   assert.equal(rosterMatchCount([
     { matchId: 'a', rosterId: '1' },
