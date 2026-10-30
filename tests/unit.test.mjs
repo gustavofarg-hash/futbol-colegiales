@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
@@ -142,6 +142,25 @@ test('un pago partido se escribe de a un jugador y el error nombra el documento'
   assert.match(app, /writePaymentsInOrder\(entries, \(entry\) => app\.store\.setPayment/);
   assert.match(store, /async _writePayment\(id, patch\)/);
   assert.equal(paymentFailureText(Object.assign(new Error('Poné un monto.'), { code: 'invalid-payment' })), 'Poné un monto.');
+});
+
+test('un pago de deudas viejas cancela primero el partido más viejo', () => {
+  const debts = [
+    { id: 'viejo', label: '01/10 21:00', owed: 5000 },
+    { id: 'medio', label: '08/10 21:00', owed: 5000 },
+    { id: 'nuevo', label: '15/10 21:00', owed: 5000 },
+  ];
+  const plan = settleOldestDebts({ cash: 8000, transfer: 4000, debts });
+  assert.deepEqual(plan.rows.map((row) => [row.id, row.applied, row.cash, row.transfer]), [
+    ['viejo', 5000, 5000, 0],
+    ['medio', 5000, 3000, 2000],
+    ['nuevo', 2000, 0, 2000],
+  ]);
+  assert.equal(plan.left, 0);
+  assert.equal(settlementSummary(plan.rows), 'Se aplicó $5.000 a 01/10 21:00, $5.000 a 08/10 21:00 y $2.000 a 15/10 21:00');
+  const short = settleOldestDebts({ cash: 3000, debts });
+  assert.deepEqual(short.rows.map((row) => row.id), ['viejo']);
+  assert.equal(short.rows[0].applied, 3000);
 });
 
 test('el pago se reparte hasta lo que debe cada uno', () => {

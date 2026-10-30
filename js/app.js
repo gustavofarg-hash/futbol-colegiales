@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, writePaymentsInOrder } from './payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, writePaymentsInOrder } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -23,7 +23,7 @@ import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, invit
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
-import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, paymentLedger, playerDebt, signupLedger } from './ledger.js';
+import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { creditBalance, creditBalances, creditLine } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
@@ -3345,6 +3345,8 @@ function openPaymentForm(m, p) {
         ${promo ? `<label class="pay-apply"><input type="checkbox" id="pay-apply-promo"><span id="pay-apply-label">Aplicar a los ${promo.count} partidos</span></label>` : ''}
         <label class="pay-apply" id="pay-split-guests-line" hidden><input type="checkbox" id="pay-split-guests"><span>Dividir entre él y sus invitados</span></label>
         <div id="pay-split-preview" hidden></div>
+        <label class="pay-apply" id="pay-oldest-line" hidden><input type="checkbox" id="pay-oldest"><span>Cancelar primero las deudas más viejas</span></label>
+        <div id="pay-oldest-preview" hidden></div>
         <div class="field"><span>Efectivo</span>
           <div class="pay-money">
             <input name="cash" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(cashStart)}" aria-label="Efectivo">
@@ -3412,6 +3414,58 @@ function openPaymentForm(m, p) {
   }
   const splitBox = $('#pay-split-guests');
   const splitLine = $('#pay-split-guests-line');
+  const oldestBox = $('#pay-oldest');
+  const oldestLine = $('#pay-oldest-line');
+  const debtsOf = () => {
+    const key = personKey(p, app.players);
+    const me = actor();
+    const rows = [];
+    for (const other of app.players) {
+      if (!key || personKey(other, app.players) !== key || !owesOrganizer(other, me)) continue;
+      const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices() });
+      if (!(owed > 0)) continue;
+      const match = knownMatches().find((item) => item.id === other.matchId);
+      if (!match || match.cancelled === true) continue;
+      rows.push({
+        id: other.id,
+        player: other,
+        date: match.date || '',
+        time: match.time || '',
+        owed,
+        label: [numericDate(match.date), shortHour(match.time)].filter(Boolean).join(' '),
+      });
+    }
+    rows.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || String(a.id).localeCompare(String(b.id)));
+    return rows;
+  };
+  const oldestPlan = () => {
+    const cash = readMoney(form.cash.value);
+    const transfer = readMoney(form.transfer.value);
+    const pending = readMoney(form.pending.value);
+    const credit = readMoney(form.fromCredit.value);
+    if (!cash.ok || !transfer.ok || !pending.ok || !credit.ok) return null;
+    return settleOldestDebts({
+      cash: cash.amount,
+      transfer: transfer.amount,
+      pending: pending.amount,
+      credit: credit.amount,
+      debts: debtsOf(),
+    });
+  };
+  const paintOldest = () => {
+    const debts = debtsOf();
+    if (oldestLine) oldestLine.hidden = debts.length < 2;
+    const preview = $('#pay-oldest-preview');
+    if (!preview) return;
+    if (!oldestBox?.checked || debts.length < 2) { preview.hidden = true; preview.innerHTML = ''; return; }
+    const plan = oldestPlan();
+    if (!plan) { preview.hidden = true; return; }
+    const lines = plan.rows.map((row) => `<li><span>${esc(row.label)}</span><b>${esc(formatARS(row.applied))}</b></li>`).join('');
+    const extra = plan.left > 0 ? `<p class="hint">Sobra ${esc(formatARS(plan.left))}: no entra en estas deudas.</p>` : '';
+    const empty = plan.rows.length ? '' : '<p class="hint">Con ese monto no se cubre ninguna deuda.</p>';
+    preview.hidden = false;
+    preview.innerHTML = `<p class="hint">Primero los partidos más viejos.</p><ul class="pay-split-preview">${lines}</ul>${empty}${extra}`;
+  };
   const guestPayees = () => [p, ...guestsOf(m.id, p.id).slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || String(a.id).localeCompare(String(b.id)))];
   const guestSplit = () => {
     const people = guestPayees();
@@ -3460,12 +3514,31 @@ function openPaymentForm(m, p) {
     preview.innerHTML = `<ul class="pay-split-preview">${lines}</ul>${extra}`;
   };
   if (splitBox) {
-    splitBox.onchange = paintGuestSplit;
-    for (const input of [form.cash, form.transfer, form.pending, form.fromCredit]) input.addEventListener('input', paintGuestSplit);
+    splitBox.onchange = () => {
+      if (splitBox.checked && oldestBox) oldestBox.checked = false;
+      paintGuestSplit();
+      paintOldest();
+    };
+    for (const input of [form.cash, form.transfer, form.pending, form.fromCredit]) {
+      input.addEventListener('input', () => { paintGuestSplit(); paintOldest(); });
+    }
     paintGuestSplit();
+  }
+  if (oldestBox) {
+    oldestBox.onchange = () => {
+      if (oldestBox.checked) {
+        if (splitBox) splitBox.checked = false;
+        const apply = $('#pay-apply-promo');
+        if (apply) apply.checked = false;
+      }
+      paintGuestSplit();
+      paintOldest();
+    };
+    paintOldest();
   }
   const applyBox = $('#pay-apply-promo');
   if (applyBox) applyBox.onchange = () => {
+    if (applyBox.checked && oldestBox) { oldestBox.checked = false; paintOldest(); }
     const fresh = promoOf(p);
     const total = fresh?.total ?? totalSuggest;
     const cashNow = readMoney(form.cash.value);
@@ -3550,6 +3623,34 @@ function openPaymentForm(m, p) {
       if (delta) savePaymentsSpendingCredit(entries, okMsg, creditMoveFor(p, delta));
       else savePayments(entries, okMsg);
     };
+    if (oldestBox?.checked && debtsOf().length >= 2) {
+      const plan = oldestPlan();
+      const rows = plan?.rows || [];
+      if (!rows.length) { $('#pay-err').textContent = 'Con ese monto no se cubre ninguna deuda.'; return; }
+      const entries = rows.map((row) => {
+        const prev = paymentParts(row.player);
+        const cash = roundMoney(prev.cash + row.cash);
+        const transfer = roundMoney(prev.transfer + row.transfer);
+        const pendingAmt = roundMoney(prev.pending + row.pending);
+        const creditAmt = roundMoney(prev.credit + row.credit);
+        const keepParts = row.transfer === 0 && Array.isArray(row.player.transferParts) && row.player.transferParts.length > 1;
+        return {
+          id: row.player.id,
+          input: {
+            ...payInput({ cash, transfer, pending: pendingAmt, credit: creditAmt }),
+            cashTo: cash > 0 ? (row.cash > 0 ? form.cashTo.value : (row.player.cashTo || form.cashTo.value)) : null,
+            transferTo: transfer > 0 ? (row.transfer > 0 ? form.transferTo.value : (row.player.transferTo || form.transferTo.value)) : null,
+            pendingTo: pendingAmt > 0 ? (row.pending > 0 ? form.pendingTo.value : (row.player.pendingTo || form.pendingTo.value)) : null,
+            creditTo: creditAmt > 0 ? creditTo : null,
+            transferParts: keepParts ? row.player.transferParts : null,
+          },
+        };
+      });
+      const summary = settlementSummary(rows);
+      const leftover = plan.left > 0 ? ` Sobra ${formatARS(plan.left)} sin aplicar.` : '';
+      finishPay(entries, rows.map((row) => row.player), `${summary}.${leftover}`.trim());
+      return;
+    }
     if (splitBox?.checked && guestsOf(m.id, p.id).length) {
       const plan = guestSplit();
       const rows = (plan?.rows || []).filter((row) => row.cash + row.transfer + row.pending + row.credit > 0);

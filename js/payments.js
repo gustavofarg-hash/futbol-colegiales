@@ -49,6 +49,49 @@ export function allocateAcrossDebts(amount, dues) {
   return { parts, left };
 }
 
+/**
+ * Un pago de deudas viejas cubre primero el partido más viejo.
+ * Cada parte (efectivo, transferencia, pendiente, crédito) sigue sobre lo que queda.
+ * debts ya vienen ordenadas de la más vieja a la más nueva.
+ */
+export function settleOldestDebts({ cash = 0, transfer = 0, pending = 0, credit = 0, debts = [] } = {}) {
+  let leftOwed = (debts || []).map((debt) => Math.max(0, roundARS(Number(debt?.owed) || 0)));
+  const take = (amount) => {
+    const split = allocateAcrossDebts(amount, leftOwed);
+    leftOwed = leftOwed.map((due, i) => roundARS(due - split.parts[i]));
+    return split;
+  };
+  const cashSplit = take(cash);
+  const transferSplit = take(transfer);
+  const pendingSplit = take(pending);
+  const creditSplit = take(credit);
+  const rows = (debts || []).map((debt, i) => {
+    const applied = roundARS(cashSplit.parts[i] + transferSplit.parts[i] + pendingSplit.parts[i] + creditSplit.parts[i]);
+    return {
+      ...debt,
+      cash: cashSplit.parts[i],
+      transfer: transferSplit.parts[i],
+      pending: pendingSplit.parts[i],
+      credit: creditSplit.parts[i],
+      applied,
+    };
+  }).filter((row) => row.applied > 0);
+  return {
+    rows,
+    left: roundARS(cashSplit.left + transferSplit.left + pendingSplit.left + creditSplit.left),
+  };
+}
+
+/** "Se aplicó $5.000 a 01/10 21:00 y $2.000 a 08/10 21:00". */
+export function settlementSummary(rows) {
+  const applied = (rows || []).filter((row) => row.applied > 0 && row.label);
+  if (!applied.length) return '';
+  const bits = applied.map((row) => `${formatARS(row.applied)} a ${row.label}`);
+  if (bits.length === 1) return `Se aplicó ${bits[0]}`;
+  const last = bits.pop();
+  return `Se aplicó ${bits.join(', ')} y ${last}`;
+}
+
 /** "$5.000" / "$5.000,50" — separador de miles "." y decimales ",". */
 export function formatARS(amount) {
   const n = roundARS(amount);
