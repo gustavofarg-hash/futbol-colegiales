@@ -32,6 +32,7 @@ import {
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
 import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
+import { DRIVE_FOLDER, DRIVE_SCOPE, driveClientId, ensureBackupFolder, forgetDriveToken, multipartBody, requestDriveToken, shareableBackupName, uploadBackupToDrive } from '../js/drive.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -2416,4 +2417,59 @@ test('resetear la base la deja vacía y un organizador no puede', async () => {
   const again = await store.exportDatabase();
   assert.equal(again.collections.matches && Object.keys(again.collections.matches).length, 0);
   assert.equal(Object.keys(again.collections.players).length, 0);
+});
+
+test('Drive: ID de config, nombre para compartir y cuerpo multipart', () => {
+  assert.equal(driveClientId({}), '');
+  assert.equal(driveClientId({ GOOGLE_DRIVE_CLIENT_ID: 'TU_ID' }), '');
+  assert.equal(driveClientId({ GOOGLE_DRIVE_CLIENT_ID: ' 123-abc.apps.googleusercontent.com ' }), '123-abc.apps.googleusercontent.com');
+  // Chrome no comparte .json: va como .txt con el mismo contenido.
+  assert.equal(shareableBackupName('Mis_partidos_2026-10-30_09-00.json'), 'Mis_partidos_2026-10-30_09-00.txt');
+  const body = multipartBody({ name: 'a.json', parents: ['f'] }, '{"x":1}', 'B');
+  assert.equal(body, '--B\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{"name":"a.json","parents":["f"]}\r\n--B\r\nContent-Type: application/json\r\n\r\n{"x":1}\r\n--B--\r\n');
+});
+
+test('Drive: permiso drive.file y subida a la carpeta de backups', async () => {
+  forgetDriveToken();
+  const asked = [];
+  globalThis.google = { accounts: { oauth2: { initTokenClient(cfg) {
+    return { requestAccessToken() { asked.push(cfg); cfg.callback({ access_token: 'tok', expires_in: 3600 }); } };
+  } } } };
+  try {
+    assert.equal(await requestDriveToken('id.apps.googleusercontent.com', { now: () => 0 }), 'tok');
+    assert.equal(await requestDriveToken('id.apps.googleusercontent.com', { now: () => 1000 }), 'tok');
+    assert.equal(asked.length, 1, 'el permiso vigente no se vuelve a pedir');
+    assert.equal(asked[0].scope, DRIVE_SCOPE);
+    assert.equal(DRIVE_SCOPE, 'https://www.googleapis.com/auth/drive.file');
+
+    forgetDriveToken();
+    globalThis.google.accounts.oauth2.initTokenClient = (cfg) => ({ requestAccessToken() { cfg.error_callback({ type: 'popup_closed' }); } });
+    await assert.rejects(requestDriveToken('id.apps.googleusercontent.com'), (e) => e.code === 'drive/cancelled');
+  } finally {
+    delete globalThis.google;
+    forgetDriveToken();
+  }
+
+  const calls = [];
+  const reply = (status, json) => ({ ok: status < 300, status, json: async () => json });
+  const fakeFetch = (existing) => async (url, init = {}) => {
+    calls.push({ url, method: init.method || 'GET', headers: init.headers || {}, body: init.body || '' });
+    if (!init.method) return reply(200, { files: existing ? [{ id: 'old-folder' }] : [] });
+    if (/upload/.test(url)) return reply(200, { id: 'file-9' });
+    return reply(200, { id: 'new-folder' });
+  };
+  assert.equal(await ensureBackupFolder('tok', fakeFetch(true)), 'old-folder');
+  assert.equal(calls.length, 1);
+  assert.match(decodeURIComponent(calls[0].url), new RegExp(`name='${DRIVE_FOLDER}'`));
+  calls.length = 0;
+  const saved = await uploadBackupToDrive({ token: 'tok', filename: 'b.json', text: '{"format":"mis-partidos-backup"}', fetchImpl: fakeFetch(false), boundary: 'Z' });
+  assert.equal(saved.id, 'file-9');
+  assert.deepEqual(calls.map((c) => c.method), ['GET', 'POST', 'POST']);
+  assert.equal(JSON.parse(calls[1].body).mimeType, 'application/vnd.google-apps.folder');
+  assert.equal(calls[2].headers['Content-Type'], 'multipart/related; boundary=Z');
+  assert.equal(calls[2].headers.Authorization, 'Bearer tok');
+  assert.ok(calls[2].body.includes('"parents":["new-folder"]') && calls[2].body.includes('{"format":"mis-partidos-backup"}'));
+
+  const denied = async () => ({ ok: false, status: 403, json: async () => ({ error: { message: 'Drive API has not been used in project' } }) });
+  await assert.rejects(ensureBackupFolder('tok', denied), (e) => e.code === 'drive/403' && /Drive API/.test(e.message));
 });

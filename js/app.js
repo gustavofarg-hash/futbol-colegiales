@@ -1,4 +1,6 @@
 import { ACCESS_CODE, VENUE } from '../config.js';
+import * as appConfig from '../config.js';
+import { DRIVE_FOLDER, driveClientId, loadGis, requestDriveToken, shareableBackupName, uploadBackupToDrive } from './drive.js';
 import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
@@ -1623,7 +1625,8 @@ function saveBackupFile(filename, text) {
 }
 
 async function shareBackupFile(filename, text) {
-  const file = new File([text], filename, { type: 'application/json' });
+  // Chrome solo comparte ciertos tipos y .json no está: va como .txt (adentro, el mismo JSON).
+  const file = new File([text], shareableBackupName(filename), { type: 'text/plain' });
   const payload = { files: [file], title: 'Backup de Mis Partidos' };
   const can = typeof navigator.share === 'function' && (typeof navigator.canShare !== 'function' || navigator.canShare(payload));
   if (can) {
@@ -1695,7 +1698,7 @@ function openRestore() {
   openSheet(`
     <h3>Cargar base de datos desde un backup</h3>
     <p class="backup-warn">Los datos de ahora se reemplazan por los del archivo. No se puede deshacer.</p>
-    <label class="field"><span>Archivo JSON</span><input id="backup-file" type="file" accept="application/json,.json"></label>
+    <label class="field"><span>Archivo de backup (.json o .txt)</span><input id="backup-file" type="file" accept="application/json,.json,text/plain,.txt"></label>
     <div id="backup-summary"></div>
     <p class="backup-status" id="backup-status" aria-live="polite"></p>
     <p class="err" id="backup-err"></p>
@@ -1757,6 +1760,7 @@ function openRestore() {
 
 function openBackup() {
   if (app.role !== 'admin') return;
+  const driveId = driveClientId(appConfig);
   openSheet(`
     <h3>Hacer backup</h3>
     <p class="hint">Un archivo JSON con partidos, jugadores, plantel, pagos, sedes, precios, confirmaciones y teléfonos.</p>
@@ -1765,18 +1769,47 @@ function openBackup() {
       <button type="button" class="btn" id="backup-drive">Guardar en Google Drive</button>
       <button type="button" class="btn ghost" data-close>Cerrar</button>
     </div>
-    <p class="hint">Drive abre el menú del teléfono para elegir dónde guardarlo. Si ese menú no está, se descarga el archivo.</p>`);
+    <p class="hint" id="backup-drive-hint">${driveId
+      ? `Drive: se sube a tu Google Drive, carpeta «${esc(DRIVE_FOLDER)}». La primera vez Google pide permiso.`
+      : 'Drive: se abre el menú del teléfono; elegí «Drive». Si no hay menú, se descarga el archivo.'}</p>`);
+  // El archivo se arma al abrir: compartir y el permiso de Google tienen que salir del toque, sin esperas largas.
+  let ready = null;
+  const prepare = () => { ready = currentBackupFile(); ready.catch(() => { ready = null; }); return ready; };
+  prepare();
+  if (driveId) loadGis().catch(() => {});
   $('#backup-download').onclick = () => {
-    currentBackupFile().then(({ filename, text }) => {
+    (ready || prepare()).then(({ filename, text }) => {
       saveBackupFile(filename, text);
       toast('Backup guardado en el celular');
     }).catch(failBackup);
   };
   $('#backup-drive').onclick = () => {
-    currentBackupFile().then(async ({ filename, text }) => {
+    const pending = ready || prepare();
+    if (driveId) {
+      // Pedir el permiso ya, dentro del toque (si no, el navegador bloquea la ventana de Google).
+      const token = loadGis().then(() => requestDriveToken(driveId, { hint: app.session?.user?.email || '' }));
+      Promise.all([pending, token]).then(async ([{ filename, text }, access]) => {
+        toast('Subiendo a Google Drive…', 0);
+        await uploadBackupToDrive({ token: access, filename, text });
+        toast(`Backup guardado en Google Drive («${DRIVE_FOLDER}»)`, 4500);
+        prepare();
+      }).catch(async (error) => {
+        if (error?.code === 'drive/cancelled') { toast('No se guardó en Drive'); return; }
+        console.error(error);
+        try {
+          const { filename, text } = await pending;
+          const how = await shareBackupFile(filename, text);
+          const why = error?.code === 'drive/403' ? 'Drive no dejó subir (¿API de Drive sin habilitar?)' : error?.code === 'drive/denied' ? 'Google no dio permiso' : 'No se pudo subir a Drive';
+          if (how === 'shared') toast(`${why}: elegí Drive en el menú`, 5000);
+          else if (how === 'downloaded') toast(`${why}: se descargó el archivo`, 5000);
+        } catch (fail) { failBackup(fail); }
+      });
+      return;
+    }
+    pending.then(async ({ filename, text }) => {
       const how = await shareBackupFile(filename, text);
       if (how === 'shared') toast('Elegí Drive en el menú para guardarlo');
-      else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo');
+      else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo: subilo a Drive');
     }).catch(failBackup);
   };
 }

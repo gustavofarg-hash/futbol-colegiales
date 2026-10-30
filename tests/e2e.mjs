@@ -2792,13 +2792,22 @@ check('El archivo de backup lleva la fecha local', /^Mis_partidos_\d{4}-\d{2}-\d
 const { readFileSync } = await import('node:fs');
 const backupJson = JSON.parse(readFileSync(await backupDownload.path(), 'utf8'));
 check('El backup descargado es de Mis Partidos', backupJson.format === 'mis-partidos-backup' && backupJson.collections && typeof backupJson.collections.matches === 'object');
+check('Sin ID de Drive en config, la ayuda dice que se elige Drive en el menú', (await page.textContent('#backup-drive-hint')).includes('elegí «Drive»'));
 await page.evaluate(() => {
-  navigator.canShare = () => true;
-  navigator.share = async (payload) => { window.__sharedBackup = payload?.files?.[0]?.name || ''; };
+  // Como Chrome: solo comparte tipos de su lista (.json no está).
+  navigator.canShare = (payload) => (payload?.files || []).every((f) => /\.txt$/.test(f.name) && f.type === 'text/plain');
+  navigator.share = async (payload) => {
+    const file = payload?.files?.[0];
+    window.__sharedBackupText = file ? await file.text() : '';
+    window.__sharedBackup = file?.name || '';
+  };
 });
 await page.click('#backup-drive');
 await page.waitForFunction(() => window.__sharedBackup);
-check('Guardar en Drive abre el menú de compartir con el archivo', /^Mis_partidos_/.test(await page.evaluate(() => window.__sharedBackup)));
+const sharedName = await page.evaluate(() => window.__sharedBackup);
+check('Guardar en Drive abre el menú de compartir con el archivo (como .txt, que Chrome sí comparte)', /^Mis_partidos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.txt$/.test(sharedName), sharedName);
+const sharedJson = JSON.parse(await page.evaluate(() => window.__sharedBackupText));
+check('El .txt compartido tiene el mismo backup JSON', sharedJson.format === 'mis-partidos-backup' && JSON.stringify(sharedJson.collections) === JSON.stringify(backupJson.collections));
 await page.evaluate(async () => {
   await window.__app.store.addMatch({ date: '2026-12-01', time: '21:00', note: 'No debe quedar' }, window.__app.who);
 });
@@ -2806,7 +2815,7 @@ await page.click('[data-close]');
 await page.click('#btn-settings');
 await page.click('#set-restore');
 await page.waitForSelector('#backup-file');
-await page.setInputFiles('#backup-file', { name: backupName, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backupJson)) });
+await page.setInputFiles('#backup-file', { name: sharedName, mimeType: 'text/plain', buffer: Buffer.from(JSON.stringify(sharedJson)) });
 await page.waitForSelector('#backup-summary li');
 const summaryText = await page.locator('#backup-summary').innerText();
 check('Cargar backup muestra la fecha y cuántos partidos trae', summaryText.includes('Fecha del backup') && summaryText.includes('Partidos') && (await page.locator('.backup-warn').innerText()).includes('reemplazan'));
@@ -2919,6 +2928,56 @@ await fresh.waitForFunction(() => document.querySelector('#tab-proximos')?.getAt
 check('Al abrir la app arranca en Próximos partidos', await fresh.evaluate(() => location.hash === '#/' || location.hash === '' || location.hash === '#'));
 await fresh.close();
 
+{
+  // Con GOOGLE_DRIVE_CLIENT_ID: pide permiso con Google y sube el archivo con la API de Drive.
+  const driveCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
+  await driveCtx.route('**/config.js', async (route) => {
+    const res = await route.fetch();
+    const body = (await res.text())
+      .replace(/export const firebaseConfig = \{[\s\S]*?\n\};/, 'export const firebaseConfig = { apiKey: "TU_API_KEY", authDomain: "x", projectId: "TU_PROYECTO", storageBucket: "x", messagingSenderId: "x", appId: "x" };')
+      .replace(/export const GOOGLE_DRIVE_CLIENT_ID = ".*";/, 'export const GOOGLE_DRIVE_CLIENT_ID = "123-abc.apps.googleusercontent.com";');
+    await route.fulfill({ status: 200, contentType: 'text/javascript', body });
+  });
+  await driveCtx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => route.abort());
+  const gisAsked = [];
+  await driveCtx.exposeFunction('__gisAsked', (cfg) => { gisAsked.push(cfg); });
+  await driveCtx.route('https://accounts.google.com/gsi/client', (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    window.google = { accounts: { oauth2: { initTokenClient(cfg) {
+      return { requestAccessToken() { window.__gisAsked({ client_id: cfg.client_id, scope: cfg.scope }); setTimeout(() => cfg.callback({ access_token: 'tok-1', expires_in: 3600 }), 10); } };
+    } } } };` }));
+  const driveCalls = [];
+  await driveCtx.route(/https:\/\/www\.googleapis\.com\/(upload\/)?drive\/v3\/files/, async (route) => {
+    const req = route.request();
+    driveCalls.push({ method: req.method(), url: req.url(), auth: req.headers().authorization || '', type: req.headers()['content-type'] || '', body: req.postData() || '' });
+    const cors = { 'access-control-allow-origin': '*' };
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { ...cors, 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST' } });
+    if (req.method() === 'GET') return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ files: [] }) });
+    if (/upload/.test(req.url())) return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ id: 'file-1', name: 'x' }) });
+    return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ id: 'folder-1' }) });
+  });
+  const dp = await driveCtx.newPage();
+  const driveErrors = [];
+  dp.on('pageerror', (e) => driveErrors.push(e.message));
+  await dp.goto(BASE);
+  await dp.waitForSelector('#login-form');
+  await dp.fill('#login-email', 'gustavo@demo.local');
+  await dp.fill('#login-password', 'demo-gustavo');
+  await dp.click('#login-form button[type=submit]');
+  await dp.waitForFunction(() => window.__app?.who);
+  await dp.click('#btn-settings');
+  await dp.click('#set-backup');
+  await dp.waitForSelector('#backup-drive');
+  check('Con ID de Drive, la ayuda dice que sube a la carpeta de Drive', (await dp.textContent('#backup-drive-hint')).includes('Mis Partidos - backups'));
+  await dp.click('#backup-drive');
+  await dp.waitForSelector('.toast:has-text("Backup guardado en Google Drive")', { timeout: 8000 }).catch(() => {});
+  const upload = driveCalls.find((c) => c.method === 'POST' && /upload/.test(c.url));
+  const folder = driveCalls.find((c) => c.method === 'POST' && !/upload/.test(c.url));
+  check('Drive: pide permiso solo para sus archivos (drive.file) con el ID de config', gisAsked.length === 1 && gisAsked[0].client_id === '123-abc.apps.googleusercontent.com' && gisAsked[0].scope === 'https://www.googleapis.com/auth/drive.file', JSON.stringify(gisAsked));
+  check('Drive: crea la carpeta «Mis Partidos - backups» si no está', !!folder && JSON.parse(folder.body).name === 'Mis Partidos - backups' && folder.auth === 'Bearer tok-1');
+  check('Drive: sube el backup JSON a esa carpeta', !!upload && upload.auth === 'Bearer tok-1' && /multipart\/related/.test(upload.type) && upload.body.includes('"parents":["folder-1"]') && upload.body.includes('"format": "mis-partidos-backup"') && /Mis_partidos_.*\.json/.test(upload.body));
+  check('Drive: avisa que quedó guardado', await dp.locator('.toast:has-text("Backup guardado en Google Drive")').count() > 0 && driveErrors.length === 0, driveErrors.join(' | '));
+  await driveCtx.close();
+}
 check('Sin errores de JS', errors.length === 0, errors.join(' | '));
 await browser.close();
 const failed = results.filter((r) => !r.ok);
