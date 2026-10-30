@@ -24,6 +24,7 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, paymentLedger, playerDebt, signupLedger } from './ledger.js';
+import { creditBalance, creditBalances, creditLine } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -91,6 +92,8 @@ const app = {
   venuesError: null,
   prices: null,
   pricesError: null,
+  credits: [],
+  creditsError: null,
   users: [],
   role: '',
   mine: false,
@@ -3578,20 +3581,70 @@ function debtSubject(player) {
   return { id: '', name: player.name || '' };
 }
 
+function menuBalance(player, debt) {
+  const me = actor().uid;
+  const rows = creditBalances(app.credits, personKey(player, app.players))
+    .sort((a, b) => Number(b.organizerUid === me) - Number(a.organizerUid === me) || a.organizerName.localeCompare(b.organizerName, 'es'));
+  const credit = rows.map((row, i) => `<p class="credit-total"${i === 0 ? ' id="menu-credit"' : ''}>${esc(creditLine(row))}</p>`).join('');
+  const debtHtml = debt?.total > 0 ? `<p class="debt-total" id="menu-debt">${esc(debt.text)}</p>` : '';
+  if (!credit && !debtHtml) return '';
+  return `<div class="menu-balance" id="menu-balance">${credit}${debtHtml}</div>`;
+}
+
+function openCreditForm(m, p) {
+  if (!p || !canAdd(m, actor().uid)) return;
+  const key = personKey(p, app.players);
+  if (!key) { toast('No se puede cargar crédito sin identificar al jugador.'); return; }
+  const me = actor();
+  const current = creditBalance(app.credits, key, me.uid);
+  openSheet(`
+    <form id="credit-form" novalidate>
+      <h3>Cargar crédito</h3>
+      <p class="hint">${esc(shownName(p))} · con ${esc(me.name || 'vos')}</p>
+      <p class="credit-total" id="credit-now">${esc(creditLine({ organizerName: me.name, amount: current }))}</p>
+      <label class="field"><span>Monto</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" autofocus aria-label="Monto del crédito"></label>
+      <p class="hint">Se suma al saldo a favor que ya tiene con ${esc(me.name || 'vos')}. No es el pago de un partido.</p>
+      <div class="field"><div class="err" id="credit-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#credit-form');
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    if (app.creditsError) { $('#credit-err').textContent = app.creditsError; return; }
+    const money = readMoney(form.amount.value);
+    if (!money.ok || !(money.amount > 0)) { $('#credit-err').textContent = money.ok ? 'Poné el monto.' : money.error; return; }
+    closeSheet();
+    run(app.store.adjustCredit({
+      personKey: key,
+      organizerUid: me.uid,
+      organizerName: me.name,
+      name: p.name,
+      delta: money.amount,
+    }, app.who), 'Crédito cargado');
+  };
+}
+
 function openPlayerMenu(m, p) {
   if (!p) return;
   const own = canEditPlayer(p, actor());
-  const debt = playerDebt({ person: debtSubject(p), players: app.players, matches: app.matches, prices: livePrices() });
+  const debt = playerDebt({
+    person: debtSubject(p),
+    players: app.players,
+    matches: knownMatches(),
+    prices: livePrices(),
+    key: personKey(p, app.players),
+  });
   const payLine = payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>';
-  const debtLine = debt.total > 0 ? `<p class="debt-total" id="menu-debt">${esc(debt.text)}</p>` : '';
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   openSheet(`
     <h3>${esc(shownName(p))}</h3>
+    ${menuBalance(p, debt)}
     <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
-    <div class="menu-pay" id="menu-pay">${payLine}${debtLine}</div>
+    <div class="menu-pay" id="menu-pay">${payLine}</div>
     ${canAdd(m, actor().uid) ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
       ${canAdd(m, actor().uid) ? `<button class="btn" id="pm-pay">${paidAlready ? 'Editar pago' : 'Cargar pago'}</button>` : ''}
+      ${canAdd(m, actor().uid) ? '<button class="btn" id="pm-credit">Cargar crédito</button>' : ''}
       ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
@@ -3606,6 +3659,8 @@ function openPlayerMenu(m, p) {
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, m.id); };
   const payBtn = $('#pm-pay');
   if (payBtn) payBtn.onclick = () => openPaymentForm(m, p);
+  const creditBtn = $('#pm-credit');
+  if (creditBtn) creditBtn.onclick = () => openCreditForm(m, p);
   const signupBox = $('#signed-up-with');
   if (signupBox) signupBox.onchange = () => {
     const signup = readSignup(signupBox);
@@ -3892,7 +3947,7 @@ async function boot() {
   $('#demo-banner').hidden = app.store.mode === 'firebase';
   app.store.setActor(app.session.user);
   app.store.subscribe((view) => {
-    const { matches, players, roster, rosterError, organizers, organizersError, venues, venuesError, prices, pricesError, history, historyMeta, historyError } = view;
+    const { matches, players, roster, rosterError, organizers, organizersError, venues, venuesError, prices, pricesError, credits, creditsError, history, historyMeta, historyError } = view;
     app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
     app.pendingWrites = view.pending === true;
     app.fromCache = view.fromCache === true;
@@ -3903,6 +3958,8 @@ async function boot() {
     app.organizers = organizers || [];
     app.venues = venues || [];
     app.prices = prices || null;
+    app.credits = credits || [];
+    app.creditsError = creditsError || null;
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);
     app.rosterError = rosterError || null;
     if (organizersError && organizersError !== app.organizersError) showError(organizersError);
@@ -3912,7 +3969,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.rosterError, app.organizersError, app.venuesError, app.pricesError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     if (!changed) return;

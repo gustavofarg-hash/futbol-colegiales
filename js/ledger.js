@@ -334,11 +334,13 @@ export function organizerMatchDebt({ match, players, matches, prices, organizer 
  * Con promo, el precio es la parte de ese día. Transfiere después entra en el resto.
  * Juega gratis, la lista de espera y un partido cancelado no suman.
  */
-export function playerDebt({ person, players, matches, prices, organizer = null }) {
+export function playerDebt({ person, players, matches, prices, organizer = null, key = '' }) {
+  const wanted = String(key || '').trim();
   const byId = new Map((matches || []).map((match) => [match.id, match]));
   const rows = [];
   for (const player of players || []) {
-    if (!playerMatchesPerson(player, person)) continue;
+    const same = wanted ? personKey(player, players) === wanted : playerMatchesPerson(player, person);
+    if (!same) continue;
     if (organizer && !owesOrganizer(player, organizer)) continue;
     const owed = amountOwed(player, { players, matches, prices });
     if (!(owed > 0)) continue;

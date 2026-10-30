@@ -742,6 +742,25 @@ service cloud.firestore {
       allow delete: if isActiveStaff();
     }
 
+    // Saldo a favor de un jugador con un organizador. Colección aparte: no
+    // entra en el update de players, así no suma al tope de 1000 expresiones.
+    function validCredit(d) {
+      return d.keys().hasOnly(['personKey', 'organizerUid', 'organizerName', 'amount', 'name', 'updatedAt', 'updatedBy'])
+          && d.personKey is string && d.personKey.size() > 0 && d.personKey.size() <= 300
+          && d.organizerUid is string && d.organizerUid.size() > 0 && d.organizerUid.size() <= 128
+          && d.organizerName is string && d.organizerName.size() > 0 && d.organizerName.size() <= 40
+          && d.amount is number && d.amount >= 0 && d.amount <= 1000000000
+          && d.name is string && d.name.size() <= 60
+          && d.updatedAt is number
+          && d.updatedBy is string && d.updatedBy.size() <= 40;
+    }
+    match /credits/{creditId} {
+      allow read: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validCredit(request.resource.data)
+          && creditId.size() > 0 && creditId.size() <= 700;
+      allow delete: if isActiveStaff();
+    }
+
     // Backup, carga y reset. isAdmin() exige cuenta activa con role == admin.
     // Un organizador no entra: sigue sin ver un Solo yo ajeno ni un teléfono privado.
     match /{document=**} {

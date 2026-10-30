@@ -11,6 +11,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
+import { creditBalance, creditBalances, creditDocId, creditLine, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -1379,6 +1380,48 @@ test('la deuda es el precio menos lo cobrado, sin gratis ni cancelados', () => {
   });
   assert.equal(mineDebt.total, 5000);
   assert.equal(playerDebt({ person: { name: 'Anotó Gustavo' }, players: switched, matches: day, prices, organizer: gustavo }).total, 0);
+});
+
+test('el saldo a favor es del jugador con ese organizador', async () => {
+  assert.equal(creditDocId('', 'gustavo'), '');
+  assert.equal(creditDocId('p:abc', 'gustavo'), 'gustavo__p:abc');
+  assert.equal(nextCredit(0, 0).ok, false);
+  assert.equal(nextCredit(1000, -1500).error, 'No alcanza el saldo a favor.');
+  assert.equal(nextCredit(1000, 500).amount, 1500);
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  await store.adjustCredit({ personKey: 'p:ana', organizerUid: 'gustavo', organizerName: 'Gustavo', name: 'Ana', delta: 2000 }, 'Gustavo');
+  await store.adjustCredit({ personKey: 'p:ana', organizerUid: 'martin', organizerName: 'Martín', name: 'Ana', delta: 700 }, 'Martín');
+  await store.adjustCredit({ personKey: 'n:otro', organizerUid: 'gustavo', organizerName: 'Gustavo', name: 'Otro', delta: 300 }, 'Gustavo');
+  let seen = [];
+  store.subscribe((view) => { seen = view.credits; });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(creditBalance(seen, 'p:ana', 'gustavo'), 2000);
+  assert.equal(creditBalance(seen, 'p:ana', 'martin'), 700);
+  assert.equal(creditBalance(seen, 'n:otro', 'gustavo'), 300);
+  assert.deepEqual(creditBalances(seen, 'p:ana').map((row) => row.organizerName), ['Gustavo', 'Martín']);
+  assert.equal(creditLine({ organizerName: 'Gustavo', amount: 2000 }), 'Saldo a favor con Gustavo: $2.000');
+  await store.adjustCredit({ personKey: 'p:ana', organizerUid: 'gustavo', organizerName: 'Gustavo', name: 'Ana', delta: -2000 }, 'Gustavo');
+  const left = JSON.parse(mem.get(store.key)).credits;
+  assert.equal(Object.values(left).some((row) => row.personKey === 'p:ana' && row.organizerUid === 'gustavo'), false);
+  const host = { id: 'h', name: 'Vinicio', phoneKey: 'aa'.repeat(32), hasPhone: true };
+  const guest = { id: 'g', name: 'Invitado 1', invitedBy: 'h', matchId: 'a' };
+  const otherHost = { id: 'e', name: 'Ernesto', phoneKey: 'bb'.repeat(32), hasPhone: true };
+  const otherGuest = { id: 'g2', name: 'Invitado 1', invitedBy: 'e', matchId: 'a' };
+  const players = [host, guest, otherHost, otherGuest];
+  const matches = [{ id: 'a', date: '2026-10-30', time: '21:00' }];
+  const debt = playerDebt({
+    players, matches, prices: null, key: personKey(guest, players),
+  });
+  assert.equal(debt.total, 5000);
+  assert.equal(playerDebt({ players, matches, prices: null, key: personKey(otherGuest, players) }).rows.length, 1);
+  assert.notEqual(personKey(guest, players), personKey(otherGuest, players));
 });
 
 test('Mis y totales por organizador', () => {
