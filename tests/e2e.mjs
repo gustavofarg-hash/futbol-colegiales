@@ -1339,7 +1339,7 @@ await page.click('.slot:has-text("Nico R.") .pay-btn');
 await page.waitForSelector('#pay-form [name=cash]');
 await page.locator('#pay-form [name=cash]').focus();
 check('El pago usa el precio guardado en el partido', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '5000'));
-check('El botón de un partido muestra el precio nuevo', (await page.textContent('#pay-prices')).includes('$6.000'));
+check('El pago no muestra botones de 1 partido ni la ayuda larga', (await page.locator('#pay-prices').count()) === 0 && !(await page.locator('#pay-form').innerText()).includes('Lo cobrado es efectivo') && !(await page.locator('#pay-form').innerText()).includes('Promo 2'));
 await page.click('#pay-form [data-close]');
 const propio = await page.evaluate(async () => {
   const id = await window.__app.store.addMatch({ date: '2026-11-09', time: '18:00', price: 7500, perTeam: 7, capacity: 14 }, window.__app.who);

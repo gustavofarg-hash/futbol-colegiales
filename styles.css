@@ -615,8 +615,6 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 .field input:focus, .field textarea:focus, .field select:focus { outline: 2px solid var(--green-2); outline-offset: 1px; border-color: transparent; }
 .pay-money { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
 .field .pay-money input, .field .pay-money select { min-width: 0; width: auto; flex: 1 1 0; }
-.price-picks { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
-.price-picks .btn { flex: 1 1 auto; min-height: 44px; font-size: 0.8125rem; padding: 6px 8px; }
 .promo-badge {
   display: inline-block; margin-top: 4px; font-size: 0.75rem; font-weight: 800;
   color: #8a5a00; background: #fff4d6; border-radius: 99px; padding: 1px 8px;

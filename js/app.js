@@ -271,11 +271,6 @@ function payStaffNames(extra = []) {
 function livePrices() {
   return normalizePrices(app.prices);
 }
-function priceExample(amount) {
-  const n = Number(amount) || 0;
-  const pretty = formatARS(n).replace(/^\$/, '');
-  return `Podés escribir ${n} o ${pretty}. Vacío es 0.`;
-}
 function addedTag(player) {
   return `<span class="tag ${organizerTagClass(player.addedBy)}">Agregó: ${esc(player.addedBy || '?')}</span>`;
 }
@@ -3347,7 +3342,6 @@ function openPaymentForm(m, p) {
       ${receivedNote}
       <label class="checkline" id="free-play-line"><input type="checkbox" id="pay-free" name="freePlay"${isFreePlay(p) ? ' checked' : ''}><span>Juega gratis</span></label>
       <div id="pay-details">
-        <div class="price-picks" id="pay-prices"></div>
         ${promo ? `<label class="pay-apply"><input type="checkbox" id="pay-apply-promo"><span id="pay-apply-label">Aplicar a los ${promo.count} partidos</span></label>` : ''}
         <label class="pay-apply" id="pay-split-guests-line" hidden><input type="checkbox" id="pay-split-guests"><span>Dividir entre él y sus invitados</span></label>
         <div id="pay-split-preview" hidden></div>
@@ -3375,7 +3369,6 @@ function openPaymentForm(m, p) {
             <input name="pending" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(pendingStart)}" aria-label="Transfiere después">
             <select name="pendingTo" aria-label="A quién le va a transferir"></select>
           </div>
-          <div class="small muted" id="pay-hint"></div>
         </div>
       </div>
       <div class="field"><div class="err" id="pay-err"></div></div>
@@ -3389,26 +3382,6 @@ function openPaymentForm(m, p) {
     if (current) select.value = names.find((name) => sameOrganizer(name, current)) || names[0];
   };
   const paintPrices = () => {
-    const nowPrices = livePrices();
-    const box = $('#pay-prices');
-    if (box) {
-      const picks = [
-        ['1 partido', nowPrices.matchPrice],
-        ['Promo 2', nowPrices.promo2Price],
-        ['Promo 3', nowPrices.promo3Price],
-      ];
-      box.innerHTML = picks.map(([label, amount]) => `<button type="button" class="btn" data-price="${amount}">${esc(label)} ${esc(formatARS(amount))}</button>`).join('');
-      box.querySelectorAll('[data-price]').forEach((btn) => {
-        btn.onclick = () => {
-          form.cash.value = btn.dataset.price;
-          form.transfer.value = '';
-          form.pending.value = '';
-          $('#pay-err').textContent = '';
-        };
-      });
-    }
-    const hint = $('#pay-hint');
-    if (hint) hint.textContent = `Lo cobrado es efectivo + transferencia. Transfiere después no entra en Recaudado hasta que lo marques como cobrado. ${priceExample(nowPrices.matchPrice)}`;
     const fresh = promoOf(p);
     const badge = $('#pay-promo');
     if (badge) badge.innerHTML = fresh ? `<div class="promo-badge">${esc(fresh.label)}</div>` : '';
