@@ -564,11 +564,13 @@ button.team-name {
 .nick-field > span { font-size: 0.8125rem; margin-bottom: 2px; }
 .nick-field input { min-height: 40px; padding-top: 6px; padding-bottom: 6px; }
 .nick-field .small { margin-top: 2px; line-height: 1.25; }
-.player-balance { display: flex; flex-wrap: wrap; gap: 2px 14px; align-items: baseline; margin: 0 0 8px; }
-.player-balance .credit-total,
-.player-balance .debt-total { margin: 0; }
-.player-panel > .btn { margin-top: 0; }
-#debt > .btn { margin-bottom: 8px; }
+.player-balance { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0 0 8px; }
+.credit-stack { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.credit-stack .credit-total { margin: 0; }
+.debt-stack { display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+.debt-stack .debt-total { margin: 0; }
+.debt-stack .ledger-list { margin: 0; gap: 2px; }
+.debt-stack .ledger-list li { color: var(--danger); }
 .stat-dates { margin: 0; padding-left: 18px; color: var(--muted); }
 .pnote { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; background: var(--card); }
 .pnote .when { font-size: 0.8125rem; font-weight: 700; color: var(--muted); }

@@ -38,7 +38,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v68';
+const APP_VERSION = 'f7c-v69';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2451,8 +2451,6 @@ function profileMoney(person) {
     <section class="profile-block" id="debt">
       ${panel.balance}
       ${panel.err}
-      ${panel.button}
-      ${panel.rows}
     </section>
     ${panel.notesHtml}
     ${panel.statsButton}` };
@@ -4045,12 +4043,14 @@ function playerPanelPieces(player, person, ids, debtKey) {
   const nickHtml = `<label class="field nick-field"><span>Nombre corto (o apodo)</span><input id="${ids.nick}" maxlength="40" autocomplete="off" placeholder="Ej: Vini" value="${esc(nick.value)}"${nick.editable ? '' : ' disabled'}><div class="small muted">${NICK_HINT}</div></label>`;
   const creditHtml = credits.map((row, i) => `<p class="credit-total"${i === 0 ? ` id="${ids.credit}"` : ''}>${esc(creditLine(row))}</p>`).join('');
   const debtHtml = debt.total > 0 ? `<p class="debt-total" id="${ids.debt}">${esc(debt.text)}</p>` : '';
-  const balance = `<div class="player-balance" id="${ids.balance}">${creditHtml}${debtHtml}</div>`;
   const err = app.creditsError ? `<p class="hint" id="${ids.err}">${esc(app.creditsError)}</p>` : '';
-  const button = canOfferCredit(me) ? `<button type="button" class="btn block" id="${ids.button}">Cargar crédito</button>` : '';
+  const button = canOfferCredit(me) ? `<button type="button" class="btn primary block" id="${ids.button}">Cargar crédito</button>` : '';
   const rows = debt.rows.length
     ? `<ul class="ledger-list" id="debt-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>`
     : '';
+  const creditStack = (creditHtml || button) ? `<div class="credit-stack">${creditHtml}${button}</div>` : '';
+  const debtStack = (debtHtml || rows) ? `<div class="debt-stack">${debtHtml}${rows}</div>` : '';
+  const balance = `<div class="player-balance" id="${ids.balance}">${creditStack}${debtStack}</div>`;
   const mine = credits.find((row) => row.organizerUid === me.uid);
   const rosterPerson = panelRosterPerson(player, person);
   const notesHtml = notesMarkup(rosterPerson);
@@ -4238,7 +4238,7 @@ function openPlayerMenu(m, p) {
   const canAnnotate = !!(match && canAdd(match, actor().uid));
   openSheet(`
     <h3>${esc(shownName(p))}</h3>
-    <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.button}${panel.notesHtml}${panel.statsButton}</div>
+    <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.notesHtml}${panel.statsButton}</div>
     <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
     ${canAnnotate ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}

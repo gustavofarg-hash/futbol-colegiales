@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v68');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v69');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3031,6 +3031,26 @@ check('El menú ofrece cargar crédito', await page.locator('#pm-credit').innerT
 check('El menú del partido deja editar el apodo', await page.locator('#menu-nick').count() === 1 && (await page.locator('#menu-balance').innerText()).includes('Debe en total'));
 const menuDebtColor = await page.$eval('#menu-debt', (el) => getComputedStyle(el).color);
 check('La deuda del menú está en rojo', menuDebtColor === 'rgb(198, 40, 40)' || menuDebtColor === 'rgb(255, 107, 107)', menuDebtColor);
+const debtLayout = await page.evaluate(() => {
+  const creditEl = document.querySelector('#menu-credit');
+  const btnEl = document.querySelector('#pm-credit');
+  const debtEl = document.querySelector('#menu-debt');
+  const lineEl = document.querySelector('#menu-panel #debt-list li');
+  const credit = creditEl.getBoundingClientRect();
+  const btn = btnEl.getBoundingClientRect();
+  const debt = debtEl.getBoundingClientRect();
+  const line = lineEl.getBoundingClientRect();
+  const green = (color) => color === 'rgb(15, 122, 61)' || color === 'rgb(34, 197, 94)';
+  const red = (color) => color === 'rgb(198, 40, 40)' || color === 'rgb(255, 107, 107)';
+  return {
+    btnUnder: btn.top >= credit.bottom - 1 && btn.top - credit.bottom <= 16,
+    btnGreen: green(getComputedStyle(btnEl).backgroundColor),
+    lineUnder: line.top >= debt.bottom - 1 && line.top - debt.bottom <= 12,
+    lineRed: red(getComputedStyle(lineEl).color),
+    debtRed: red(getComputedStyle(debtEl).color),
+  };
+});
+check('En el menú, Cargar crédito verde queda bajo el saldo y el detalle rojo bajo el total', debtLayout.btnUnder && debtLayout.btnGreen && debtLayout.lineUnder && debtLayout.lineRed && debtLayout.debtRed, JSON.stringify(debtLayout));
 await page.click('#pm-credit');
 await page.waitForSelector('#credit-form');
 await page.fill('#credit-form [name=amount]', '8000');
@@ -3049,6 +3069,19 @@ await page.waitForSelector('#menu-credit');
 const creditColor = await page.$eval('#menu-credit', (el) => getComputedStyle(el).color);
 const creditText = await page.locator('#menu-credit').innerText();
 check('El saldo a favor del menú está en verde y es con Gustavo', creditText.includes('Saldo a favor con Gustavo: $3.000') && (creditColor === 'rgb(15, 122, 61)' || creditColor === 'rgb(34, 197, 94)'), `${creditText} ${creditColor}`);
+const creditLayout = await page.evaluate(() => {
+  const creditEl = document.querySelector('#menu-credit');
+  const btnEl = document.querySelector('#pm-credit');
+  const credit = creditEl.getBoundingClientRect();
+  const btn = btnEl.getBoundingClientRect();
+  const bg = getComputedStyle(btnEl).backgroundColor;
+  return {
+    btnUnder: btn.top >= credit.bottom - 1 && btn.top - credit.bottom <= 16,
+    btnGreen: bg === 'rgb(15, 122, 61)' || bg === 'rgb(34, 197, 94)',
+    noDebt: document.querySelector('#menu-debt') == null,
+  };
+});
+check('Con saldo y sin deuda, el botón verde queda pegado al saldo', creditLayout.btnUnder && creditLayout.btnGreen && creditLayout.noDebt, JSON.stringify(creditLayout));
 await page.click('#pm-pay');
 await page.waitForSelector('#pay-credit-field');
 const creditField = await page.locator('#pay-credit-field').innerText();
