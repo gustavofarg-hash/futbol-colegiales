@@ -1394,7 +1394,7 @@ async function offerPromotionWhatsApp(player, match) {
     return;
   }
   const token = await app.store.ensureConfirmToken(player.id);
-  if (!confirm(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`)) return;
+  if (!(await askYesNo(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`))) return;
   const pending = window.open('about:blank', '_blank');
   const code = await app.store.ensureShortLink(player.id);
   const external = isShortCode(code) ? await resolveExternalShort(code) : '';
@@ -3541,15 +3541,21 @@ function askYesNo(title) {
       </div>`);
     $('#ask-yes').onclick = () => finish(true);
     $('#ask-no').onclick = () => finish(false);
-    sheet.addEventListener('close', () => finish(false), { once: true });
+    // Si venimos de otra pregunta, su 'close' llega tarde con la hoja ya abierta: no cuenta como No.
+    const onClose = () => {
+      if (sheet.open) return;
+      sheet.removeEventListener('close', onClose);
+      finish(false);
+    };
+    sheet.addEventListener('close', onClose);
   });
 }
 
-function removeMatchPlayer(m, p, { asked = false } = {}) {
+async function removeMatchPlayer(m, p, { asked = false } = {}) {
   const fromMain = !isWaiting(p);
   const friends = guestsOf(m.id, p.id);
   if (!asked && !confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
-  const dropFriends = friends.length > 0 && confirm(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
+  const dropFriends = friends.length > 0 && await askYesNo(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
   const mainLeft = playersOf(m.id).filter((item) => !dropping.has(item.id)).length;
@@ -3571,10 +3577,10 @@ function removeMatchPlayer(m, p, { asked = false } = {}) {
   askYesNo(`¿Subir a ${top.name}, el primero de la lista de espera?`).then(go);
 }
 
-function demoteToWait(m, p) {
+async function demoteToWait(m, p) {
   if (!p || isWaiting(p) || !canAdd(m, actor().uid)) return;
   const guests = guestsOf(m.id, p.id).filter((item) => !isWaiting(item));
-  const also = guests.length > 0 && confirm(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
+  const also = guests.length > 0 && await askYesNo(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
   const moving = [p, ...(also ? guests : [])];
   closeSheet();
   let order = nextWaitOrder(waitingOf(m.id));

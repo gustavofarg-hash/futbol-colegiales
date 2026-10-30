@@ -764,9 +764,12 @@ await page.setViewportSize({ width: 390, height: 844 });
 await page.evaluate((font) => { document.documentElement.style.fontSize = font; }, fontBefore);
 const teoSum = await page.textContent('#confirm-sum');
 check('En espera no entra en el resumen', teoSum.includes('Sin respuesta: 0') && teoSum.includes('No juegan: 1'), teoSum);
+await page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).locator('[data-promote]').click();
+await page.waitForSelector('#ask-yes');
+check('El aviso por WhatsApp al subir pregunta con Sí y No', (await page.textContent('dialog.sheet h3')).trim() === '¿Avisarle por WhatsApp a Avisa Teo que subió al partido?' && (await page.locator('#ask-yes').innerText()) === 'Sí' && (await page.locator('#ask-no').innerText()) === 'No');
 const [teoPopup] = await Promise.all([
   page.waitForEvent('popup'),
-  page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).locator('[data-promote]').click(),
+  page.click('#ask-yes'),
 ]);
 await teoPopup.waitForURL((url) => /wa\.me|phone=/.test(String(url)), { waitUntil: 'commit' });
 await page.waitForSelector('#slots .name:text-is("Avisa Teo")');
@@ -2496,13 +2499,16 @@ await page.evaluate(() => {
   window.__confirms = [];
   window.confirm = (msg) => {
     window.__confirms.push(msg);
-    return !String(msg).includes('sus invitados');
+    return true;
   };
 });
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("zzz nuevo")') }).locator('[data-menu]').click();
 await page.click('#pm-del');
+await page.waitForSelector('#ask-no');
+const askFriends = (await page.textContent('dialog.sheet h3')).trim();
+check('Pregunta si quitar a los amigos, con Sí y No', askFriends.startsWith('¿Quitar también a sus invitados (') && (await page.locator('#ask-yes').innerText()) === 'Sí' && !(await page.evaluate(() => window.__confirms.some((msg) => msg.includes('sus invitados')))), askFriends);
+await page.click('#ask-no');
 await page.waitForFunction(() => ![...document.querySelectorAll('#slots .name')].some((el) => el.textContent === 'zzz nuevo'));
-check('Pregunta si quitar a los amigos', await page.evaluate(() => window.__confirms.some((msg) => msg.includes('sus invitados'))));
 check('Si no, los amigos siguen con el nombre', (await page.locator('#slots .friend-tag', { hasText: 'invitado de zzz nuevo' }).count()) >= 2);
 await page.evaluate(() => {
   window.confirm = (msg) => {
@@ -2512,6 +2518,8 @@ await page.evaluate(() => {
 });
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("Segundo")') }).locator('[data-menu]').click();
 await page.click('#pm-del');
+await page.waitForSelector('#ask-yes');
+await page.click('#ask-yes');
 await page.waitForFunction(() => ![...document.querySelectorAll('.friend-tag')].some((el) => el.textContent.includes('Segundo')));
 check('Si sí, los amigos también salen', await page.locator('#slots .name:text-is("Segundo")').count() === 0);
 await page.evaluate(() => { delete window.confirm; });
@@ -2520,6 +2528,34 @@ check('El menú ofrece bajar a la espera', await page.locator('#pm-wait').innerT
 await page.click('#pm-wait');
 await page.waitForSelector('#wait-list .name:text-is("Después")');
 check('Bajar a la espera lo deja al final y no sube a nadie', await page.locator('#slots .name:text-is("Después")').count() === 0 && await page.locator('#wait-list .name:text-is("Después")').count() === 1);
+{
+  // Bajar con invitados: pregunta con Sí/No (no con Aceptar/Cancelar del navegador).
+  const native = [];
+  const onNative = (d) => { native.push(d.message()); d.dismiss(); };
+  page.on('dialog', onNative);
+  const baja = await page.evaluate(async () => {
+    const app = window.__app;
+    const matchId = decodeURIComponent(location.hash.split('/')[2] || '');
+    const match = app.matches.find((m) => m.id === matchId);
+    const host = await app.store.addPlayer(match, { name: 'Baja Grupo', phone: '' }, app.who);
+    await app.store.addPlayer(match, { name: 'Invitado 1', invitedBy: host, invitedByName: 'Baja Grupo', guestAuto: true }, app.who);
+    return { host, matchId };
+  });
+  await page.waitForSelector('#slots .name:text-is("Baja Grupo")');
+  await page.click('[aria-label="Opciones de Baja Grupo"]');
+  await page.click('#pm-wait');
+  await page.waitForSelector('#ask-yes');
+  const askDown = (await page.textContent('dialog.sheet h3')).trim();
+  check('Bajar con invitados pregunta con Sí y No', askDown === '¿Bajar también a sus invitados (Invitado 1)?' && (await page.locator('#ask-no').innerText()) === 'No', askDown);
+  await page.click('#ask-yes');
+  await page.waitForSelector('#wait-list .name:text-is("Baja Grupo")');
+  const moved = await page.evaluate((host) => window.__app.players.filter((p) => p.id === host || p.invitedBy === host).every((p) => p.waiting === true), baja.host);
+  check('Con Sí baja también a sus invitados', moved && native.length === 0, native.join(' | '));
+  page.off('dialog', onNative);
+  await page.evaluate(async (host) => {
+    for (const p of window.__app.players.filter((item) => item.id === host || item.invitedBy === host)) await window.__app.store.deletePlayer(p.id);
+  }, baja.host);
+}
 await page.evaluate(() => localStorage.setItem('f7c-text-size', '1'));
 await page.setViewportSize({ width: 390, height: 844 });
 await page.reload();
