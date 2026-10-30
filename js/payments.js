@@ -28,7 +28,7 @@ import { sameOrganizer } from './organizers.js';
 export const MAX_AMOUNT = 1_000_000_000;
 export const MAX_TRANSFER_PARTS = 6;
 export const PAYMENT_METHODS = ['efectivo', 'transferencia'];
-const METHOD_LABEL = { efectivo: 'Efectivo', transferencia: 'Transferencia' };
+const METHOD_LABEL = { efectivo: 'Efectivo', transferencia: 'Transferencia', credito: 'Crédito' };
 
 export function roundARS(n) {
   return Math.round(Number(n) * 100) / 100;
@@ -98,7 +98,7 @@ export function isFreePlay(player) {
 /** true si el documento ya usa efectivo / transferencia / pendiente por separado. */
 export function isSplitPayment(player) {
   if (!player) return false;
-  return player.cash != null || player.transfer != null || player.pendingTransfer != null;
+  return player.cash != null || player.transfer != null || player.pendingTransfer != null || player.fromCredit != null;
 }
 
 /**
@@ -106,19 +106,21 @@ export function isSplitPayment(player) {
  * received es solo lo cobrado. pending no entra ahí.
  */
 export function paymentParts(player) {
-  const empty = { cash: 0, transfer: 0, pending: 0, received: 0, split: false };
+  const empty = { cash: 0, transfer: 0, pending: 0, credit: 0, received: 0, split: false };
   if (!player || isFreePlay(player)) return empty;
   if (!isSplitPayment(player)) {
     if (player.paid !== true) return empty;
     const received = finiteMoney(player.amount);
-    if (player.method === 'transferencia') return { cash: 0, transfer: received, pending: 0, received, split: false };
-    if (player.method === 'efectivo') return { cash: received, transfer: 0, pending: 0, received, split: false };
-    return { cash: 0, transfer: 0, pending: 0, received, split: false };
+    if (player.method === 'transferencia') return { ...empty, transfer: received, received };
+    if (player.method === 'efectivo') return { ...empty, cash: received, received };
+    if (player.method === 'credito') return { ...empty, credit: received, received };
+    return { ...empty, received };
   }
   const cash = finiteMoney(player.cash);
   const transfer = finiteMoney(player.transfer);
   const pending = finiteMoney(player.pendingTransfer);
-  return { cash, transfer, pending, received: roundARS(cash + transfer), split: true };
+  const credit = finiteMoney(player.fromCredit);
+  return { cash, transfer, pending, credit, received: roundARS(cash + transfer + credit), split: true };
 }
 
 export function sumParts(players) {
@@ -136,7 +138,7 @@ export function sumParts(players) {
 /** true si el pago ya dice quién cobró cada parte. */
 export function hasPaymentDirection(player) {
   if (!player) return false;
-  return player.cashTo != null || player.transferTo != null || player.pendingTo != null
+  return player.cashTo != null || player.transferTo != null || player.pendingTo != null || player.creditTo != null
     || (Array.isArray(player.transferParts) && player.transferParts.length > 0);
 }
 
@@ -149,7 +151,7 @@ export function paymentShares(player) {
   const directed = hasPaymentDirection(player);
   const legacy = String(player?.receivedBy || '').trim();
   const shares = [];
-  if (!parts.split && parts.received > 0 && parts.cash === 0 && parts.transfer === 0) {
+  if (!parts.split && parts.received > 0 && parts.cash === 0 && parts.transfer === 0 && parts.credit === 0) {
     shares.push({ kind: 'received', name: legacy, amount: parts.received });
   }
   if (parts.cash > 0) {
@@ -168,6 +170,9 @@ export function paymentShares(player) {
         amount: parts.transfer,
       });
     }
+  }
+  if (parts.credit > 0) {
+    shares.push({ kind: 'credit', name: String(player?.creditTo || '').trim(), amount: parts.credit });
   }
   if (parts.pending > 0) {
     const name = directed ? String(player?.pendingTo || '').trim() : String(player?.paidUpdatedBy || '').trim();
@@ -195,6 +200,14 @@ export function pendingStatusText(player) {
   return name ? `${base} · a ${name}` : base;
 }
 
+function paidPartText(parts) {
+  const bits = [];
+  if (parts.cash > 0) bits.push(`Efectivo ${formatARS(parts.cash)}`);
+  if (parts.transfer > 0) bits.push(`Transferencia ${formatARS(parts.transfer)}`);
+  if (parts.credit > 0) bits.push(`Crédito ${formatARS(parts.credit)}`);
+  return bits.join(' · ');
+}
+
 function directedStatusText(player) {
   const parts = paymentParts(player);
   if (parts.received <= 0) return '';
@@ -203,14 +216,15 @@ function directedStatusText(player) {
   const amount = formatARS(parts.received);
   if (names.length <= 1) {
     let base;
-    if (parts.cash > 0 && parts.transfer === 0) base = `Pagó ${amount} · Efectivo`;
-    else if (parts.transfer > 0 && parts.cash === 0) base = `Pagó ${amount} · Transferencia`;
-    else base = `Pagó ${amount} · Efectivo ${formatARS(parts.cash)} · Transferencia ${formatARS(parts.transfer)}`;
+    if (parts.cash > 0 && parts.transfer === 0 && parts.credit === 0) base = `Pagó ${amount} · Efectivo`;
+    else if (parts.transfer > 0 && parts.cash === 0 && parts.credit === 0) base = `Pagó ${amount} · Transferencia`;
+    else if (parts.credit > 0 && parts.cash === 0 && parts.transfer === 0) base = `Pagó ${amount} · Crédito`;
+    else base = `Pagó ${amount} · ${paidPartText(parts)}`;
     return names[0] ? `${base} · cobró ${names[0]}` : base;
   }
   const bits = [`Pagó ${amount}`];
   for (const share of shares) {
-    const label = share.kind === 'cash' ? 'Efectivo' : 'Transferencia';
+    const label = share.kind === 'cash' ? 'Efectivo' : share.kind === 'credit' ? 'Crédito' : 'Transferencia';
     const who = share.name ? ` · cobró ${share.name}` : '';
     bits.push(`${label} ${formatARS(share.amount)}${who}`);
   }
@@ -234,9 +248,10 @@ function receivedStatusText(player) {
   if (parts.received <= 0) return '';
   const amount = formatARS(parts.received);
   let base;
-  if (parts.cash > 0 && parts.transfer === 0) base = `Pagó ${amount} · Efectivo`;
-  else if (parts.transfer > 0 && parts.cash === 0) base = `Pagó ${amount} · Transferencia`;
-  else base = `Pagó ${amount} · Efectivo ${formatARS(parts.cash)} · Transferencia ${formatARS(parts.transfer)}`;
+  if (parts.cash > 0 && parts.transfer === 0 && parts.credit === 0) base = `Pagó ${amount} · Efectivo`;
+  else if (parts.transfer > 0 && parts.cash === 0 && parts.credit === 0) base = `Pagó ${amount} · Transferencia`;
+  else if (parts.credit > 0 && parts.cash === 0 && parts.transfer === 0) base = `Pagó ${amount} · Crédito`;
+  else base = `Pagó ${amount} · ${paidPartText(parts)}`;
   const receiver = String(player.receivedBy || '').trim();
   return receiver ? `${base} · cobró ${receiver}` : base;
 }
@@ -301,7 +316,7 @@ function nameField(value) {
 }
 
 function usesSplitInput(input) {
-  return !!input && (input.split === true || 'cash' in input || 'transfer' in input || 'pendingTransfer' in input);
+  return !!input && (input.split === true || 'cash' in input || 'transfer' in input || 'pendingTransfer' in input || 'fromCredit' in input);
 }
 
 function moneyField(value, error) {
@@ -310,10 +325,12 @@ function moneyField(value, error) {
   return roundARS(value);
 }
 
-function methodOfParts(cash, transfer) {
-  if (cash > 0 && transfer === 0) return 'efectivo';
-  if (transfer > 0 && cash === 0) return 'transferencia';
-  return null;
+function methodOfParts(cash, transfer, credit = 0) {
+  const on = [];
+  if (cash > 0) on.push('efectivo');
+  if (transfer > 0) on.push('transferencia');
+  if (credit > 0) on.push('credito');
+  return on.length === 1 ? on[0] : null;
 }
 
 function freePlayPatch(who, now) {
@@ -334,6 +351,8 @@ function freePlayPatch(who, now) {
     transferTo: null,
     pendingTo: null,
     transferParts: null,
+    fromCredit: null,
+    creditTo: null,
   };
 }
 
@@ -364,6 +383,8 @@ export function paymentRecord(input, who, now = Date.now()) {
     transferTo: null,
     pendingTo: null,
     transferParts: null,
+    fromCredit: null,
+    creditTo: null,
   };
   if (paid === false) return { ok: true, patch: cleared };
   const cash = moneyField(input.cash, 'Efectivo inválido.');
@@ -372,7 +393,15 @@ export function paymentRecord(input, who, now = Date.now()) {
   if (typeof transfer === 'object') return { ok: false, error: transfer.error };
   const pending = moneyField(input.pendingTransfer, 'Monto inválido.');
   if (typeof pending === 'object') return { ok: false, error: pending.error };
-  if (cash + transfer + pending <= 0) return { ok: false, error: 'Poné un monto.' };
+  const credit = moneyField(input.fromCredit, 'Crédito inválido.');
+  if (typeof credit === 'object') return { ok: false, error: credit.error };
+  if (cash + transfer + pending + credit <= 0) return { ok: false, error: 'Poné un monto.' };
+  let creditTo = null;
+  if (credit > 0) {
+    const creditName = nameField(input.creditTo || who);
+    if (creditName && typeof creditName === 'object') return { ok: false, error: creditName.error };
+    creditTo = creditName;
+  }
   const directed = 'cashTo' in input || 'transferTo' in input || 'pendingTo' in input || 'transferParts' in input;
   let cashTo = null;
   let transferTo = null;
@@ -411,13 +440,14 @@ export function paymentRecord(input, who, now = Date.now()) {
     if (cashTo) who.push(cashTo);
     if (transferParts) who.push(...transferParts.map((part) => part.to));
     else if (transferTo) who.push(transferTo);
+    if (creditTo) who.push(creditTo);
     const names = uniqueNames(who);
     receivedBy = names.length === 1 && names[0] ? names[0] : null;
   } else {
     receivedBy = receiverValue(input);
     if (receivedBy && typeof receivedBy === 'object') return { ok: false, error: receivedBy.error };
   }
-  const received = roundARS(cash + transfer);
+  const received = roundARS(cash + transfer + credit);
   return {
     ok: true,
     patch: {
@@ -425,7 +455,7 @@ export function paymentRecord(input, who, now = Date.now()) {
       ...freeFlag(input),
       paid: received > 0,
       amount: received > 0 ? received : null,
-      method: methodOfParts(cash, transfer),
+      method: methodOfParts(cash, transfer, credit),
       receivedBy: received > 0 ? receivedBy : null,
       cash,
       transfer,
@@ -434,6 +464,8 @@ export function paymentRecord(input, who, now = Date.now()) {
       transferTo,
       pendingTo,
       transferParts,
+      fromCredit: credit > 0 ? credit : null,
+      creditTo: credit > 0 ? creditTo : null,
       transferReceivedAt: null,
       transferReceivedBy: null,
     },

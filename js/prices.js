@@ -130,11 +130,12 @@ export function splitEven(total, n) {
 }
 
 /** Reparte efectivo, transferencia y pendiente por separado. La suma de cada uno cierra. */
-export function splitPaymentAcross({ cash = 0, transfer = 0, pending = 0 }, n) {
+export function splitPaymentAcross({ cash = 0, transfer = 0, pending = 0, credit = 0 }, n) {
   const cashShares = splitEven(cash, n);
   const transferShares = splitEven(transfer, n);
   const pendingShares = splitEven(pending, n);
-  return cashShares.map((part, i) => ({ cash: part, transfer: transferShares[i], pending: pendingShares[i] }));
+  const creditShares = splitEven(credit, n);
+  return cashShares.map((part, i) => ({ cash: part, transfer: transferShares[i], pending: pendingShares[i], credit: creditShares[i] }));
 }
 
 /** Promo del día para este jugador, con el monto que le toca a este partido. */

@@ -138,7 +138,8 @@ test('un pago partido se escribe de a un jugador y el error nombra el documento'
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
   assert.equal(app.includes('Promise.all(jobs)'), false);
-  assert.match(app, /savePayments\(entries, 'Pago dividido'\)/);
+  assert.match(app, /finishPay\(entries, guestPayees\(\), 'Pago dividido'\)/);
+  assert.match(app, /writePaymentsInOrder\(entries, \(entry\) => app\.store\.setPayment/);
   assert.match(store, /async _writePayment\(id, patch\)/);
   assert.equal(paymentFailureText(Object.assign(new Error('Poné un monto.'), { code: 'invalid-payment' })), 'Poné un monto.');
 });
@@ -180,7 +181,7 @@ test('texto de pago y total del partido', () => {
   assert.equal(collectedLine([juan, pedro, nico]), 'Recaudado: $5.000 · 1/3 pagaron');
   assert.equal(collectedLine([{ freePlay: true, paid: true, name: 'Libre' }, juan]), 'Recaudado: $5.000 · 1/1 pagaron · 1 juega gratis');
   assert.equal(paymentStatusText({ freePlay: true, paid: true, amount: 5000 }), 'Juega gratis');
-  assert.deepEqual(paymentParts({ freePlay: true, paid: true, cash: 5000 }), { cash: 0, transfer: 0, pending: 0, received: 0, split: false });
+  assert.deepEqual(paymentParts({ freePlay: true, paid: true, cash: 5000 }), { cash: 0, transfer: 0, pending: 0, credit: 0, received: 0, split: false });
   const gratis = paymentRecord({ freePlay: true, paid: true, split: true }, 'Gustavo', 10);
   assert.equal(gratis.ok, true);
   assert.equal(gratis.patch.freePlay, true);
@@ -237,7 +238,7 @@ test('pago partido y transfiere después no entran en lo cobrado hasta marcarlo'
   assert.equal(paymentStatusText(onlyPending.patch), 'Transfiere después $800');
   assert.equal(paymentStatusText({ paid: false, cash: null, transfer: null, pendingTransfer: null }), 'No pagó');
   const legacy = { paid: true, amount: 4500, method: 'efectivo' };
-  assert.deepEqual(paymentParts(legacy), { cash: 4500, transfer: 0, pending: 0, received: 4500, split: false });
+  assert.deepEqual(paymentParts(legacy), { cash: 4500, transfer: 0, pending: 0, credit: 0, received: 4500, split: false });
   assert.equal(paymentStatusText(legacy), 'Pagó $4.500 · Efectivo');
   const list = [both.patch, onlyPending.patch, { name: 'Nico' }];
   assert.equal(collectedLine(list), 'Recaudado: $5.000 · 1/3 pagaron · Transfiere después: $2.300');
@@ -1424,6 +1425,30 @@ test('el saldo a favor es del jugador con ese organizador', async () => {
   assert.notEqual(personKey(guest, players), personKey(otherGuest, players));
 });
 
+test('descontar del crédito paga al organizador logueado y baja la deuda', () => {
+  const rec = paymentRecord({
+    paid: true, split: true, cash: 0, transfer: 0, pendingTransfer: 0, fromCredit: 2000, creditTo: 'Gustavo',
+  }, 'Gustavo', 5);
+  assert.equal(rec.ok, true);
+  assert.equal(rec.patch.method, 'credito');
+  assert.equal(rec.patch.amount, 2000);
+  assert.equal(rec.patch.fromCredit, 2000);
+  assert.equal(rec.patch.creditTo, 'Gustavo');
+  assert.equal(rec.patch.cashTo, null);
+  const player = { ...rec.patch, matchId: 'a', waiting: false };
+  const owed = amountOwed(player, {
+    players: [player],
+    matches: [{ id: 'a', date: '2026-10-01', time: '21:00' }],
+    prices: { matchPrice: 5000 },
+  });
+  assert.equal(owed, 3000);
+  assert.match(paymentStatusText(player), /Pagó \$2\.000 · Crédito/);
+  assert.match(paymentStatusText(player), /cobró Gustavo/);
+  const short = paymentRecord({ paid: true, split: true, fromCredit: 5000, creditTo: 'Gustavo' }, 'Martín', 6);
+  assert.equal(short.patch.creditTo, 'Gustavo');
+  assert.equal(paymentRecord({ paid: true, split: true, fromCredit: -1 }, 'Gustavo', 7).ok, false);
+});
+
 test('Mis y totales por organizador', () => {
   const players = [
     { addedBy: 'Gustavo', paid: true, amount: 5000, receivedBy: 'Martín' },
@@ -1501,8 +1526,8 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.deepEqual(splitEven(9000, 2), [4500, 4500]);
   assert.deepEqual(splitEven(9001, 2), [4501, 4500]);
   assert.deepEqual(splitPaymentAcross({ cash: 9001, transfer: 100, pending: 0 }, 2), [
-    { cash: 4501, transfer: 50, pending: 0 },
-    { cash: 4500, transfer: 50, pending: 0 },
+    { cash: 4501, transfer: 50, pending: 0, credit: 0 },
+    { cash: 4500, transfer: 50, pending: 0, credit: 0 },
   ]);
   const matches = [
     { id: 'a', date: '2026-10-22', time: '19:00', startsAt: 1 },

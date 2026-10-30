@@ -157,7 +157,7 @@ service cloud.firestore {
     function moneyKeys() {
       return ['paid', 'amount', 'method', 'paidUpdatedBy', 'paidUpdatedAt', 'receivedBy',
           'cash', 'transfer', 'pendingTransfer', 'transferReceivedAt', 'transferReceivedBy',
-          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay'];
+          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo'];
     }
     function waitKeys() {
       return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt'];
@@ -177,7 +177,7 @@ service cloud.firestore {
     function validMoney(d) {
       return (!('paid' in d) || d.paid is bool)
           && (!('amount' in d) || d.amount == null || (d.amount is number && d.amount >= 0 && d.amount <= 1000000000))
-          && (!('method' in d) || d.method == null || d.method == 'efectivo' || d.method == 'transferencia')
+          && (!('method' in d) || d.method == null || d.method == 'efectivo' || d.method == 'transferencia' || d.method == 'credito')
           && (!('paidUpdatedBy' in d) || (d.paidUpdatedBy is string && d.paidUpdatedBy.size() <= 40))
           && (!('paidUpdatedAt' in d) || d.paidUpdatedAt is number)
           && (!('receivedBy' in d) || d.receivedBy == null || (d.receivedBy is string && d.receivedBy.size() > 0 && d.receivedBy.size() <= 40))
@@ -190,7 +190,9 @@ service cloud.firestore {
           && (!('transferTo' in d) || d.transferTo == null || (d.transferTo is string && d.transferTo.size() > 0 && d.transferTo.size() <= 40))
           && (!('pendingTo' in d) || d.pendingTo == null || (d.pendingTo is string && d.pendingTo.size() > 0 && d.pendingTo.size() <= 40))
           && (!('transferParts' in d) || d.transferParts == null || transferPartsOk(d.transferParts))
-          && (!('freePlay' in d) || d.freePlay is bool);
+          && (!('freePlay' in d) || d.freePlay is bool)
+          && (!('fromCredit' in d) || d.fromCredit == null || (d.fromCredit is number && d.fromCredit >= 0 && d.fromCredit <= 1000000000))
+          && (!('creditTo' in d) || d.creditTo == null || (d.creditTo is string && d.creditTo.size() > 0 && d.creditTo.size() <= 40));
     }
     function validPlayerState(d) {
       return validWait(d) && validConfirm(d) && validGoals(d) && validStamp(d);

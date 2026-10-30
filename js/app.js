@@ -162,6 +162,38 @@ function savePayments(entries, okMsg) {
   return run(writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who)), okMsg);
 }
 
+/** delta suma al saldo (negativo lo gasta). Si el pago falla, el saldo vuelve. */
+function savePaymentsSpendingCredit(entries, okMsg, creditMove) {
+  const job = (async () => {
+    const delta = roundMoney(creditMove?.delta || 0);
+    if (delta) await app.store.adjustCredit({ ...creditMove, delta }, app.who);
+    try {
+      await writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who));
+    } catch (error) {
+      if (delta) await app.store.adjustCredit({ ...creditMove, delta: roundMoney(-delta) }, app.who);
+      throw error;
+    }
+  })();
+  return run(job, okMsg);
+}
+
+function creditMoveFor(player, delta) {
+  const me = actor();
+  return {
+    personKey: personKey(player, app.players),
+    organizerUid: me.uid,
+    organizerName: me.name,
+    name: player.name || '',
+    delta: roundMoney(delta),
+  };
+}
+
+function creditDelta(people, entries) {
+  const oldCredit = roundMoney((people || []).reduce((sum, person) => sum + paymentParts(person).credit, 0));
+  const freshCredit = roundMoney((entries || []).reduce((sum, entry) => sum + (Number(entry.input?.fromCredit) || 0), 0));
+  return roundMoney(oldCredit - freshCredit);
+}
+
 /* ───────── datos derivados ───────── */
 const actor = () => ({ uid: app.session?.user?.uid || '', name: app.who || '' });
 const shownName = (player) => displayName(player, app.roster);
@@ -3297,6 +3329,8 @@ function openPaymentForm(m, p) {
   const cashStart = known ? moneyText(parts.cash) : '';
   const transferStart = known ? moneyText(parts.transfer) : '';
   const pendingStart = known ? moneyText(parts.pending) : '';
+  const creditStart = known ? moneyText(parts.credit) : '';
+  const creditNow = creditBalance(app.credits, personKey(p, app.players), actor().uid);
   const partsHint = Array.isArray(p.transferParts) && p.transferParts.length > 1
     ? `<p class="hint" id="pay-parts">Transferencia repartida: ${p.transferParts.map((part) => `${esc(part.to)} ${esc(formatARS(part.amount))}`).join(' · ')}. Si cambiás el monto, queda en un solo organizador.</p>`
     : '';
@@ -3330,6 +3364,12 @@ function openPaymentForm(m, p) {
           </div>
         </div>
         ${partsHint}
+        <div class="field" id="pay-credit-field"><span>Descontar del crédito</span>
+          <div class="pay-money">
+            <input name="fromCredit" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(creditStart)}" aria-label="Descontar del crédito">
+          </div>
+          <div class="small muted" id="pay-credit-hint">Sale del saldo a favor con ${esc(loggedInStaffName())}. Tiene ${esc(formatARS(creditNow))}.</div>
+        </div>
         <div class="field"><span>Transfiere después</span>
           <div class="pay-money">
             <input name="pending" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(pendingStart)}" aria-label="Transfiere después">
@@ -3406,20 +3446,23 @@ function openPaymentForm(m, p) {
     const cash = readMoney(form.cash.value);
     const transfer = readMoney(form.transfer.value);
     const pending = readMoney(form.pending.value);
-    if (!cash.ok || !transfer.ok || !pending.ok) return null;
+    const credit = readMoney(form.fromCredit.value);
+    if (!cash.ok || !transfer.ok || !pending.ok || !credit.ok) return null;
     const cashSplit = allocateAcrossDebts(cash.amount, dues);
     const transferSplit = allocateAcrossDebts(transfer.amount, dues);
     const pendingSplit = allocateAcrossDebts(pending.amount, dues);
+    const creditSplit = allocateAcrossDebts(credit.amount, dues);
     const rows = people.map((person, i) => ({
       person,
       owed: dues[i],
       cash: cashSplit.parts[i],
       transfer: transferSplit.parts[i],
       pending: pendingSplit.parts[i],
+      credit: creditSplit.parts[i],
     }));
     return {
       rows,
-      left: roundMoney(cashSplit.left + transferSplit.left + pendingSplit.left),
+      left: roundMoney(cashSplit.left + transferSplit.left + pendingSplit.left + creditSplit.left),
     };
   };
   const paintGuestSplit = () => {
@@ -3435,6 +3478,7 @@ function openPaymentForm(m, p) {
       if (row.cash > 0) bits.push(`Efectivo ${formatARS(row.cash)}`);
       if (row.transfer > 0) bits.push(`Transferencia ${formatARS(row.transfer)}`);
       if (row.pending > 0) bits.push(`Transfiere después ${formatARS(row.pending)}`);
+      if (row.credit > 0) bits.push(`Crédito ${formatARS(row.credit)}`);
       const money = bits.length ? bits.join(' · ') : 'sin pago';
       return `<li><span>${esc(shownName(row.person))}</span><b>${esc(money)}</b></li>`;
     }).join('');
@@ -3444,7 +3488,7 @@ function openPaymentForm(m, p) {
   };
   if (splitBox) {
     splitBox.onchange = paintGuestSplit;
-    for (const input of [form.cash, form.transfer, form.pending]) input.addEventListener('input', paintGuestSplit);
+    for (const input of [form.cash, form.transfer, form.pending, form.fromCredit]) input.addEventListener('input', paintGuestSplit);
     paintGuestSplit();
   }
   const applyBox = $('#pay-apply-promo');
@@ -3477,7 +3521,7 @@ function openPaymentForm(m, p) {
   const freeBox = $('#pay-free');
   const paintFree = () => {
     const on = freeBox?.checked === true;
-    for (const input of [form.cash, form.transfer, form.pending, form.cashTo, form.transferTo, form.pendingTo]) {
+    for (const input of [form.cash, form.transfer, form.pending, form.fromCredit, form.cashTo, form.transferTo, form.pendingTo]) {
       if (!input) continue;
       input.disabled = on;
       if (on && input.tagName === 'INPUT') input.value = '';
@@ -3489,8 +3533,11 @@ function openPaymentForm(m, p) {
   form.onsubmit = (e) => {
     e.preventDefault();
     if (freeBox?.checked) {
+      const entries = [{ id: p.id, input: { freePlay: true, paid: true, split: true } }];
+      const delta = creditDelta([p], entries);
       closeSheet();
-      savePayments([{ id: p.id, input: { freePlay: true, paid: true, split: true } }], 'Juega gratis');
+      if (delta) savePaymentsSpendingCredit(entries, 'Juega gratis', creditMoveFor(p, delta));
+      else savePayments(entries, 'Juega gratis');
       return;
     }
     const cash = readMoney(form.cash.value);
@@ -3499,66 +3546,59 @@ function openPaymentForm(m, p) {
     if (!transfer.ok) { $('#pay-err').textContent = transfer.error; return; }
     const pending = readMoney(form.pending.value);
     if (!pending.ok) { $('#pay-err').textContent = pending.error; return; }
-    if (cash.amount + transfer.amount + pending.amount <= 0) { $('#pay-err').textContent = 'Poné un monto.'; return; }
+    const fromCredit = readMoney(form.fromCredit.value);
+    if (!fromCredit.ok) { $('#pay-err').textContent = fromCredit.error; return; }
+    if (cash.amount + transfer.amount + pending.amount + fromCredit.amount <= 0) { $('#pay-err').textContent = 'Poné un monto.'; return; }
+    const creditTo = loggedInStaffName();
+    const payInput = (part) => ({
+      paid: true,
+      split: true,
+      freePlay: false,
+      cash: part.cash,
+      transfer: part.transfer,
+      pendingTransfer: part.pending,
+      fromCredit: part.credit,
+      cashTo: part.cash > 0 ? form.cashTo.value : null,
+      transferTo: part.transfer > 0 ? form.transferTo.value : null,
+      pendingTo: part.pending > 0 ? form.pendingTo.value : null,
+      creditTo: part.credit > 0 ? creditTo : null,
+    });
+    const finishPay = (entries, people, okMsg) => {
+      const delta = creditDelta(people, entries);
+      if (delta < 0 && roundMoney(-delta) > creditBalance(app.credits, personKey(p, app.players), actor().uid)) {
+        $('#pay-err').textContent = 'No alcanza el saldo a favor.';
+        return;
+      }
+      if (delta && !personKey(p, app.players)) {
+        $('#pay-err').textContent = 'No se puede descontar el crédito sin identificar al jugador.';
+        return;
+      }
+      closeSheet();
+      if (delta) savePaymentsSpendingCredit(entries, okMsg, creditMoveFor(p, delta));
+      else savePayments(entries, okMsg);
+    };
     if (splitBox?.checked && guestsOf(m.id, p.id).length) {
       const plan = guestSplit();
-      const rows = (plan?.rows || []).filter((row) => row.cash + row.transfer + row.pending > 0);
+      const rows = (plan?.rows || []).filter((row) => row.cash + row.transfer + row.pending + row.credit > 0);
       if (!rows.length) { $('#pay-err').textContent = 'Con ese monto no le toca a nadie.'; return; }
-      const entries = rows.map((row) => ({
-        id: row.person.id,
-        input: {
-          paid: true,
-          split: true,
-          freePlay: false,
-          cash: row.cash,
-          transfer: row.transfer,
-          pendingTransfer: row.pending,
-          cashTo: row.cash > 0 ? form.cashTo.value : null,
-          transferTo: row.transfer > 0 ? form.transferTo.value : null,
-          pendingTo: row.pending > 0 ? form.pendingTo.value : null,
-        },
-      }));
-      closeSheet();
-      savePayments(entries, 'Pago dividido');
+      const entries = rows.map((row) => ({ id: row.person.id, input: payInput(row) }));
+      finishPay(entries, guestPayees(), 'Pago dividido');
       return;
     }
     const freshPromo = promoOf(p);
     const applyAll = !!applyBox?.checked && freshPromo && freshPromo.rows.length >= 2;
     if (applyAll) {
-      const shares = splitPaymentAcross({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount }, freshPromo.rows.length);
-      const entries = freshPromo.rows.map((row, i) => ({
-        id: row.player.id,
-        input: {
-          paid: true,
-          split: true,
-          freePlay: false,
-          cash: shares[i].cash,
-          transfer: shares[i].transfer,
-          pendingTransfer: shares[i].pending,
-          cashTo: shares[i].cash > 0 ? form.cashTo.value : null,
-          transferTo: shares[i].transfer > 0 ? form.transferTo.value : null,
-          pendingTo: shares[i].pending > 0 ? form.pendingTo.value : null,
-        },
-      }));
-      closeSheet();
-      savePayments(entries, 'Promo aplicada');
+      const shares = splitPaymentAcross({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount, credit: fromCredit.amount }, freshPromo.rows.length);
+      const entries = freshPromo.rows.map((row, i) => ({ id: row.player.id, input: payInput(shares[i]) }));
+      finishPay(entries, freshPromo.rows.map((row) => row.player), 'Promo aplicada');
       return;
     }
     const keepParts = roundMoney(transfer.amount) === parts.transfer && Array.isArray(p.transferParts) && p.transferParts.length > 1;
     const rec = {
-      paid: true,
-      split: true,
-      freePlay: false,
-      cash: cash.amount,
-      transfer: transfer.amount,
-      pendingTransfer: pending.amount,
-      cashTo: cash.amount > 0 ? form.cashTo.value : null,
-      transferTo: transfer.amount > 0 ? form.transferTo.value : null,
-      pendingTo: pending.amount > 0 ? form.pendingTo.value : null,
+      ...payInput({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount, credit: fromCredit.amount }),
       transferParts: keepParts ? p.transferParts : null,
     };
-    closeSheet();
-    savePayments([{ id: p.id, input: rec }], 'Pago guardado');
+    finishPay([{ id: p.id, input: rec }], [p], 'Pago guardado');
   };
 }
 function roundMoney(n) {
