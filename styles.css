@@ -718,3 +718,5 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 .detail-tools .btn { padding: 0 8px; font-size: 0.84375rem; gap: 6px; min-width: 0; }
 .detail-tools .btn svg { width: 18px; height: 18px; }
 .btn svg { flex: none; }
+.also-box .checkline { margin: 6px 0; font-weight: 600; }
+.also-box .hint { margin: 4px 0 0; }

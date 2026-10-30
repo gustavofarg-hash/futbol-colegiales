@@ -2556,6 +2556,64 @@ check('Bajar a la espera lo deja al final y no sube a nadie', await page.locator
     for (const p of window.__app.players.filter((item) => item.id === host || item.invitedBy === host)) await window.__app.store.deletePlayer(p.id);
   }, baja.host);
 }
+{
+  // Invitados en todos sus partidos del día: el menú ofrece sumarlos también en los otros.
+  const ids = await page.evaluate(async () => {
+    const { store, who } = window.__app;
+    const a = await store.addMatch({ date: '2026-11-20', time: '19:00', note: '', capacity: 14 }, who);
+    const b = await store.addMatch({ date: '2026-11-20', time: '20:00', note: '', capacity: 1 }, who);
+    const c = await store.addMatch({ date: '2026-11-20', time: '21:00', note: '', capacity: 14 }, who);
+    const d = await store.addMatch({ date: '2026-11-20', time: '22:00', note: '', capacity: 14 }, who);
+    const find = (id) => window.__app.matches.find((m) => m.id === id);
+    for (let i = 0; i < 50 && ![a, b, c, d].every(find); i++) await new Promise((r) => setTimeout(r, 20));
+    const host = {};
+    for (const id of [a, b, c]) host[id] = await store.addPlayer(find(id), { name: 'Doble Día', phone: '5491155550101' }, who);
+    await store.addPlayer(find(d), { name: 'Otro Día', phone: '5491155550102' }, who);
+    return { a, b, c, d, host };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, ids.a);
+  await page.waitForSelector('#slots .name:text-is("Doble Día")');
+  await page.click('[aria-label="Opciones de Doble Día"]');
+  await page.click('#pm-friend');
+  await page.waitForSelector('#friend-form');
+  const offered = await page.$$eval('#friend-also input[name=also]', (els) => els.map((el) => ({ id: el.value, on: el.checked, off: el.disabled })));
+  check('Agregar invitados ofrece sus otros partidos del mismo día, ya marcados', offered.length === 2 && offered.every((o) => o.on && !o.off) && offered.map((o) => o.id).join() === [ids.b, ids.c].join(), JSON.stringify(offered));
+  check('El partido lleno avisa que van a la espera', (await page.textContent('#friend-also')).includes('completo: van a la espera'));
+  await page.click('#friend-plus');
+  await page.locator('#friend-rows input').nth(1).fill('Pipa');
+  await page.click('#friend-form button[type=submit]');
+  const guestsIn = (id, host) => page.evaluate(({ id, host }) => window.__app.players.filter((p) => p.matchId === id && p.invitedBy === host).map((p) => `${p.name}${p.waiting ? '(espera)' : ''}`).sort().join(','), { id, host });
+  await page.waitForFunction(({ c, host }) => window.__app.players.filter((p) => p.matchId === c && p.invitedBy === host).length === 2, { c: ids.c, host: ids.host[ids.c] });
+  check('Los mismos invitados quedan en su partido', await guestsIn(ids.a, ids.host[ids.a]) === 'Invitado 1,Pipa');
+  check('En el otro partido quedan con el mismo anfitrión y nombre', await guestsIn(ids.c, ids.host[ids.c]) === 'Invitado 1,Pipa');
+  check('En el partido lleno van a la lista de espera', await guestsIn(ids.b, ids.host[ids.b]) === 'Invitado 1(espera),Pipa(espera)');
+  check('Un partido del día donde él no juega no cambia', await page.evaluate((d) => window.__app.players.filter((p) => p.matchId === d).length === 1, ids.d));
+  const promo = await page.evaluate(async ({ a, c }) => {
+    const { sameDayTitulars, playerPromoKey } = await import('./js/prices.js');
+    const all = window.__app.players;
+    const pipa = (id) => all.find((p) => p.matchId === id && p.name === 'Pipa');
+    return playerPromoKey(pipa(a), all) === playerPromoKey(pipa(c), all) && typeof sameDayTitulars === 'function';
+  }, ids);
+  check('Para la promo del día es el mismo invitado en los dos partidos', promo);
+  // Sin marcar el otro partido, solo se agrega en este.
+  await page.waitForTimeout(300);
+  await page.click('[aria-label="Opciones de Doble Día"]');
+  await page.click('#pm-friend');
+  await page.waitForSelector('#friend-also');
+  await page.uncheck(`#friend-also input[value="${ids.c}"]`);
+  await page.uncheck(`#friend-also input[value="${ids.b}"]`);
+  await page.click('#friend-form button[type=submit]');
+  await page.waitForFunction(({ a, host }) => window.__app.players.filter((p) => p.matchId === a && p.invitedBy === host).length === 3, { a: ids.a, host: ids.host[ids.a] });
+  await page.waitForTimeout(300);
+  check('Si se desmarca, en los otros partidos no se agrega', await guestsIn(ids.c, ids.host[ids.c]) === 'Invitado 1,Pipa' && await guestsIn(ids.a, ids.host[ids.a]) === 'Invitado 1,Invitado 2,Pipa');
+  await page.evaluate(async (list) => {
+    const app = window.__app;
+    for (const id of list) {
+      for (const p of app.players.filter((item) => item.matchId === id)) await app.store.deletePlayer(p.id);
+      await app.store.deleteMatch(id);
+    }
+  }, [ids.a, ids.b, ids.c, ids.d]);
+}
 await page.evaluate(() => localStorage.setItem('f7c-text-size', '1'));
 await page.setViewportSize({ width: 390, height: 844 });
 await page.reload();

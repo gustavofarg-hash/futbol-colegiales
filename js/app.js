@@ -16,7 +16,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -2835,13 +2835,13 @@ function focusField(el) {
 }
 
 /** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
-function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
+function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
   const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
   if (guestBlock) { toast(guestBlock); return false; }
   const taken = host?.id ? friendNamesOf(m.id, host.id) : [];
-  const friends = resolveFriendNames(friendRows, taken).map((friend) => ({
+  const friends = (resolved || resolveFriendNames(friendRows, taken)).map((friend) => ({
     name: friend.name,
     guestAuto: friend.guestAuto,
     invitedBy: host?.id || (friend.guestAuto ? 'nuevo' : ''),
@@ -2912,8 +2912,75 @@ function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
       }, app.who, { waiting });
       offset += 1;
     }
+    if (also.length) {
+      const notes = await addGuestsToSameDay(also, friends, signup);
+      if (notes.length) toast(notes.join(' · '), 4500);
+    }
   })(), msg);
   return true;
+}
+
+/**
+ * Los otros partidos del mismo día en los que está anotado quien invita
+ * (misma persona: personKey). Para sumarle los mismos invitados ahí también.
+ */
+function sameDayHostMatches(m, host) {
+  if (!host?.id || host.invitedBy) return [];
+  const key = personKey(host, app.players);
+  if (!key) return [];
+  const out = [];
+  for (const match of app.matches || []) {
+    if (match.id === m.id || match.date !== m.date || match.cancelled === true) continue;
+    const there = matesOf(match.id).find((player) => !player.invitedBy && personKey(player, app.players) === key);
+    if (!there) continue;
+    const blocked = addBlock(match) || inviteBlock(matesOf(match.id), there.id);
+    out.push({ match, host: there, blocked });
+  }
+  return out.sort((a, b) => String(a.match.time || '').localeCompare(String(b.match.time || '')) || String(a.match.id).localeCompare(String(b.match.id)));
+}
+
+function sameDayLine({ match, host }, from) {
+  const free = Math.max(0, capOf(match) - playersOf(match.id).length);
+  const room = host.waiting === true ? 'él está en espera' : free === 0 ? 'completo: van a la espera' : free === 1 ? 'queda 1 lugar' : `quedan ${free} lugares`;
+  const place = placeOf(match);
+  return [`${match.time || '--:--'} hs`, place === placeOf(from) ? '' : place, room].filter(Boolean).join(' · ');
+}
+
+/**
+ * Suma los mismos invitados (mismo nombre, invitados por la misma persona)
+ * en cada partido elegido. De a un jugador, en orden. Lo que ya está no se
+ * repite; lo que no entra va a la espera, como en el partido de origen.
+ */
+async function addGuestsToSameDay(targets, friends, signup) {
+  const notes = [];
+  for (const { match, host } of targets) {
+    const label = `${match.time || '--:--'} hs`;
+    const blocked = addBlock(match) || inviteBlock(matesOf(match.id), host.id);
+    if (blocked) { notes.push(`${label}: ${blocked}`); continue; }
+    const there = new Set(friendNamesOf(match.id, host.id).map((name) => normName(name)));
+    const fresh = friends.filter((friend) => !there.has(normName(friend.name)));
+    const todo = fresh.filter((friend) => !firstDuplicate(matesOf(match.id), [{ name: friend.name, phone: '', guestAuto: friend.guestAuto === true }]));
+    const clash = fresh.filter((friend) => !todo.includes(friend)).map((friend) => friend.name);
+    if (clash.length) notes.push(`${label}: ${clash.join(', ')} ya figura${clash.length > 1 ? 'n' : ''} en ese partido`);
+    if (!todo.length) { if (!clash.length) notes.push(`${label}: ya estaban`); continue; }
+    const max = limitFor(match, actor().uid);
+    if (max != null && addedCount(matesOf(match.id), actor()) + todo.length > max) { notes.push(`${label}: ${limitMessage(max)}`); continue; }
+    const place = placeGroup({ mainCount: playersOf(match.id).length, capacity: capOf(match), count: todo.length, forceWait: host.waiting === true });
+    let offset = 0;
+    for (const friend of todo) {
+      await app.store.addPlayer(match, {
+        name: friend.name,
+        phone: '',
+        invitedBy: host.id,
+        invitedByName: host.name,
+        guestAuto: friend.guestAuto === true,
+        ...signup,
+      }, app.who, { waiting: offset >= place.main });
+      offset += 1;
+    }
+    notes.push(place.wait ? `${label}: también anotados · ${place.wait} en espera` : `${label}: también anotados`);
+  }
+  return notes;
 }
 
 function openPhoneForm(person) {
@@ -3600,6 +3667,7 @@ function openFriendForm(m, host) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return; }
   const next = resolveFriendNames([''], friendNamesOf(m.id, host.id))[0]?.name || 'Invitado 1';
+  const sameDay = sameDayHostMatches(m, host);
   openSheet(`
     <form id="friend-form" novalidate>
       <h3>Invitados de ${esc(host.name)}</h3>
@@ -3610,6 +3678,11 @@ function openFriendForm(m, host) {
         <div id="friend-rows"></div>
         <p class="hint" id="friend-hint"></p>
       </div>
+      ${sameDay.length ? `<fieldset class="access-box also-box" id="friend-also">
+        <legend>También en sus partidos del día</legend>
+        ${sameDay.map((row) => `<label class="checkline"><input type="checkbox" name="also" value="${esc(row.match.id)}"${row.blocked ? ' disabled' : ' checked'}><span>${esc(sameDayLine(row, m))}${row.blocked ? ` · ${esc(row.blocked)}` : ''}</span></label>`).join('')}
+        <p class="hint">Los mismos invitados quedan anotados ahí también, así les toca la promo del día.</p>
+      </fieldset>` : ''}
       <div class="field"><div class="err" id="friend-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Agregar</button></div>
     </form>`);
@@ -3619,7 +3692,11 @@ function openFriendForm(m, host) {
     e.preventDefault();
     const rows = friendRowValues();
     if (!rows.length) { $('#friend-err').textContent = 'Agregá al menos un invitado.'; return; }
-    const result = addSignedPlayer(m, host, host.waiting === true, false, rows);
+    const picked = new Set([...form.querySelectorAll('input[name=also]:checked')].map((input) => input.value));
+    const also = sameDay.filter((row) => !row.blocked && picked.has(row.match.id));
+    // Los nombres salen de este partido; en los otros van los mismos (mismo anfitrión + nombre = misma persona).
+    const resolved = resolveFriendNames(rows, friendNamesOf(m.id, host.id));
+    const result = addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also });
     if (result === ALREADY_IN_MATCH) $('#friend-err').textContent = result;
   };
 }
