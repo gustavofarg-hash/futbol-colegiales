@@ -2966,9 +2966,17 @@ const menuDebtColor = await page.$eval('#menu-debt', (el) => getComputedStyle(el
 check('La deuda del menú está en rojo', menuDebtColor === 'rgb(198, 40, 40)' || menuDebtColor === 'rgb(255, 107, 107)', menuDebtColor);
 await page.click('#pm-credit');
 await page.waitForSelector('#credit-form');
-await page.fill('#credit-form [name=amount]', '3000');
+await page.fill('#credit-form [name=amount]', '8000');
+await page.waitForSelector('#credit-preview li');
+const creditPreview = (await page.locator('#credit-preview').innerText()).replace(/\s+/g, ' ');
+check('Cargar crédito muestra que primero cubre la deuda y el resto queda de saldo', creditPreview.includes('$5.000') && creditPreview.includes('Queda como saldo a favor $3.000'), creditPreview);
 await page.click('#credit-form button[type=submit]');
-await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Crédito cargado'));
+await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Se aplicó'));
+const ajenaSettled = await page.evaluate(() => {
+  const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((player) => player.name === 'Deuda Ajena');
+  return { fromCredit: row?.fromCredit, creditTo: row?.creditTo, method: row?.method, paid: row?.paid };
+});
+check('El crédito cargado queda como pago de Gustavo', ajenaSettled.fromCredit === 5000 && ajenaSettled.creditTo === 'Gustavo' && ajenaSettled.method === 'credito' && ajenaSettled.paid === true, JSON.stringify(ajenaSettled));
 await page.click('.slot:has-text("Deuda Ajena") .more-btn');
 await page.waitForSelector('#menu-credit');
 const creditColor = await page.$eval('#menu-credit', (el) => getComputedStyle(el).color);
@@ -2979,7 +2987,7 @@ await page.waitForSelector('#pay-credit-field');
 const creditField = await page.locator('#pay-credit-field').innerText();
 check('Descontar del crédito no tiene desplegable de cobrador', creditField.includes('Descontar del crédito') && await page.locator('#pay-credit-field select').count() === 0 && (await page.locator('#pay-credit-hint').innerText()).includes('Gustavo'), creditField.replace(/\s+/g, ' '));
 check('El pago no muestra los botones de promo ni la ayuda larga', await page.locator('#pay-prices').count() === 0 && !(await page.locator('#pay-form').innerText()).includes('Lo cobrado es efectivo') && !(await page.locator('#pay-form').innerText()).includes('1 partido'));
-await page.fill('#pay-form [name=fromCredit]', '2000');
+await page.fill('#pay-form [name=fromCredit]', '7000');
 await page.click('#pay-form button[type=submit]');
 await page.waitForSelector('.slot:has-text("Deuda Ajena") .pay-line');
 const ajenaPay = await page.locator('.slot:has-text("Deuda Ajena") .pay-line').innerText();
@@ -3098,8 +3106,11 @@ check('En la espera el saldo está en verde y la deuda en rojo', (waitGreen === 
 await page.click('#pm-credit');
 await page.waitForSelector('#credit-form');
 await page.fill('#credit-form [name=amount]', '1500');
+await page.waitForSelector('#credit-preview');
+const realPreview = (await page.locator('#credit-preview').innerText()).replace(/\s+/g, ' ');
+check('Con un uid de Firebase el crédito muestra la deuda antes de guardar', realPreview.includes('$1.500') && realPreview.includes('No queda saldo a favor') && await page.locator('#pm-pay').count() === 0, realPreview);
 await page.click('#credit-form button[type=submit]');
-await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Crédito cargado'));
+await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Se aplicó'));
 
 await page.evaluate((id) => { location.hash = `#/partido/${id}/equipos`; }, real.futuro);
 await page.waitForSelector('#team-bib .team-name');
@@ -3124,7 +3135,7 @@ await page.click('#list-history .match-card[data-note="Uid historial"]');
 await page.waitForSelector('#wait-list .more-btn');
 await page.click('#wait-list .more-btn');
 await page.waitForSelector('#pm-credit');
-check('Historial: el menú de la espera tiene el mismo bloque', (await page.inputValue('#menu-nick')) === 'Ficha' && (await page.locator('#pm-credit').innerText()) === 'Cargar crédito' && (await page.locator('#menu-credit').innerText()).includes('$1.500'));
+check('Historial: el menú de la espera tiene el mismo bloque', (await page.inputValue('#menu-nick')) === 'Ficha' && (await page.locator('#pm-credit').innerText()) === 'Cargar crédito' && (await page.locator('#menu-credit').innerText()).includes('Saldo a favor con Gus: $0'));
 await page.click('#sheet [data-close]');
 await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
 
@@ -3132,7 +3143,7 @@ await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id
 await page.waitForSelector('#profile-credit-btn');
 const profileGreen = await page.$eval('#profile-credit', (el) => getComputedStyle(el).color);
 const profileRed = await page.$eval('#debt-total', (el) => getComputedStyle(el).color);
-check('Jugadores: el perfil tiene apodo, saldo en verde, deuda en rojo y Cargar crédito', (await page.inputValue('#profile-nick')) === 'Ficha' && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar crédito' && (await page.locator('#profile-credit').innerText()).includes('Saldo a favor con Gus: $1.500') && (await page.locator('#debt-total').innerText()).includes('Debe en total') && (profileGreen === 'rgb(15, 122, 61)' || profileGreen === 'rgb(34, 197, 94)') && (profileRed === 'rgb(198, 40, 40)' || profileRed === 'rgb(255, 107, 107)'), `${profileGreen} ${profileRed}`);
+check('Jugadores: el perfil tiene apodo, saldo en verde, deuda en rojo y Cargar crédito', (await page.inputValue('#profile-nick')) === 'Ficha' && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar crédito' && (await page.locator('#profile-credit').innerText()).includes('Saldo a favor con Gus: $0') && (await page.locator('#debt-total').innerText()).includes('Debe en total') && (profileGreen === 'rgb(15, 122, 61)' || profileGreen === 'rgb(34, 197, 94)') && (profileRed === 'rgb(198, 40, 40)' || profileRed === 'rgb(255, 107, 107)'), `${profileGreen} ${profileRed}`);
 await page.fill('#profile-nick', 'Fifi');
 await page.locator('#profile-nick').press('Enter');
 await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Apodo'));
@@ -3150,6 +3161,54 @@ await page.evaluate((prev) => {
   app.role = prev.role;
   app.store.setActor(user);
 }, real.prev);
+
+const viejas = await page.evaluate(async () => {
+  const app = window.__app;
+  const who = app.who;
+  const oldUid = 'firebaseUidQueNoAnota_x9';
+  const access = { solo: false, viewers: ['*'], adders: [oldUid], viewerNames: [], adderNames: [], limits: [], createdByUid: oldUid };
+  const store = app.store;
+  const older = await store.addMatch({ date: '2026-09-01', time: '21:00', note: 'Credito viejo', price: 5000, perTeam: 7, access }, who);
+  const newer = await store.addMatch({ date: '2026-09-15', time: '19:00', note: 'Credito nuevo', price: 5000, perTeam: 7, access }, who);
+  const alien = await store.addMatch({ date: '2026-09-20', time: '18:00', note: 'Deuda de Martin', price: 5000, perTeam: 7, access }, who);
+  const fields = { name: 'Paga Con Credito', phone: '5491100008888' };
+  const by = (id) => app.matches.find((item) => item.id === id);
+  await store.addPlayer(by(older), fields, who);
+  await store.addPlayer(by(newer), fields, who);
+  await store.addPlayer(by(alien), { ...fields, signedUpWith: 'martin', signedUpWithName: 'Martín' }, who);
+  const { canAdd } = await import('./js/access.js');
+  return { older, blocked: canAdd(by(older), app.session.user.uid) === false };
+});
+check('Cargar pago sigue oculto si el uid no está en adders', viejas.blocked === true);
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, viejas.older);
+await page.waitForSelector('#match-readonly');
+check('En ese partido no aparece Cargar pago', await page.locator('#slots .pay-btn, #slots .more-btn').count() === 0);
+await page.click('#slots .who');
+await page.waitForSelector('#profile-credit-btn');
+await page.click('#profile-credit-btn');
+await page.waitForSelector('#credit-form [name=amount]');
+await page.fill('#credit-form [name=amount]', '12000');
+await page.waitForSelector('#credit-preview li');
+const twoDebts = (await page.locator('#credit-preview').innerText()).replace(/\s+/g, ' ');
+check('La vista previa paga primero el partido más viejo y deja el sobrante', twoDebts.includes('01/09/2026') && twoDebts.includes('15/09/2026') && twoDebts.includes('$5.000') && twoDebts.includes('Queda como saldo a favor $2.000') && !twoDebts.includes('20/09'), twoDebts);
+await page.click('#credit-form button[type=submit]');
+await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Se aplicó') && (document.querySelector('#toast')?.textContent || '').includes('saldo a favor'));
+const appliedCredit = await page.evaluate(() => {
+  const rows = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((player) => player.name === 'Paga Con Credito');
+  return rows.map((player) => ({ date: player.matchDate, fromCredit: player.fromCredit || 0, creditTo: player.creditTo || '', method: player.method || '' })).sort((a, b) => a.date.localeCompare(b.date));
+});
+check('El crédito pagó las deudas con Gustavo y no la de Martín', appliedCredit[0]?.fromCredit === 5000 && appliedCredit[0]?.creditTo === 'Gustavo' && appliedCredit[0]?.method === 'credito' && appliedCredit[1]?.fromCredit === 5000 && appliedCredit[1]?.creditTo === 'Gustavo' && appliedCredit[2]?.fromCredit === 0, JSON.stringify(appliedCredit));
+const saldoPaga = await page.evaluate(() => {
+  const credits = JSON.parse(localStorage.getItem('f7c-demo-db')).credits || {};
+  return Object.values(credits).find((row) => row.name === 'Paga Con Credito');
+});
+check('Lo que sobra del crédito queda como saldo con Gustavo', saldoPaga?.amount === 2000 && saldoPaga?.organizerName === 'Gustavo', JSON.stringify(saldoPaga));
+await page.waitForSelector('#debt-total');
+const debtLeft = (await page.locator('#debt').innerText()).replace(/\s+/g, ' ');
+check('Debe en total ya no cuenta lo pagado con el crédito', !debtLeft.includes('01/09/2026') && !debtLeft.includes('15/09/2026') && debtLeft.includes('20/09/2026') && debtLeft.includes('Saldo a favor con Gustavo: $2.000'), debtLeft);
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, viejas.older);
+await page.waitForSelector('.slot .pay-line');
+check('El partido viejo figura pagado con crédito', (await page.locator('.slot .pay-line').innerText()).includes('Crédito') && (await page.locator('.slot .pay-line').innerText()).includes('Gustavo'));
 
 const fresh = await ctx.newPage();
 fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
