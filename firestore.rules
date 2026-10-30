@@ -157,7 +157,7 @@ service cloud.firestore {
     function moneyKeys() {
       return ['paid', 'amount', 'method', 'paidUpdatedBy', 'paidUpdatedAt', 'receivedBy',
           'cash', 'transfer', 'pendingTransfer', 'transferReceivedAt', 'transferReceivedBy',
-          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay'];
+          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo'];
     }
     function waitKeys() {
       return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt'];
@@ -177,7 +177,7 @@ service cloud.firestore {
     function validMoney(d) {
       return (!('paid' in d) || d.paid is bool)
           && (!('amount' in d) || d.amount == null || (d.amount is number && d.amount >= 0 && d.amount <= 1000000000))
-          && (!('method' in d) || d.method == null || d.method == 'efectivo' || d.method == 'transferencia')
+          && (!('method' in d) || d.method == null || d.method == 'efectivo' || d.method == 'transferencia' || d.method == 'credito')
           && (!('paidUpdatedBy' in d) || (d.paidUpdatedBy is string && d.paidUpdatedBy.size() <= 40))
           && (!('paidUpdatedAt' in d) || d.paidUpdatedAt is number)
           && (!('receivedBy' in d) || d.receivedBy == null || (d.receivedBy is string && d.receivedBy.size() > 0 && d.receivedBy.size() <= 40))
@@ -190,7 +190,9 @@ service cloud.firestore {
           && (!('transferTo' in d) || d.transferTo == null || (d.transferTo is string && d.transferTo.size() > 0 && d.transferTo.size() <= 40))
           && (!('pendingTo' in d) || d.pendingTo == null || (d.pendingTo is string && d.pendingTo.size() > 0 && d.pendingTo.size() <= 40))
           && (!('transferParts' in d) || d.transferParts == null || transferPartsOk(d.transferParts))
-          && (!('freePlay' in d) || d.freePlay is bool);
+          && (!('freePlay' in d) || d.freePlay is bool)
+          && (!('fromCredit' in d) || d.fromCredit == null || (d.fromCredit is number && d.fromCredit >= 0 && d.fromCredit <= 1000000000))
+          && (!('creditTo' in d) || d.creditTo == null || (d.creditTo is string && d.creditTo.size() > 0 && d.creditTo.size() <= 40));
     }
     function validPlayerState(d) {
       return validWait(d) && validConfirm(d) && validGoals(d) && validStamp(d);
@@ -739,6 +741,25 @@ service cloud.firestore {
           && request.resource.data.p == resource.data.p
           && request.resource.data.t == resource.data.t
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shortUrl', 'shortProvider', 'shortAt']);
+      allow delete: if isActiveStaff();
+    }
+
+    // Saldo a favor de un jugador con un organizador. Colección aparte: no
+    // entra en el update de players, así no suma al tope de 1000 expresiones.
+    function validCredit(d) {
+      return d.keys().hasOnly(['personKey', 'organizerUid', 'organizerName', 'amount', 'name', 'updatedAt', 'updatedBy'])
+          && d.personKey is string && d.personKey.size() > 0 && d.personKey.size() <= 300
+          && d.organizerUid is string && d.organizerUid.size() > 0 && d.organizerUid.size() <= 128
+          && d.organizerName is string && d.organizerName.size() > 0 && d.organizerName.size() <= 40
+          && d.amount is number && d.amount >= 0 && d.amount <= 1000000000
+          && d.name is string && d.name.size() <= 60
+          && d.updatedAt is number
+          && d.updatedBy is string && d.updatedBy.size() <= 40;
+    }
+    match /credits/{creditId} {
+      allow read: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validCredit(request.resource.data)
+          && creditId.size() > 0 && creditId.size() <= 700;
       allow delete: if isActiveStaff();
     }
 

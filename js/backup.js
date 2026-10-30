@@ -32,6 +32,7 @@ export const BACKUP_COLLECTIONS = Object.freeze([
   'rosterContacts',
   'links',
   'users',
+  'credits',
 ]);
 
 export const COLLECTION_LABELS = Object.freeze({
@@ -46,6 +47,7 @@ export const COLLECTION_LABELS = Object.freeze({
   rosterContacts: 'Teléfonos del plantel',
   links: 'Links',
   users: 'Cuentas',
+  credits: 'Saldos a favor',
 });
 
 const ID_MAX = 700;

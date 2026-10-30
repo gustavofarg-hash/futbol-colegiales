@@ -87,6 +87,7 @@ import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { toEpoch, todayISO } from './dates.js';
 import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
+import { creditDocId, nextCredit } from './credit.js';
 import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
@@ -492,6 +493,7 @@ function localCollections(db) {
     rosterContacts: db.contacts?.roster || {},
     links: db.links || {},
     users: {},
+    credits: db.credits || {},
   };
 }
 
@@ -517,12 +519,12 @@ class LocalStore {
   async ensureMatch() {}
   _load() {
     try {
-      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } };
-      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {};
+      const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {}, contacts: { players: {}, roster: {} } };
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {}; db.credits ||= {};
       ensureContacts(db);
       migratePhones(db);
       return db;
-    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, contacts: { players: {}, roster: {} } }; }
+    } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {}, contacts: { players: {}, roster: {} } }; }
   }
   _touchConfirmations(db) {
     db.confirmations ||= {};
@@ -650,12 +652,14 @@ class LocalStore {
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
     const venues = Object.entries(db.venues || {}).map(([id, venue]) => ({ id, ...venue }));
     const prices = db.settings?.prices || null;
+    const credits = Object.entries(db.credits || {}).map(([id, row]) => ({ id, ...row }));
     const windowed = historyWindow(matches, this._historyFilter);
     const history = windowed.matches;
     const { matches: _rows, ...historyMeta } = windowed;
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
       players, roster, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
+      credits, creditsError: null,
     }));
   }
   async init() {
@@ -819,6 +823,58 @@ class LocalStore {
     const rec = paymentRecord(input, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
     await this.updatePlayer(id, rec.patch);
+  }
+  async adjustCredit(input, who) {
+    const id = creditDocId(input?.personKey, input?.organizerUid);
+    if (!id) throw Object.assign(new Error('Falta el jugador o el organizador.'), { code: 'invalid-credit' });
+    const db = this._load();
+    db.credits ||= {};
+    const prev = Number(db.credits[id]?.amount) || 0;
+    const next = nextCredit(prev, input?.delta);
+    if (!next.ok) throw Object.assign(new Error(next.error), { code: 'invalid-credit' });
+    if (next.amount <= 0) delete db.credits[id];
+    else {
+      db.credits[id] = {
+        personKey: String(input.personKey).trim(),
+        organizerUid: String(input.organizerUid).trim(),
+        organizerName: String(input.organizerName || who || '').trim().replace(/\s+/g, ' ').slice(0, 40),
+        name: String(input.name || '').trim().slice(0, 60),
+        amount: next.amount,
+        updatedAt: Date.now(),
+        updatedBy: String(who || '').slice(0, 40),
+      };
+    }
+    this._save(db);
+    return next.amount;
+  }
+  async moveCredit(oldKey, newKey, name) {
+    const from = String(oldKey || '').trim();
+    const to = String(newKey || '').trim();
+    if (!from || !to || from === to) return;
+    const db = this._load();
+    db.credits ||= {};
+    const moving = Object.entries(db.credits).filter(([, row]) => row?.personKey === from);
+    for (const [id, row] of moving) {
+      const nextId = creditDocId(to, row.organizerUid);
+      if (!nextId) continue;
+      const prev = nextId === id ? 0 : (Number(db.credits[nextId]?.amount) || 0);
+      const next = nextCredit(prev, row.amount);
+      if (!next.ok) throw Object.assign(new Error(next.error), { code: 'invalid-credit' });
+      if (next.amount <= 0) delete db.credits[nextId];
+      else {
+        db.credits[nextId] = {
+          personKey: to,
+          organizerUid: row.organizerUid,
+          organizerName: row.organizerName || '',
+          name: String(name || row.name || '').trim().slice(0, 60),
+          amount: next.amount,
+          updatedAt: Date.now(),
+          updatedBy: row.updatedBy || '',
+        };
+      }
+      if (nextId !== id) delete db.credits[id];
+    }
+    this._save(db);
   }
   async markTransferReceived(id, who) {
     const player = this._load().players[id];
@@ -1063,6 +1119,7 @@ class LocalStore {
     db.settings = structuredClone(docs.settings);
     db.confirmations = structuredClone(docs.confirmations);
     db.links = structuredClone(docs.links);
+    db.credits = structuredClone(docs.credits || {});
     ensureContacts(db);
     db.contacts.players = structuredClone(docs.playerContacts);
     db.contacts.roster = structuredClone(docs.rosterContacts);
@@ -1074,7 +1131,7 @@ class LocalStore {
     requireAdmin(this.actor);
     const db = {
       matches: {}, players: {}, roster: {}, organizers: {}, venues: {},
-      confirmations: {}, settings: {}, links: {},
+      confirmations: {}, settings: {}, links: {}, credits: {},
       contacts: { players: {}, roster: {} },
     };
     localStorage.setItem(this.key, JSON.stringify(db));
@@ -1112,7 +1169,7 @@ export class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, playerContacts: {}, rosterContacts: {}, historyError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, playerContacts: {}, rosterContacts: {}, historyError: '' };
   }
   setHistoryFilter(filter) {
     this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
@@ -1506,6 +1563,17 @@ export class FirebaseStore {
     }, (e) => {
       this.state.venues = [];
       this.state.venuesError = isVenueDenied(e) ? VENUES_DENIED_READ : ('No se pudieron leer las sedes: ' + (e?.message || e?.code || e));
+      this._emit();
+    });
+    watch(collection(this.db, 'credits'), null, (snap) => {
+      this.state.credits = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this.state.creditsError = null;
+      this._emit();
+    }, (e) => {
+      this.state.credits = [];
+      this.state.creditsError = e?.code === 'permission-denied'
+        ? 'No se puede leer el saldo a favor. Hay que publicar las reglas de Firestore para credits.'
+        : ('No se pudo leer el saldo a favor: ' + (e?.message || e?.code || e));
       this._emit();
     });
     watch(doc(this.db, 'settings', 'prices'), null, (snap) => {
@@ -1959,6 +2027,76 @@ export class FirebaseStore {
     const rec = paymentRecord(input, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
     await this._writePayment(id, rec.patch);
+  }
+  async adjustCredit(input, who) {
+    const id = creditDocId(input?.personKey, input?.organizerUid);
+    if (!id) throw Object.assign(new Error('Falta el jugador o el organizador.'), { code: 'invalid-credit' });
+    const { doc, runTransaction } = this.fs;
+    const ref = doc(this.db, 'credits', id);
+    const personKeyValue = String(input.personKey).trim();
+    const organizerUid = String(input.organizerUid).trim();
+    const organizerName = String(input.organizerName || who || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    const name = String(input.name || '').trim().slice(0, 60);
+    let saved = 0;
+    await runTransaction(this.db, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() ? Number(snap.data()?.amount) || 0 : 0;
+      const next = nextCredit(prev, input?.delta);
+      if (!next.ok) throw Object.assign(new Error(next.error), { code: 'invalid-credit' });
+      saved = next.amount;
+      if (next.amount <= 0) {
+        if (snap.exists()) tx.delete(ref);
+        return;
+      }
+      tx.set(ref, {
+        personKey: personKeyValue,
+        organizerUid,
+        organizerName,
+        name,
+        amount: next.amount,
+        updatedAt: Date.now(),
+        updatedBy: String(who || '').slice(0, 40),
+      });
+    });
+    return saved;
+  }
+  async moveCredit(oldKey, newKey, name) {
+    const from = String(oldKey || '').trim();
+    const to = String(newKey || '').trim();
+    if (!from || !to || from === to) return;
+    const { collection, query, where, getDocs, doc, runTransaction } = this.fs;
+    const snap = await getDocs(query(collection(this.db, 'credits'), where('personKey', '==', from)));
+    for (const item of snap.docs) {
+      const data = item.data() || {};
+      const toId = creditDocId(to, data.organizerUid);
+      if (!toId) continue;
+      const fromRef = item.ref;
+      const toRef = doc(this.db, 'credits', toId);
+      await runTransaction(this.db, async (tx) => {
+        const current = await tx.get(fromRef);
+        if (!current.exists()) return;
+        const amount = Number(current.data()?.amount) || 0;
+        const sameDoc = fromRef.path === toRef.path;
+        const dest = sameDoc ? null : await tx.get(toRef);
+        const prev = dest?.exists() ? Number(dest.data()?.amount) || 0 : 0;
+        const next = nextCredit(sameDoc ? 0 : prev, amount);
+        if (!next.ok) throw Object.assign(new Error(next.error), { code: 'invalid-credit' });
+        if (next.amount <= 0) {
+          tx.delete(fromRef);
+          return;
+        }
+        tx.set(toRef, {
+          personKey: to,
+          organizerUid: String(data.organizerUid || ''),
+          organizerName: String(data.organizerName || '').slice(0, 40),
+          name: String(name || data.name || '').trim().slice(0, 60),
+          amount: next.amount,
+          updatedAt: Date.now(),
+          updatedBy: String(data.updatedBy || '').slice(0, 40),
+        });
+        if (!sameDoc) tx.delete(fromRef);
+      });
+    }
   }
   async markTransferReceived(id, who) {
     const player = this.state.players.find((item) => item.id === id);

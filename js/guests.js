@@ -1,7 +1,8 @@
 // Amigos de un jugador y la regla de no anotar dos veces al mismo en un partido.
 // Puro: no escribe en Firestore. El id del documento sigue siendo aleatorio
 // (los partidos viejos ya están así). La repetición se frena en el cliente.
-import { foldText, phoneIdentity } from './roster.js';
+import { sameDayTitulars } from './prices.js';
+import { foldText, guestHostKey, isNamedGuest, phoneIdentity } from './roster.js';
 
 export const ALREADY_IN_MATCH = 'Ya está anotado en este partido';
 export const GUEST_CANNOT_INVITE = 'Un invitado no puede agregar invitados.';
@@ -162,4 +163,23 @@ export function groupByInviter(players, universe) {
     out.push(...(friends.get(player.id) || []));
   }
   return out;
+}
+
+/**
+ * El mismo invitado (anfitrión + nombre) en los otros partidos del día con promo.
+ * No toca al invitado de otro anfitrión aunque se llame igual.
+ */
+export function sameDayPromoGuestRenames({ player, newName, players, matches }) {
+  if (!isNamedGuest(player)) return [];
+  const next = String(newName || '').trim().replace(/\s+/g, ' ');
+  if (!foldText(next) || foldText(next) === foldText(player?.name)) return [];
+  const rows = sameDayTitulars({ player, players, matches });
+  if (rows.length < 2) return [];
+  const hostKey = guestHostKey(player, players);
+  if (!hostKey) return [];
+  const oldName = foldText(player.name);
+  return rows.map((row) => row.player).filter((other) => other?.id !== player.id
+    && isNamedGuest(other)
+    && foldText(other.name) === oldName
+    && guestHostKey(other, players) === hostKey);
 }
