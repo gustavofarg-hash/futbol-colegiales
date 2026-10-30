@@ -24,7 +24,7 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
-import { canOfferCredit, creditBalance, creditLine, creditPanelRows } from './credit.js';
+import { canOfferCredit, creditAgainstDebts, creditBalance, creditLine, creditLoadSummary, creditPanelRows } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -3900,6 +3900,67 @@ function bindPlayerPanel(scope, player, person, ids, panel) {
   if (btn) btn.onclick = () => openCreditForm({ player, person, panel });
 }
 
+/** Deudas de esta persona con el organizador logueado, de la más vieja a la más nueva. */
+function creditDebtsFor(player, person) {
+  const me = staffActor();
+  const keys = new Set(creditKeysOf(player, person));
+  const rows = [];
+  for (const other of app.players) {
+    const key = personKey(other, app.players);
+    if (!key || !keys.has(key) || !owesOrganizer(other, me)) continue;
+    const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices() });
+    if (!(owed > 0)) continue;
+    const match = knownMatches().find((item) => item.id === other.matchId);
+    if (!match || match.cancelled === true) continue;
+    rows.push({
+      id: other.id,
+      player: other,
+      date: match.date || '',
+      time: match.time || '',
+      owed,
+      label: [numericDate(match.date), shortHour(match.time)].filter(Boolean).join(' '),
+    });
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || String(a.id).localeCompare(String(b.id)));
+  return rows;
+}
+
+/** El crédito se suma a lo ya cobrado. El cobrador del crédito es quien está logueado. */
+function creditPaymentInput(player, addCredit, creditTo) {
+  const prev = paymentParts(player);
+  const cash = prev.cash;
+  const transfer = prev.transfer;
+  const pending = prev.pending;
+  const credit = roundMoney(prev.credit + addCredit);
+  const keepParts = Array.isArray(player.transferParts) && player.transferParts.length > 1;
+  return {
+    paid: true,
+    split: true,
+    freePlay: false,
+    cash,
+    transfer,
+    pendingTransfer: pending,
+    fromCredit: credit,
+    cashTo: cash > 0 ? (player.cashTo || player.receivedBy || null) : null,
+    transferTo: transfer > 0 && !keepParts ? (player.transferTo || player.receivedBy || null) : null,
+    pendingTo: pending > 0 ? (player.pendingTo || player.paidUpdatedBy || null) : null,
+    creditTo: credit > 0 ? creditTo : null,
+    ...(keepParts ? { transferParts: player.transferParts } : {}),
+  };
+}
+
+function creditPreviewHtml(plan) {
+  if (!plan?.ok) return '';
+  if (!plan.rows.length) {
+    return `<p class="hint" id="credit-preview">No tiene deudas con vos. Queda como saldo a favor ${esc(formatARS(plan.leftover))}.</p>`;
+  }
+  const lines = plan.rows.map((row) => `<li><span>${esc(row.label)}</span><b>${esc(formatARS(row.credit))}</b></li>`).join('');
+  const left = plan.leftover > 0
+    ? `<p class="hint" id="credit-leftover">Queda como saldo a favor ${esc(formatARS(plan.leftover))}.</p>`
+    : '<p class="hint" id="credit-leftover">No queda saldo a favor.</p>';
+  return `<div id="credit-preview"><p class="hint">Primero las deudas más viejas con vos.</p><ul class="pay-split-preview">${lines}</ul>${left}</div>`;
+}
+
 function openCreditForm({ player, person, panel }) {
   const me = actor();
   const key = panel?.writeKey || creditWriteKey(creditKeysOf(player, person), me.uid);
@@ -3908,30 +3969,55 @@ function openCreditForm({ player, person, panel }) {
   const label = player ? shownName(player) : (cleanShortName(person?.shortName) || person?.name || '');
   const fullName = player?.name || person?.name || '';
   const current = panel?.shownAmount ?? creditBalance(app.credits, key, me.uid);
+  const who = me.name || 'vos';
   openSheet(`
     <form id="credit-form" novalidate>
       <h3>Cargar crédito</h3>
-      <p class="hint">${esc(label)} · con ${esc(me.name || 'vos')}</p>
+      <p class="hint">${esc(label)} · con ${esc(who)}</p>
       <p class="credit-total" id="credit-now">${esc(creditLine({ organizerName: me.name, amount: current }))}</p>
       <label class="field"><span>Monto</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" autofocus aria-label="Monto del crédito"></label>
-      <p class="hint">Se suma al saldo a favor que ya tiene con ${esc(me.name || 'vos')}. No es el pago de un partido.</p>
+      <div id="credit-plan"></div>
+      <p class="hint">Primero cancela las deudas más viejas con ${esc(who)}. Lo que sobra queda como saldo a favor.</p>
       <div class="field"><div class="err" id="credit-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
     </form>`);
   const form = $('#credit-form');
+  const paintPlan = () => {
+    const box = $('#credit-plan');
+    if (!box) return;
+    const money = readMoney(form.amount.value);
+    if (!money.ok || !(money.amount > 0)) { box.innerHTML = ''; return; }
+    const plan = creditAgainstDebts(money.amount, creditDebtsFor(player, person));
+    box.innerHTML = plan.ok ? creditPreviewHtml(plan) : '';
+  };
+  form.amount.addEventListener('input', paintPlan);
   form.onsubmit = (e) => {
     e.preventDefault();
     if (app.creditsError) { $('#credit-err').textContent = app.creditsError; return; }
     const money = readMoney(form.amount.value);
     if (!money.ok || !(money.amount > 0)) { $('#credit-err').textContent = money.ok ? 'Poné el monto.' : money.error; return; }
+    const plan = creditAgainstDebts(money.amount, creditDebtsFor(player, person));
+    if (!plan.ok) { $('#credit-err').textContent = plan.error; return; }
+    const creditTo = loggedInStaffName();
+    const entries = plan.rows.map((row) => ({
+      id: row.id,
+      input: creditPaymentInput(row.player, row.credit, creditTo),
+    }));
+    const summary = creditLoadSummary(plan);
     closeSheet();
-    run(app.store.adjustCredit({
-      personKey: key,
-      organizerUid: me.uid,
-      organizerName: me.name,
-      name: fullName,
-      delta: money.amount,
-    }, app.who), 'Crédito cargado');
+    const job = (async () => {
+      if (entries.length) await writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who));
+      if (plan.leftover > 0) {
+        await app.store.adjustCredit({
+          personKey: key,
+          organizerUid: me.uid,
+          organizerName: me.name,
+          name: fullName,
+          delta: plan.leftover,
+        }, app.who);
+      }
+    })();
+    run(job, summary);
   };
 }
 
