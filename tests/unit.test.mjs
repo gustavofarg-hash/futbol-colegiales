@@ -11,7 +11,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { creditBalance, creditBalances, creditDocId, creditLine, nextCredit } from '../js/credit.js';
+import { canOfferCredit, creditBalance, creditBalances, creditDocId, creditLine, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -1480,6 +1480,24 @@ test('el saldo a favor es del jugador con ese organizador', async () => {
   assert.equal(creditBalance(seen, 'n:otro', 'gustavo'), 300);
   assert.deepEqual(creditBalances(seen, 'p:ana').map((row) => row.organizerName), ['Gustavo', 'Martín']);
   assert.equal(creditLine({ organizerName: 'Gustavo', amount: 2000 }), 'Saldo a favor con Gustavo: $2.000');
+  const realMatch = { viewers: ['*'], adders: ['OLD_FIREBASE_UID'], createdByUid: 'OLD_FIREBASE_UID' };
+  const gus = { uid: 'k7xQ2mN9pL4sT8vW1aB3', name: 'Gus', role: 'admin' };
+  const martin = { uid: 'martin', name: 'Martín', role: 'organizer' };
+  assert.equal(canAdd(realMatch, gus.uid), false);
+  assert.equal(canAdd(realMatch, martin.uid), false);
+  assert.equal(canOfferCredit(gus), true);
+  assert.equal(canOfferCredit(martin), true);
+  assert.equal(canOfferCredit({ uid: '', name: '', role: '' }), false);
+  assert.equal(creditPanelRows([], 'p:ana', gus)[0].amount, 0);
+  assert.equal(creditPanelRows([], 'p:ana', gus)[0].organizerName, 'Gus');
+  const summed = creditPanelRows([
+    { personKey: 'p:ana', organizerUid: 'martin', organizerName: 'Martín', amount: 700 },
+    { personKey: 'r:ana', organizerUid: 'martin', organizerName: 'Martín', amount: 300 },
+    { personKey: 'p:ana', organizerUid: gus.uid, organizerName: 'Gus', amount: 2000 },
+  ], ['p:ana', 'r:ana'], gus);
+  assert.equal(summed[0].organizerUid, gus.uid);
+  assert.equal(summed[0].amount, 2000);
+  assert.equal(summed.find((row) => row.organizerUid === 'martin').amount, 1000);
   await store.adjustCredit({ personKey: 'p:ana', organizerUid: 'gustavo', organizerName: 'Gustavo', name: 'Ana', delta: -2000 }, 'Gustavo');
   const left = JSON.parse(mem.get(store.key)).credits;
   assert.equal(Object.values(left).some((row) => row.personKey === 'p:ana' && row.organizerUid === 'gustavo'), false);

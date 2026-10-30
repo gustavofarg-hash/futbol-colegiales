@@ -24,7 +24,7 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
-import { creditBalance, creditBalances, creditLine } from './credit.js';
+import { canOfferCredit, creditBalance, creditLine, creditPanelRows } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -576,7 +576,7 @@ function oweBox(m) {
   const rows = debt.rows.map((row) => {
     const player = app.players.find((item) => item.id === row.id);
     const name = player ? shownName(player) : row.name;
-    return `<li><span>${esc(name)}</span><b>${esc(formatARS(row.owed))}</b></li>`;
+    return `<li><button type="button" class="owe-player" data-owe-player="${esc(row.id)}"><span>${esc(name)}</span><b>${esc(formatARS(row.owed))}</b></button></li>`;
   }).join('');
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
@@ -2428,14 +2428,15 @@ function saveProfile(id, patch) {
   });
 }
 
-function debtBlock(person) {
-  const debt = playerDebt({ person, players: app.players, matches: app.matches, prices: livePrices() });
-  if (!(debt.total > 0)) return '';
-  return `
+function profileMoney(person) {
+  const panel = playerPanelPieces(null, person, PROFILE_PANEL, '');
+  return { panel, html: `
     <section class="profile-block" id="debt">
-      <p class="debt-total" id="debt-total">${esc(debt.text)}</p>
-      <ul class="ledger-list" id="debt-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>
-    </section>`;
+      ${panel.balance}
+      ${panel.err}
+      ${panel.button}
+      ${panel.rows}
+    </section>` };
 }
 
 function ledgerSection(person) {
@@ -2554,10 +2555,11 @@ function renderProfile(id) {
   const notes = sortedNotes(person.notes);
   const own = canEditRoster(person, actor());
   const lockNote = own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`;
+  const money = profileMoney(person);
   const painted = replaceView(`
     <article id="profile">
       <h2 class="section">${esc(person.name)}</h2>
-      ${cleanShortName(person.shortName) ? `<p class="hint" id="profile-nick">En los partidos se ve como ${esc(cleanShortName(person.shortName))}</p>` : ''}
+      ${money.panel.nickHtml}
       ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" value="${esc(person.name)}"></label>` : ''}
       <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</p>
       ${lockNote}
@@ -2590,7 +2592,7 @@ function renderProfile(id) {
         <p class="hint" id="stat-pay">${esc(record.paidText)}</p>
         ${record.confirmText ? `<p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>` : ''}
       </section>
-      ${debtBlock(person)}
+      ${money.html}
       ${ledgerSection(person)}
       <section class="profile-block">
         <h2>Notas de partido</h2>
@@ -2611,6 +2613,7 @@ function renderProfile(id) {
     if (!person.phone && !phoneHidden(person)) openPhoneForm(person);
   }
   if (!painted) return;
+  bindPlayerPanel($('#profile'), null, person, PROFILE_PANEL, money.panel);
   const addPhone = $('#profile-add-phone');
   if (addPhone && own) addPhone.onclick = () => openPhoneForm(person);
   const profileName = $('#profile-name');
@@ -3789,26 +3792,126 @@ function debtSubject(player) {
   return { id: '', name: player.name || '' };
 }
 
-function menuBalance(player, debt) {
-  const me = actor().uid;
-  const rows = creditBalances(app.credits, personKey(player, app.players))
-    .sort((a, b) => Number(b.organizerUid === me) - Number(a.organizerUid === me) || a.organizerName.localeCompare(b.organizerName, 'es'));
-  const credit = rows.map((row, i) => `<p class="credit-total"${i === 0 ? ' id="menu-credit"' : ''}>${esc(creditLine(row))}</p>`).join('');
-  const debtHtml = debt?.total > 0 ? `<p class="debt-total" id="menu-debt">${esc(debt.text)}</p>` : '';
-  if (!credit && !debtHtml) return '';
-  return `<div class="menu-balance" id="menu-balance">${credit}${debtHtml}</div>`;
+const NICK_HINT = 'Es lo que se ve en la lista del partido y en Equipos.';
+const MENU_PANEL = { nick: 'menu-nick', credit: 'menu-credit', debt: 'menu-debt', balance: 'menu-balance', button: 'pm-credit', err: 'menu-credit-err' };
+const PROFILE_PANEL = { nick: 'profile-nick', credit: 'profile-credit', debt: 'debt-total', balance: 'profile-balance', button: 'profile-credit-btn', err: 'profile-credit-err' };
+
+function staffActor() {
+  return { ...actor(), role: app.role || app.session?.user?.role || '' };
 }
 
-function openCreditForm(m, p) {
-  if (!p || !canAdd(m, actor().uid)) return;
-  const key = personKey(p, app.players);
-  if (!key) { toast('No se puede cargar crédito sin identificar al jugador.'); return; }
+/** Claves de saldo: la del jugador del partido, o las de la ficha y sus partidos. */
+function creditKeysOf(player, person) {
+  const keys = [];
+  const add = (key) => {
+    const clean = String(key || '').trim();
+    if (clean && !keys.includes(clean)) keys.push(clean);
+  };
+  if (player) add(personKey(player, app.players));
+  if (person) {
+    for (const row of app.players) {
+      if (playerMatchesPerson(row, person)) add(personKey(row, app.players));
+    }
+    const phone = phoneIdentity(person);
+    if (phone) add(`p:${phone}`);
+    else if (person.id) add(`r:${person.id}`);
+    else {
+      const name = foldText(person.name);
+      if (name) add(`n:${name}`);
+    }
+  }
+  return keys;
+}
+
+function creditWriteKey(keys, uid) {
+  for (const key of keys) {
+    if (creditBalance(app.credits, key, uid) > 0) return key;
+  }
+  return keys[0] || '';
+}
+
+function panelNickState(player, person) {
+  if (player) return { value: nickOf(player, app.roster), editable: canWritePlayer(player, staffActor()) };
+  let value = cleanShortName(person?.shortName);
+  if (!value && person) {
+    const linked = app.players.find((item) => playerMatchesPerson(item, person));
+    if (linked) value = nickOf(linked, app.roster);
+  }
+  return { value, editable: !!(person && canEditRosterNick(person, staffActor())) };
+}
+
+/**
+ * Apodo, saldo a favor, deuda y Cargar crédito. El mismo bloque en el menú
+ * del partido y en el perfil, para que no se desfasen.
+ */
+function playerPanelPieces(player, person, ids, debtKey) {
+  const keys = creditKeysOf(player, person);
+  const me = staffActor();
+  let credits = [];
+  if (!app.creditsError) {
+    try { credits = creditPanelRows(app.credits, keys, me); }
+    catch (error) { console.error(error); }
+  }
+  let debt = { total: 0, rows: [], text: '' };
+  try {
+    debt = playerDebt({
+      person: player ? debtSubject(player) : person,
+      players: app.players,
+      matches: knownMatches(),
+      prices: livePrices(),
+      key: debtKey || '',
+    });
+  } catch (error) { console.error(error); }
+  const nick = panelNickState(player, person);
+  const nickHtml = `<label class="field nick-field"><span>Nombre corto (o apodo)</span><input id="${ids.nick}" maxlength="40" autocomplete="off" placeholder="Ej: Vini" value="${esc(nick.value)}"${nick.editable ? '' : ' disabled'}><div class="small muted">${NICK_HINT}</div></label>`;
+  const creditHtml = credits.map((row, i) => `<p class="credit-total"${i === 0 ? ` id="${ids.credit}"` : ''}>${esc(creditLine(row))}</p>`).join('');
+  const debtHtml = debt.total > 0 ? `<p class="debt-total" id="${ids.debt}">${esc(debt.text)}</p>` : '';
+  const balance = `<div class="player-balance" id="${ids.balance}">${creditHtml}${debtHtml}</div>`;
+  const err = app.creditsError ? `<p class="hint" id="${ids.err}">${esc(app.creditsError)}</p>` : '';
+  const button = canOfferCredit(me) ? `<button type="button" class="btn block" id="${ids.button}">Cargar crédito</button>` : '';
+  const rows = debt.rows.length
+    ? `<ul class="ledger-list" id="debt-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>`
+    : '';
+  const mine = credits.find((row) => row.organizerUid === me.uid);
+  return { keys, writeKey: creditWriteKey(keys, me.uid), nick, nickHtml, balance, err, button, rows, shownAmount: mine ? mine.amount : 0 };
+}
+
+function bindPlayerPanel(scope, player, person, ids, panel) {
+  const input = scope?.querySelector(`#${ids.nick}`);
+  if (input && !input.disabled) {
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); input.blur(); }
+    });
+    input.addEventListener('change', () => {
+      const nick = cleanShortName(input.value);
+      const before = player ? nickOf(player, app.roster) : cleanShortName(person?.shortName);
+      if (nick === before) return;
+      const job = player
+        ? saveNick(player, nick, player.rosterId || '')
+        : app.store.setRosterNick(person.id, nick);
+      Promise.resolve(job).then(() => toast('Apodo actualizado')).catch((error) => {
+        input.value = before;
+        if (isRosterDenied(error)) showError(ROSTER_DENIED_WRITE);
+        else toast('No se pudo guardar: ' + (error?.code || error?.message || error));
+      });
+    });
+  }
+  const btn = scope?.querySelector(`#${ids.button}`);
+  if (btn) btn.onclick = () => openCreditForm({ player, person, panel });
+}
+
+function openCreditForm({ player, person, panel }) {
   const me = actor();
-  const current = creditBalance(app.credits, key, me.uid);
+  const key = panel?.writeKey || creditWriteKey(creditKeysOf(player, person), me.uid);
+  if (!key) { toast('No se puede cargar crédito sin identificar al jugador.'); return; }
+  if (!me.uid) { toast('No se pudo identificar la sesión.'); return; }
+  const label = player ? shownName(player) : (cleanShortName(person?.shortName) || person?.name || '');
+  const fullName = player?.name || person?.name || '';
+  const current = panel?.shownAmount ?? creditBalance(app.credits, key, me.uid);
   openSheet(`
     <form id="credit-form" novalidate>
       <h3>Cargar crédito</h3>
-      <p class="hint">${esc(shownName(p))} · con ${esc(me.name || 'vos')}</p>
+      <p class="hint">${esc(label)} · con ${esc(me.name || 'vos')}</p>
       <p class="credit-total" id="credit-now">${esc(creditLine({ organizerName: me.name, amount: current }))}</p>
       <label class="field"><span>Monto</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" autofocus aria-label="Monto del crédito"></label>
       <p class="hint">Se suma al saldo a favor que ya tiene con ${esc(me.name || 'vos')}. No es el pago de un partido.</p>
@@ -3826,7 +3929,7 @@ function openCreditForm(m, p) {
       personKey: key,
       organizerUid: me.uid,
       organizerName: me.name,
-      name: p.name,
+      name: fullName,
       delta: money.amount,
     }, app.who), 'Crédito cargado');
   };
@@ -3834,41 +3937,35 @@ function openCreditForm(m, p) {
 
 function openPlayerMenu(m, p) {
   if (!p) return;
+  const match = m || knownMatches().find((item) => item.id === p.matchId) || null;
   const own = canEditPlayer(p, actor());
-  const debt = playerDebt({
-    person: debtSubject(p),
-    players: app.players,
-    matches: knownMatches(),
-    prices: livePrices(),
-    key: personKey(p, app.players),
-  });
+  const panel = playerPanelPieces(p, null, MENU_PANEL, personKey(p, app.players));
   const payLine = payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>';
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
+  const canAnnotate = !!(match && canAdd(match, actor().uid));
   openSheet(`
     <h3>${esc(shownName(p))}</h3>
-    ${menuBalance(p, debt)}
+    <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.button}</div>
     <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
-    ${canAdd(m, actor().uid) ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
+    ${canAnnotate ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
-      ${canAdd(m, actor().uid) ? `<button class="btn" id="pm-pay">${paidAlready ? 'Editar pago' : 'Cargar pago'}</button>` : ''}
-      ${canAdd(m, actor().uid) ? '<button class="btn" id="pm-credit">Cargar crédito</button>' : ''}
-      ${p.phone ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(m, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
+      ${canAnnotate ? `<button class="btn" id="pm-pay">${paidAlready ? 'Editar pago' : 'Cargar pago'}</button>` : ''}
+      ${p.phone && match ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(match, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
-      <button class="btn" id="pm-edit"${own || canAdd(m, actor().uid) || canWritePlayer(p, actorWithRole()) ? '' : ' disabled'}>${ICON.edit}Editar</button>
+      <button class="btn" id="pm-edit"${own || canAnnotate || canWritePlayer(p, actorWithRole()) ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
       ${isGuest(p) ? '' : '<button class="btn" id="pm-friend">Agregar invitado</button>'}
-      ${!isWaiting(p) && canAdd(m, actor().uid) ? '<button class="btn" id="pm-wait">Bajar a lista de espera</button>' : ''}
+      ${!isWaiting(p) && canAnnotate ? '<button class="btn" id="pm-wait">Bajar a lista de espera</button>' : ''}
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
-  $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, m.id); };
+  bindPlayerPanel(sheet, p, null, MENU_PANEL, panel);
+  $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, match?.id); };
   const payBtn = $('#pm-pay');
-  if (payBtn) payBtn.onclick = () => openPaymentForm(m, p);
-  const creditBtn = $('#pm-credit');
-  if (creditBtn) creditBtn.onclick = () => openCreditForm(m, p);
+  if (payBtn) payBtn.onclick = () => openPaymentForm(match, p);
   const signupBox = $('#signed-up-with');
   if (signupBox) signupBox.onchange = () => {
     const signup = readSignup(signupBox);
@@ -3876,15 +3973,15 @@ function openPlayerMenu(m, p) {
     run(app.store.updatePlayer(p.id, signup), 'Se anotó con actualizado');
   };
   const loadPhone = $('#pm-phone');
-  if (loadPhone && own) loadPhone.onclick = () => { closeSheet(); app.wantPhoneForm = true; openPlayerProfile(p, m.id); };
+  if (loadPhone && own) loadPhone.onclick = () => { closeSheet(); app.wantPhoneForm = true; openPlayerProfile(p, match?.id); };
   const spot = $('#pm-confirm-spot');
   if (spot) spot.onclick = () => { closeSheet(); clearReservedSpot(p); };
-  if (!$('#pm-edit').disabled) $('#pm-edit').onclick = () => openPlayerForm(m, p);
+  if (match && !$('#pm-edit').disabled) $('#pm-edit').onclick = () => openPlayerForm(match, p);
   const addGuest = $('#pm-friend');
-  if (addGuest) addGuest.onclick = () => openFriendForm(m, p);
+  if (addGuest && match) addGuest.onclick = () => openFriendForm(match, p);
   const demote = $('#pm-wait');
-  if (demote) demote.onclick = () => demoteToWait(m, p);
-  $('#pm-del').onclick = () => removeMatchPlayer(m, p);
+  if (demote && match) demote.onclick = () => demoteToWait(match, p);
+  if (match) $('#pm-del').onclick = () => removeMatchPlayer(match, p);
 }
 
 function askYesNo(title) {
@@ -4099,6 +4196,16 @@ async function boot() {
   };
   window.addEventListener('resize', placeBars);
   document.addEventListener('click', (e) => {
+    const owePlayer = e.target.closest('[data-owe-player]');
+    if (owePlayer) {
+      e.preventDefault();
+      e.stopPropagation();
+      const player = app.players.find((item) => item.id === owePlayer.dataset.owePlayer);
+      if (!player) return;
+      const match = knownMatches().find((item) => item.id === player.matchId) || null;
+      openPlayerMenu(match, player);
+      return;
+    }
     const btn = e.target.closest('[data-owe-toggle]');
     if (!btn) return;
     e.preventDefault();

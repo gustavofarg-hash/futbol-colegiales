@@ -53,3 +53,44 @@ export function creditLine(row) {
   const amount = formatARS(row?.amount || 0);
   return who ? `Saldo a favor con ${who}: ${amount}` : `Saldo a favor: ${amount}`;
 }
+
+/**
+ * Cargar crédito no es anotar en el partido. canAdd mira adders y
+ * createdByUid: en Firebase el uid de Auth a veces no está en esa lista
+ * (la cuenta se recreó, o el partido lo anota solo otro) y el botón no
+ * aparecía ni para el admin. Lo ve cualquier organizador o admin.
+ */
+export function canOfferCredit(actor) {
+  const role = String(actor?.role || '');
+  if (role === 'admin' || role === 'organizer') return true;
+  return !!String(actor?.uid || '').trim();
+}
+
+/**
+ * Saldos a favor para la ficha y el menú, por organizador.
+ * personKeys puede ser uno (el jugador del partido) o varios (la ficha).
+ * El organizador logueado aparece aunque el monto sea cero.
+ */
+export function creditPanelRows(credits, personKeys, organizer) {
+  const keys = (Array.isArray(personKeys) ? personKeys : [personKeys])
+    .map((key) => String(key || '').trim())
+    .filter(Boolean);
+  const byOrg = new Map();
+  for (const key of keys) {
+    for (const row of creditBalances(credits, key)) {
+      const prev = byOrg.get(row.organizerUid);
+      if (!prev) byOrg.set(row.organizerUid, { ...row });
+      else prev.amount = roundARS(prev.amount + row.amount);
+    }
+  }
+  const uid = String(organizer?.uid || '').trim();
+  const name = String(organizer?.name || '').trim();
+  const rows = [...byOrg.values()];
+  if (uid && !rows.some((row) => row.organizerUid === uid)) {
+    rows.push({ organizerUid: uid, organizerName: name, amount: 0 });
+  }
+  rows.sort((a, b) => Number(b.organizerUid === uid) - Number(a.organizerUid === uid)
+    || a.organizerName.localeCompare(b.organizerName, 'es')
+    || a.organizerUid.localeCompare(b.organizerUid));
+  return rows;
+}

@@ -124,7 +124,12 @@ h2.section:first-child { margin-top: 4px; }
 .owe-toggle .chev { margin-left: auto; width: 16px; height: 16px; flex: none; transition: transform .15s ease; }
 .owe-box.open .chev { transform: rotate(180deg); }
 .owe-list { list-style: none; margin: 0; padding: 0 12px 8px; display: grid; gap: 2px; }
-.owe-list li { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.owe-list li { font-weight: 700; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.owe-list .owe-player {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  width: 100%; min-height: 32px; padding: 2px 0; border: 0; background: transparent;
+  color: inherit; font: inherit; font-weight: 700; font-size: inherit; text-align: left;
+}
 .owe-list b { font-weight: 800; }
 @media (prefers-color-scheme: dark) {
   .owe-box { background: rgba(255, 107, 107, .16); }
@@ -540,8 +545,18 @@ button.team-name {
 .stat-summary { font-weight: 800; margin: 0 0 6px; }
 .debt-total { color: var(--danger); font-weight: 800; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
 .credit-total { color: var(--green); font-weight: 800; margin: 0 0 4px; font-variant-numeric: tabular-nums; }
-.menu-balance { margin: 0 0 8px; }
-.menu-balance .debt-total { margin: 0; }
+.player-panel { margin: 0 0 8px; }
+.player-panel .nick-field,
+.profile-block .nick-field,
+#profile > .nick-field { margin-bottom: 8px; }
+.nick-field > span { font-size: 0.8125rem; margin-bottom: 2px; }
+.nick-field input { min-height: 40px; padding-top: 6px; padding-bottom: 6px; }
+.nick-field .small { margin-top: 2px; line-height: 1.25; }
+.player-balance { display: flex; flex-wrap: wrap; gap: 2px 14px; align-items: baseline; margin: 0 0 8px; }
+.player-balance .credit-total,
+.player-balance .debt-total { margin: 0; }
+.player-panel > .btn { margin-top: 0; }
+#debt > .btn { margin-bottom: 8px; }
 .stat-dates { margin: 0; padding-left: 18px; color: var(--muted); }
 .pnote { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; background: var(--card); }
 .pnote .when { font-size: 0.8125rem; font-weight: 700; color: var(--muted); }
