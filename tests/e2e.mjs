@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v62');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v63');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -2375,6 +2375,31 @@ check('La lista del partido muestra el apodo', await page.locator('#slots .name:
     return { text: el.textContent, broken, clipped: el.scrollWidth > el.clientWidth + 1 };
   });
   check('Un nombre largo sin apodo se ve entero y sin partir palabras', long.text === 'Maximiliano Fernández Etcheverry Larralde' && !long.broken.length && !long.clipped, JSON.stringify(long));
+  // La lista de espera tampoco corta nombres ni etiquetas con «…».
+  await page.evaluate(async (id) => {
+    const app = window.__app; const match = app.matches.find((item) => item.id === id);
+    const host = await app.store.addPlayer(match, { name: 'Bartolomé Ezequiel Santisteban Goñi', phone: '' }, app.who, { waiting: true });
+    await app.store.addPlayer(match, { name: 'Invitado 1', invitedBy: host, invitedByName: 'Bartolomé Ezequiel Santisteban Goñi', guestAuto: true }, app.who, { waiting: true });
+  }, apodo.id);
+  await page.waitForSelector('#wait-list .name:text-is("Bartolomé Ezequiel Santisteban Goñi")');
+  const waitCut = await page.$$eval('#wait-list li.slot', (rows) => rows.flatMap((row) => {
+    const out = [];
+    for (const el of row.querySelectorAll('.name, .tag')) {
+      if (el.scrollWidth > el.clientWidth + 1 || getComputedStyle(el).textOverflow === 'ellipsis') out.push(`cortado: ${el.textContent.trim()}`);
+    }
+    const name = row.querySelector('.name');
+    const text = name.firstChild;
+    let at = 0;
+    for (const word of name.textContent.split(' ')) {
+      const range = document.createRange();
+      range.setStart(text, at);
+      range.setEnd(text, at + word.length);
+      if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`partida: ${word}`);
+      at += word.length + 1;
+    }
+    return out;
+  }));
+  check('La lista de espera muestra nombres y etiquetas enteros, sin partir palabras', waitCut.length === 0, waitCut.join(' | '));
   // Jugador sin ficha en Jugadores: igual se le puede poner apodo desde Editar.
   await page.locator('#slots li.slot', { hasText: 'Maximiliano' }).locator('[data-menu]').click();
   await page.click('#pm-edit');
