@@ -1,6 +1,6 @@
 // Saldo a favor. Es de un jugador con un organizador, no de un partido.
 // Puro: el store guarda el documento y la pantalla lo muestra.
-import { MAX_AMOUNT, formatARS, roundARS } from './payments.js';
+import { MAX_AMOUNT, formatARS, roundARS, settlementSummary, settleOldestDebts } from './payments.js';
 
 /** Id estable. personKey puede traer ":" y "|"; la barra no entra en un id. */
 export function creditDocId(personKey, organizerUid) {
@@ -93,4 +93,29 @@ export function creditPanelRows(credits, personKeys, organizer) {
     || a.organizerName.localeCompare(b.organizerName, 'es')
     || a.organizerUid.localeCompare(b.organizerUid));
   return rows;
+}
+
+/**
+ * Un crédito nuevo cancela primero las deudas, de la más vieja a la más nueva.
+ * debts ya vienen en ese orden y son solo las del organizador que carga.
+ * Lo que sobra queda como saldo a favor.
+ */
+export function creditAgainstDebts(amount, debts) {
+  const money = roundARS(Number(amount) || 0);
+  if (!(money > 0)) return { ok: false, error: 'Poné el monto.' };
+  const plan = settleOldestDebts({ credit: money, debts: debts || [] });
+  const rows = (plan.rows || []).filter((row) => row.credit > 0);
+  const applied = roundARS(rows.reduce((sum, row) => sum + row.credit, 0));
+  return { ok: true, rows, applied, leftover: plan.left };
+}
+
+/** "Se aplicó $5.000 a 01/10 21hs. Queda como saldo a favor $3.000." */
+export function creditLoadSummary(plan) {
+  if (!plan?.ok) return '';
+  const summary = settlementSummary(plan.rows);
+  const left = roundARS(plan.leftover || 0);
+  if (summary && left > 0) return `${summary}. Queda como saldo a favor ${formatARS(left)}.`;
+  if (summary) return `${summary}.`;
+  if (left > 0) return `Quedó como saldo a favor ${formatARS(left)}.`;
+  return 'Crédito cargado.';
 }

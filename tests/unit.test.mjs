@@ -11,7 +11,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { canOfferCredit, creditBalance, creditBalances, creditDocId, creditLine, creditPanelRows, nextCredit } from '../js/credit.js';
+import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -1515,6 +1515,32 @@ test('el saldo a favor es del jugador con ese organizador', async () => {
   assert.notEqual(personKey(guest, players), personKey(otherGuest, players));
 });
 
+test('cargar crédito cancela primero la deuda más vieja y el sobrante queda de saldo', () => {
+  const debts = [
+    { id: 'a', date: '2026-10-01', owed: 5000, label: '01/10/2026 21hs' },
+    { id: 'b', date: '2026-10-08', owed: 5000, label: '08/10/2026 20hs' },
+  ];
+  const partial = creditAgainstDebts(8000, debts);
+  assert.equal(partial.ok, true);
+  assert.deepEqual(partial.rows.map((row) => row.credit), [5000, 3000]);
+  assert.equal(partial.leftover, 0);
+  assert.equal(creditLoadSummary(partial), 'Se aplicó $5.000 a 01/10/2026 21hs y $3.000 a 08/10/2026 20hs.');
+  const extra = creditAgainstDebts(12000, debts);
+  assert.deepEqual(extra.rows.map((row) => row.credit), [5000, 5000]);
+  assert.equal(extra.leftover, 2000);
+  assert.match(creditLoadSummary(extra), /Queda como saldo a favor \$2\.000\./);
+  const none = creditAgainstDebts(4000, []);
+  assert.equal(none.rows.length, 0);
+  assert.equal(none.leftover, 4000);
+  assert.equal(creditLoadSummary(none), 'Quedó como saldo a favor $4.000.');
+  assert.equal(creditAgainstDebts(0, debts).ok, false);
+  // Una deuda de otro organizador no entra en la lista: el llamador la filtra.
+  const onlyMine = creditAgainstDebts(5000, [debts[1]]);
+  assert.equal(onlyMine.rows.length, 1);
+  assert.equal(onlyMine.rows[0].id, 'b');
+  assert.equal(onlyMine.leftover, 0);
+});
+
 test('descontar del crédito paga al organizador logueado y baja la deuda', () => {
   const rec = paymentRecord({
     paid: true, split: true, cash: 0, transfer: 0, pendingTransfer: 0, fromCredit: 2000, creditTo: 'Gustavo',
@@ -2430,7 +2456,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v65');
+  assert.equal(version, 'f7c-v66');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
