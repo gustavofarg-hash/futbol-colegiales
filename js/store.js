@@ -1946,9 +1946,10 @@ export class FirebaseStore {
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
     await this._writePayment(id, rec.patch);
   }
-  // Solo los campos del pago. updatePlayer además migra el teléfono y reescribe
-  // la confirmación: en un pago partido (él y sus invitados) eso suma get() de
-  // las reglas y Firestore niega el request. Cada jugador se escribe solo.
+  // Solo los campos del pago (y updatedAt): así entra por la regla corta de
+  // pagos en firestore.rules. La regla general de players, con un invitado,
+  // pasaba el tope de 1000 expresiones por request y Firestore lo negaba,
+  // también al admin. Cada jugador se escribe solo.
   async _writePayment(id, patch) {
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'players', id), { ...patch, updatedAt: Date.now() });
