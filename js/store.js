@@ -847,6 +847,35 @@ class LocalStore {
     this._save(db);
     return next.amount;
   }
+  async moveCredit(oldKey, newKey, name) {
+    const from = String(oldKey || '').trim();
+    const to = String(newKey || '').trim();
+    if (!from || !to || from === to) return;
+    const db = this._load();
+    db.credits ||= {};
+    const moving = Object.entries(db.credits).filter(([, row]) => row?.personKey === from);
+    for (const [id, row] of moving) {
+      const nextId = creditDocId(to, row.organizerUid);
+      if (!nextId) continue;
+      const prev = nextId === id ? 0 : (Number(db.credits[nextId]?.amount) || 0);
+      const next = nextCredit(prev, row.amount);
+      if (!next.ok) throw Object.assign(new Error(next.error), { code: 'invalid-credit' });
+      if (next.amount <= 0) delete db.credits[nextId];
+      else {
+        db.credits[nextId] = {
+          personKey: to,
+          organizerUid: row.organizerUid,
+          organizerName: row.organizerName || '',
+          name: String(name || row.name || '').trim().slice(0, 60),
+          amount: next.amount,
+          updatedAt: Date.now(),
+          updatedBy: row.updatedBy || '',
+        };
+      }
+      if (nextId !== id) delete db.credits[id];
+    }
+    this._save(db);
+  }
   async markTransferReceived(id, who) {
     const player = this._load().players[id];
     if (!player) throw new Error('Jugador inexistente');
@@ -2030,6 +2059,44 @@ export class FirebaseStore {
       });
     });
     return saved;
+  }
+  async moveCredit(oldKey, newKey, name) {
+    const from = String(oldKey || '').trim();
+    const to = String(newKey || '').trim();
+    if (!from || !to || from === to) return;
+    const { collection, query, where, getDocs, doc, runTransaction } = this.fs;
+    const snap = await getDocs(query(collection(this.db, 'credits'), where('personKey', '==', from)));
+    for (const item of snap.docs) {
+      const data = item.data() || {};
+      const toId = creditDocId(to, data.organizerUid);
+      if (!toId) continue;
+      const fromRef = item.ref;
+      const toRef = doc(this.db, 'credits', toId);
+      await runTransaction(this.db, async (tx) => {
+        const current = await tx.get(fromRef);
+        if (!current.exists()) return;
+        const amount = Number(current.data()?.amount) || 0;
+        const sameDoc = fromRef.path === toRef.path;
+        const dest = sameDoc ? null : await tx.get(toRef);
+        const prev = dest?.exists() ? Number(dest.data()?.amount) || 0 : 0;
+        const next = nextCredit(sameDoc ? 0 : prev, amount);
+        if (!next.ok) throw Object.assign(new Error(next.error), { code: 'invalid-credit' });
+        if (next.amount <= 0) {
+          tx.delete(fromRef);
+          return;
+        }
+        tx.set(toRef, {
+          personKey: to,
+          organizerUid: String(data.organizerUid || ''),
+          organizerName: String(data.organizerName || '').slice(0, 40),
+          name: String(name || data.name || '').trim().slice(0, 60),
+          amount: next.amount,
+          updatedAt: Date.now(),
+          updatedBy: String(data.updatedBy || '').slice(0, 40),
+        });
+        if (!sameDoc) tx.delete(fromRef);
+      });
+    }
   }
   async markTransferReceived(id, who) {
     const player = this.state.players.find((item) => item.id === id);

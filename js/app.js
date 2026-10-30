@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, writePaymentsInOrder } from './payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -19,7 +19,7 @@ import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
-import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
+import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
@@ -162,19 +162,42 @@ function savePayments(entries, okMsg) {
   return run(writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who)), okMsg);
 }
 
-/** delta suma al saldo (negativo lo gasta). Si el pago falla, el saldo vuelve. */
+/** Cada delta suma al saldo (negativo lo gasta). Si el pago falla, el saldo vuelve. */
 function savePaymentsSpendingCredit(entries, okMsg, creditMove) {
+  const moves = (Array.isArray(creditMove) ? creditMove : [creditMove]).filter((move) => move && roundMoney(move.delta));
   const job = (async () => {
-    const delta = roundMoney(creditMove?.delta || 0);
-    if (delta) await app.store.adjustCredit({ ...creditMove, delta }, app.who);
+    const done = [];
     try {
+      for (const move of moves) {
+        await app.store.adjustCredit(move, app.who);
+        done.push(move);
+      }
       await writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who));
     } catch (error) {
-      if (delta) await app.store.adjustCredit({ ...creditMove, delta: roundMoney(-delta) }, app.who);
+      for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
       throw error;
     }
   })();
   return run(job, okMsg);
+}
+
+function organizerUidByName(name) {
+  const me = actor();
+  if (sameOrganizer(name, me.name) && me.uid) return me.uid;
+  const user = staffUsers(app.users).find((item) => sameOrganizer(item.name, name));
+  return user?.uid || '';
+}
+
+function mergeCreditMoves(moves) {
+  const by = new Map();
+  for (const move of moves || []) {
+    const delta = roundMoney(move?.delta || 0);
+    if (!move?.organizerUid || !delta) continue;
+    const prev = by.get(move.organizerUid);
+    if (prev) prev.delta = roundMoney(prev.delta + delta);
+    else by.set(move.organizerUid, { ...move, delta });
+  }
+  return [...by.values()];
 }
 
 function creditMoveFor(player, delta) {
@@ -3255,6 +3278,17 @@ function openPlayerForm(m, p, opts = {}) {
           return;
         }
       }
+      const staysNamedGuest = editingFriend && !phoneForCheck && !candidate.rosterId && !savingNewRoster;
+      const promoRenames = staysNamedGuest
+        ? sameDayPromoGuestRenames({ player: p, newName: name, players: app.players, matches: knownMatches() })
+        : [];
+      for (const other of promoRenames) {
+        const mates = app.players.filter((item) => item.matchId === other.matchId);
+        if (alreadyInMatch(mates, { ...candidate, invitedBy: other.invitedBy }, { exceptId: other.id, roster: false })) {
+          $('#pf-err').textContent = `${name} ya está en otro partido de ese día.`;
+          return;
+        }
+      }
       closeSheet();
       run((async () => {
         const id = saveRoster
@@ -3276,9 +3310,24 @@ function openPlayerForm(m, p, opts = {}) {
           patch.guestAuto = stillAuto;
         }
         Object.assign(patch, signup);
+        const oldKey = staysNamedGuest ? personKey(p, app.players) : '';
         await app.store.updatePlayer(p.id, patch);
+        for (const other of promoRenames) {
+          await app.store.updatePlayer(other.id, {
+            name,
+            invitedBy: other.invitedBy,
+            ...(other.invitedByName ? { invitedByName: other.invitedByName } : {}),
+            guestAuto: stillAuto,
+          });
+        }
+        if (oldKey) {
+          const renamedIds = new Set([p.id, ...promoRenames.map((row) => row.id)]);
+          const preview = app.players.map((item) => (renamedIds.has(item.id) ? { ...item, name } : item));
+          const newKey = personKey({ ...p, name }, preview);
+          if (newKey && newKey !== oldKey) await app.store.moveCredit(oldKey, newKey, name);
+        }
         if (nickChanged) await saveNick(p, nick, id || '');
-      })(), editingFriend ? 'Invitado actualizado' : 'Jugador actualizado');
+      })(), promoRenames.length ? 'Nombre actualizado en los partidos del día' : (editingFriend ? 'Invitado actualizado' : 'Jugador actualizado'));
       return;
     }
     const result = addSignedPlayer(m, { name, phone, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
@@ -3490,6 +3539,10 @@ function openPaymentForm(m, p) {
     return {
       rows,
       left: roundMoney(cashSplit.left + transferSplit.left + pendingSplit.left + creditSplit.left),
+      cashLeft: cashSplit.left,
+      transferLeft: transferSplit.left,
+      pendingLeft: pendingSplit.left,
+      creditLeft: creditSplit.left,
     };
   };
   const paintGuestSplit = () => {
@@ -3509,9 +3562,18 @@ function openPaymentForm(m, p) {
       const money = bits.length ? bits.join(' · ') : 'sin pago';
       return `<li><span>${esc(shownName(row.person))}</span><b>${esc(money)}</b></li>`;
     }).join('');
-    const extra = plan.left > 0 ? `<p class="hint">Sobra ${esc(formatARS(plan.left))}: no entra porque ya cubre lo que deben.</p>` : '';
+    const notes = splitLeftoverCredit({
+      playerName: shownName(p),
+      cashLeft: plan.cashLeft,
+      cashTo: form.cashTo.value,
+      transferLeft: plan.transferLeft,
+      transferTo: form.transferTo.value,
+    });
+    const extra = notes.map((item, i) => `<p class="hint"${i === 0 ? ' id="pay-leftover"' : ''}>${esc(item.text)}</p>`).join('');
+    const pendingNote = plan.pendingLeft > 0 ? `<p class="hint">Sobra ${esc(formatARS(plan.pendingLeft))} de transfiere después: no queda como saldo porque todavía no se cobró.</p>` : '';
+    const unusedCredit = plan.creditLeft > 0 ? `<p class="hint">Sobra ${esc(formatARS(plan.creditLeft))} de crédito: no se descuenta.</p>` : '';
     preview.hidden = false;
-    preview.innerHTML = `<ul class="pay-split-preview">${lines}</ul>${extra}`;
+    preview.innerHTML = `<ul class="pay-split-preview">${lines}</ul>${extra}${pendingNote}${unusedCredit}`;
   };
   if (splitBox) {
     splitBox.onchange = () => {
@@ -3656,7 +3718,39 @@ function openPaymentForm(m, p) {
       const rows = (plan?.rows || []).filter((row) => row.cash + row.transfer + row.pending + row.credit > 0);
       if (!rows.length) { $('#pay-err').textContent = 'Con ese monto no le toca a nadie.'; return; }
       const entries = rows.map((row) => ({ id: row.person.id, input: payInput(row) }));
-      finishPay(entries, guestPayees(), 'Pago dividido');
+      const notes = splitLeftoverCredit({
+        playerName: shownName(p),
+        cashLeft: plan.cashLeft,
+        cashTo: form.cashTo.value,
+        transferLeft: plan.transferLeft,
+        transferTo: form.transferTo.value,
+      });
+      const grants = [];
+      for (const item of notes) {
+        const organizerUid = organizerUidByName(item.name);
+        if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+        grants.push({
+          personKey: personKey(p, app.players),
+          organizerUid,
+          organizerName: item.name,
+          name: p.name,
+          delta: item.amount,
+        });
+      }
+      const moves = mergeCreditMoves([creditMoveFor(p, creditDelta(guestPayees(), entries)), ...grants]);
+      const mine = moves.find((move) => move.organizerUid === actor().uid);
+      if (mine && mine.delta < 0 && roundMoney(-mine.delta) > creditBalance(app.credits, personKey(p, app.players), actor().uid)) {
+        $('#pay-err').textContent = 'No alcanza el saldo a favor.';
+        return;
+      }
+      if (moves.some((move) => !move.personKey)) {
+        $('#pay-err').textContent = 'No se puede guardar el saldo sin identificar al jugador.';
+        return;
+      }
+      const msg = ['Pago dividido', ...notes.map((item) => item.text)].filter(Boolean).join(' ');
+      closeSheet();
+      if (moves.length) savePaymentsSpendingCredit(entries, msg, moves);
+      else savePayments(entries, msg);
       return;
     }
     const freshPromo = promoOf(p);

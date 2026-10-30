@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
-import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
+import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
@@ -138,10 +138,63 @@ test('un pago partido se escribe de a un jugador y el error nombra el documento'
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
   assert.equal(app.includes('Promise.all(jobs)'), false);
-  assert.match(app, /finishPay\(entries, guestPayees\(\), 'Pago dividido'\)/);
+  assert.match(app, /Pago dividido/);
   assert.match(app, /writePaymentsInOrder\(entries, \(entry\) => app\.store\.setPayment/);
   assert.match(store, /async _writePayment\(id, patch\)/);
   assert.equal(paymentFailureText(Object.assign(new Error('Poné un monto.'), { code: 'invalid-payment' })), 'Poné un monto.');
+});
+
+test('renombrar un invitado de la promo no toca al invitado de otro anfitrión', async () => {
+  const phone = (hex) => hex.repeat(32);
+  const vinicio = { id: 'v1', name: 'Vinicio', phoneKey: phone('ab'), hasPhone: true, matchId: 'a' };
+  const vinicio2 = { id: 'v2', name: 'Vinicio', phoneKey: phone('ab'), hasPhone: true, matchId: 'b' };
+  const ernesto = { id: 'e1', name: 'Ernesto', phoneKey: phone('cd'), hasPhone: true, matchId: 'a' };
+  const ernesto2 = { id: 'e2', name: 'Ernesto', phoneKey: phone('cd'), hasPhone: true, matchId: 'b' };
+  const guestA = { id: 'g1', name: 'Invitado 1', invitedBy: 'v1', matchId: 'a', guestAuto: true };
+  const guestB = { id: 'g2', name: 'Invitado 1', invitedBy: 'v2', matchId: 'b', guestAuto: true };
+  const otherA = { id: 'o1', name: 'Invitado 1', invitedBy: 'e1', matchId: 'a', guestAuto: true };
+  const otherB = { id: 'o2', name: 'Invitado 1', invitedBy: 'e2', matchId: 'b', guestAuto: true };
+  const alone = { id: 'g3', name: 'Invitado 1', invitedBy: 'v1', matchId: 'c', guestAuto: true };
+  const players = [vinicio, vinicio2, ernesto, ernesto2, guestA, guestB, otherA, otherB, alone];
+  const matches = [
+    { id: 'a', date: '2026-10-30', time: '19:00' },
+    { id: 'b', date: '2026-10-30', time: '21:00' },
+    { id: 'c', date: '2026-10-31', time: '19:00' },
+  ];
+  const targets = sameDayPromoGuestRenames({ player: guestA, newName: 'Pedro', players, matches });
+  assert.deepEqual(targets.map((row) => row.id), ['g2']);
+  assert.equal(sameDayPromoGuestRenames({ player: otherA, newName: 'Pedro', players, matches }).some((row) => row.id === 'g2'), false);
+  assert.deepEqual(sameDayPromoGuestRenames({ player: otherA, newName: 'Luis', players, matches }).map((row) => row.id), ['o2']);
+  assert.equal(sameDayPromoGuestRenames({ player: alone, newName: 'Pedro', players, matches }).length, 0);
+  assert.equal(promoForPlayer({ player: { ...guestA, name: 'Pedro' }, players: players.map((row) => (row.id === 'g1' || row.id === 'g2' ? { ...row, name: 'Pedro' } : row)), matches, prices: null }).label, 'Promo 2 partidos por $9.000');
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  const oldKey = personKey(guestA, players);
+  const newKey = personKey({ ...guestA, name: 'Pedro' }, players.map((row) => (row.id === 'g1' || row.id === 'g2' ? { ...row, name: 'Pedro' } : row)));
+  await store.adjustCredit({ personKey: oldKey, organizerUid: 'gustavo', organizerName: 'Gustavo', name: 'Invitado 1', delta: 800 }, 'Gustavo');
+  await store.moveCredit(oldKey, newKey, 'Pedro');
+  const credits = JSON.parse(mem.get(store.key)).credits;
+  assert.equal(Object.values(credits).some((row) => row.personKey === oldKey), false);
+  assert.equal(Object.values(credits).find((row) => row.personKey === newKey).amount, 800);
+});
+
+test('lo que sobra de un pago dividido queda como saldo de quien paga', () => {
+  const one = splitLeftoverCredit({ playerName: 'Juan', cashLeft: 10000, cashTo: 'Gustavo', transferLeft: 0, transferTo: 'Martín' });
+  assert.equal(one.length, 1);
+  assert.equal(one[0].amount, 10000);
+  assert.equal(one[0].name, 'Gustavo');
+  assert.equal(one[0].text, 'Sobra $10.000: queda como saldo a favor de Juan con Gustavo.');
+  const both = splitLeftoverCredit({ playerName: 'Juan', cashLeft: 3000, cashTo: 'Gustavo', transferLeft: 2000, transferTo: 'Martín' });
+  assert.deepEqual(both.map((item) => item.name), ['Gustavo', 'Martín']);
+  const same = splitLeftoverCredit({ playerName: 'Ana', cashLeft: 1000, cashTo: 'Gustavo', transferLeft: 500, transferTo: 'gustavo' });
+  assert.equal(same.length, 1);
+  assert.equal(same[0].amount, 1500);
+  assert.equal(splitLeftoverCredit({ playerName: 'Ana', cashLeft: 0, transferLeft: 0 }).length, 0);
 });
 
 test('un pago de deudas viejas cancela primero el partido más viejo', () => {
