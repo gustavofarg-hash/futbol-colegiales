@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, fullNameBehind, nickOf, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
+import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -32,6 +32,7 @@ import {
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
 import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
+import { DRIVE_FOLDER, DRIVE_SCOPE, driveClientId, ensureBackupFolder, forgetDriveToken, multipartBody, requestDriveToken, shareableBackupName, uploadBackupToDrive } from '../js/drive.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
@@ -1484,6 +1485,62 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).total, 10000);
 });
 
+test('promo de invitados: es quien invita + el nombre del invitado', () => {
+  const matches = [
+    { id: 'A', date: '2026-10-22', time: '19:00', startsAt: 1 },
+    { id: 'B', date: '2026-10-22', time: '21:00', startsAt: 2 },
+  ];
+  const base = { phone: '', waiting: false };
+  // Invitado 1 de Vinicio en A y de Ernesto en B: dos personas distintas, sin promo.
+  const distintos = [
+    { ...base, id: 'vA', matchId: 'A', name: 'Vinicio' },
+    { ...base, id: 'eB', matchId: 'B', name: 'Ernesto' },
+    { ...base, id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', guestAuto: true },
+    { ...base, id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'eB', guestAuto: true },
+  ];
+  assert.equal(promoForPlayer({ player: distintos[2], players: distintos, matches, prices: null }), null);
+  assert.equal(promoForPlayer({ player: distintos[3], players: distintos, matches, prices: null }), null);
+  assert.notEqual(playerPromoKey(distintos[2], distintos), playerPromoKey(distintos[3], distintos));
+  assert.equal(playerPromoKey(distintos[2], distintos), 'g:n:vinicio|invitado 1');
+  // El mismo Vinicio lleva a su Invitado 1 a los dos partidos del día: promo 2.
+  const mismo = [
+    { ...base, id: 'vA', matchId: 'A', name: 'Vinicio' },
+    { ...base, id: 'vB', matchId: 'B', name: 'Vinicio' },
+    { ...base, id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', guestAuto: true },
+    { ...base, id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'vB', guestAuto: true },
+  ];
+  const promo = promoForPlayer({ player: mismo[2], players: mismo, matches, prices: { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 } });
+  assert.equal(promo?.label, 'Promo 2 partidos por $9.000');
+  assert.equal(promo.share, 4500);
+  assert.deepEqual(promo.rows.map((row) => row.player.id), ['gA', 'gB']);
+  // Con el teléfono del anfitrión también: lo identifica igual en los dos partidos.
+  const conTel = mismo.map((p) => (p.invitedBy ? p : { ...p, phone: '5491122223333', name: p.id === 'vA' ? 'Vini' : 'Vinicio R.' }));
+  assert.equal(promoForPlayer({ player: conTel[3], players: conTel, matches, prices: null })?.count, 2);
+  // Si no está el anfitrión en la lista, el invitado queda solo en su partido.
+  assert.equal(personKey({ name: 'Invitado 1', invitedBy: 'borrado' }, []), 'g:id:borrado|invitado 1');
+  // Un invitado con teléfono o ficha es esa persona, lo invite quien lo invite.
+  assert.equal(personKey({ name: 'Juan', invitedBy: 'vA', rosterId: 'r9' }, mismo), 'r:r9');
+  // amountOwed usa la parte de la promo solo para el invitado del mismo anfitrión.
+  assert.equal(amountOwed(mismo[2], { players: mismo, matches, prices: null }), 4500);
+  assert.equal(amountOwed(distintos[2], { players: distintos, matches, prices: null }), 5000);
+});
+
+test('invitados con el mismo nombre no se mezclan en resúmenes ni en Jugadores', () => {
+  const players = [
+    { id: 'vA', matchId: 'A', name: 'Vinicio', phone: '' },
+    { id: 'eB', matchId: 'B', name: 'Ernesto', phone: '' },
+    { id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', phone: '', paid: true, cash: 5000, cashTo: 'Gus', pendingTransfer: 1000, pendingTo: 'Gus' },
+    { id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'eB', phone: '', paid: true, cash: 5000, cashTo: 'Gus', pendingTransfer: 1000, pendingTo: 'Gus' },
+  ];
+  const summary = paymentsSummary({ players, roster: [] });
+  assert.equal(summary.filter((row) => row.name === 'Invitado 1').length, 2);
+  const pending = pendingTransfers({ players, roster: [] });
+  assert.equal(pending.rows.filter((row) => row.name === 'Invitado 1').length, 2);
+  // Una ficha de Jugadores que se llama igual no se lleva a los invitados.
+  assert.equal(playerMatchesPerson(players[2], { id: 'r1', name: 'Invitado 1', phone: '' }), false);
+  assert.equal(playerMatchesPerson(players[0], { id: 'r2', name: 'Vinicio', phone: '' }), true);
+});
+
 test('permisos del partido: todos, solo yo, límite y sin excepción de admin', () => {
   const staff = [
     { uid: 'gustavo', name: 'Gustavo', role: 'admin' },
@@ -2194,7 +2251,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v62');
+  assert.equal(version, 'f7c-v63');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
@@ -2360,4 +2417,59 @@ test('resetear la base la deja vacía y un organizador no puede', async () => {
   const again = await store.exportDatabase();
   assert.equal(again.collections.matches && Object.keys(again.collections.matches).length, 0);
   assert.equal(Object.keys(again.collections.players).length, 0);
+});
+
+test('Drive: ID de config, nombre para compartir y cuerpo multipart', () => {
+  assert.equal(driveClientId({}), '');
+  assert.equal(driveClientId({ GOOGLE_DRIVE_CLIENT_ID: 'TU_ID' }), '');
+  assert.equal(driveClientId({ GOOGLE_DRIVE_CLIENT_ID: ' 123-abc.apps.googleusercontent.com ' }), '123-abc.apps.googleusercontent.com');
+  // Chrome no comparte .json: va como .txt con el mismo contenido.
+  assert.equal(shareableBackupName('Mis_partidos_2026-10-30_09-00.json'), 'Mis_partidos_2026-10-30_09-00.txt');
+  const body = multipartBody({ name: 'a.json', parents: ['f'] }, '{"x":1}', 'B');
+  assert.equal(body, '--B\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{"name":"a.json","parents":["f"]}\r\n--B\r\nContent-Type: application/json\r\n\r\n{"x":1}\r\n--B--\r\n');
+});
+
+test('Drive: permiso drive.file y subida a la carpeta de backups', async () => {
+  forgetDriveToken();
+  const asked = [];
+  globalThis.google = { accounts: { oauth2: { initTokenClient(cfg) {
+    return { requestAccessToken() { asked.push(cfg); cfg.callback({ access_token: 'tok', expires_in: 3600 }); } };
+  } } } };
+  try {
+    assert.equal(await requestDriveToken('id.apps.googleusercontent.com', { now: () => 0 }), 'tok');
+    assert.equal(await requestDriveToken('id.apps.googleusercontent.com', { now: () => 1000 }), 'tok');
+    assert.equal(asked.length, 1, 'el permiso vigente no se vuelve a pedir');
+    assert.equal(asked[0].scope, DRIVE_SCOPE);
+    assert.equal(DRIVE_SCOPE, 'https://www.googleapis.com/auth/drive.file');
+
+    forgetDriveToken();
+    globalThis.google.accounts.oauth2.initTokenClient = (cfg) => ({ requestAccessToken() { cfg.error_callback({ type: 'popup_closed' }); } });
+    await assert.rejects(requestDriveToken('id.apps.googleusercontent.com'), (e) => e.code === 'drive/cancelled');
+  } finally {
+    delete globalThis.google;
+    forgetDriveToken();
+  }
+
+  const calls = [];
+  const reply = (status, json) => ({ ok: status < 300, status, json: async () => json });
+  const fakeFetch = (existing) => async (url, init = {}) => {
+    calls.push({ url, method: init.method || 'GET', headers: init.headers || {}, body: init.body || '' });
+    if (!init.method) return reply(200, { files: existing ? [{ id: 'old-folder' }] : [] });
+    if (/upload/.test(url)) return reply(200, { id: 'file-9' });
+    return reply(200, { id: 'new-folder' });
+  };
+  assert.equal(await ensureBackupFolder('tok', fakeFetch(true)), 'old-folder');
+  assert.equal(calls.length, 1);
+  assert.match(decodeURIComponent(calls[0].url), new RegExp(`name='${DRIVE_FOLDER}'`));
+  calls.length = 0;
+  const saved = await uploadBackupToDrive({ token: 'tok', filename: 'b.json', text: '{"format":"mis-partidos-backup"}', fetchImpl: fakeFetch(false), boundary: 'Z' });
+  assert.equal(saved.id, 'file-9');
+  assert.deepEqual(calls.map((c) => c.method), ['GET', 'POST', 'POST']);
+  assert.equal(JSON.parse(calls[1].body).mimeType, 'application/vnd.google-apps.folder');
+  assert.equal(calls[2].headers['Content-Type'], 'multipart/related; boundary=Z');
+  assert.equal(calls[2].headers.Authorization, 'Bearer tok');
+  assert.ok(calls[2].body.includes('"parents":["new-folder"]') && calls[2].body.includes('{"format":"mis-partidos-backup"}'));
+
+  const denied = async () => ({ ok: false, status: 403, json: async () => ({ error: { message: 'Drive API has not been used in project' } }) });
+  await assert.rejects(ensureBackupFolder('tok', denied), (e) => e.code === 'drive/403' && /Drive API/.test(e.message));
 });

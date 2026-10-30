@@ -2,7 +2,7 @@
 // settings/prices y, si todavía no existe, usa estos defaults.
 import { toEpoch } from './dates.js';
 import { formatARS, roundARS } from './payments.js';
-import { foldText, phoneIdentity } from './roster.js';
+import { personKey } from './roster.js';
 
 export const DEFAULT_PRICES = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
 export const MAX_PRICE = 1_000_000_000;
@@ -55,14 +55,13 @@ export function priceRecord(input) {
   return { ok: true, patch: { matchPrice: matchPrice.amount, promo2Price: promo2Price.amount, promo3Price: promo3Price.amount } };
 }
 
-/** Misma persona: teléfono (hash), si no el id del plantel, si no el nombre. */
-export function playerPromoKey(player) {
-  const phone = phoneIdentity(player);
-  if (phone) return `p:${phone}`;
-  const rosterId = String(player?.rosterId || '').trim();
-  if (rosterId) return `r:${rosterId}`;
-  const name = foldText(player?.name);
-  return name ? `n:${name}` : '';
+/**
+ * Misma persona: teléfono (hash), si no el id del plantel, si no el nombre.
+ * Un invitado sin teléfono ni ficha es «quien lo invita + su nombre»
+ * (personKey): la promo solo junta al Invitado 1 del mismo anfitrión.
+ */
+export function playerPromoKey(player, players = []) {
+  return personKey(player, players);
 }
 
 function whenOf(match) {
@@ -77,7 +76,7 @@ function whenOf(match) {
  * Ordenados por hora. Vacío si no hay con quién agrupar.
  */
 export function sameDayTitulars({ player, players, matches }) {
-  const key = playerPromoKey(player);
+  const key = playerPromoKey(player, players);
   if (!key || player?.waiting === true) return [];
   const own = (matches || []).find((match) => match.id === player.matchId);
   const date = own?.date || player.matchDate;
@@ -85,7 +84,7 @@ export function sameDayTitulars({ player, players, matches }) {
   const byMatch = new Map();
   for (const other of players || []) {
     if (other?.waiting === true) continue;
-    if (playerPromoKey(other) !== key) continue;
+    if (playerPromoKey(other, players) !== key) continue;
     const match = (matches || []).find((item) => item.id === other.matchId);
     const day = match?.date || other.matchDate;
     if (day !== date) continue;

@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v62');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v63');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -764,9 +764,12 @@ await page.setViewportSize({ width: 390, height: 844 });
 await page.evaluate((font) => { document.documentElement.style.fontSize = font; }, fontBefore);
 const teoSum = await page.textContent('#confirm-sum');
 check('En espera no entra en el resumen', teoSum.includes('Sin respuesta: 0') && teoSum.includes('No juegan: 1'), teoSum);
+await page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).locator('[data-promote]').click();
+await page.waitForSelector('#ask-yes');
+check('El aviso por WhatsApp al subir pregunta con Sí y No', (await page.textContent('dialog.sheet h3')).trim() === '¿Avisarle por WhatsApp a Avisa Teo que subió al partido?' && (await page.locator('#ask-yes').innerText()) === 'Sí' && (await page.locator('#ask-no').innerText()) === 'No');
 const [teoPopup] = await Promise.all([
   page.waitForEvent('popup'),
-  page.locator('#wait-list .slot', { hasText: 'Avisa Teo' }).locator('[data-promote]').click(),
+  page.click('#ask-yes'),
 ]);
 await teoPopup.waitForURL((url) => /wa\.me|phone=/.test(String(url)), { waitUntil: 'commit' });
 await page.waitForSelector('#slots .name:text-is("Avisa Teo")');
@@ -2375,6 +2378,31 @@ check('La lista del partido muestra el apodo', await page.locator('#slots .name:
     return { text: el.textContent, broken, clipped: el.scrollWidth > el.clientWidth + 1 };
   });
   check('Un nombre largo sin apodo se ve entero y sin partir palabras', long.text === 'Maximiliano Fernández Etcheverry Larralde' && !long.broken.length && !long.clipped, JSON.stringify(long));
+  // La lista de espera tampoco corta nombres ni etiquetas con «…».
+  await page.evaluate(async (id) => {
+    const app = window.__app; const match = app.matches.find((item) => item.id === id);
+    const host = await app.store.addPlayer(match, { name: 'Bartolomé Ezequiel Santisteban Goñi', phone: '' }, app.who, { waiting: true });
+    await app.store.addPlayer(match, { name: 'Invitado 1', invitedBy: host, invitedByName: 'Bartolomé Ezequiel Santisteban Goñi', guestAuto: true }, app.who, { waiting: true });
+  }, apodo.id);
+  await page.waitForSelector('#wait-list .name:text-is("Bartolomé Ezequiel Santisteban Goñi")');
+  const waitCut = await page.$$eval('#wait-list li.slot', (rows) => rows.flatMap((row) => {
+    const out = [];
+    for (const el of row.querySelectorAll('.name, .tag')) {
+      if (el.scrollWidth > el.clientWidth + 1 || getComputedStyle(el).textOverflow === 'ellipsis') out.push(`cortado: ${el.textContent.trim()}`);
+    }
+    const name = row.querySelector('.name');
+    const text = name.firstChild;
+    let at = 0;
+    for (const word of name.textContent.split(' ')) {
+      const range = document.createRange();
+      range.setStart(text, at);
+      range.setEnd(text, at + word.length);
+      if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) out.push(`partida: ${word}`);
+      at += word.length + 1;
+    }
+    return out;
+  }));
+  check('La lista de espera muestra nombres y etiquetas enteros, sin partir palabras', waitCut.length === 0, waitCut.join(' | '));
   // Jugador sin ficha en Jugadores: igual se le puede poner apodo desde Editar.
   await page.locator('#slots li.slot', { hasText: 'Maximiliano' }).locator('[data-menu]').click();
   await page.click('#pm-edit');
@@ -2471,13 +2499,16 @@ await page.evaluate(() => {
   window.__confirms = [];
   window.confirm = (msg) => {
     window.__confirms.push(msg);
-    return !String(msg).includes('sus invitados');
+    return true;
   };
 });
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("zzz nuevo")') }).locator('[data-menu]').click();
 await page.click('#pm-del');
+await page.waitForSelector('#ask-no');
+const askFriends = (await page.textContent('dialog.sheet h3')).trim();
+check('Pregunta si quitar a los amigos, con Sí y No', askFriends.startsWith('¿Quitar también a sus invitados (') && (await page.locator('#ask-yes').innerText()) === 'Sí' && !(await page.evaluate(() => window.__confirms.some((msg) => msg.includes('sus invitados')))), askFriends);
+await page.click('#ask-no');
 await page.waitForFunction(() => ![...document.querySelectorAll('#slots .name')].some((el) => el.textContent === 'zzz nuevo'));
-check('Pregunta si quitar a los amigos', await page.evaluate(() => window.__confirms.some((msg) => msg.includes('sus invitados'))));
 check('Si no, los amigos siguen con el nombre', (await page.locator('#slots .friend-tag', { hasText: 'invitado de zzz nuevo' }).count()) >= 2);
 await page.evaluate(() => {
   window.confirm = (msg) => {
@@ -2487,6 +2518,8 @@ await page.evaluate(() => {
 });
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("Segundo")') }).locator('[data-menu]').click();
 await page.click('#pm-del');
+await page.waitForSelector('#ask-yes');
+await page.click('#ask-yes');
 await page.waitForFunction(() => ![...document.querySelectorAll('.friend-tag')].some((el) => el.textContent.includes('Segundo')));
 check('Si sí, los amigos también salen', await page.locator('#slots .name:text-is("Segundo")').count() === 0);
 await page.evaluate(() => { delete window.confirm; });
@@ -2495,6 +2528,92 @@ check('El menú ofrece bajar a la espera', await page.locator('#pm-wait').innerT
 await page.click('#pm-wait');
 await page.waitForSelector('#wait-list .name:text-is("Después")');
 check('Bajar a la espera lo deja al final y no sube a nadie', await page.locator('#slots .name:text-is("Después")').count() === 0 && await page.locator('#wait-list .name:text-is("Después")').count() === 1);
+{
+  // Bajar con invitados: pregunta con Sí/No (no con Aceptar/Cancelar del navegador).
+  const native = [];
+  const onNative = (d) => { native.push(d.message()); d.dismiss(); };
+  page.on('dialog', onNative);
+  const baja = await page.evaluate(async () => {
+    const app = window.__app;
+    const matchId = decodeURIComponent(location.hash.split('/')[2] || '');
+    const match = app.matches.find((m) => m.id === matchId);
+    const host = await app.store.addPlayer(match, { name: 'Baja Grupo', phone: '' }, app.who);
+    await app.store.addPlayer(match, { name: 'Invitado 1', invitedBy: host, invitedByName: 'Baja Grupo', guestAuto: true }, app.who);
+    return { host, matchId };
+  });
+  await page.waitForSelector('#slots .name:text-is("Baja Grupo")');
+  await page.click('[aria-label="Opciones de Baja Grupo"]');
+  await page.click('#pm-wait');
+  await page.waitForSelector('#ask-yes');
+  const askDown = (await page.textContent('dialog.sheet h3')).trim();
+  check('Bajar con invitados pregunta con Sí y No', askDown === '¿Bajar también a sus invitados (Invitado 1)?' && (await page.locator('#ask-no').innerText()) === 'No', askDown);
+  await page.click('#ask-yes');
+  await page.waitForSelector('#wait-list .name:text-is("Baja Grupo")');
+  const moved = await page.evaluate((host) => window.__app.players.filter((p) => p.id === host || p.invitedBy === host).every((p) => p.waiting === true), baja.host);
+  check('Con Sí baja también a sus invitados', moved && native.length === 0, native.join(' | '));
+  page.off('dialog', onNative);
+  await page.evaluate(async (host) => {
+    for (const p of window.__app.players.filter((item) => item.id === host || item.invitedBy === host)) await window.__app.store.deletePlayer(p.id);
+  }, baja.host);
+}
+{
+  // Invitados en todos sus partidos del día: el menú ofrece sumarlos también en los otros.
+  const ids = await page.evaluate(async () => {
+    const { store, who } = window.__app;
+    const a = await store.addMatch({ date: '2026-11-20', time: '19:00', note: '', capacity: 14 }, who);
+    const b = await store.addMatch({ date: '2026-11-20', time: '20:00', note: '', capacity: 1 }, who);
+    const c = await store.addMatch({ date: '2026-11-20', time: '21:00', note: '', capacity: 14 }, who);
+    const d = await store.addMatch({ date: '2026-11-20', time: '22:00', note: '', capacity: 14 }, who);
+    const find = (id) => window.__app.matches.find((m) => m.id === id);
+    for (let i = 0; i < 50 && ![a, b, c, d].every(find); i++) await new Promise((r) => setTimeout(r, 20));
+    const host = {};
+    for (const id of [a, b, c]) host[id] = await store.addPlayer(find(id), { name: 'Doble Día', phone: '5491155550101' }, who);
+    await store.addPlayer(find(d), { name: 'Otro Día', phone: '5491155550102' }, who);
+    return { a, b, c, d, host };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, ids.a);
+  await page.waitForSelector('#slots .name:text-is("Doble Día")');
+  await page.click('[aria-label="Opciones de Doble Día"]');
+  await page.click('#pm-friend');
+  await page.waitForSelector('#friend-form');
+  const offered = await page.$$eval('#friend-also input[name=also]', (els) => els.map((el) => ({ id: el.value, on: el.checked, off: el.disabled })));
+  check('Agregar invitados ofrece sus otros partidos del mismo día, ya marcados', offered.length === 2 && offered.every((o) => o.on && !o.off) && offered.map((o) => o.id).join() === [ids.b, ids.c].join(), JSON.stringify(offered));
+  check('El partido lleno avisa que van a la espera', (await page.textContent('#friend-also')).includes('completo: van a la espera'));
+  await page.click('#friend-plus');
+  await page.locator('#friend-rows input').nth(1).fill('Pipa');
+  await page.click('#friend-form button[type=submit]');
+  const guestsIn = (id, host) => page.evaluate(({ id, host }) => window.__app.players.filter((p) => p.matchId === id && p.invitedBy === host).map((p) => `${p.name}${p.waiting ? '(espera)' : ''}`).sort().join(','), { id, host });
+  await page.waitForFunction(({ c, host }) => window.__app.players.filter((p) => p.matchId === c && p.invitedBy === host).length === 2, { c: ids.c, host: ids.host[ids.c] });
+  check('Los mismos invitados quedan en su partido', await guestsIn(ids.a, ids.host[ids.a]) === 'Invitado 1,Pipa');
+  check('En el otro partido quedan con el mismo anfitrión y nombre', await guestsIn(ids.c, ids.host[ids.c]) === 'Invitado 1,Pipa');
+  check('En el partido lleno van a la lista de espera', await guestsIn(ids.b, ids.host[ids.b]) === 'Invitado 1(espera),Pipa(espera)');
+  check('Un partido del día donde él no juega no cambia', await page.evaluate((d) => window.__app.players.filter((p) => p.matchId === d).length === 1, ids.d));
+  const promo = await page.evaluate(async ({ a, c }) => {
+    const { sameDayTitulars, playerPromoKey } = await import('./js/prices.js');
+    const all = window.__app.players;
+    const pipa = (id) => all.find((p) => p.matchId === id && p.name === 'Pipa');
+    return playerPromoKey(pipa(a), all) === playerPromoKey(pipa(c), all) && typeof sameDayTitulars === 'function';
+  }, ids);
+  check('Para la promo del día es el mismo invitado en los dos partidos', promo);
+  // Sin marcar el otro partido, solo se agrega en este.
+  await page.waitForTimeout(300);
+  await page.click('[aria-label="Opciones de Doble Día"]');
+  await page.click('#pm-friend');
+  await page.waitForSelector('#friend-also');
+  await page.uncheck(`#friend-also input[value="${ids.c}"]`);
+  await page.uncheck(`#friend-also input[value="${ids.b}"]`);
+  await page.click('#friend-form button[type=submit]');
+  await page.waitForFunction(({ a, host }) => window.__app.players.filter((p) => p.matchId === a && p.invitedBy === host).length === 3, { a: ids.a, host: ids.host[ids.a] });
+  await page.waitForTimeout(300);
+  check('Si se desmarca, en los otros partidos no se agrega', await guestsIn(ids.c, ids.host[ids.c]) === 'Invitado 1,Pipa' && await guestsIn(ids.a, ids.host[ids.a]) === 'Invitado 1,Invitado 2,Pipa');
+  await page.evaluate(async (list) => {
+    const app = window.__app;
+    for (const id of list) {
+      for (const p of app.players.filter((item) => item.matchId === id)) await app.store.deletePlayer(p.id);
+      await app.store.deleteMatch(id);
+    }
+  }, [ids.a, ids.b, ids.c, ids.d]);
+}
 await page.evaluate(() => localStorage.setItem('f7c-text-size', '1'));
 await page.setViewportSize({ width: 390, height: 844 });
 await page.reload();
@@ -2673,13 +2792,22 @@ check('El archivo de backup lleva la fecha local', /^Mis_partidos_\d{4}-\d{2}-\d
 const { readFileSync } = await import('node:fs');
 const backupJson = JSON.parse(readFileSync(await backupDownload.path(), 'utf8'));
 check('El backup descargado es de Mis Partidos', backupJson.format === 'mis-partidos-backup' && backupJson.collections && typeof backupJson.collections.matches === 'object');
+check('Sin ID de Drive en config, la ayuda dice que se elige Drive en el menú', (await page.textContent('#backup-drive-hint')).includes('elegí «Drive»'));
 await page.evaluate(() => {
-  navigator.canShare = () => true;
-  navigator.share = async (payload) => { window.__sharedBackup = payload?.files?.[0]?.name || ''; };
+  // Como Chrome: solo comparte tipos de su lista (.json no está).
+  navigator.canShare = (payload) => (payload?.files || []).every((f) => /\.txt$/.test(f.name) && f.type === 'text/plain');
+  navigator.share = async (payload) => {
+    const file = payload?.files?.[0];
+    window.__sharedBackupText = file ? await file.text() : '';
+    window.__sharedBackup = file?.name || '';
+  };
 });
 await page.click('#backup-drive');
 await page.waitForFunction(() => window.__sharedBackup);
-check('Guardar en Drive abre el menú de compartir con el archivo', /^Mis_partidos_/.test(await page.evaluate(() => window.__sharedBackup)));
+const sharedName = await page.evaluate(() => window.__sharedBackup);
+check('Guardar en Drive abre el menú de compartir con el archivo (como .txt, que Chrome sí comparte)', /^Mis_partidos_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}\.txt$/.test(sharedName), sharedName);
+const sharedJson = JSON.parse(await page.evaluate(() => window.__sharedBackupText));
+check('El .txt compartido tiene el mismo backup JSON', sharedJson.format === 'mis-partidos-backup' && JSON.stringify(sharedJson.collections) === JSON.stringify(backupJson.collections));
 await page.evaluate(async () => {
   await window.__app.store.addMatch({ date: '2026-12-01', time: '21:00', note: 'No debe quedar' }, window.__app.who);
 });
@@ -2687,7 +2815,7 @@ await page.click('[data-close]');
 await page.click('#btn-settings');
 await page.click('#set-restore');
 await page.waitForSelector('#backup-file');
-await page.setInputFiles('#backup-file', { name: backupName, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(backupJson)) });
+await page.setInputFiles('#backup-file', { name: sharedName, mimeType: 'text/plain', buffer: Buffer.from(JSON.stringify(sharedJson)) });
 await page.waitForSelector('#backup-summary li');
 const summaryText = await page.locator('#backup-summary').innerText();
 check('Cargar backup muestra la fecha y cuántos partidos trae', summaryText.includes('Fecha del backup') && summaryText.includes('Partidos') && (await page.locator('.backup-warn').innerText()).includes('reemplazan'));
@@ -2800,6 +2928,56 @@ await fresh.waitForFunction(() => document.querySelector('#tab-proximos')?.getAt
 check('Al abrir la app arranca en Próximos partidos', await fresh.evaluate(() => location.hash === '#/' || location.hash === '' || location.hash === '#'));
 await fresh.close();
 
+{
+  // Con GOOGLE_DRIVE_CLIENT_ID: pide permiso con Google y sube el archivo con la API de Drive.
+  const driveCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
+  await driveCtx.route('**/config.js', async (route) => {
+    const res = await route.fetch();
+    const body = (await res.text())
+      .replace(/export const firebaseConfig = \{[\s\S]*?\n\};/, 'export const firebaseConfig = { apiKey: "TU_API_KEY", authDomain: "x", projectId: "TU_PROYECTO", storageBucket: "x", messagingSenderId: "x", appId: "x" };')
+      .replace(/export const GOOGLE_DRIVE_CLIENT_ID = ".*";/, 'export const GOOGLE_DRIVE_CLIENT_ID = "123-abc.apps.googleusercontent.com";');
+    await route.fulfill({ status: 200, contentType: 'text/javascript', body });
+  });
+  await driveCtx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => route.abort());
+  const gisAsked = [];
+  await driveCtx.exposeFunction('__gisAsked', (cfg) => { gisAsked.push(cfg); });
+  await driveCtx.route('https://accounts.google.com/gsi/client', (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body: `
+    window.google = { accounts: { oauth2: { initTokenClient(cfg) {
+      return { requestAccessToken() { window.__gisAsked({ client_id: cfg.client_id, scope: cfg.scope }); setTimeout(() => cfg.callback({ access_token: 'tok-1', expires_in: 3600 }), 10); } };
+    } } } };` }));
+  const driveCalls = [];
+  await driveCtx.route(/https:\/\/www\.googleapis\.com\/(upload\/)?drive\/v3\/files/, async (route) => {
+    const req = route.request();
+    driveCalls.push({ method: req.method(), url: req.url(), auth: req.headers().authorization || '', type: req.headers()['content-type'] || '', body: req.postData() || '' });
+    const cors = { 'access-control-allow-origin': '*' };
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { ...cors, 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST' } });
+    if (req.method() === 'GET') return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ files: [] }) });
+    if (/upload/.test(req.url())) return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ id: 'file-1', name: 'x' }) });
+    return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ id: 'folder-1' }) });
+  });
+  const dp = await driveCtx.newPage();
+  const driveErrors = [];
+  dp.on('pageerror', (e) => driveErrors.push(e.message));
+  await dp.goto(BASE);
+  await dp.waitForSelector('#login-form');
+  await dp.fill('#login-email', 'gustavo@demo.local');
+  await dp.fill('#login-password', 'demo-gustavo');
+  await dp.click('#login-form button[type=submit]');
+  await dp.waitForFunction(() => window.__app?.who);
+  await dp.click('#btn-settings');
+  await dp.click('#set-backup');
+  await dp.waitForSelector('#backup-drive');
+  check('Con ID de Drive, la ayuda dice que sube a la carpeta de Drive', (await dp.textContent('#backup-drive-hint')).includes('Mis Partidos - backups'));
+  await dp.click('#backup-drive');
+  await dp.waitForSelector('.toast:has-text("Backup guardado en Google Drive")', { timeout: 8000 }).catch(() => {});
+  const upload = driveCalls.find((c) => c.method === 'POST' && /upload/.test(c.url));
+  const folder = driveCalls.find((c) => c.method === 'POST' && !/upload/.test(c.url));
+  check('Drive: pide permiso solo para sus archivos (drive.file) con el ID de config', gisAsked.length === 1 && gisAsked[0].client_id === '123-abc.apps.googleusercontent.com' && gisAsked[0].scope === 'https://www.googleapis.com/auth/drive.file', JSON.stringify(gisAsked));
+  check('Drive: crea la carpeta «Mis Partidos - backups» si no está', !!folder && JSON.parse(folder.body).name === 'Mis Partidos - backups' && folder.auth === 'Bearer tok-1');
+  check('Drive: sube el backup JSON a esa carpeta', !!upload && upload.auth === 'Bearer tok-1' && /multipart\/related/.test(upload.type) && upload.body.includes('"parents":["folder-1"]') && upload.body.includes('"format": "mis-partidos-backup"') && /Mis_partidos_.*\.json/.test(upload.body));
+  check('Drive: avisa que quedó guardado', await dp.locator('.toast:has-text("Backup guardado en Google Drive")').count() > 0 && driveErrors.length === 0, driveErrors.join(' | '));
+  await driveCtx.close();
+}
 check('Sin errores de JS', errors.length === 0, errors.join(' | '));
 await browser.close();
 const failed = results.filter((r) => !r.ok);

@@ -242,6 +242,18 @@ button.who { text-align: left; background: none; border: 0; color: inherit; font
 #slots .slot-actions .wa-btn,
 #slots .slot-actions .pay-btn { width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
 #slots .slot-side .more-btn { width: 40px; min-width: 40px; min-height: 40px; height: auto; align-self: stretch; }
+/* Lista de espera: igual que el partido. El nombre (o apodo) y las etiquetas se ven enteros, sin «…» y sin partir palabras. */
+#wait-list .name { white-space: normal; overflow: visible; text-overflow: unset; min-width: auto; overflow-wrap: normal; word-break: normal; hyphens: none; }
+#wait-list .phone-line { white-space: nowrap; flex: 0 0 auto; }
+#wait-list .pay-line,
+#wait-list .pay-pending,
+#wait-list .promo-badge,
+#wait-list .confirm-tag,
+#wait-list .tag { white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: break-word; }
+#wait-list .slot { gap: 8px; }
+#wait-list .slot > .wa-btn { width: 40px; height: 40px; }
+#wait-list .slot > .more-btn { width: 32px; }
+#wait-list .tag { border-radius: 10px; }
 .level-badge {
   flex: none; font-size: 0.75rem; font-weight: 800; line-height: 1;
   padding: 3px 6px; border-radius: 999px;
@@ -706,3 +718,5 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 .detail-tools .btn { padding: 0 8px; font-size: 0.84375rem; gap: 6px; min-width: 0; }
 .detail-tools .btn svg { width: 18px; height: 18px; }
 .btn svg { flex: none; }
+.also-box .checkline { margin: 6px 0; font-weight: 600; }
+.also-box .hint { margin: 4px 0 0; }

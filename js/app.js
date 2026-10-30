@@ -1,4 +1,6 @@
 import { ACCESS_CODE, VENUE } from '../config.js';
+import * as appConfig from '../config.js';
+import { DRIVE_FOLDER, driveClientId, loadGis, requestDriveToken, shareableBackupName, uploadBackupToDrive } from './drive.js';
 import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
@@ -16,7 +18,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterInMatchMessage, rosterMatchCount, searchRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -34,7 +36,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v62';
+const APP_VERSION = 'f7c-v63';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1394,7 +1396,7 @@ async function offerPromotionWhatsApp(player, match) {
     return;
   }
   const token = await app.store.ensureConfirmToken(player.id);
-  if (!confirm(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`)) return;
+  if (!(await askYesNo(`¿Avisarle por WhatsApp a ${player.name} que subió al partido?`))) return;
   const pending = window.open('about:blank', '_blank');
   const code = await app.store.ensureShortLink(player.id);
   const external = isShortCode(code) ? await resolveExternalShort(code) : '';
@@ -1623,7 +1625,8 @@ function saveBackupFile(filename, text) {
 }
 
 async function shareBackupFile(filename, text) {
-  const file = new File([text], filename, { type: 'application/json' });
+  // Chrome solo comparte ciertos tipos y .json no está: va como .txt (adentro, el mismo JSON).
+  const file = new File([text], shareableBackupName(filename), { type: 'text/plain' });
   const payload = { files: [file], title: 'Backup de Mis Partidos' };
   const can = typeof navigator.share === 'function' && (typeof navigator.canShare !== 'function' || navigator.canShare(payload));
   if (can) {
@@ -1695,7 +1698,7 @@ function openRestore() {
   openSheet(`
     <h3>Cargar base de datos desde un backup</h3>
     <p class="backup-warn">Los datos de ahora se reemplazan por los del archivo. No se puede deshacer.</p>
-    <label class="field"><span>Archivo JSON</span><input id="backup-file" type="file" accept="application/json,.json"></label>
+    <label class="field"><span>Archivo de backup (.json o .txt)</span><input id="backup-file" type="file" accept="application/json,.json,text/plain,.txt"></label>
     <div id="backup-summary"></div>
     <p class="backup-status" id="backup-status" aria-live="polite"></p>
     <p class="err" id="backup-err"></p>
@@ -1757,6 +1760,7 @@ function openRestore() {
 
 function openBackup() {
   if (app.role !== 'admin') return;
+  const driveId = driveClientId(appConfig);
   openSheet(`
     <h3>Hacer backup</h3>
     <p class="hint">Un archivo JSON con partidos, jugadores, plantel, pagos, sedes, precios, confirmaciones y teléfonos.</p>
@@ -1765,18 +1769,47 @@ function openBackup() {
       <button type="button" class="btn" id="backup-drive">Guardar en Google Drive</button>
       <button type="button" class="btn ghost" data-close>Cerrar</button>
     </div>
-    <p class="hint">Drive abre el menú del teléfono para elegir dónde guardarlo. Si ese menú no está, se descarga el archivo.</p>`);
+    <p class="hint" id="backup-drive-hint">${driveId
+      ? `Drive: se sube a tu Google Drive, carpeta «${esc(DRIVE_FOLDER)}». La primera vez Google pide permiso.`
+      : 'Drive: se abre el menú del teléfono; elegí «Drive». Si no hay menú, se descarga el archivo.'}</p>`);
+  // El archivo se arma al abrir: compartir y el permiso de Google tienen que salir del toque, sin esperas largas.
+  let ready = null;
+  const prepare = () => { ready = currentBackupFile(); ready.catch(() => { ready = null; }); return ready; };
+  prepare();
+  if (driveId) loadGis().catch(() => {});
   $('#backup-download').onclick = () => {
-    currentBackupFile().then(({ filename, text }) => {
+    (ready || prepare()).then(({ filename, text }) => {
       saveBackupFile(filename, text);
       toast('Backup guardado en el celular');
     }).catch(failBackup);
   };
   $('#backup-drive').onclick = () => {
-    currentBackupFile().then(async ({ filename, text }) => {
+    const pending = ready || prepare();
+    if (driveId) {
+      // Pedir el permiso ya, dentro del toque (si no, el navegador bloquea la ventana de Google).
+      const token = loadGis().then(() => requestDriveToken(driveId, { hint: app.session?.user?.email || '' }));
+      Promise.all([pending, token]).then(async ([{ filename, text }, access]) => {
+        toast('Subiendo a Google Drive…', 0);
+        await uploadBackupToDrive({ token: access, filename, text });
+        toast(`Backup guardado en Google Drive («${DRIVE_FOLDER}»)`, 4500);
+        prepare();
+      }).catch(async (error) => {
+        if (error?.code === 'drive/cancelled') { toast('No se guardó en Drive'); return; }
+        console.error(error);
+        try {
+          const { filename, text } = await pending;
+          const how = await shareBackupFile(filename, text);
+          const why = error?.code === 'drive/403' ? 'Drive no dejó subir (¿API de Drive sin habilitar?)' : error?.code === 'drive/denied' ? 'Google no dio permiso' : 'No se pudo subir a Drive';
+          if (how === 'shared') toast(`${why}: elegí Drive en el menú`, 5000);
+          else if (how === 'downloaded') toast(`${why}: se descargó el archivo`, 5000);
+        } catch (fail) { failBackup(fail); }
+      });
+      return;
+    }
+    pending.then(async ({ filename, text }) => {
       const how = await shareBackupFile(filename, text);
       if (how === 'shared') toast('Elegí Drive en el menú para guardarlo');
-      else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo');
+      else if (how === 'downloaded') toast('Este teléfono no abre el menú. Se descargó el archivo: subilo a Drive');
     }).catch(failBackup);
   };
 }
@@ -2835,13 +2868,13 @@ function focusField(el) {
 }
 
 /** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
-function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
+function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
   const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
   if (guestBlock) { toast(guestBlock); return false; }
   const taken = host?.id ? friendNamesOf(m.id, host.id) : [];
-  const friends = resolveFriendNames(friendRows, taken).map((friend) => ({
+  const friends = (resolved || resolveFriendNames(friendRows, taken)).map((friend) => ({
     name: friend.name,
     guestAuto: friend.guestAuto,
     invitedBy: host?.id || (friend.guestAuto ? 'nuevo' : ''),
@@ -2912,8 +2945,75 @@ function addSignedPlayer(m, host, asWait, tentative, friendRows = []) {
       }, app.who, { waiting });
       offset += 1;
     }
+    if (also.length) {
+      const notes = await addGuestsToSameDay(also, friends, signup);
+      if (notes.length) toast(notes.join(' · '), 4500);
+    }
   })(), msg);
   return true;
+}
+
+/**
+ * Los otros partidos del mismo día en los que está anotado quien invita
+ * (misma persona: personKey). Para sumarle los mismos invitados ahí también.
+ */
+function sameDayHostMatches(m, host) {
+  if (!host?.id || host.invitedBy) return [];
+  const key = personKey(host, app.players);
+  if (!key) return [];
+  const out = [];
+  for (const match of app.matches || []) {
+    if (match.id === m.id || match.date !== m.date || match.cancelled === true) continue;
+    const there = matesOf(match.id).find((player) => !player.invitedBy && personKey(player, app.players) === key);
+    if (!there) continue;
+    const blocked = addBlock(match) || inviteBlock(matesOf(match.id), there.id);
+    out.push({ match, host: there, blocked });
+  }
+  return out.sort((a, b) => String(a.match.time || '').localeCompare(String(b.match.time || '')) || String(a.match.id).localeCompare(String(b.match.id)));
+}
+
+function sameDayLine({ match, host }, from) {
+  const free = Math.max(0, capOf(match) - playersOf(match.id).length);
+  const room = host.waiting === true ? 'él está en espera' : free === 0 ? 'completo: van a la espera' : free === 1 ? 'queda 1 lugar' : `quedan ${free} lugares`;
+  const place = placeOf(match);
+  return [`${match.time || '--:--'} hs`, place === placeOf(from) ? '' : place, room].filter(Boolean).join(' · ');
+}
+
+/**
+ * Suma los mismos invitados (mismo nombre, invitados por la misma persona)
+ * en cada partido elegido. De a un jugador, en orden. Lo que ya está no se
+ * repite; lo que no entra va a la espera, como en el partido de origen.
+ */
+async function addGuestsToSameDay(targets, friends, signup) {
+  const notes = [];
+  for (const { match, host } of targets) {
+    const label = `${match.time || '--:--'} hs`;
+    const blocked = addBlock(match) || inviteBlock(matesOf(match.id), host.id);
+    if (blocked) { notes.push(`${label}: ${blocked}`); continue; }
+    const there = new Set(friendNamesOf(match.id, host.id).map((name) => normName(name)));
+    const fresh = friends.filter((friend) => !there.has(normName(friend.name)));
+    const todo = fresh.filter((friend) => !firstDuplicate(matesOf(match.id), [{ name: friend.name, phone: '', guestAuto: friend.guestAuto === true }]));
+    const clash = fresh.filter((friend) => !todo.includes(friend)).map((friend) => friend.name);
+    if (clash.length) notes.push(`${label}: ${clash.join(', ')} ya figura${clash.length > 1 ? 'n' : ''} en ese partido`);
+    if (!todo.length) { if (!clash.length) notes.push(`${label}: ya estaban`); continue; }
+    const max = limitFor(match, actor().uid);
+    if (max != null && addedCount(matesOf(match.id), actor()) + todo.length > max) { notes.push(`${label}: ${limitMessage(max)}`); continue; }
+    const place = placeGroup({ mainCount: playersOf(match.id).length, capacity: capOf(match), count: todo.length, forceWait: host.waiting === true });
+    let offset = 0;
+    for (const friend of todo) {
+      await app.store.addPlayer(match, {
+        name: friend.name,
+        phone: '',
+        invitedBy: host.id,
+        invitedByName: host.name,
+        guestAuto: friend.guestAuto === true,
+        ...signup,
+      }, app.who, { waiting: offset >= place.main });
+      offset += 1;
+    }
+    notes.push(place.wait ? `${label}: también anotados · ${place.wait} en espera` : `${label}: también anotados`);
+  }
+  return notes;
 }
 
 function openPhoneForm(person) {
@@ -3541,15 +3641,21 @@ function askYesNo(title) {
       </div>`);
     $('#ask-yes').onclick = () => finish(true);
     $('#ask-no').onclick = () => finish(false);
-    sheet.addEventListener('close', () => finish(false), { once: true });
+    // Si venimos de otra pregunta, su 'close' llega tarde con la hoja ya abierta: no cuenta como No.
+    const onClose = () => {
+      if (sheet.open) return;
+      sheet.removeEventListener('close', onClose);
+      finish(false);
+    };
+    sheet.addEventListener('close', onClose);
   });
 }
 
-function removeMatchPlayer(m, p, { asked = false } = {}) {
+async function removeMatchPlayer(m, p, { asked = false } = {}) {
   const fromMain = !isWaiting(p);
   const friends = guestsOf(m.id, p.id);
   if (!asked && !confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
-  const dropFriends = friends.length > 0 && confirm(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
+  const dropFriends = friends.length > 0 && await askYesNo(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
   const mainLeft = playersOf(m.id).filter((item) => !dropping.has(item.id)).length;
@@ -3571,10 +3677,10 @@ function removeMatchPlayer(m, p, { asked = false } = {}) {
   askYesNo(`¿Subir a ${top.name}, el primero de la lista de espera?`).then(go);
 }
 
-function demoteToWait(m, p) {
+async function demoteToWait(m, p) {
   if (!p || isWaiting(p) || !canAdd(m, actor().uid)) return;
   const guests = guestsOf(m.id, p.id).filter((item) => !isWaiting(item));
-  const also = guests.length > 0 && confirm(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
+  const also = guests.length > 0 && await askYesNo(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
   const moving = [p, ...(also ? guests : [])];
   closeSheet();
   let order = nextWaitOrder(waitingOf(m.id));
@@ -3594,6 +3700,7 @@ function openFriendForm(m, host) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return; }
   const next = resolveFriendNames([''], friendNamesOf(m.id, host.id))[0]?.name || 'Invitado 1';
+  const sameDay = sameDayHostMatches(m, host);
   openSheet(`
     <form id="friend-form" novalidate>
       <h3>Invitados de ${esc(host.name)}</h3>
@@ -3604,6 +3711,11 @@ function openFriendForm(m, host) {
         <div id="friend-rows"></div>
         <p class="hint" id="friend-hint"></p>
       </div>
+      ${sameDay.length ? `<fieldset class="access-box also-box" id="friend-also">
+        <legend>También en sus partidos del día</legend>
+        ${sameDay.map((row) => `<label class="checkline"><input type="checkbox" name="also" value="${esc(row.match.id)}"${row.blocked ? ' disabled' : ' checked'}><span>${esc(sameDayLine(row, m))}${row.blocked ? ` · ${esc(row.blocked)}` : ''}</span></label>`).join('')}
+        <p class="hint">Los mismos invitados quedan anotados ahí también, así les toca la promo del día.</p>
+      </fieldset>` : ''}
       <div class="field"><div class="err" id="friend-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Agregar</button></div>
     </form>`);
@@ -3613,7 +3725,11 @@ function openFriendForm(m, host) {
     e.preventDefault();
     const rows = friendRowValues();
     if (!rows.length) { $('#friend-err').textContent = 'Agregá al menos un invitado.'; return; }
-    const result = addSignedPlayer(m, host, host.waiting === true, false, rows);
+    const picked = new Set([...form.querySelectorAll('input[name=also]:checked')].map((input) => input.value));
+    const also = sameDay.filter((row) => !row.blocked && picked.has(row.match.id));
+    // Los nombres salen de este partido; en los otros van los mismos (mismo anfitrión + nombre = misma persona).
+    const resolved = resolveFriendNames(rows, friendNamesOf(m.id, host.id));
+    const result = addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also });
     if (result === ALREADY_IN_MATCH) $('#friend-err').textContent = result;
   };
 }
