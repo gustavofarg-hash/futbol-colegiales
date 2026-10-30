@@ -3,12 +3,12 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
-**Actualizada para f7c-v63** (rama `fix/pedidos-restaurados`, 30/10/2026): v62 (#47, apodo) y los arreglos de v63 que figuran abajo. Los números de línea son de la versión en que se revisó cada punto y pueden correrse.
+**Actualizada para f7c-v64** (rama `cursor/saldo-credito-deudas-253c`, 30/10/2026): saldo a favor, descontar del crédito, deudas viejas, sobrante del pago dividido y renombre del invitado en la promo del día. Los números de línea son de la versión en que se revisó cada punto y pueden correrse.
 Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **e2e 480/480 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 83/83 OK** (`node --test tests/unit.test.mjs`).
+Pruebas sobre esta copia: **e2e 515/515 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 92/92 OK** (`node --test tests/unit.test.mjs`).
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
@@ -70,9 +70,13 @@ Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reempla
 | 30/10 (v63) | **Invitados en la promo del día: son «quien invita + su nombre»** | ✅ | `personKey` (`js/roster.js`) y `playerPromoKey` (`js/prices.js`): un invitado sin teléfono ni ficha se identifica por la identidad de su anfitrión (`invitedBy` → ese jugador) más su nombre. El Invitado 1 de Vinicio y el de Ernesto no juntan promo; el Invitado 1 del mismo Vinicio en dos partidos del día sí. Lo mismo en los resúmenes de pagos y transferencias (`summaryKey`, `ledger.js`) y en Jugadores (`playerMatchesPerson` no junta invitados por nombre). Unit «promo de invitados…» |
 | 30/10 (v63) | **«Guardar backup en Google Drive» descargaba el archivo en vez de guardarlo en Drive** | ✅ | Causa: el botón compartía el archivo con `navigator.share`, pero Chrome solo comparte ciertos tipos y `.json` / `application/json` no está; `canShare` daba falso y caía en la descarga. Además el archivo se armaba después del toque y el permiso del toque podía vencer. Ahora (`js/drive.js`, `openBackup` en `app.js`): el archivo se arma al abrir la hoja. **Con `GOOGLE_DRIVE_CLIENT_ID` en `config.js`**, Google Identity Services pide permiso `drive.file` (solo los archivos que crea la app) y se sube con la API de Drive a la carpeta «Mis Partidos - backups». **Sin ese ID** (o si Drive falla), se abre el menú de compartir con el archivo como `.txt` (mismo JSON adentro), donde se elige Drive; si no hay menú, se descarga. «Restaurar» acepta `.json` y `.txt`. Para activar la subida directa, ver los pasos en `config.js`. Unit «Drive: …» y e2e «Guardar en Drive…», «Drive: …». Capturas `shots-v63/antes|despues-backup-drive.png` |
 | 30/10 (v63) | **Agregar invitados en todos sus partidos del mismo día** | ✅ | En «Agregar invitados» (menú del jugador), si esa persona (misma `personKey`) está anotada en otros partidos del mismo día, aparece «También en sus partidos del día» con cada partido marcado (hora, sede si es otra y lugar libre). Al agregar, se crean los mismos invitados (mismo nombre; `invitedBy` = su fila en ese partido) de a uno, así les toca la promo del día. Si el partido está lleno o él está en espera, van a la lista de espera; lo que ya estaba no se repite y lo que no se puede (solo lectura, tope de anotados) se avisa (`sameDayHostMatches`, `addGuestsToSameDay`, `app.js`). e2e «Agregar invitados ofrece sus otros partidos del mismo día…» y siguientes. Captura `shots-v63/despues-invitados-mismo-dia.png` |
-| 29/10 (#45 S1) | **La deuda es siempre del organizador de «Se anotó con»** | ❌ pendiente en PR #45 | `organizerMatchDebt` (`ledger.js:301`) filtra por `addedByOrganizer` (276), o sea quién lo cargó. El arreglo `owesOrganizer()` solo está en el commit `6f3ce57` de la rama `cursor/saldo-credito-deudas-253c` (**PR #45, borrador sin mergear**) |
-| 29/10 (#45) | **Los pagos de deudas viejas cancelan primero los partidos más viejos** | ❌ pendiente en PR #45 | No aparece en ningún lado. El PR #45 dice que S2–S5 están pendientes. Si el pago dividido sobra, muestra «Sobra … ya cubre lo que deben» y no aplica el resto a otras deudas |
-| 29/10 (#45) | **Saldo a favor** | ❌ pendiente en PR #45 | No hay código. Busqué «saldo», «credit» y «oldest» en `js/` y no aparece nada |
+| 29/10 (#45 S1) | **La deuda es siempre del organizador de «Se anotó con»** | ✅ | `owesOrganizer` (`ledger.js`). `organizerMatchDebt` y el cuadro «Faltan pagar (que anoté yo)» filtran por «Se anotó con». Si ese dato no está, siguen con «Agregó». Unit «la deuda es el precio…» y e2e «Faltan pagar cuenta a quien se anotó con Gustavo…» |
+| 29/10 (#45 S2) | **Cargar crédito (saldo a favor), por jugador y por organizador** | ✅ | `js/credit.js`, colección `credits`. En el menú del jugador, arriba: saldo en verde (`#menu-credit`) y deuda en rojo (`#menu-debt`). Botón «Cargar crédito». e2e «El saldo a favor del menú está en verde…» |
+| 29/10 (#45 S3) | **Descontar del crédito, sin cobrador, siempre paga al organizador logueado** | ✅ | Campo «Descontar del crédito» en el pago, sin desplegable. `fromCredit` / `creditTo`. e2e «Descontar del crédito no tiene desplegable…» y «Pagar con crédito figura como Crédito…» |
+| 29/10 (#45 S4) | **Sacar del pago los botones 1 partido / Promo 2 / Promo 3 y la ayuda larga** | ✅ | No está `#pay-prices` ni el texto «Lo cobrado es efectivo…». Sigue el cartel de la promo del día y completar el precio al tocar un monto vacío. e2e «El pago no muestra los botones de promo…» |
+| 29/10 (#45 S5) | **Los pagos de deudas viejas cancelan primero los partidos más viejos** | ✅ | `settleOldestDebts` (`payments.js`). El pago muestra a qué partido fue cada monto. e2e «La deuda vieja se reparte primero…» |
+| 29/10 (#45 S6) | **Lo que sobra de un pago dividido queda como saldo de quien paga** | ✅ | `splitLeftoverCredit`. El texto dice «queda como saldo a favor de {jugador} con {organizador}». e2e «Lo que sobra del pago dividido…» |
+| 30/10 (#45 S7) | **Renombrar un invitado de la promo del día lo renombra en los otros partidos de ese anfitrión** | ✅ | `sameDayPromoGuestRenames` (`guests.js`). Misma identidad anfitrión + nombre. No toca al invitado de otro anfitrión. La promo sigue. No cambia el apodo. e2e «El otro partido del día también se llama Pedro…» |
 
 ## Historial
 
@@ -82,7 +86,7 @@ Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reempla
 | 20/10 (#17) | Últimos 30 por defecto y filtros por fecha | ✅ | «Por defecto muestra los últimos 30» |
 | 20/10 (#25) | Chips de sede en Historial | ✅ | PR #25, e2e OK |
 | 26/10 (#27 C4, #28 E3) | Importar el historial desde un texto, incluidas las fechas en formato viejo | ✅ | «Importar partidos desde texto», `js/parser.js` |
-| 27/10 (#41) y 29/10 (#43 R3) | Cuadro rojo «Faltan pagar (que anoté yo)» en Historial y en las tarjetas de HOY, con la lista que se despliega | ✅ | `oweBox` (`app.js:490`), `data-owe-toggle`. El cuadro cuenta por quién cargó al jugador, no por «Se anotó con» (ver ❌ S1) |
+| 27/10 (#41) y 29/10 (#43 R3) | Cuadro rojo «Faltan pagar (que anoté yo)» en Historial y en las tarjetas de HOY, con la lista que se despliega | ✅ | `oweBox` (`app.js`), `data-owe-toggle`. Desde v64 cuenta por «Se anotó con» (`owesOrganizer`). Si ese dato no está, sigue con «Agregó» |
 | 27/10 (#41) | Filtro «Partidos con deudores» | ✅ | `#hist-debtors` (`app.js:804–866`) |
 
 ## Equipos

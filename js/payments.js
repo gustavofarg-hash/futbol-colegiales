@@ -82,6 +82,29 @@ export function settleOldestDebts({ cash = 0, transfer = 0, pending = 0, credit 
   };
 }
 
+/**
+ * Lo que sobra de un pago dividido (efectivo y transferencia ya cobrados)
+ * queda como saldo a favor de quien paga, con el organizador que lo recibió.
+ */
+export function splitLeftoverCredit({ playerName, cashLeft = 0, cashTo = '', transferLeft = 0, transferTo = '' } = {}) {
+  const items = [];
+  const push = (amount, name) => {
+    const n = roundARS(amount);
+    const who = String(name || '').trim();
+    if (!(n > 0) || !who) return;
+    const found = items.find((item) => sameOrganizer(item.name, who));
+    if (found) found.amount = roundARS(found.amount + n);
+    else items.push({ name: who, amount: n });
+  };
+  push(cashLeft, cashTo);
+  push(transferLeft, transferTo);
+  const name = String(playerName || '').trim() || 'el jugador';
+  return items.map((item) => ({
+    ...item,
+    text: `Sobra ${formatARS(item.amount)}: queda como saldo a favor de ${name} con ${item.name}.`,
+  }));
+}
+
 /** "Se aplicó $5.000 a 01/10 21:00 y $2.000 a 08/10 21:00". */
 export function settlementSummary(rows) {
   const applied = (rows || []).filter((row) => row.applied > 0 && row.label);
