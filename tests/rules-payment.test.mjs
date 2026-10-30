@@ -83,3 +83,51 @@ test('efectivo, transferencia y transfiere después: tipos y montos', async (t) 
     await testEnv.cleanup();
   }
 });
+
+test('el pago de un invitado es un update del jugador, sin lote', async (t) => {
+  if (!process.env.FIRESTORE_EMULATOR_HOST) {
+    t.skip('sin emulador de Firestore');
+    return;
+  }
+  const { initializeTestEnvironment, assertSucceeds } = await import('@firebase/rules-unit-testing');
+  const { doc, setDoc, updateDoc } = await import('firebase/firestore');
+  const host = process.env.FIRESTORE_EMULATOR_HOST;
+  const [hostname, portRaw] = host.split(':');
+  const testEnv = await initializeTestEnvironment({
+    projectId: 'demo-f7c-split',
+    firestore: {
+      rules: readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8'),
+      host: hostname,
+      port: Number(portRaw),
+    },
+  });
+  try {
+    await testEnv.clearFirestore();
+    const admin = testEnv.authenticatedContext('admin-uid', { email: 'gustavof.arg@gmail.com' });
+    await assertSucceeds(setDoc(doc(admin.firestore(), 'users', 'admin-uid'), {
+      role: 'admin', name: 'Gustavo', email: 'gustavof.arg@gmail.com', active: true, createdAt: 1,
+    }));
+    const db = admin.firestore();
+    await assertSucceeds(setDoc(doc(db, 'matches', MATCH), { date: '2026-10-22', time: '21:00', note: '' }));
+    const person = {
+      matchId: MATCH, matchDate: '2026-10-22', phone: '',
+      addedBy: 'Gustavo', addedByUid: 'admin-uid', createdAt: 1, updatedAt: 1,
+      viewers: ['*'], adders: ['*'],
+    };
+    await assertSucceeds(setDoc(doc(db, 'players', 'host'), { ...person, name: 'Ernesto', confirmToken: 'h'.repeat(24) }));
+    await assertSucceeds(setDoc(doc(db, 'players', 'guest'), {
+      ...person, name: 'Invitado 1', confirmToken: 'g'.repeat(24),
+      invitedBy: 'host', invitedByName: 'Ernesto', guestAuto: true,
+    }));
+    const pay = {
+      paid: true, amount: 2000, method: 'efectivo', cash: 2000, transfer: 0, pendingTransfer: null,
+      cashTo: 'Gustavo', transferTo: null, pendingTo: null, transferParts: null,
+      receivedBy: 'Gustavo', freePlay: false, paidUpdatedBy: 'Gustavo', paidUpdatedAt: 4,
+      transferReceivedAt: null, transferReceivedBy: null, updatedAt: 4,
+    };
+    await assertSucceeds(updateDoc(doc(db, 'players', 'host'), pay));
+    await assertSucceeds(updateDoc(doc(db, 'players', 'guest'), { ...pay, amount: 3000, cash: 3000 }));
+  } finally {
+    await testEnv.cleanup();
+  }
+});
