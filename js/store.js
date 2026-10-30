@@ -101,7 +101,7 @@ import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.j
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
 } from './organizers.js';
-import { canEditPlayer, canEditRoster, editLockedError, playerPatchEditsIdentity } from './edit-lock.js';
+import { canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer, editLockedError, playerPatchEditsIdentity } from './edit-lock.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
@@ -310,7 +310,7 @@ function mergePlayerPatches(...groups) {
   return [...byId.values()];
 }
 
-/** Copia el apodo a los jugadores del partido con ese rosterId que este organizador puede editar. */
+/** Copia el apodo a los jugadores con ese rosterId en los que este organizador puede escribir (anotar o admin). */
 function rosterShortPatches(players, rosterId, shortName, actor) {
   const id = String(rosterId || '').trim();
   if (!id) return [];
@@ -318,7 +318,7 @@ function rosterShortPatches(players, rosterId, shortName, actor) {
   const patches = [];
   for (const player of players || []) {
     if (!player?.id || String(player.rosterId || '') !== id) continue;
-    if (!canEditPlayer(player, actor)) continue;
+    if (!canWritePlayer(player, actor)) continue;
     if (cleanShortName(player.shortName) === short) continue;
     patches.push({ id: player.id, patch: { shortName: short } });
   }
@@ -896,6 +896,27 @@ class LocalStore {
     delete cur.phone;
     if ('phone' in (data || {})) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
     applyRosterNamePatches(db, patches, now);
+    this._save(db);
+  }
+  /** Solo el apodo de la ficha (creador o admin) y su copia en los partidos. */
+  async setRosterNick(id, value) {
+    const db = this._load(); const cur = db.roster[id]; if (!cur) return;
+    if (!canEditRosterNick(cur, this.actor)) throw editLockedError();
+    const short = cleanShortName(value);
+    for (const { id: pid, patch } of rosterShortPatches(rosterPlayers(db), id, short, this.actor)) {
+      Object.assign(db.players[pid], patch, { updatedAt: Date.now() });
+    }
+    applyShortName(cur, short, true);
+    cur.updatedAt = Date.now();
+    this._save(db);
+  }
+  /** El apodo de este jugador en este partido. Vacío: vuelve al de su ficha. */
+  async setPlayerShortName(id, value) {
+    const db = this._load(); const player = db.players[id]; if (!player) return;
+    if (!canWritePlayer(player, this.actor)) throw editLockedError();
+    const short = cleanShortName(value);
+    if (short) player.shortName = short; else delete player.shortName;
+    player.updatedAt = Date.now();
     this._save(db);
   }
   async patchRoster(id, patch) {
@@ -2152,6 +2173,31 @@ export class FirebaseStore {
     batch.update(fs.doc(this.db, 'roster', id), next);
     for (const item of namePatches) batch.update(fs.doc(this.db, 'players', item.id), { ...item.patch, updatedAt: now });
     await batch.commit();
+  }
+  // El apodo va solo: la ficha primero y después cada partido por separado,
+  // así un jugador sin permiso no frena al resto ni se junta todo en un request.
+  async setRosterNick(id, value) {
+    const cur = this.state.roster.find((r) => r.id === id);
+    if (!cur) throw new Error('Jugador inexistente');
+    if (!canEditRosterNick(cur, this.actor)) throw editLockedError();
+    const { doc, updateDoc, deleteField } = this.fs;
+    const short = cleanShortName(value);
+    const now = Date.now();
+    await updateDoc(doc(this.db, 'roster', id), { shortName: short || deleteField(), updatedAt: now });
+    for (const item of rosterShortPatches(this.state.players || [], id, short, this.actor)) {
+      try {
+        await updateDoc(doc(this.db, 'players', item.id), { shortName: short || deleteField(), updatedAt: now });
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+      }
+    }
+  }
+  async setPlayerShortName(id, value) {
+    const cur = this.state.players.find((p) => p.id === id);
+    if (cur && !canWritePlayer(cur, this.actor)) throw editLockedError();
+    const { doc, updateDoc, deleteField } = this.fs;
+    const short = cleanShortName(value);
+    await updateDoc(doc(this.db, 'players', id), { shortName: short || deleteField(), updatedAt: Date.now() });
   }
   async patchRoster(id, patch) {
     const cur = this.state.roster.find((r) => r.id === id);
