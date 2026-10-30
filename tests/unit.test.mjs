@@ -11,6 +11,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
+import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
@@ -2437,6 +2438,55 @@ test('se anotó con queda en el jugador y se puede cambiar sin tocar el nombre',
   assert.equal(guest.signedUpWithName, 'Gustavo');
 });
 
+test('estadísticas: cobrado contra lo que correspondía, por mes y por año', () => {
+  const match = { id: 'm1', date: '2026-10-15', time: '21:00', price: 5000 };
+  const other = { id: 'm2', date: '2026-11-02', time: '19:00', price: 5000 };
+  const cancelled = { id: 'm3', date: '2026-10-15', time: '18:00', price: 5000, cancelled: true };
+  const players = [
+    { id: 'a', matchId: 'm1', name: 'Ana', phone: '5491111111111', paid: true, amount: 5000, method: 'efectivo', receivedBy: 'Gustavo', confirmed: 'si', goals: 2 },
+    { id: 'b', matchId: 'm1', name: 'Beto', phone: '5491122222222', paid: true, cash: 0, transfer: 3000, transferTo: 'Martín', pendingTransfer: 2000, pendingTo: 'Martín', confirmed: 'no', goals: 0 },
+    { id: 'c', matchId: 'm1', name: 'Ciro', waiting: true },
+    { id: 'd', matchId: 'm2', name: 'Ana', phone: '5491111111111', paid: true, amount: 5000, method: 'transferencia', receivedBy: 'Gustavo' },
+    { id: 'e', matchId: 'm3', name: 'Dano', paid: true, amount: 5000, method: 'efectivo', receivedBy: 'Gustavo' },
+  ];
+  const matches = [match, other, cancelled];
+  const take = matchTake({ match, players, matches, prices: null });
+  assert.equal(take.main, 2);
+  assert.equal(take.waiting, 1);
+  assert.equal(take.noShows, 1);
+  assert.equal(take.goals, 2);
+  assert.equal(take.goalsTracked, true);
+  assert.equal(take.players, 3);
+  assert.equal(take.expected, 10000);
+  assert.equal(take.collected, 8000);
+  assert.equal(take.pending, 2000);
+  assert.equal(take.byOrganizer.find((row) => row.name === 'Gustavo').amount, 5000);
+  assert.equal(take.byOrganizer.find((row) => row.name === 'Martín').amount, 3000);
+  assert.equal(take.byMethod.find((row) => row.kind === 'cash').amount, 5000);
+  assert.equal(take.byMethod.find((row) => row.kind === 'transfer').amount, 3000);
+  const months = periodBuckets({ matches, players, prices: null, grain: 'month' });
+  const oct = months.find((row) => row.key === '2026-10');
+  assert.equal(oct.matches, 1);
+  assert.equal(oct.cancelled, 1);
+  assert.equal(oct.players, 3);
+  assert.equal(oct.collected, 8000);
+  const nov = months.find((row) => row.key === '2026-11');
+  assert.equal(nov.matches, 1);
+  assert.equal(nov.players, 1);
+  assert.equal(nov.collected, 5000);
+  const year = periodBuckets({ matches, players, prices: null, grain: 'year' });
+  assert.equal(year[0].key, '2026');
+  assert.equal(year[0].matches, 2);
+  assert.equal(year[0].players, 3);
+  assert.equal(year[0].collected, 13000);
+  const gone = matchTake({ match: cancelled, players, matches, prices: null });
+  assert.equal(gone.collected, 0);
+  assert.equal(gone.expected, 0);
+  assert.equal(gone.main, 1);
+  assert.deepEqual(countedGoals([{ goals: 1 }, { goals: 0 }, {}]), { tracked: true, goals: 1 });
+  assert.deepEqual(countedGoals([{}]), { tracked: false, goals: 0 });
+});
+
 test('el error del backup nombra la colección y el documento', () => {
   assert.equal(BACKUP_WRITE_BATCH, 1);
   const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
@@ -2456,7 +2506,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v67');
+  assert.equal(version, 'f7c-v68');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));

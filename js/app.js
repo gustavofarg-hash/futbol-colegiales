@@ -24,6 +24,7 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
+import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditLine, creditLoadSummary, creditPanelRows } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
@@ -37,7 +38,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v67';
+const APP_VERSION = 'f7c-v68';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -427,6 +428,15 @@ function route() {
   if (name === 'partido' && id && extra === 'equipos') return { name: 'teams', id: decodeURIComponent(id) };
   if (name === 'partido' && id) return { name: 'match', id: decodeURIComponent(id) };
   if (name === 'historial') return { name: 'history' };
+  if (name === 'estadisticas') {
+    const modes = ['jugador', 'partido', 'mes', 'anio'];
+    const parts = h.split('/');
+    const mode = modes.includes(parts[1]) ? parts[1] : 'jugador';
+    const raw = modes.includes(parts[1]) ? parts.slice(2).join('/') : '';
+    let picked = '';
+    try { picked = raw ? decodeURIComponent(raw) : ''; } catch { picked = raw; }
+    return { name: 'stats', mode, id: picked };
+  }
   if (name === 'jugadores' || name === 'pagos') return { name: 'roster' };
   if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
@@ -453,7 +463,7 @@ function openOnUpcoming() {
     sessionStorage.removeItem('f7c-tab');
     sessionStorage.removeItem('f7c-later');
     const name = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || '';
-    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial';
+    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial' || name === 'estadisticas';
     if (section && location.hash && location.hash !== '#/' && location.hash !== '#') {
       history.replaceState(null, '', `${location.pathname}${location.search}#/`);
     }
@@ -465,18 +475,20 @@ openOnUpcoming();
 function savedTab() {
   try {
     const value = sessionStorage.getItem('f7c-tab');
-    if (value === 'roster' || value === 'history' || value === 'home') return value;
+    if (value === 'roster' || value === 'history' || value === 'home' || value === 'stats') return value;
   } catch {}
   return 'home';
 }
 function hashForTab(tab) {
   if (tab === 'history') return '#/historial';
   if (tab === 'roster') return '#/jugadores';
+  if (tab === 'stats') return '#/estadisticas';
   return '#/';
 }
 function tabFor(r) {
   if (r.name === 'history') return 'history';
   if (r.name === 'roster') return 'roster';
+  if (r.name === 'stats') return 'stats';
   if (r.name === 'home') return 'home';
   if (r.name === 'match' || r.name === 'teams') {
     const match = matchById(r.id);
@@ -493,7 +505,7 @@ function tabFor(r) {
 }
 function paintTabs(r) {
   const tab = tabFor(r);
-  if (r.name === 'home' || r.name === 'roster' || r.name === 'history') {
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats') {
     try { sessionStorage.setItem('f7c-tab', tab); } catch {}
   }
   document.querySelectorAll('#tabbar a').forEach((link) => {
@@ -501,7 +513,7 @@ function paintTabs(r) {
     if (on) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
-  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history';
+  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || (r.name === 'stats' && !r.id);
   $('#btn-back').hidden = root || !app.loaded;
   requestAnimationFrame(placeBars);
 }
@@ -531,7 +543,7 @@ function render() {
   const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
   const brand = $('#venue-name');
   if (brand) brand.textContent = shownVenue;
-  const key = `${r.name}:${r.id || ''}`;
+  const key = `${r.name}:${r.mode || ''}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
   const y = same ? (document.scrollingElement?.scrollTop || 0) : 0;
@@ -541,6 +553,7 @@ function render() {
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
+  else if (r.name === 'stats') renderStats(r);
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'users') renderUsers();
@@ -2424,8 +2437,8 @@ async function openPlayerProfile(player, matchId) {
   }
 }
 
-function saveProfile(id, patch) {
-  Promise.resolve(app.store.patchRoster(id, patch)).catch((error) => {
+function saveProfile(id, patch, done) {
+  Promise.resolve(app.store.patchRoster(id, patch)).then(() => { if (done) done(); }).catch((error) => {
     if (error?.code === 'already-in-match') toast(error.message || ALREADY_IN_MATCH);
     else if (isRosterDenied(error)) showError(`${ROSTER_DENIED_WRITE} El perfil no se guardó.`);
     else toast('No se pudo guardar: ' + (error?.code || error?.message || error));
@@ -2440,7 +2453,9 @@ function profileMoney(person) {
       ${panel.err}
       ${panel.button}
       ${panel.rows}
-    </section>` };
+    </section>
+    ${panel.notesHtml}
+    ${panel.statsButton}` };
 }
 
 function ledgerSection(person) {
@@ -2492,6 +2507,154 @@ function ledgerSection(person) {
       ${by}
       <h2>Anotado por</h2>
       ${signed}
+    </section>`;
+}
+
+const STATS_MODES = [
+  { id: 'jugador', label: 'Jugador' },
+  { id: 'partido', label: 'Partido' },
+  { id: 'mes', label: 'Mes' },
+  { id: 'anio', label: 'Año' },
+];
+
+function statsHash(mode, id) {
+  const base = `#/estadisticas/${mode}`;
+  return id ? `${base}/${encodeURIComponent(id)}` : base;
+}
+
+function moneyList(rows, empty) {
+  if (!rows?.length) return `<p class="hint">${esc(empty)}</p>`;
+  return `<ul class="ledger-list">${rows.map((row) => `<li>${esc(row.label || row.name)}: ${esc(formatARS(row.amount))}</li>`).join('')}</ul>`;
+}
+
+function takeSummary(take) {
+  const goals = take.goalsTracked ? `Goles: ${take.goals}` : 'Sin goles cargados';
+  const pending = take.pending > 0 ? `<p class="pay-pending">Transfiere después ${esc(formatARS(take.pending))}</p>` : '';
+  return `
+    <p class="hint" id="stats-attendance">En la lista: ${take.main} · En espera: ${take.waiting} · No juega: ${take.noShows}</p>
+    <p class="hint" id="stats-goals">${esc(goals)}</p>
+    <p class="stat-summary" id="stats-collected">Cobrado ${esc(formatARS(take.collected))} de ${esc(formatARS(take.expected))}</p>
+    ${pending}
+    <h2>Por medio</h2>
+    ${moneyList(take.byMethod, 'Sin cobros.')}
+    <h2>Por organizador</h2>
+    ${moneyList(take.byOrganizer, 'Nadie cobró.')}`;
+}
+
+function renderStats(r) {
+  const mode = STATS_MODES.some((item) => item.id === r.mode) ? r.mode : 'jugador';
+  const seg = `<div class="seg stats-seg" id="stats-mode">${STATS_MODES.map((item) => `<a class="btn ${item.id === mode ? 'primary' : ''}" href="${statsHash(item.id)}"${item.id === mode ? ' aria-current="page"' : ''}>${item.label}</a>`).join('')}</div>`;
+  let body = '';
+  if (mode === 'jugador') body = statsPlayerBody(r.id);
+  else if (mode === 'partido') body = statsMatchBody(r.id);
+  else body = statsPeriodBody(mode === 'anio' ? 'year' : 'month', r.id);
+  if (!replaceView(`<div id="stats-view">${seg}${body}</div>`)) return;
+  bindPayFilter($('#stats-view'));
+}
+
+function statsPlayerBody(id) {
+  const mine = rosterForOrganizer(app.roster, staffActor())
+    .slice()
+    .sort((a, b) => foldText(a.name).localeCompare(foldText(b.name), 'es') || String(a.id).localeCompare(String(b.id)));
+  if (!id) {
+    const rows = mine.map((person) => `<li class="slot"><a class="who" href="${statsHash('jugador', person.id)}"><div class="name">${esc(person.name)}</div></a></li>`).join('');
+    return `<h2 class="section">Por jugador</h2><p class="hint">Solo los jugadores de tu agenda.</p><ul class="slots" id="stats-players">${rows || '<li class="empty-wait">No hay jugadores en tu agenda.</li>'}</ul>`;
+  }
+  const person = app.roster.find((row) => row.id === id);
+  if (!person) {
+    return `<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p><a class="btn" href="${statsHash('jugador')}">Volver a la lista</a></p></div>`;
+  }
+  const who = rosterIdentity(person);
+  const matches = knownMatches();
+  const played = playerStats({ ...who, players: app.players, matches });
+  const record = playerRecord({ ...who, players: app.players, matches });
+  const appearances = app.players.filter((player) => playerMatchesPerson(player, person));
+  const goals = countedGoals(appearances);
+  const main = appearances.filter((player) => player.waiting !== true).length;
+  const waiting = appearances.length - main;
+  const noShows = appearances.filter((player) => player.confirmed === 'no').length;
+  const debt = playerDebt({ person, players: app.players, matches, prices: livePrices() });
+  let creditHtml = '';
+  try {
+    const rows = creditPanelRows(app.credits, creditKeysOf(null, person), staffActor());
+    creditHtml = rows.filter((row) => row.amount > 0).map((row) => `<p class="credit-total">${esc(creditLine(row))}</p>`).join('');
+  } catch (error) { console.error(error); }
+  const inMine = mine.some((row) => row.id === person.id);
+  const notes = sortedNotes(person.notes);
+  const notesHtml = notes.length
+    ? notes.map((note) => `<article class="pnote"><div class="when">${esc(noteWhen(note, matches) || 'Partido')}</div><p>${esc(note.text)}</p></article>`).join('')
+    : '<p class="empty-wait">Sin notas.</p>';
+  const playedText = played.played ? `Jugó ${played.played} ${played.played === 1 ? 'vez' : 'veces'}` : 'Todavía no jugó';
+  return `
+    <p class="hint"><a href="${statsHash('jugador')}">Todos los jugadores</a></p>
+    <h2 class="section" id="stats-player">${esc(person.name)}</h2>
+    ${inMine ? '' : '<p class="hint">No está en tu agenda. Los números salen de los partidos que podés ver.</p>'}
+    <section class="profile-block">
+      <h2>Partidos</h2>
+      <p class="stat-summary" id="stats-played">${esc(playedText)}</p>
+      <p class="hint" id="stats-attendance">En la lista: ${main} · En espera: ${waiting} · No juega: ${noShows}</p>
+      <p class="hint" id="stats-goals">${goals.tracked ? `Goles: ${goals.goals}` : 'Sin goles cargados'}</p>
+      ${record.confirmText ? `<p class="hint">${esc(record.confirmText)}</p>` : ''}
+    </section>
+    <section class="profile-block" id="stats-balance">
+      <h2>Deuda y saldo</h2>
+      ${creditHtml || '<p class="hint">Sin saldo a favor.</p>'}
+      ${debt.total > 0 ? `<p class="debt-total">${esc(debt.text)}</p><ul class="ledger-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>` : '<p class="hint">Sin deuda.</p>'}
+    </section>
+    <section class="profile-block" id="stats-notes">
+      <h2>Notas de partido</h2>
+      ${notesHtml}
+    </section>
+    ${ledgerSection(person)}`;
+}
+
+function statsMatchBody(id) {
+  const matches = knownMatches()
+    .filter((match) => match?.date)
+    .sort((a, b) => b.date.localeCompare(a.date) || String(b.time || '').localeCompare(String(a.time || '')) || String(b.id).localeCompare(String(a.id)));
+  if (!id) {
+    const rows = matches.map((match) => {
+      const take = matchTake({ match, players: app.players, matches, prices: livePrices() });
+      const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
+      const money = `${formatARS(take.collected)} de ${formatARS(take.expected)}`;
+      return `<li class="slot"><a class="who" href="${statsHash('partido', match.id)}"><div class="name">${esc(when)}</div><div class="sub"><span>${esc(money)}</span>${match.cancelled === true ? '<span class="tag">Cancelado</span>' : ''}</div></a></li>`;
+    }).join('');
+    return `<h2 class="section">Por partido</h2><ul class="slots" id="stats-matches">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
+  }
+  const match = matches.find((item) => item.id === id);
+  if (!match) return `<div class="empty"><p><b>No encontramos este partido.</b></p><p><a class="btn" href="${statsHash('partido')}">Volver a la lista</a></p></div>`;
+  const take = matchTake({ match, players: app.players, matches, prices: livePrices() });
+  const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
+  return `
+    <p class="hint"><a href="${statsHash('partido')}">Todos los partidos</a></p>
+    <h2 class="section" id="stats-match">${esc(when)}</h2>
+    ${match.cancelled === true ? '<p class="hint">Cancelado: no suma plata.</p>' : ''}
+    <section class="profile-block">${takeSummary(take)}</section>`;
+}
+
+function statsPeriodBody(grain, id) {
+  const mode = grain === 'year' ? 'anio' : 'mes';
+  const title = grain === 'year' ? 'Por año' : 'Por mes';
+  const buckets = periodBuckets({ matches: knownMatches(), players: app.players, prices: livePrices(), grain });
+  if (!id) {
+    const rows = buckets.map((bucket) => `<li class="slot"><a class="who" href="${statsHash(mode, bucket.key)}"><div class="name">${esc(bucket.label)}</div><div class="sub"><span>${bucket.matches} ${bucket.matches === 1 ? 'partido' : 'partidos'} · ${bucket.players} ${bucket.players === 1 ? 'jugador' : 'jugadores'}</span><span>${esc(formatARS(bucket.collected))}</span></div></a></li>`).join('');
+    return `<h2 class="section">${title}</h2><ul class="slots" id="stats-periods">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
+  }
+  const bucket = buckets.find((item) => item.key === id);
+  if (!bucket) return `<div class="empty"><p><b>No hay datos de ese período.</b></p><p><a class="btn" href="${statsHash(mode)}">Volver a la lista</a></p></div>`;
+  const cancelled = bucket.cancelled > 0 ? `<p class="hint">${bucket.cancelled} ${bucket.cancelled === 1 ? 'cancelado, no suma' : 'cancelados, no suman'}.</p>` : '';
+  return `
+    <p class="hint"><a href="${statsHash(mode)}">Todos</a></p>
+    <h2 class="section" id="stats-period">${esc(bucket.label)}</h2>
+    <p class="stat-summary" id="stats-period-count">${bucket.matches} ${bucket.matches === 1 ? 'partido' : 'partidos'} · ${bucket.players} ${bucket.players === 1 ? 'jugador' : 'jugadores'}</p>
+    ${cancelled}
+    <section class="profile-block">
+      <p class="stat-summary" id="stats-collected">Cobrado ${esc(formatARS(bucket.collected))} de ${esc(formatARS(bucket.expected))}</p>
+      ${bucket.pending > 0 ? `<p class="pay-pending">Transfiere después ${esc(formatARS(bucket.pending))}</p>` : ''}
+      <h2>Por medio</h2>
+      ${moneyList(bucket.byMethod, 'Sin cobros.')}
+      <h2>Por organizador</h2>
+      ${moneyList(bucket.byOrganizer, 'Nadie cobró.')}
     </section>`;
 }
 
@@ -2556,7 +2719,6 @@ function renderProfile(id) {
   const record = playerRecord({ ...who, players: app.players, matches: app.matches });
   const positions = new Set(person.positions || []);
   const level = storedLevel(person.level);
-  const notes = sortedNotes(person.notes);
   const own = canEditRoster(person, actor());
   const lockNote = own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`;
   const money = profileMoney(person);
@@ -2597,20 +2759,6 @@ function renderProfile(id) {
         ${record.confirmText ? `<p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>` : ''}
       </section>
       ${money.html}
-      ${ledgerSection(person)}
-      <section class="profile-block">
-        <h2>Notas de partido</h2>
-        <div id="notes">${notes.length ? notes.map((note) => `
-          <article class="pnote" data-note="${esc(note.id)}">
-            <div class="when">${esc(noteWhen(note, app.matches) || 'Partido')}</div>
-            <p>${esc(note.text)}</p>
-            <div class="row">
-              <button type="button" class="btn" data-note-edit="${esc(note.id)}"${own ? '' : ' disabled'}>Editar</button>
-              <button type="button" class="btn danger" data-note-del="${esc(note.id)}"${own ? '' : ' disabled'}>Borrar</button>
-            </div>
-          </article>`).join('') : '<p class="empty-wait">Sin notas.</p>'}</div>
-        <button type="button" class="btn block" id="btn-add-note"${own ? '' : ' disabled'}>Agregar nota</button>
-      </section>
     </article>`);
   if (app.wantPhoneForm) {
     app.wantPhoneForm = false;
@@ -2666,19 +2814,7 @@ function renderProfile(id) {
     if (next.has(pos)) next.delete(pos); else next.add(pos);
     saveProfile(person.id, { positions: POSITIONS.filter((item) => next.has(item)) });
   };
-  bindPayFilter($('#profile'));
   bindPartidos(person);
-  if (own) $('#btn-add-note').onclick = () => openNoteForm(person);
-  $('#notes').onclick = (e) => {
-    if (!own) return;
-    const edit = e.target.closest('[data-note-edit]');
-    if (edit) return openNoteForm(person, (person.notes || []).find((n) => n.id === edit.dataset.noteEdit));
-    const del = e.target.closest('[data-note-del]');
-    if (!del) return;
-    const note = (person.notes || []).find((n) => n.id === del.dataset.noteDel);
-    if (!note || !confirm('¿Borrar esta nota?')) return;
-    saveProfile(person.id, { notes: (person.notes || []).filter((n) => n.id !== note.id) });
-  };
 }
 
 function signupDraft(person) {
@@ -2816,7 +2952,7 @@ function bindPartidos(person) {
   paint();
 }
 
-function openNoteForm(person, note) {
+function openNoteForm(person, note, player) {
   const matches = [...app.matches].sort((a, b) => (b.startsAt ?? 0) - (a.startsAt ?? 0));
   const selected = note?.matchId || app.profileMatchId || matches[0]?.id || '';
   openSheet(`
@@ -2846,7 +2982,7 @@ function openNoteForm(person, note) {
       notes.push({ id: noteId(), matchId: match.id, matchDate: match.date, matchTime: match.time || '', text, createdAt: Date.now(), updatedAt: Date.now() });
     }
     closeSheet();
-    saveProfile(person.id, { notes });
+    saveProfile(person.id, { notes }, () => reopenPlayerMenu(player));
   };
 }
 
@@ -3796,8 +3932,8 @@ function debtSubject(player) {
 }
 
 const NICK_HINT = 'Es lo que se ve en la lista del partido y en Equipos.';
-const MENU_PANEL = { nick: 'menu-nick', credit: 'menu-credit', debt: 'menu-debt', balance: 'menu-balance', button: 'pm-credit', err: 'menu-credit-err' };
-const PROFILE_PANEL = { nick: 'profile-nick', credit: 'profile-credit', debt: 'debt-total', balance: 'profile-balance', button: 'profile-credit-btn', err: 'profile-credit-err' };
+const MENU_PANEL = { nick: 'menu-nick', credit: 'menu-credit', debt: 'menu-debt', balance: 'menu-balance', button: 'pm-credit', err: 'menu-credit-err', stats: 'pm-stats' };
+const PROFILE_PANEL = { nick: 'profile-nick', credit: 'profile-credit', debt: 'debt-total', balance: 'profile-balance', button: 'profile-credit-btn', err: 'profile-credit-err', stats: 'profile-stats' };
 
 function staffActor() {
   return { ...actor(), role: app.role || app.session?.user?.role || '' };
@@ -3843,9 +3979,49 @@ function panelNickState(player, person) {
   return { value, editable: !!(person && canEditRosterNick(person, staffActor())) };
 }
 
+function panelRosterPerson(player, person) {
+  if (person?.id) {
+    const found = (app.roster || []).find((row) => row.id === person.id);
+    if (found) return found;
+  }
+  if (!player) return null;
+  const subject = debtSubject(player);
+  if (!subject?.id) return null;
+  return (app.roster || []).find((row) => row.id === subject.id) || null;
+}
+
+function notesMarkup(person) {
+  if (!person) {
+    return `<section class="profile-block panel-notes"><h2>Notas de partido</h2><p class="empty-wait">Sin ficha en Jugadores.</p></section>`;
+  }
+  const own = canEditRoster(person, actor());
+  const notes = sortedNotes(person.notes);
+  const list = notes.length ? notes.map((note) => `
+    <article class="pnote" data-note="${esc(note.id)}">
+      <div class="when">${esc(noteWhen(note, knownMatches()) || 'Partido')}</div>
+      <p>${esc(note.text)}</p>
+      <div class="row">
+        <button type="button" class="btn" data-note-edit="${esc(note.id)}"${own ? '' : ' disabled'}>Editar</button>
+        <button type="button" class="btn danger" data-note-del="${esc(note.id)}"${own ? '' : ' disabled'}>Borrar</button>
+      </div>
+    </article>`).join('') : '<p class="empty-wait">Sin notas.</p>';
+  return `<section class="profile-block panel-notes"><h2>Notas de partido</h2><div id="notes">${list}</div><button type="button" class="btn block" id="btn-add-note"${own ? '' : ' disabled'}>Agregar nota</button></section>`;
+}
+
+function reopenPlayerMenu(player) {
+  if (!player) return;
+  const fresh = app.players.find((row) => row.id === player.id) || player;
+  const match = knownMatches().find((item) => item.id === fresh.matchId) || null;
+  openPlayerMenu(match, fresh);
+}
+
+function statsPlayerHash(id) {
+  return id ? `#/estadisticas/jugador/${encodeURIComponent(id)}` : '#/estadisticas/jugador';
+}
+
 /**
- * Apodo, saldo a favor, deuda y Cargar crédito. El mismo bloque en el menú
- * del partido y en el perfil, para que no se desfasen.
+ * Apodo, saldo a favor, deuda, Cargar crédito, notas y Ver estadísticas.
+ * El mismo bloque en el menú del partido y en el perfil.
  */
 function playerPanelPieces(player, person, ids, debtKey) {
   const keys = creditKeysOf(player, person);
@@ -3876,7 +4052,10 @@ function playerPanelPieces(player, person, ids, debtKey) {
     ? `<ul class="ledger-list" id="debt-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>`
     : '';
   const mine = credits.find((row) => row.organizerUid === me.uid);
-  return { keys, writeKey: creditWriteKey(keys, me.uid), nick, nickHtml, balance, err, button, rows, shownAmount: mine ? mine.amount : 0 };
+  const rosterPerson = panelRosterPerson(player, person);
+  const notesHtml = notesMarkup(rosterPerson);
+  const statsButton = `<button type="button" class="btn block" id="${ids.stats}">Ver estadísticas</button>`;
+  return { keys, writeKey: creditWriteKey(keys, me.uid), nick, nickHtml, balance, err, button, rows, notesHtml, statsButton, person: rosterPerson, shownAmount: mine ? mine.amount : 0 };
 }
 
 function bindPlayerPanel(scope, player, person, ids, panel) {
@@ -3901,6 +4080,31 @@ function bindPlayerPanel(scope, player, person, ids, panel) {
   }
   const btn = scope?.querySelector(`#${ids.button}`);
   if (btn) btn.onclick = () => openCreditForm({ player, person, panel });
+  const statsBtn = scope?.querySelector(`#${ids.stats}`);
+  if (statsBtn) statsBtn.onclick = () => {
+    closeSheet();
+    location.hash = statsPlayerHash(panel.person?.id || '');
+  };
+  bindPlayerNotes(scope, player, panel.person);
+}
+
+function bindPlayerNotes(scope, player, person) {
+  if (!person || !canEditRoster(person, actor())) return;
+  const add = scope?.querySelector('#btn-add-note');
+  if (add && !add.disabled) add.onclick = () => openNoteForm(person, null, player);
+  const notes = scope?.querySelector('#notes');
+  if (!notes) return;
+  notes.onclick = (e) => {
+    const edit = e.target.closest('[data-note-edit]');
+    if (edit) return openNoteForm(person, (person.notes || []).find((n) => n.id === edit.dataset.noteEdit), player);
+    const del = e.target.closest('[data-note-del]');
+    if (!del) return;
+    const note = (person.notes || []).find((n) => n.id === del.dataset.noteDel);
+    if (!note || !confirm('¿Borrar esta nota?')) return;
+    saveProfile(person.id, { notes: (person.notes || []).filter((n) => n.id !== note.id) }, () => {
+      if (player && sheet.open) reopenPlayerMenu(player);
+    });
+  };
 }
 
 /** Deudas de esta persona con el organizador logueado, de la más vieja a la más nueva. */
@@ -4034,7 +4238,7 @@ function openPlayerMenu(m, p) {
   const canAnnotate = !!(match && canAdd(match, actor().uid));
   openSheet(`
     <h3>${esc(shownName(p))}</h3>
-    <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.button}</div>
+    <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.button}${panel.notesHtml}${panel.statsButton}</div>
     <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
     ${canAnnotate ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
@@ -4280,6 +4484,10 @@ async function boot() {
       location.hash = '#/jugadores';
       return;
     }
+    if (r.name === 'stats') {
+      location.hash = r.id ? `#/estadisticas/${r.mode}` : '#/';
+      return;
+    }
     if (r.name === 'users') { location.hash = hashForTab(savedTab()); return; }
     location.hash = '#/';
   };
@@ -4493,6 +4701,14 @@ sheet.addEventListener('close', () => {
   app.refreshPaySheet = null;
   pendingRender = false;
   render();
+  // El formulario cerrado no puede dejar ids repetidos (notas del menú y de la ficha).
+  // Se vacía después: si en este mismo turno se abre otra hoja, no hay que pisarla.
+  queueMicrotask(() => {
+    if (sheet.open) return;
+    restoreTabs();
+    const body = sheet.querySelector('.sheet-body');
+    if (body) body.remove();
+  });
 });
 
 boot().catch((e) => { console.error(e); showError('Error al iniciar la app: ' + e.message); });
