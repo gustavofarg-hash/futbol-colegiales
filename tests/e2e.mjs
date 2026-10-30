@@ -256,7 +256,27 @@ const players = [
 ];
 await page.click('#btn-add-player');
 await page.waitForSelector('#wa-share');
-check('Alta del partido: Mostrar el WhatsApp para todos, destildado', (await page.locator('#wa-share-line').innerText()).replace(/\s+/g, ' ').trim() === 'Mostrar el WhatsApp para todos' && !(await page.isChecked('#wa-share')));
+check('Alta del partido: permitir ver el WhatsApp, destildado', (await page.locator('#wa-share-line').innerText()).replace(/\s+/g, ' ').trim() === 'Permitir que otros organizadores vean su WhatsApp' && !(await page.isChecked('#wa-share')));
+const addWaRow = await page.evaluate(() => {
+  const row = document.querySelector('#player-form .phone-row');
+  const phone = row.querySelector('input[name=phone]');
+  const box = row.querySelector('#wa-share-line');
+  const label = box.querySelector('span');
+  phone.value = '+54 9 11 2671-4277';
+  const pr = phone.getBoundingClientRect();
+  const br = box.getBoundingClientRect();
+  const style = getComputedStyle(label);
+  const line = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+  return {
+    right: br.left >= pr.right - 1,
+    same: br.top < pr.bottom - 2 && pr.top < br.bottom - 2,
+    phoneFull: phone.scrollWidth <= phone.clientWidth + 1,
+    lines: label.getBoundingClientRect().height / line,
+    inside: row.getBoundingClientRect().right <= window.innerWidth + 1,
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  };
+});
+check('A 390px el WhatsApp del alta y el casillero entran en una fila', addWaRow.right && addWaRow.same && addWaRow.phoneFull && addWaRow.lines <= 3.3 && addWaRow.inside && addWaRow.overflow <= 1, JSON.stringify(addWaRow));
 check('Se anotó con arranca en Gustavo', (await page.locator('#signed-up-with option:checked').innerText()).trim() === 'Gustavo');
 await page.click('#player-form [data-close]');
 for (const [name, phone] of players) {
@@ -1013,7 +1033,7 @@ await page.waitForFunction(() => !document.body.innerText.includes('Libre Gómez
 check('Se puede borrar un jugador guardado que no está en un partido', (await page.locator('#roster-list .name', { hasText: 'Libre Gómez' }).count()) === 0);
 await page.click('#btn-add-roster');
 await page.waitForSelector('#roster-form #wa-share');
-check('Alta de Jugadores: Mostrar el WhatsApp para todos, destildado', (await page.locator('#roster-form #wa-share-line').innerText()).replace(/\s+/g, ' ').trim() === 'Mostrar el WhatsApp para todos' && !(await page.isChecked('#roster-form #wa-share')));
+check('Alta de Jugadores: permitir ver el WhatsApp, destildado', (await page.locator('#roster-form #wa-share-line').innerText()).replace(/\s+/g, ' ').trim() === 'Permitir que otros organizadores vean su WhatsApp' && !(await page.isChecked('#roster-form #wa-share')));
 await page.fill('#roster-form [name=name]', 'Otro Pérez');
 await page.fill('#roster-form [name=phone]', '11 4444-5555');
 await page.click('#roster-form button[type=submit]');
@@ -1033,7 +1053,26 @@ await page.locator('#slots .who', { hasText: 'Ernesto P.' }).click();
 await page.waitForSelector('#profile');
 check('Tocarlo abre el perfil con WhatsApp', (await page.getAttribute('#profile-wa', 'href')).startsWith('https://wa.me/5491122223333'));
 await assertStill('El perfil no se redibuja solo');
-check('Mostrar el WhatsApp a los demás arranca desactivado', (await page.locator('#phone-share').count()) === 1 && !(await page.isChecked('#phone-share')) && (await page.textContent('#phone-share-line')).includes('Mostrar mi WhatsApp a los demás organizadores'));
+check('Permitir ver el WhatsApp arranca desactivado', (await page.locator('#phone-share').count()) === 1 && !(await page.isChecked('#phone-share')) && (await page.textContent('#phone-share-line')).replace(/\s+/g, ' ').includes('Permitir que otros organizadores vean su WhatsApp'));
+const profileWaRow = await page.evaluate(() => {
+  const row = document.querySelector('#profile .phone-row');
+  const phone = document.querySelector('#profile-phone');
+  const box = document.querySelector('#phone-share-line');
+  const label = box.querySelector('span');
+  const pr = phone.getBoundingClientRect();
+  const br = box.getBoundingClientRect();
+  const style = getComputedStyle(label);
+  const line = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+  return {
+    right: br.left >= pr.right - 1,
+    same: br.top < pr.bottom - 2 && pr.top < br.bottom - 2,
+    phoneFull: phone.scrollWidth <= phone.clientWidth + 1,
+    phone: phone.textContent.trim(),
+    lines: label.getBoundingClientRect().height / line,
+    inside: row.getBoundingClientRect().right <= window.innerWidth + 1,
+  };
+});
+check('A 390px el número y el casillero van en la misma fila', profileWaRow.right && profileWaRow.same && profileWaRow.phoneFull && profileWaRow.phone.startsWith('+54') && profileWaRow.lines <= 3.3 && profileWaRow.inside, JSON.stringify(profileWaRow));
 check('Cuenta el partido pasado en la lista principal', (await page.textContent('#stat-times')).includes('Jugó 1 vez'));
 check('Mayormente jueves · 21:00', (await page.textContent('#stat-summary')).includes('Mayormente jueves · 21:00'));
 for (let i = 0; i < 8; i++) await page.click('#level-up');

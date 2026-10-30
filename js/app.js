@@ -48,6 +48,11 @@ function phoneSub(p) {
   if (phoneHidden(p)) return `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>`;
   return '<span>Sin número</span>';
 }
+const WA_SHARE_LABEL = 'Permitir que otros organizadores vean su WhatsApp';
+function waShareControl(id, { checked = false, named = false } = {}) {
+  const lineId = id === 'phone-share' ? 'phone-share-line' : 'wa-share-line';
+  return `<label class="checkline wa-share" id="${lineId}"><input type="checkbox" id="${id}"${named ? ' name="waShare"' : ''}${checked ? ' checked' : ''}><span>${WA_SHARE_LABEL}</span></label>`;
+}
 function slotSide(p, m, readOnly, payText) {
   const pay = readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? ' on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>`;
   const wa = waButton(p, waMessage(m, p));
@@ -2312,9 +2317,8 @@ function openRosterForm(person) {
       <p class="hint">Nombre completo. El WhatsApp es opcional. Si el número ya está, no se duplica.</p>
       <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
       <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
-      ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person ? displayFromWa(person.phone) : '')}">
+      ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${person ? `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(displayFromWa(person.phone))}">` : `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="">${waShareControl('wa-share', { named: true })}</div>`}
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
-      ${person ? '' : '<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"><span>Mostrar el WhatsApp para todos</span></label>'}
       <div class="field"><div class="err" id="rf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit"${locked ? ' disabled' : ''}>${person ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
@@ -2561,16 +2565,16 @@ function renderProfile(id) {
       <h2 class="section">${esc(person.name)}</h2>
       ${money.panel.nickHtml}
       ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" value="${esc(person.name)}"></label>` : ''}
-      <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</p>
+      <div class="phone-row">
+        <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</p>
+        ${person.phone && person.hasPhone && person.phoneOwnerUid === actor().uid ? waShareControl('phone-share', { checked: person.phoneShared === true }) : ''}
+      </div>
       ${lockNote}
       ${person.phone
         ? `<a class="btn profile-wa" id="profile-wa" href="${esc(waHref(person.phone))}" target="_blank" rel="noopener">${ICON.wa}WhatsApp</a>`
         : phoneHidden(person)
           ? `<button type="button" class="btn profile-wa" id="profile-wa" disabled>${ICON.wa}${esc(PRIVATE_WA_TEXT)}</button>`
           : `<button type="button" class="btn profile-add-phone" id="profile-add-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
-      ${person.phone && person.hasPhone && person.phoneOwnerUid === actor().uid
-        ? `<label class="checkline" id="phone-share-line"><input type="checkbox" id="phone-share"${person.phoneShared ? ' checked' : ''}><span>Mostrar mi WhatsApp a los demás organizadores</span></label>`
-        : ''}
       ${partidosSection(person)}
       <section class="profile-block">
         <h2>Nivel de juego</h2>
@@ -3159,9 +3163,8 @@ function openPlayerForm(m, p, opts = {}) {
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
       <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       ${p ? nickField(p) : ''}
-      ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">
+      ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${(!p || editingFriend) ? `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">${waShareControl('wa-share', { named: true, checked: p?.phoneShared === true })}</div>` : `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">`}
         <div class="small muted" id="pf-phone">${esc(emptyPhoneHint)}</div></label>`}
-      ${(!p || editingFriend) && !lockPhone ? `<label class="checkline" id="wa-share-line"><input type="checkbox" id="wa-share" name="waShare"${p?.phoneShared === true ? ' checked' : ''}><span>Mostrar el WhatsApp para todos</span></label>` : ''}
       ${offerRoster ? '<label class="checkline" id="save-roster-line"><input type="checkbox" id="save-roster" name="saveRoster"><span>Guardar en Jugadores</span></label>' : ''}
       ${!p && !asWait ? '<label class="checkline"><input type="checkbox" id="player-tentative" name="tentative"> Anotar como pendiente de confirmación</label>' : ''}
       ${p ? '' : `<div class="friend-box" id="friend-box">
