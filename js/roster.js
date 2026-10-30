@@ -140,6 +140,36 @@ export function rosterInMatchMessage(name, count) {
  * Manda el teléfono (el hash, aunque el número esté oculto). Si ninguno tiene, manda el id del plantel.
  * Si el jugador no tiene teléfono ni id, alcanza el mismo nombre.
  */
+/**
+ * La misma persona en distintos partidos: teléfono, si no la ficha de
+ * Jugadores. Un invitado sin teléfono ni ficha es «quien lo invita + su
+ * nombre»: el Invitado 1 de Vinicio y el Invitado 1 de Ernesto son dos
+ * personas distintas. Al que invita se lo busca en players (invitedBy es el
+ * id del jugador en ese partido) y se usa su propia identidad. El resto, el nombre.
+ */
+export function personKey(player, players, depth = 0) {
+  const phone = phoneIdentity(player);
+  if (phone) return `p:${phone}`;
+  const rosterId = String(player?.rosterId || '').trim();
+  if (rosterId) return `r:${rosterId}`;
+  const name = foldText(player?.name);
+  if (!name) return '';
+  if (isNamedGuest(player)) return `g:${guestHostKey(player, players, depth)}|${name}`;
+  return `n:${name}`;
+}
+
+/** Invitado que solo se conoce por el nombre (sin teléfono ni ficha). */
+export function isNamedGuest(player) {
+  return !!String(player?.invitedBy || '').trim() && !phoneIdentity(player) && !String(player?.rosterId || '').trim();
+}
+
+/** Identidad de quien invita. Si no está en la lista, el id del jugador que invita (solo vale en ese partido). */
+export function guestHostKey(player, players, depth = 0) {
+  const hostId = String(player?.invitedBy || '').trim();
+  const host = depth < 2 ? (players || []).find((item) => item?.id === hostId) : null;
+  return (host && personKey(host, players, depth + 1)) || `id:${hostId}`;
+}
+
 export function playerMatchesPerson(player, person) {
   if (!player || !person) return false;
   const phoneP = phoneIdentity(player);
@@ -147,6 +177,8 @@ export function playerMatchesPerson(player, person) {
   if (phoneP && phoneR && phoneP === phoneR) return true;
   if (player.rosterId && person.id && player.rosterId === person.id) return true;
   if (phoneP || player.rosterId || phoneR) return false;
+  // Un invitado sin teléfono ni ficha no es nadie de Jugadores por tener el mismo nombre.
+  if (isNamedGuest(player)) return false;
   const left = foldText(player.name);
   const right = foldText(person.name);
   return !!left && left === right;

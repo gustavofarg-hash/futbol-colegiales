@@ -4,7 +4,7 @@ import { MESES_CORTOS, numericDate, shortHour } from './dates.js';
 import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { priceOfMatch, promoForPlayer } from './prices.js';
 import { UNSPECIFIED, sameOrganizer } from './organizers.js';
-import { foldText, phoneIdentity, playerMatchesPerson } from './roster.js';
+import { foldText, isNamedGuest, personKey, phoneIdentity, playerMatchesPerson } from './roster.js';
 
 export function receiverLabel(player) {
   const name = String(player?.receivedBy || '').trim();
@@ -54,10 +54,12 @@ function ofPerson({ phone, phoneKey, rosterId, name }, players) {
   return (players || []).filter((player) => playerMatchesPerson(player, person));
 }
 
-function summaryKey(player, roster) {
+function summaryKey(player, roster, players) {
   const phone = phoneIdentity(player);
   if (phone) return `p:${phone}`;
   if (player?.rosterId) return `r:${player.rosterId}`;
+  // Invitado sin teléfono ni ficha: quien lo invita + su nombre, no cualquiera con ese nombre.
+  if (isNamedGuest(player)) return personKey(player, players) || `id:${player?.id || ''}`;
   const named = (roster || []).filter((person) => !phoneIdentity(person) && foldText(person.name) === foldText(player?.name) && person.id);
   if (named.length === 1) return `r:${named[0].id}`;
   const name = foldText(player?.name);
@@ -152,7 +154,7 @@ export function paymentsSummary({ players, roster, organizer = null }) {
     if (person.name) row.name = person.name;
   }
   for (const player of players || []) {
-    const row = touch(summaryKey(player, roster), player.name);
+    const row = touch(summaryKey(player, roster, players), player.name);
     if (!row) continue;
     const added = addedByLabel(player);
     if (wants(added, organizer)) row.signups.set(added, (row.signups.get(added) || 0) + 1);
@@ -242,11 +244,11 @@ export function pendingTransfers({ players, roster, organizer = null }) {
   for (const player of players || []) {
     const shares = pendingShareList(player).filter((share) => wants(shareLabel(share.name), organizer));
     if (!shares.length) continue;
-    const key = summaryKey(player, roster);
+    const key = summaryKey(player, roster, players);
     if (!people.has(key)) {
       const saved = (roster || []).find((person) => phoneIdentity(person) && phoneIdentity(person) === phoneIdentity(player))
         || (roster || []).find((person) => person.id && person.id === player.rosterId)
-        || (roster || []).find((person) => !phoneIdentity(person) && foldText(person.name) === foldText(player.name));
+        || (isNamedGuest(player) ? null : (roster || []).find((person) => !phoneIdentity(person) && foldText(person.name) === foldText(player.name)));
       people.set(key, { key, name: saved?.name || player.name || 'Sin nombre', amount: 0, by: new Map() });
     }
     const row = people.get(key);

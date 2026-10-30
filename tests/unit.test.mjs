@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, fullNameBehind, nickOf, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
+import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1482,6 +1482,62 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(four.shares.reduce((sum, n) => sum + n, 0), 17000);
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).label, 'Promo 3 partidos por $10.000');
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).total, 10000);
+});
+
+test('promo de invitados: es quien invita + el nombre del invitado', () => {
+  const matches = [
+    { id: 'A', date: '2026-10-22', time: '19:00', startsAt: 1 },
+    { id: 'B', date: '2026-10-22', time: '21:00', startsAt: 2 },
+  ];
+  const base = { phone: '', waiting: false };
+  // Invitado 1 de Vinicio en A y de Ernesto en B: dos personas distintas, sin promo.
+  const distintos = [
+    { ...base, id: 'vA', matchId: 'A', name: 'Vinicio' },
+    { ...base, id: 'eB', matchId: 'B', name: 'Ernesto' },
+    { ...base, id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', guestAuto: true },
+    { ...base, id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'eB', guestAuto: true },
+  ];
+  assert.equal(promoForPlayer({ player: distintos[2], players: distintos, matches, prices: null }), null);
+  assert.equal(promoForPlayer({ player: distintos[3], players: distintos, matches, prices: null }), null);
+  assert.notEqual(playerPromoKey(distintos[2], distintos), playerPromoKey(distintos[3], distintos));
+  assert.equal(playerPromoKey(distintos[2], distintos), 'g:n:vinicio|invitado 1');
+  // El mismo Vinicio lleva a su Invitado 1 a los dos partidos del día: promo 2.
+  const mismo = [
+    { ...base, id: 'vA', matchId: 'A', name: 'Vinicio' },
+    { ...base, id: 'vB', matchId: 'B', name: 'Vinicio' },
+    { ...base, id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', guestAuto: true },
+    { ...base, id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'vB', guestAuto: true },
+  ];
+  const promo = promoForPlayer({ player: mismo[2], players: mismo, matches, prices: { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 } });
+  assert.equal(promo?.label, 'Promo 2 partidos por $9.000');
+  assert.equal(promo.share, 4500);
+  assert.deepEqual(promo.rows.map((row) => row.player.id), ['gA', 'gB']);
+  // Con el teléfono del anfitrión también: lo identifica igual en los dos partidos.
+  const conTel = mismo.map((p) => (p.invitedBy ? p : { ...p, phone: '5491122223333', name: p.id === 'vA' ? 'Vini' : 'Vinicio R.' }));
+  assert.equal(promoForPlayer({ player: conTel[3], players: conTel, matches, prices: null })?.count, 2);
+  // Si no está el anfitrión en la lista, el invitado queda solo en su partido.
+  assert.equal(personKey({ name: 'Invitado 1', invitedBy: 'borrado' }, []), 'g:id:borrado|invitado 1');
+  // Un invitado con teléfono o ficha es esa persona, lo invite quien lo invite.
+  assert.equal(personKey({ name: 'Juan', invitedBy: 'vA', rosterId: 'r9' }, mismo), 'r:r9');
+  // amountOwed usa la parte de la promo solo para el invitado del mismo anfitrión.
+  assert.equal(amountOwed(mismo[2], { players: mismo, matches, prices: null }), 4500);
+  assert.equal(amountOwed(distintos[2], { players: distintos, matches, prices: null }), 5000);
+});
+
+test('invitados con el mismo nombre no se mezclan en resúmenes ni en Jugadores', () => {
+  const players = [
+    { id: 'vA', matchId: 'A', name: 'Vinicio', phone: '' },
+    { id: 'eB', matchId: 'B', name: 'Ernesto', phone: '' },
+    { id: 'gA', matchId: 'A', name: 'Invitado 1', invitedBy: 'vA', phone: '', paid: true, cash: 5000, cashTo: 'Gus', pendingTransfer: 1000, pendingTo: 'Gus' },
+    { id: 'gB', matchId: 'B', name: 'Invitado 1', invitedBy: 'eB', phone: '', paid: true, cash: 5000, cashTo: 'Gus', pendingTransfer: 1000, pendingTo: 'Gus' },
+  ];
+  const summary = paymentsSummary({ players, roster: [] });
+  assert.equal(summary.filter((row) => row.name === 'Invitado 1').length, 2);
+  const pending = pendingTransfers({ players, roster: [] });
+  assert.equal(pending.rows.filter((row) => row.name === 'Invitado 1').length, 2);
+  // Una ficha de Jugadores que se llama igual no se lleva a los invitados.
+  assert.equal(playerMatchesPerson(players[2], { id: 'r1', name: 'Invitado 1', phone: '' }), false);
+  assert.equal(playerMatchesPerson(players[0], { id: 'r2', name: 'Vinicio', phone: '' }), true);
 });
 
 test('permisos del partido: todos, solo yo, límite y sin excepción de admin', () => {
