@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v67** (rama `cursor/whatsapp-checkbox-fila-c20d`, 30/10/2026): el casillero del WhatsApp queda a la derecha del número, con el texto «Permitir que otros organizadores vean su WhatsApp». Quién ve el número no cambió. `firestore.rules` no cambió.
 **Actualizada para f7c-v66** (rama `cursor/credito-cancela-deuda-c20d`, 30/10/2026): «Cargar crédito» cancela primero las deudas con el organizador logueado, de la más vieja a la más nueva, y solo el sobrante queda como saldo. `firestore.rules` no cambió. «Cargar pago» sigue detrás de `canAdd` (ver Otros puntos).
 **Actualizada para f7c-v65** (rama `cursor/ficha-credito-apodo-c20d`, 30/10/2026): en la ficha del jugador y en el menú, el mismo bloque con el apodo editable, el saldo a favor en verde, la deuda en rojo y «Cargar crédito». En Firebase el botón no aparecía si el uid de la sesión no estaba en `adders` (`canAdd`); ahora lo ve cualquier organizador o el admin. `firestore.rules` no cambió.
 **Actualizada para f7c-v64** (rama `cursor/saldo-credito-deudas-253c`, 30/10/2026): saldo a favor, descontar del crédito, deudas viejas, sobrante del pago dividido y renombre del invitado en la promo del día. Los números de línea son de la versión en que se revisó cada punto y pueden correrse.
@@ -10,7 +11,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **e2e 537/537 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 93/93 OK** (`node --test tests/unit.test.mjs`). El e2e de v66 arma un uid que no está en `adders` y revisa que el crédito pague primero el partido más viejo.
+Pruebas sobre esta copia: **e2e 539/539 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 93/93 OK** (`node --test tests/unit.test.mjs`). El e2e de v67 revisa que a 390px el número y el casillero entren en la misma fila sin cortar el teléfono.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
@@ -123,7 +124,7 @@ Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reempla
 |---|---|---|---|
 | 19/10 (#3) | Cuentas: el admin crea organizadores | ✅ | `#/usuarios`, «Organizadores» (`app.js:2391`) |
 | 19/10 (#8) | Quién ve y quién anota cada partido, «Solo yo» y un límite por organizador | ✅ | «Solo yo», «Llegaste a tu límite» |
-| 20/10 (#15, #18) | El WhatsApp del jugador es privado, con el casillero «Mostrar el WhatsApp para todos» | ✅ | `js/privacy.js`, «Mostrar mi WhatsApp a los demás organizadores» |
+| 20/10 (#15, #18) | El WhatsApp del jugador es privado, con el casillero «Mostrar el WhatsApp para todos» | ✅ | `js/privacy.js`. **v67:** el texto pasó a «Permitir que otros organizadores vean su WhatsApp» y el casillero queda a la derecha del número (perfil, alta de partido y alta de Jugadores). Sigue arrancando destildado: el número lo ve solo quien lo cargó. e2e «Permitir ver el WhatsApp arranca desactivado» y «A 390px el número y el casillero van en la misma fila» |
 | 20/10 (#19) | Solo edita la ficha quien la creó | ✅ | `canEditRoster`, `js/edit-lock.js` |
 
 ## Otros puntos (no son pedidos)
