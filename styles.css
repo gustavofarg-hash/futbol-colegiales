@@ -532,6 +532,17 @@ button.team-name {
 .history-venues .chip { min-height: 44px; max-width: 100%; white-space: normal; text-align: center; line-height: 1.15; }
 .profile-name { margin-top: 4px; }
 .profile-phone { margin: 0 0 12px; color: var(--muted); overflow-wrap: anywhere; }
+.phone-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#profile > .phone-row { margin: 0 0 12px; }
+.phone-row .profile-phone { margin: 0; flex: 0 0 auto; white-space: nowrap; font-size: 0.9rem; }
+.phone-row .wa-share {
+  flex: 1 1 auto; min-width: 0; margin: 0; gap: 6px;
+  font-size: 0.68rem; line-height: 1.15; font-weight: 700; align-items: flex-start;
+}
+.phone-row .wa-share span { overflow-wrap: normal; word-break: normal; hyphens: none; flex: 1 1 auto; }
+.phone-row .wa-share input { width: 1.25rem; min-width: 1.25rem; flex: none; }
+.field .phone-row { margin-bottom: 4px; }
+.field .phone-row input[type="tel"] { flex: 0 0 auto; width: 10.6rem; min-width: 10.6rem; max-width: 54%; font-size: 0.9rem; }
 .checkline span { min-width: 0; overflow-wrap: anywhere; }
 .profile-wa { width: 100%; margin-bottom: 16px; background: var(--wa); border-color: var(--wa); color: #fff; }
 .profile-add-phone { width: 100%; margin-bottom: 16px; }
