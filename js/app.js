@@ -34,7 +34,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v61';
+const APP_VERSION = 'f7c-v62';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -160,10 +160,9 @@ function savePayments(entries, okMsg) {
 /* ───────── datos derivados ───────── */
 const actor = () => ({ uid: app.session?.user?.uid || '', name: app.who || '' });
 const shownName = (player) => displayName(player, app.roster);
-/** Nombre del jugador en la fila: el apodo en negrita y, al lado, el nombre completo más chico. */
+/** Nombre en la fila del partido: solo el apodo; sin apodo, el nombre completo. El nombre completo va en el menú. */
 function nameRow(p) {
-  const full = fullNameBehind(p, app.roster);
-  return `<div class="name-row"><div class="name${full ? ' has-alt' : ''}">${esc(shownName(p))}</div>${full ? `<span class="alt-name">${esc(full)}</span>` : ''}${levelBadge(p)}</div>`;
+  return `<div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>`;
 }
 const addBlock = (m) => {
   const who = actor();

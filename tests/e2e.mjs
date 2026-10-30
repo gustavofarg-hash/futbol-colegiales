@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v61');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v62');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -2317,6 +2317,7 @@ const apodo = await page.evaluate(async () => {
   const id = await window.__app.store.addMatch({ date: '2026-10-29', time: '20:00', note: 'Con apodo', capacity: 14 }, who);
   const match = window.__app.matches.find((item) => item.id === id);
   await window.__app.store.addPlayer(match, { name: 'Ernesto Apodo', rosterId, shortName: 'Tito', phone: '' }, who);
+  await window.__app.store.addPlayer(match, { name: 'Maximiliano Fernández Etcheverry Larralde', phone: '' }, who);
   return { rosterId, id };
 });
 await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, apodo.id);
@@ -2324,11 +2325,14 @@ await page.waitForSelector('#slots .name:text-is("Tito")');
 check('La lista del partido muestra el apodo', await page.locator('#slots .name:text-is("Ernesto Apodo")').count() === 0);
 {
   const row = page.locator('#slots li.slot', { hasText: 'Tito' });
-  const alt = (await row.locator('.alt-name').innerText()).trim();
-  const nameBox = await row.locator('.name').boundingBox();
-  const altBox = await row.locator('.alt-name').boundingBox();
-  check('Al lado del apodo se ve el nombre completo, en la misma línea', alt === 'Ernesto Apodo' && Math.abs(nameBox.y + nameBox.height - (altBox.y + altBox.height)) < 8, `alt=${alt}`);
-  check('Una fila sin apodo no repite el nombre', await page.locator('#slots li.slot .alt-name').count() === 1);
+  const alt = await page.locator('#slots .alt-name').count();
+  const nameText = (await row.locator('.name').innerText()).trim();
+  const lines = await row.locator('.name').evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+  });
+  check('La fila del partido muestra solo el apodo, en una línea', alt === 0 && nameText === 'Tito' && lines === 1, `alt=${alt} lines=${lines}`);
   await row.locator('[data-menu]').click();
   await page.waitForSelector('#menu-full-name');
   check('El menú del jugador muestra apodo y nombre', (await page.textContent('dialog.sheet h3')).trim() === 'Tito' && (await page.textContent('#menu-full-name')).trim() === 'Ernesto Apodo');
@@ -2341,6 +2345,21 @@ check('La lista del partido muestra el apodo', await page.locator('#slots .name:
   check('El apodo cambiado desde el partido queda en Jugadores', await page.evaluate((id) => window.__app.roster.find((p) => p.id === id)?.shortName, apodo.rosterId) === 'Titi');
   await page.evaluate(async (id) => { await window.__app.store.patchRoster(id, { shortName: 'Tito' }); }, apodo.rosterId);
   await page.waitForSelector('#slots .name:text-is("Tito")');
+  // Sin apodo: el nombre largo baja de línea entre palabras, sin cortarse ni partir una palabra.
+  const long = await page.locator('#slots .name', { hasText: 'Maximiliano' }).evaluate((el) => {
+    const text = el.firstChild;
+    const broken = [];
+    let at = 0;
+    for (const word of el.textContent.split(' ')) {
+      const range = document.createRange();
+      range.setStart(text, at);
+      range.setEnd(text, at + word.length);
+      if (new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size > 1) broken.push(word);
+      at += word.length + 1;
+    }
+    return { text: el.textContent, broken, clipped: el.scrollWidth > el.clientWidth + 1 };
+  });
+  check('Un nombre largo sin apodo se ve entero y sin partir palabras', long.text === 'Maximiliano Fernández Etcheverry Larralde' && !long.broken.length && !long.clipped, JSON.stringify(long));
 }
 await page.locator('#slots .who', { hasText: 'Tito' }).click();
 await page.waitForSelector('#profile h2.section');
