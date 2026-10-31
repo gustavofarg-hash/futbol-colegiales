@@ -12,7 +12,7 @@ import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
-import { editorsOf, inLogRange, matchEditDetail, paymentLines, playerLogFields, weekRange } from '../js/log.js';
+import { editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
@@ -2597,6 +2597,19 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.deepEqual(week, { from: '2026-10-13', to: '2026-10-19' });
   assert.equal(inLogRange({ at: Date.parse('2026-10-13T00:00:00-03:00') }, week), true);
   assert.equal(inLogRange({ at: Date.parse('2026-10-12T23:00:00-03:00') }, week), false);
+  const actor = { uid: 'g', name: 'Gustavo' };
+  const early = pagoEntry(actor, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Polideportivo Colegiales' }, [], { name: 'Ana', matchId: 'm1' }, [], { type: 'pago', method: 'efectivo', amount: 2000 });
+  const late = pagoEntry(actor, { id: 'm2', date: '2026-10-19', time: '22:30', venueName: 'Polideportivo Colegiales' }, [], { name: 'Ana', matchId: 'm2' }, [], { type: 'pago', method: 'credito', amount: 1500 });
+  assert.equal(pagoMatchText(early), 'Lunes 19/10 · 21:00 · Polideportivo Colegiales');
+  assert.match(logText(early), /Lunes 19\/10 · 21:00 · Polideportivo Colegiales · Ana · Efectivo \$2\.000/);
+  assert.match(logText(late), /Lunes 19\/10 · 22:30 · Polideportivo Colegiales · Ana · Crédito \$1\.500/);
+  assert.equal(logText(early).includes('22:30'), false);
+  const load = pagoEntry(actor, null, [], { name: 'Ana' }, [], { type: 'crédito cargado', method: 'credito', amount: 8000 });
+  assert.equal(pagoMatchText(load), 'Carga de crédito');
+  assert.equal(logText(load), 'Carga de crédito · Ana · Crédito $8.000');
+  assert.equal(pagoMatchText({ section: 'pagos', type: 'pago', matchLabel: '', matchDate: '2026-10-18', matchTime: '18:00' }), 'Domingo 18/10 · 18:00');
+  assert.equal(pagoMatchText({ section: 'pagos', type: 'pago', matchId: 'gone', matchLabel: '' }), 'Partido');
+  assert.equal(pagoMatchText({ ...early, matchLabel: early.matchLabel }), early.matchLabel);
 });
 
 test('el error del backup nombra la colección y el documento', () => {
@@ -2618,7 +2631,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v71');
+  assert.equal(version, 'f7c-v72');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
