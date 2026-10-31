@@ -39,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v77';
+const APP_VERSION = 'f7c-v78';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3589,26 +3589,26 @@ function openPaymentForm(m, p, opts = {}) {
         <div id="pay-oldest-preview" hidden></div>
         <div class="field"><span>Efectivo</span>
           <div class="pay-money">
-            <input name="cash" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(cashStart)}" aria-label="Efectivo">
+            <input name="cash" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(cashStart)}" aria-label="Efectivo">
             <select name="cashTo" aria-label="Quién cobró el efectivo"></select>
           </div>
         </div>
         <div class="field"><span>Transferencia</span>
           <div class="pay-money">
-            <input name="transfer" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(transferStart)}" aria-label="Transferencia">
+            <input name="transfer" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(transferStart)}" aria-label="Transferencia">
             <select name="transferTo" aria-label="Quién cobró la transferencia"></select>
           </div>
         </div>
         ${partsHint}
         <div class="field" id="pay-credit-field"><span>Descontar del crédito</span>
           <div class="pay-money">
-            <input name="fromCredit" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(creditStart)}" aria-label="Descontar del crédito">
+            <input name="fromCredit" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(creditStart)}" aria-label="Descontar del crédito">
           </div>
           <div class="small muted" id="pay-credit-hint">Sale del saldo a favor con ${esc(loggedInStaffName())}. Tiene ${esc(formatARS(creditNow))}.</div>
         </div>
         <div class="field"><span>Transfiere después</span>
           <div class="pay-money">
-            <input name="pending" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(pendingStart)}" aria-label="Transfiere después">
+            <input name="pending" type="text" inputmode="decimal" autocomplete="off" placeholder="0" value="${esc(pendingStart)}" aria-label="Transfiere después">
             <select name="pendingTo" aria-label="A quién le va a transferir"></select>
           </div>
         </div>
@@ -3645,53 +3645,56 @@ function openPaymentForm(m, p, opts = {}) {
   };
   const caretAtEnd = (input) => {
     const end = String(input.value || '').length;
-    try { input.setSelectionRange(end, end); } catch { /* el navegador puede rechazar el rango */ }
+    try { input.setSelectionRange(end, end); } catch { /* type=number no deja elegir rango; estos campos son type=text */ }
   };
-  // El toque no marca el monto: en Android eso abre Cortar/Copiar/Pegar.
-  // El cursor queda al final para corregir con borrar. Si el campo estaba vacío
-  // o en 0, el primer número igual reemplaza el precio recién puesto, sin marcarlo.
+  // En el celular el toque suelta el dedo (pointerup) ANTES de enfocar el campo.
+  // v77 solo escribía el precio si pointerdown había marcado el toque y el foco
+  // llegaba con esa marca todavía prendida: en Android ya estaba apagada, el
+  // campo seguía vacío y el cursor quedaba al principio. Acá el precio se pone
+  // en el toque y otra vez en el foco, y el cursor se manda al final después
+  // de que el navegador lo deje al principio. No se marca el texto.
   const bindAmountField = (input, { fillPrice = false } = {}) => {
     if (!input) return;
-    let replaceValue = null;
-    let pinTap = false;
-    const pin = () => caretAtEnd(input);
-    input.addEventListener('pointerdown', () => { pinTap = document.activeElement !== input; });
-    input.addEventListener('focus', () => {
-      replaceValue = null;
-      // Solo un toque completa el precio. Un focus de programa (borrar el campo, por ejemplo)
-      // no tiene que reescribir el monto ni mover el cursor.
-      if (!pinTap) return;
+    let fromTap = false;
+    let armClick = false;
+    let pending = [];
+    const drop = () => { for (const timer of pending) clearTimeout(timer); pending = []; };
+    const place = () => { if (document.activeElement === input) caretAtEnd(input); };
+    const arm = () => {
+      drop();
+      armClick = true;
+      place();
+      // El toque del celular deja el cursor al principio después del foco.
+      pending.push(setTimeout(place, 0));
+      requestAnimationFrame(() => { if (pending.length) place(); });
+      pending.push(setTimeout(place, 40));
+    };
+    const maybeFill = () => {
       if (fillPrice) {
         const current = readMoney(input.value);
         if (current.ok && current.amount === 0) {
           input.value = moneyText(priceOfMatch(m, livePrices())) || '0';
-          replaceValue = input.value;
+          arm();
+          return;
         }
-      } else if (input.value === '0') replaceValue = '0';
+      }
+      if (String(input.value || '').length) arm();
+    };
+    input.addEventListener('pointerdown', () => { fromTap = document.activeElement !== input; });
+    input.addEventListener('pointerup', () => { if (fromTap) maybeFill(); });
+    input.addEventListener('touchend', () => { if (fromTap) maybeFill(); });
+    input.addEventListener('focus', () => {
+      if (!fromTap) return;
+      fromTap = false;
+      maybeFill();
     });
-    input.addEventListener('pointerup', (event) => {
-      if (!pinTap) return;
-      pinTap = false;
-      // El toque, después del foco, marca el texto. Se cancela y el cursor queda al final.
-      event.preventDefault();
-      pin();
-      setTimeout(pin, 0);
+    input.addEventListener('click', () => {
+      if (!armClick) return;
+      armClick = false;
+      place();
     });
-    input.addEventListener('beforeinput', (event) => {
-      if (replaceValue == null || input.value !== replaceValue) return;
-      const deleting = event.inputType === 'deleteContentBackward' || event.inputType === 'deleteContentForward' || event.inputType === 'deleteByCut';
-      if (deleting) { replaceValue = null; return; }
-      const inserting = event.inputType === 'insertText' || event.inputType === 'insertCompositionText' || event.inputType === 'insertFromPaste';
-      if (!inserting) return;
-      const data = event.data;
-      if (data == null) { replaceValue = null; return; }
-      if (replaceValue === '0' && !/^[1-9]$/.test(data)) { replaceValue = null; return; }
-      event.preventDefault();
-      input.value = data;
-      replaceValue = null;
-      pin();
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    input.addEventListener('keydown', drop);
+    input.addEventListener('input', drop);
   };
   for (const input of [form.cash, form.transfer, form.pending]) bindAmountField(input, { fillPrice: true });
   bindAmountField(form.fromCredit);
