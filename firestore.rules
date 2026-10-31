@@ -66,6 +66,7 @@ service cloud.firestore {
           && (!('perTeam' in d) || !('capacity' in d) || d.capacity == d.perTeam * 2)
           && (!('court' in d) || (d.court is string && d.court.size() <= 20))
           && (!('price' in d) || (d.price is int && d.price >= 0 && d.price <= 1000000000))
+          && (!('splitMode' in d) || d.splitMode == 'equal' || d.splitMode == 'signed')
           && (!('score' in d) || scoreOk(d.score))
           && accessShape(d);
     }
@@ -832,6 +833,57 @@ service cloud.firestore {
       return d.keys().hasAll(['editors']) && d.editors is list
           && (d.editors.hasAny(['*']) || d.editors.hasAny([request.auth.uid]));
     }
+    function compRowOk(p) {
+      return p is map
+          && p.keys().hasOnly(['uid', 'name', 'collected', 'entitled'])
+          && p.uid is string && p.uid.size() > 0 && p.uid.size() <= 160
+          && p.name is string && p.name.size() <= 40
+          && p.collected is number && p.collected >= 0 && p.collected <= 1000000000
+          && p.entitled is number && p.entitled >= 0 && p.entitled <= 1000000000;
+    }
+    function compTransferOk(p) {
+      return p is map
+          && p.keys().hasOnly(['fromUid', 'fromName', 'toUid', 'toName', 'amount', 'doneAt', 'stale', 'removed'])
+          && p.fromUid is string && p.fromUid.size() <= 160
+          && p.toUid is string && p.toUid.size() <= 160
+          && p.fromName is string && p.fromName.size() <= 40
+          && p.toName is string && p.toName.size() <= 40
+          && p.amount is number && p.amount >= 0 && p.amount <= 1000000000
+          && (p.doneAt == null || p.doneAt is number)
+          && p.stale is bool
+          && p.removed is bool;
+    }
+    function validCompensation(d) {
+      return d.keys().hasOnly(['date', 'fingerprint', 'changed', 'computedAt', 'rows', 'transfers'])
+          && d.date is string && d.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+          && d.fingerprint is string && d.fingerprint.size() <= 200000
+          && d.changed is bool
+          && d.computedAt is number
+          && d.rows is list && d.rows.size() <= 30
+          && (d.rows.size() < 1 || compRowOk(d.rows[0]))
+          && (d.rows.size() < 2 || compRowOk(d.rows[1]))
+          && (d.rows.size() < 3 || compRowOk(d.rows[2]))
+          && (d.rows.size() < 4 || compRowOk(d.rows[3]))
+          && (d.rows.size() < 5 || compRowOk(d.rows[4]))
+          && (d.rows.size() < 6 || compRowOk(d.rows[5]))
+          && (d.rows.size() < 7 || compRowOk(d.rows[6]))
+          && (d.rows.size() < 8 || compRowOk(d.rows[7]))
+          && d.transfers is list && d.transfers.size() <= 30
+          && (d.transfers.size() < 1 || compTransferOk(d.transfers[0]))
+          && (d.transfers.size() < 2 || compTransferOk(d.transfers[1]))
+          && (d.transfers.size() < 3 || compTransferOk(d.transfers[2]))
+          && (d.transfers.size() < 4 || compTransferOk(d.transfers[3]))
+          && (d.transfers.size() < 5 || compTransferOk(d.transfers[4]))
+          && (d.transfers.size() < 6 || compTransferOk(d.transfers[5]))
+          && (d.transfers.size() < 7 || compTransferOk(d.transfers[6]))
+          && (d.transfers.size() < 8 || compTransferOk(d.transfers[7]));
+    }
+    match /compensations/{day} {
+      allow read: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validCompensation(request.resource.data) && day == request.resource.data.date;
+      allow delete: if isAdmin();
+    }
+
     match /log/{entryId} {
       allow read: if isActiveStaff() && canReadLog(resource.data);
       allow create: if isActiveStaff() && validLog(request.resource.data) && entryId.size() > 0 && entryId.size() <= 80;

@@ -14,6 +14,7 @@ import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDe
 import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { planRows } from '../js/settle.js';
+import { dayCompensation, reconcileTransfers } from '../js/compensate.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
@@ -2696,7 +2697,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v80');
+  assert.equal(version, 'f7c-v81');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
@@ -2945,4 +2946,72 @@ test('lo que sobra del partido queda en quien lo cobró y primero se cubre al de
   assert.equal(other.pending[0].amount, 8000);
   assert.equal(other.projected.used[0].name, 'Martín');
   assert.equal(other.projected.credits[0].amount, 3000);
+});
+
+test('la compensación reparte el día y cuenta lo pendiente de confirmar', () => {
+  const staff = [{ uid: 'gus', name: 'Gustavo', active: true }, { uid: 'mar', name: 'Martín', active: true }];
+  const match = { id: 'm', date: '2026-10-18', adders: ['*'], splitMode: 'signed', price: 5000 };
+  const players = [
+    { id: 'a', matchId: 'm', name: 'A', waiting: false, signedUpWith: 'gus', signedUpWithName: 'Gustavo', paid: true, split: true, cash: 30000, cashTo: 'Martín', transfer: 0, fromCredit: 0 },
+    { id: 'b', matchId: 'm', name: 'B', waiting: false, signedUpWith: 'mar', signedUpWithName: 'Martín', paid: true, split: true, cash: 0, transfer: 0, fromCredit: 0, pendingTransfer: 20000, pendingTo: 'Gustavo' },
+  ];
+  const day = dayCompensation([match], players, staff);
+  assert.equal(day.missing.length, 0);
+  const gus = day.rows.find((row) => row.uid === 'gus');
+  const mar = day.rows.find((row) => row.uid === 'mar');
+  assert.equal(gus.entitled, 30000);
+  assert.equal(mar.entitled, 20000);
+  assert.equal(mar.collected, 30000);
+  assert.equal(gus.collected, 20000);
+  assert.equal(day.transfers[0].fromName, 'Martín');
+  assert.equal(day.transfers[0].toName, 'Gustavo');
+  assert.equal(day.transfers[0].amount, 10000);
+  const equal = { ...match, splitMode: 'equal' };
+  const split = dayCompensation([equal], players, staff);
+  assert.equal(split.rows.find((row) => row.uid === 'gus').entitled, 25000);
+  assert.equal(split.rows.find((row) => row.uid === 'mar').entitled, 25000);
+  const open = dayCompensation([{ ...equal, adders: ['gus'] }], [{ id: 'c', matchId: 'm', name: 'C', waiting: false }], staff);
+  assert.equal(open.missing.length, 1);
+  assert.equal(open.transfers.length, 0);
+  const kept = reconcileTransfers([{ fromUid: 'mar', toUid: 'gus', amount: 10000, doneAt: 5, stale: false }], [{ fromUid: 'mar', toUid: 'gus', fromName: 'Martín', toName: 'Gustavo', amount: 4000, doneAt: null, stale: false }]);
+  assert.equal(kept[0].doneAt, 5);
+  assert.equal(kept[0].stale, true);
+  assert.equal(kept[0].removed, false);
+  assert.equal(day.transfers[0].removed, false);
+  const gone = reconcileTransfers([{ fromUid: 'mar', toUid: 'gus', amount: 5000, doneAt: 5, stale: false, removed: false }], []);
+  assert.equal(gone[0].removed, true);
+  assert.equal(gone[0].doneAt, 5);
+  const waitingPay = dayCompensation([match], [{
+    id: 'w', matchId: 'm', name: 'W', waiting: false, signedUpWithName: 'Gustavo',
+    awaiting: [{ id: '1', kind: 'transfer', amount: 8000, to: 'Martín', toUid: 'mar' }],
+  }], staff);
+  assert.equal(waitingPay.missing.length, 0);
+  assert.equal(waitingPay.rows.find((row) => row.uid === 'mar').collected, 8000);
+  assert.equal(waitingPay.rows.find((row) => row.uid === 'gus').entitled, 8000);
+  assert.equal(waitingPay.transfers[0].amount, 8000);
+  const freeDay = dayCompensation([match], [{ id: 'f', matchId: 'm', name: 'F', waiting: false, freePlay: true, signedUpWithName: 'Gustavo' }], staff);
+  assert.equal(freeDay.missing.length, 0);
+  assert.equal(freeDay.rows.length, 0);
+  const three = [{ ...staff[0] }, staff[1], { uid: 'zoe', name: 'Zoe', active: true }, { uid: 'old', name: 'Viejo', active: false }];
+  const cents = dayCompensation([{ ...equal, adders: ['*'] }], [{ id: 'z', matchId: 'm', name: 'Z', waiting: false, paid: true, split: true, cash: 10000, cashTo: 'Gustavo' }], three);
+  assert.equal(cents.rows.find((row) => row.uid === 'old'), undefined);
+  const centsOf = (uid) => Math.round(cents.rows.find((row) => row.uid === uid).entitled * 100);
+  assert.equal(centsOf('gus'), 333334);
+  assert.equal(centsOf('mar'), 333333);
+  assert.equal(centsOf('zoe'), 333333);
+  const summed = dayCompensation([
+    { id: 'a', date: '2026-10-16', adders: ['*'], splitMode: 'equal' },
+    { id: 'b', date: '2026-10-16', adders: ['*'], splitMode: 'signed', cancelled: false },
+  ], [
+    { id: 'p1', matchId: 'a', waiting: false, signedUpWithName: 'Gustavo', paid: true, split: true, cash: 10000, cashTo: 'Gustavo' },
+    { id: 'p2', matchId: 'b', waiting: false, signedUpWithName: 'Martín', paid: true, split: true, cash: 4000, cashTo: 'Gustavo' },
+  ], staff);
+  assert.equal(summed.rows.find((row) => row.uid === 'gus').collected, 14000);
+  assert.equal(summed.rows.find((row) => row.uid === 'gus').entitled, 5000);
+  assert.equal(summed.rows.find((row) => row.uid === 'mar').entitled, 9000);
+  assert.equal(summed.transfers[0].fromName, 'Gustavo');
+  assert.equal(summed.transfers[0].toName, 'Martín');
+  assert.equal(summed.transfers[0].amount, 9000);
+  const skipped = dayCompensation([{ ...match, cancelled: true }], players, staff);
+  assert.equal(skipped.rows.length, 0);
 });

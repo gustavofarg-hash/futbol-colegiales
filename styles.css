@@ -679,6 +679,16 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
 .pay-apply { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; font-weight: 700; }
 .pay-split-preview { list-style: none; margin: 0 0 12px; padding: 8px 10px; display: grid; gap: 4px; border-radius: 12px; background: var(--bg); }
 .pay-split-preview li { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
+.comp-choice { border: 0; margin: 0 0 14px; padding: 0; }
+.comp-choice legend { font-size: 0.875rem; font-weight: 700; margin: 0 0 6px; padding: 0; }
+.comp-choice .checkline { margin: 6px 0; font-weight: 600; }
+.comp-slot { list-style: none; margin: 8px 0; }
+.comp-slot .btn, #btn-comp { white-space: normal; line-height: 1.2; text-align: center; padding: 10px 12px; height: auto; }
+#comp-detail { margin: 8px 0 4px; }
+#comp-rows li, #comp-missing li { display: block; }
+.comp-transfer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; align-items: center; margin: 6px 0; }
+.comp-transfer span { flex: 1 1 180px; }
+.comp-transfer .btn { min-height: 36px; flex: none; }
 #pay-split-preview .hint { margin: 6px 0 0; }
 .pay-apply input { width: 1.25rem; height: 1.25rem; margin-top: 2px; flex: none; }
 .field .err { color: var(--danger); font-size: 0.8125rem; margin-top: 4px; }
