@@ -25,6 +25,7 @@ import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from 
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { countedGoals, matchTake, periodBuckets } from './stats.js';
+import { logText, logWhen, weekRange } from './log.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditLine, creditLoadSummary, creditPanelRows } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
@@ -38,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v69';
+const APP_VERSION = 'f7c-v70';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -100,6 +101,9 @@ const app = {
   pricesError: null,
   credits: [],
   creditsError: null,
+  log: [],
+  logError: '',
+  logRange: null,
   users: [],
   role: '',
   session: null,
@@ -438,6 +442,7 @@ function route() {
     try { picked = raw ? decodeURIComponent(raw) : ''; } catch { picked = raw; }
     return { name: 'stats', mode, id: picked };
   }
+  if (name === 'registro') return { name: 'registro', section: id === 'pagos' ? 'pagos' : 'partidos' };
   if (name === 'jugadores' || name === 'pagos') return { name: 'roster' };
   if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
@@ -464,7 +469,7 @@ function openOnUpcoming() {
     sessionStorage.removeItem('f7c-tab');
     sessionStorage.removeItem('f7c-later');
     const name = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || '';
-    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial' || name === 'estadisticas';
+    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial' || name === 'estadisticas' || name === 'registro';
     if (section && location.hash && location.hash !== '#/' && location.hash !== '#') {
       history.replaceState(null, '', `${location.pathname}${location.search}#/`);
     }
@@ -476,7 +481,7 @@ openOnUpcoming();
 function savedTab() {
   try {
     const value = sessionStorage.getItem('f7c-tab');
-    if (value === 'roster' || value === 'history' || value === 'home' || value === 'stats') return value;
+    if (value === 'roster' || value === 'history' || value === 'home' || value === 'stats' || value === 'registro') return value;
   } catch {}
   return 'home';
 }
@@ -484,12 +489,14 @@ function hashForTab(tab) {
   if (tab === 'history') return '#/historial';
   if (tab === 'roster') return '#/jugadores';
   if (tab === 'stats') return '#/estadisticas';
+  if (tab === 'registro') return '#/registro';
   return '#/';
 }
 function tabFor(r) {
   if (r.name === 'history') return 'history';
   if (r.name === 'roster') return 'roster';
   if (r.name === 'stats') return 'stats';
+  if (r.name === 'registro') return 'registro';
   if (r.name === 'home') return 'home';
   if (r.name === 'match' || r.name === 'teams') {
     const match = matchById(r.id);
@@ -506,7 +513,7 @@ function tabFor(r) {
 }
 function paintTabs(r) {
   const tab = tabFor(r);
-  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats') {
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats' || r.name === 'registro') {
     try { sessionStorage.setItem('f7c-tab', tab); } catch {}
   }
   document.querySelectorAll('#tabbar a').forEach((link) => {
@@ -514,7 +521,7 @@ function paintTabs(r) {
     if (on) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
-  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || (r.name === 'stats' && !r.id);
+  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro' || (r.name === 'stats' && !r.id);
   $('#btn-back').hidden = root || !app.loaded;
   requestAnimationFrame(placeBars);
 }
@@ -544,7 +551,7 @@ function render() {
   const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
   const brand = $('#venue-name');
   if (brand) brand.textContent = shownVenue;
-  const key = `${r.name}:${r.mode || ''}:${r.id || ''}`;
+  const key = `${r.name}:${r.mode || ''}:${r.section || ''}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
   const y = same ? (document.scrollingElement?.scrollTop || 0) : 0;
@@ -555,6 +562,7 @@ function render() {
   else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
   else if (r.name === 'stats') renderStats(r);
+  else if (r.name === 'registro') renderRegistro(r);
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'users') renderUsers();
@@ -2650,6 +2658,46 @@ function statsPeriodBody(grain, id) {
     </section>`;
 }
 
+function renderRegistro(r) {
+  const section = r.section === 'pagos' ? 'pagos' : 'partidos';
+  if (!app.logRange) app.logRange = weekRange();
+  const range = app.logRange;
+  const rows = (app.log || []).filter((entry) => entry.section === section);
+  const list = rows.length
+    ? `<ul class="slots" id="log-list">${rows.map((entry) => `
+      <li class="slot log-row">
+        <div class="who">
+          <div class="name">${esc(entry.type)}</div>
+          <div class="sub"><span>${esc(logWhen(entry))}</span><span>${esc(entry.actorName || '')}</span></div>
+          <div class="sub">${esc(logText(entry))}</div>
+        </div>
+      </li>`).join('')}</ul>`
+    : `<p class="empty-wait" id="log-empty">${app.logError ? esc(app.logError) : 'No hay registros en estas fechas.'}</p>`;
+  if (!replaceView(`
+    <div id="log-view">
+      <div class="seg stats-seg" id="log-mode">
+        <a class="btn ${section === 'partidos' ? 'primary' : ''}" href="#/registro/partidos"${section === 'partidos' ? ' aria-current="page"' : ''}>Partidos</a>
+        <a class="btn ${section === 'pagos' ? 'primary' : ''}" href="#/registro/pagos"${section === 'pagos' ? ' aria-current="page"' : ''}>Pagos</a>
+      </div>
+      <form id="log-range" class="log-range">
+        <label class="field"><span>Desde</span><input type="date" id="log-from" value="${esc(range.from)}" aria-label="Desde"></label>
+        <label class="field"><span>Hasta</span><input type="date" id="log-to" value="${esc(range.to)}" aria-label="Hasta"></label>
+      </form>
+      <p class="hint">Últimos 7 días, hasta hoy. Se puede cambiar el rango.</p>
+      ${list}
+    </div>`)) return;
+  const form = $('#log-range');
+  const apply = () => {
+    const from = $('#log-from').value;
+    const to = $('#log-to').value;
+    if (!from || !to || from > to) return;
+    app.logRange = { from, to };
+    app.store?.setLogRange?.(app.logRange);
+    render();
+  };
+  form.onchange = apply;
+}
+
 function renderUsers() {
   if (app.role !== 'admin') {
     replaceView(`<div class="empty"><div class="big">🔒</div><p><b>Solo el administrador puede crear o desactivar organizadores.</b></p><p class="small">Los partidos, los jugadores, los pagos y el plantel los pueden editar los dos.</p></div>`);
@@ -4217,6 +4265,12 @@ function openCreditForm({ player, person, panel }) {
           delta: plan.leftover,
         }, app.who);
       }
+      const creditMatch = player?.matchId ? matchById(player.matchId) : null;
+      await app.store.recordCreditLoad({
+        match: creditMatch,
+        player: player || { name: fullName },
+        amount: money.amount,
+      });
     })();
     run(job, summary);
   };
@@ -4567,6 +4621,8 @@ async function boot() {
     app.prices = prices || null;
     app.credits = credits || [];
     app.creditsError = creditsError || null;
+    app.log = view.log || [];
+    app.logError = view.logError || '';
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);
     app.rosterError = rosterError || null;
     if (organizersError && organizersError !== app.organizersError) showError(organizersError);
@@ -4576,7 +4632,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     if (!changed) return;

@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v69');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v70');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -139,13 +139,13 @@ await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/header-agenda.p
 check('La lista no muestra sede y formato al pie', await page.locator('#view .footer-note').count() === 0 && !(await page.locator('#view').innerText()).includes('Fútbol 7 contra 7'));
 check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
 const tabLabels = await page.$$eval('#tabbar a', (els) => els.map((el) => el.textContent.trim()));
-const fourTabs = ['Próximos partidos', 'Jugadores', 'Historial', 'Estadísticas'];
-check('Cuatro pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(fourTabs), tabLabels.join(' | '));
+const fiveTabs = ['Próximos partidos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro'];
+check('Cinco pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(fiveTabs), tabLabels.join(' | '));
 const tabFit = await page.evaluate(() => ({
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   right: Math.max(...[...document.querySelectorAll('#tabbar a')].map((el) => el.getBoundingClientRect().right)),
 }));
-check('A 390px las cuatro pestañas no desbordan', tabFit.overflow <= 1 && tabFit.right <= 391, JSON.stringify(tabFit));
+check('A 390px las cinco pestañas no desbordan', tabFit.overflow <= 1 && tabFit.right <= 391, JSON.stringify(tabFit));
 check('Próximos partidos queda activo', await page.getAttribute('#tab-proximos', 'aria-current') === 'page');
 await page.click('#btn-settings');
 check('Ajustes dice quién entró', (await page.textContent('#set-who')).includes('Entraste como Gustavo'));
@@ -161,7 +161,7 @@ const settingsBars = await page.evaluate(() => {
     inDialog: document.querySelector('#tabbar').parentElement?.id === 'sheet',
   };
 });
-check('En Ajustes las cuatro pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial', 'Estadísticas']), JSON.stringify(settingsBars));
+check('En Ajustes las cinco pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro']), JSON.stringify(settingsBars));
 check('La hoja de Ajustes no queda debajo de las pestañas', settingsBars.sheetBelow, JSON.stringify(settingsBars));
 await page.click('#btn-historial');
 await page.waitForSelector('#history-filter');
@@ -3329,6 +3329,45 @@ check('Debe en total ya no cuenta lo pagado con el crédito', !debtLeft.includes
 await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, viejas.older);
 await page.waitForSelector('.slot .pay-line');
 check('El partido viejo figura pagado con crédito', (await page.locator('.slot .pay-line').innerText()).includes('Crédito') && (await page.locator('.slot .pay-line').innerText()).includes('Gustavo'));
+
+await page.evaluate(async () => {
+  const app = window.__app;
+  const me = { uid: app.session.user.uid, name: app.session.user.name, role: app.session.user.role };
+  app.store.setActor(me);
+  const id = await app.store.addMatch({ date: '2026-10-19', time: '23:40', note: 'Registro visible' }, me.name);
+  const match = app.matches.find((item) => item.id === id) || { id, date: '2026-10-19', time: '23:40' };
+  const host = await app.store.addPlayer(match, { name: 'Anfitrión Log', phone: '' }, me.name);
+  await app.store.addPlayer(match, { name: 'Invitado 1', phone: '', invitedBy: host, invitedByName: 'Anfitrión Log', guestAuto: true }, me.name, { waiting: true });
+  const payer = await app.store.addPlayer(match, { name: 'Paga Log', phone: '' }, me.name);
+  await app.store.setPayment(payer, {
+    paid: true, split: true, cash: 2000, transfer: 3000, fromCredit: 500, pendingTransfer: 0,
+    cashTo: me.name, transferTo: me.name, creditTo: me.name,
+  }, me.name);
+  await app.store.recordCreditLoad({ match, player: { name: 'Paga Log' }, amount: 8000 });
+  app.store.setActor({ uid: 'otro-organizador', name: 'Otro', role: 'organizer' });
+  await app.store.addMatch({
+    date: '2026-10-19', time: '23:41', note: 'Registro ajeno',
+    access: { solo: true, viewers: ['otro-organizador'], adders: ['otro-organizador'], viewerNames: [], adderNames: [], limits: [], createdByUid: 'otro-organizador' },
+  }, 'Otro');
+  app.store.setActor(me);
+  await app.store.setLogRange({ from: '2026-10-13', to: '2026-10-19' });
+});
+await page.evaluate(() => { location.hash = '#/registro/partidos'; });
+await page.waitForSelector('#log-list');
+const partidos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
+check('Registro de partidos anota el alta, el invitado y no el partido ajeno', partidos.includes('nuevo partido') && partidos.includes('alta') && partidos.includes('Invitado 1 (invitado de Anfitrión Log)') && partidos.includes('En la lista de espera') && !partidos.includes('23:41'), partidos.slice(0, 300));
+await page.click('#log-mode a[href="#/registro/pagos"]');
+await page.waitForFunction(() => location.hash.includes('/pagos') && document.querySelector('#log-list .name')?.textContent.trim() === 'crédito cargado');
+const pagos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
+const pagoTypes = await page.$$eval('#log-list .name', (els) => els.map((el) => el.textContent.trim()));
+check('Registro de pagos separa los medios y deja el crédito cargado arriba del pago', pagos.includes('Efectivo') && pagos.includes('Transferencia') && pagos.includes('Crédito $500') && pagoTypes[0] === 'crédito cargado', `${pagoTypes.slice(0, 4).join(', ')} ${pagos.slice(0, 240)}`);
+await page.fill('#log-from', '2026-09-01');
+await page.fill('#log-to', '2026-09-02');
+await page.waitForSelector('#log-empty');
+check('El filtro de fechas deja el registro vacío', (await page.locator('#log-empty').innerText()).includes('No hay registros'));
+await page.fill('#log-from', '2026-10-13');
+await page.fill('#log-to', '2026-10-19');
+await page.waitForSelector('#log-list');
 
 const fresh = await ctx.newPage();
 fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

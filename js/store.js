@@ -107,6 +107,7 @@ import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
 import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, parseBackup, plainValue, requireAdmin, reviveValue } from './backup.js';
+import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 
 function reportBackupProgress(onProgress, done, total) {
   if (typeof onProgress !== 'function') return;
@@ -494,12 +495,13 @@ function localCollections(db) {
     links: db.links || {},
     users: {},
     credits: db.credits || {},
+    log: db.log || {},
   };
 }
 
 /* ───────────── Modo demo (localStorage) ───────────── */
 class LocalStore {
-  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; this._historyFilter = null; this._queryDay = todayISO(); }
+  constructor() { this.key = DEMO_STORAGE_KEY; this.mode = 'demo'; this.listeners = new Set(); this.actor = null; this._historyFilter = null; this._queryDay = todayISO(); this._logRange = weekRange(); }
   setActor(user) {
     const next = actorRecord(user);
     if (this.actor?.uid === next.uid && this.actor?.name === next.name && this.actor?.role === next.role) return;
@@ -509,6 +511,40 @@ class LocalStore {
   setHistoryFilter(filter) {
     this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
     this._emit();
+  }
+  setLogRange(range) {
+    const next = range?.from && range?.to ? { from: range.from, to: range.to } : weekRange();
+    if (this._logRange && this._logRange.from === next.from && this._logRange.to === next.to) return;
+    this._logRange = next;
+    if (this.listeners.size) this._emit();
+  }
+  _actor() {
+    return { uid: this.actor?.uid || '', name: this.actor?.name || '' };
+  }
+  _venuesOf(db) {
+    return Object.entries(db?.venues || {}).map(([id, venue]) => ({ id, ...venue }));
+  }
+  _matesOf(db, matchId) {
+    return Object.entries(db.players || {})
+      .filter(([, row]) => row.matchId === matchId)
+      .map(([id, row]) => ({ id, ...row }));
+  }
+  _pushLogs(db, entries) {
+    if (!entries?.length) return;
+    db.log ||= {};
+    for (const entry of entries) {
+      if (!entry?.type || !entry.actorUid) continue;
+      db.log[rid()] = entry;
+    }
+  }
+  _logPayment(db, before, after) {
+    if (!before || !after) return;
+    const lines = paymentLines(before, after);
+    if (!lines.length) return;
+    const match = db.matches[after.matchId] || null;
+    const mates = this._matesOf(db, after.matchId);
+    const venues = this._venuesOf(db);
+    this._pushLogs(db, lines.map((line) => pagoEntry(this._actor(), match, venues, after, mates, line)));
   }
   syncDay(now = Date.now()) {
     const today = todayISO(new Date(now));
@@ -520,7 +556,7 @@ class LocalStore {
   _load() {
     try {
       const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {}, contacts: { players: {}, roster: {} } };
-      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {}; db.credits ||= {};
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {}; db.credits ||= {}; db.log ||= {};
       ensureContacts(db);
       migratePhones(db);
       return db;
@@ -653,13 +689,18 @@ class LocalStore {
     const venues = Object.entries(db.venues || {}).map(([id, venue]) => ({ id, ...venue }));
     const prices = db.settings?.prices || null;
     const credits = Object.entries(db.credits || {}).map(([id, row]) => ({ id, ...row }));
+    const log = Object.entries(db.log || {})
+      .map(([id, row]) => ({ id, ...row }))
+      .filter((row) => canSeeLog(row, uid) && inLogRange(row, this._logRange))
+      .sort((a, b) => (b.at || 0) - (a.at || 0) || String(b.id).localeCompare(String(a.id)))
+      .slice(0, LOG_LIMIT);
     const windowed = historyWindow(matches, this._historyFilter);
     const history = windowed.matches;
     const { matches: _rows, ...historyMeta } = windowed;
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
       players, roster, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
-      credits, creditsError: null,
+      credits, creditsError: null, log, logError: '',
     }));
   }
   async init() {
@@ -675,21 +716,32 @@ class LocalStore {
   async addMatch(data, who) {
     const db = this._load();
     const id = matchIdFor(data.date, data.time, new Set(Object.keys(db.matches)));
-    db.matches[id] = matchDoc(data, who); this._save(db); return id;
+    db.matches[id] = matchDoc(data, who);
+    this._pushLogs(db, [partidoEntry(this._actor(), { id, ...db.matches[id] }, this._venuesOf(db), { type: 'nuevo partido' })]);
+    this._save(db); return id;
   }
   async addMatches(list, who) {
     const db = this._load(); const ids = [];
     for (const data of list) {
       const id = matchIdFor(data.date, data.time, new Set(Object.keys(db.matches)));
       db.matches[id] = matchDoc(data, who); ids.push(id);
+      this._pushLogs(db, [partidoEntry(this._actor(), { id, ...db.matches[id] }, this._venuesOf(db), { type: 'nuevo partido' })]);
     }
     this._save(db); return ids;
   }
   async updateMatch(id, data, who) {
     const db = this._load(); const m = db.matches[id]; if (!m) return;
     refusePlayedCancel(m, data);
+    const before = { ...m };
     const { rest, access } = cleanMatchPatch(data);
     Object.assign(m, rest, access || {}, { startsAt: toEpoch(data.date ?? m.date, data.time ?? m.time), updatedBy: who, updatedAt: Date.now() });
+    const venues = this._venuesOf(db);
+    const logged = [];
+    if (data.cancelled === true && before.cancelled !== true) logged.push(partidoEntry(this._actor(), { id, ...m }, venues, { type: 'partido cancelado' }));
+    if (data.cancelled === false && before.cancelled === true) logged.push(partidoEntry(this._actor(), { id, ...m }, venues, { type: 'partido reflotado' }));
+    const detail = matchEditDetail(before, m);
+    if (detail) logged.push(partidoEntry(this._actor(), { id, ...m }, venues, { type: 'partido editado', detail }));
+    this._pushLogs(db, logged);
     const copied = playerAccess(m);
     ensureContacts(db);
     for (const [pid, p] of Object.entries(db.players)) if (p.matchId === id) {
@@ -705,6 +757,8 @@ class LocalStore {
     const db = this._load();
     const n = Object.values(db.players).filter((p) => p.matchId === id).length;
     if (n > 0) throw Object.assign(new Error('Este partido tiene jugadores. Cancelalo en lugar de borrarlo.'), { code: 'has-players' });
+    const match = db.matches[id];
+    if (match) this._pushLogs(db, [partidoEntry(this._actor(), { id, ...match }, this._venuesOf(db), { type: 'partido borrado' })]);
     delete db.matches[id];
     this._save(db);
   }
@@ -735,6 +789,13 @@ class LocalStore {
       ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
     };
     db.players[id] = player;
+    const person = playerLogFields({ id, ...player }, [...mates, { id, ...player }]);
+    const savedMatch = db.matches[match.id] || match;
+    this._pushLogs(db, [partidoEntry(this._actor(), { id: match.id, ...savedMatch }, this._venuesOf(db), {
+      type: 'alta',
+      ...person,
+      detail: waiting ? 'En la lista de espera' : '',
+    })]);
     if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '', data.phoneShared === true);
     else if (data.hasPhone && /^[0-9a-f]{64}$/.test(String(data.phoneKey || ''))) {
       player.phoneKey = data.phoneKey;
@@ -822,7 +883,11 @@ class LocalStore {
   async setPayment(id, input, who) {
     const rec = paymentRecord(input, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
+    const before = this._load().players[id];
     await this.updatePlayer(id, rec.patch);
+    const db = this._load();
+    this._logPayment(db, before ? { id, ...before } : null, db.players[id] ? { id, ...db.players[id] } : null);
+    if (paymentLines(before, db.players[id]).length) this._save(db);
   }
   async adjustCredit(input, who) {
     const id = creditDocId(input?.personKey, input?.organizerUid);
@@ -881,7 +946,22 @@ class LocalStore {
     if (!player) throw new Error('Jugador inexistente');
     const rec = receivePendingTransfer(player, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
+    const before = { id, ...player };
     await this.updatePlayer(id, rec.patch);
+    const db = this._load();
+    this._logPayment(db, before, db.players[id] ? { id, ...db.players[id] } : null);
+    if (paymentLines(before, db.players[id]).length) this._save(db);
+  }
+  async recordCreditLoad({ match, player, amount }) {
+    const money = Math.round(Number(amount) * 100) / 100;
+    if (!(money > 0)) return;
+    const db = this._load();
+    const saved = match?.id ? (db.matches[match.id] || match) : null;
+    const mates = saved ? this._matesOf(db, saved.id) : [];
+    this._pushLogs(db, [pagoEntry(this._actor(), saved ? { id: saved.id || match.id, ...saved } : null, this._venuesOf(db), player, mates, {
+      type: 'crédito cargado', method: 'credito', amount: money,
+    })]);
+    this._save(db);
   }
   async setWaitOrders(updates) {
     const db = this._load(); const now = Date.now();
@@ -911,7 +991,17 @@ class LocalStore {
   }
   async deletePlayer(id) {
     const db = this._load();
-    if (db.players[id]) this._dropFromTeams(db, db.players[id].matchId, id);
+    const player = db.players[id];
+    if (player) {
+      const mates = this._matesOf(db, player.matchId);
+      const match = db.matches[player.matchId];
+      this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: player.matchId, ...match } : { id: player.matchId }, this._venuesOf(db), {
+        type: 'baja',
+        ...playerLogFields({ id, ...player }, mates),
+        detail: player.waiting === true ? 'En la lista de espera' : '',
+      })]);
+      this._dropFromTeams(db, player.matchId, id);
+    }
     delete db.players[id];
     ensureContacts(db);
     delete db.contacts.players[id];
@@ -1120,6 +1210,7 @@ class LocalStore {
     db.confirmations = structuredClone(docs.confirmations);
     db.links = structuredClone(docs.links);
     db.credits = structuredClone(docs.credits || {});
+    db.log = structuredClone(docs.log || {});
     ensureContacts(db);
     db.contacts.players = structuredClone(docs.playerContacts);
     db.contacts.roster = structuredClone(docs.rosterContacts);
@@ -1131,7 +1222,7 @@ class LocalStore {
     requireAdmin(this.actor);
     const db = {
       matches: {}, players: {}, roster: {}, organizers: {}, venues: {},
-      confirmations: {}, settings: {}, links: {}, credits: {},
+      confirmations: {}, settings: {}, links: {}, credits: {}, log: {},
       contacts: { players: {}, roster: {} },
     };
     localStorage.setItem(this.key, JSON.stringify(db));
@@ -1169,7 +1260,8 @@ export class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, playerContacts: {}, rosterContacts: {}, historyError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this._logRange = weekRange();
   }
   setHistoryFilter(filter) {
     this._historyFilter = filter && (filter.day || filter.from || filter.to) ? filter : null;
@@ -1231,7 +1323,7 @@ export class FirebaseStore {
       const next = parsed.backup.collections[name] || {};
       for (const id of Object.keys(current)) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
-        if (!Object.prototype.hasOwnProperty.call(next, id)) ops.push({ kind: 'delete', segments: [name, id] });
+        if (name === 'log' || !Object.prototype.hasOwnProperty.call(next, id)) ops.push({ kind: 'delete', segments: [name, id] });
       }
       for (const [id, data] of Object.entries(next)) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
@@ -1411,6 +1503,41 @@ export class FirebaseStore {
     });
     this._swap('history', un);
   }
+  _listenLog() {
+    if (!this.fs) return;
+    const uid = this.actor?.uid || '';
+    if (!uid) {
+      this.state.log = [];
+      this.state.logError = '';
+      this._swap('log', null);
+      this._emit();
+      return;
+    }
+    const { start, end } = rangeMillis(this._logRange || weekRange());
+    const { collection, query, where, orderBy, limit, onSnapshot } = this.fs;
+    const q = query(
+      collection(this.db, 'log'),
+      where('editors', 'array-contains-any', [uid, '*']),
+      where('at', '>=', start),
+      where('at', '<=', end),
+      orderBy('at', 'desc'),
+      limit(LOG_LIMIT),
+    );
+    const un = onSnapshot(q, (snap) => {
+      this.state.log = snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+      this.state.logError = '';
+      this._emit();
+    }, (e) => {
+      this.state.log = [];
+      this.state.logError = e?.code === 'failed-precondition'
+        ? 'Falta el índice de Firestore del registro (editors + at).'
+        : (e?.code === 'permission-denied'
+          ? 'No se puede leer el registro. Hay que publicar las reglas de Firestore.'
+          : ('No se pudo leer el registro: ' + (e?.message || e?.code || e)));
+      this._emit();
+    });
+    this._swap('log', un);
+  }
   _noteSnap(snap) {
     const meta = snap?.metadata;
     if (!meta) return;
@@ -1519,6 +1646,7 @@ export class FirebaseStore {
     };
     this._listenUpcoming();
     this._listenHistory();
+    this._listenLog();
     watch(collection(this.db, 'players'), null, (snap) => {
       this._noteSnap(snap);
       this._buckets.players.broad = take(snap);
@@ -1725,19 +1853,41 @@ export class FirebaseStore {
   }
   subscribe(fn) { this.listeners.add(fn); fn(this._view()); return () => this.listeners.delete(fn); }
   _ids() { return new Set(this.state.matches.map((m) => m.id)); }
+  _actor() { return { uid: this.actor?.uid || '', name: this.actor?.name || '' }; }
+  setLogRange(range) {
+    const next = range?.from && range?.to ? { from: range.from, to: range.to } : weekRange();
+    if (this._logRange && this._logRange.from === next.from && this._logRange.to === next.to) return;
+    this._logRange = next;
+    if (this.fs) this._listenLog();
+  }
+  async _appendLogs(entries) {
+    if (!this.fs || !entries?.length) return;
+    const { doc, setDoc } = this.fs;
+    for (const entry of entries) {
+      if (!entry?.type || !entry.actorUid) continue;
+      await setDoc(doc(this.db, 'log', rid()), entry);
+    }
+  }
   async addMatch(data, who) {
     const { doc, setDoc } = this.fs;
     const id = matchIdFor(data.date, data.time, this._ids());
-    await setDoc(doc(this.db, 'matches', id), matchDoc(data, who)); return id;
+    const body = matchDoc(data, who);
+    await setDoc(doc(this.db, 'matches', id), body);
+    await this._appendLogs([partidoEntry(this._actor(), { id, ...body }, this.state.venues, { type: 'nuevo partido' })]);
+    return id;
   }
   async addMatches(list, who) {
     const { doc, writeBatch } = this.fs;
-    const batch = writeBatch(this.db); const ids = this._ids(); const out = [];
+    const batch = writeBatch(this.db); const ids = this._ids(); const out = []; const rows = [];
     for (const data of list) {
       const id = matchIdFor(data.date, data.time, ids); ids.add(id); out.push(id);
-      batch.set(doc(this.db, 'matches', id), matchDoc(data, who));
+      const body = matchDoc(data, who);
+      rows.push({ id, ...body });
+      batch.set(doc(this.db, 'matches', id), body);
     }
-    await batch.commit(); return out;
+    await batch.commit();
+    await this._appendLogs(rows.map((match) => partidoEntry(this._actor(), match, this.state.venues, { type: 'nuevo partido' })));
+    return out;
   }
   async updateMatch(id, data, who) {
     const { doc, writeBatch } = this.fs;
@@ -1773,6 +1923,12 @@ export class FirebaseStore {
         catch (e) { if (e?.code !== 'not-found' && e?.code !== 'permission-denied') console.error(e); }
       }
     }
+    const logged = [];
+    if (data.cancelled === true && cur.cancelled !== true) logged.push(partidoEntry(this._actor(), next, this.state.venues, { type: 'partido cancelado' }));
+    if (data.cancelled === false && cur.cancelled === true) logged.push(partidoEntry(this._actor(), next, this.state.venues, { type: 'partido reflotado' }));
+    const detail = matchEditDetail(cur, next);
+    if (detail) logged.push(partidoEntry(this._actor(), next, this.state.venues, { type: 'partido editado', detail }));
+    await this._appendLogs(logged);
   }
   async deleteMatch(id) {
     const local = this.state.players.filter((p) => p.matchId === id).length;
@@ -1782,6 +1938,7 @@ export class FirebaseStore {
       throw Object.assign(new Error('Este partido tiene jugadores. Cancelalo en lugar de borrarlo.'), { code: 'has-players' });
     }
     const { doc, deleteDoc } = this.fs;
+    if (stored) await this._appendLogs([partidoEntry(this._actor(), stored, this.state.venues, { type: 'partido borrado' })]);
     await deleteDoc(doc(this.db, 'matches', id));
   }
   _viewersOf(entity) {
@@ -1917,6 +2074,11 @@ export class FirebaseStore {
     }
     await this._writeConfirmation(token, ref.id, player, match);
     await this.ensureShortLink(ref.id, { matchId: match.id, confirmToken: token });
+    await this._appendLogs([partidoEntry(this._actor(), stored, this.state.venues, {
+      type: 'alta',
+      ...playerLogFields({ id: ref.id, ...player }, [...mates, { id: ref.id, ...player }]),
+      detail: waiting ? 'En la lista de espera' : '',
+    })]);
     return ref.id;
   }
   async setTeams(id, teams, who) {
@@ -2026,7 +2188,15 @@ export class FirebaseStore {
   async setPayment(id, input, who) {
     const rec = paymentRecord(input, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
+    const before = this.state.players.find((item) => item.id === id);
     await this._writePayment(id, rec.patch);
+    if (!before) return;
+    const after = { ...before, ...rec.patch };
+    const lines = paymentLines(before, after);
+    if (!lines.length) return;
+    const match = this.state.matches.find((item) => item.id === before.matchId) || null;
+    const mates = this.state.players.filter((item) => item.matchId === before.matchId);
+    await this._appendLogs(lines.map((line) => pagoEntry(this._actor(), match, this.state.venues, after, mates, line)));
   }
   async adjustCredit(input, who) {
     const id = creditDocId(input?.personKey, input?.organizerUid);
@@ -2104,6 +2274,21 @@ export class FirebaseStore {
     const rec = receivePendingTransfer(player, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
     await this._writePayment(id, rec.patch);
+    const after = { ...player, ...rec.patch };
+    const lines = paymentLines(player, after);
+    if (!lines.length) return;
+    const match = this.state.matches.find((item) => item.id === player.matchId) || null;
+    const mates = this.state.players.filter((item) => item.matchId === player.matchId);
+    await this._appendLogs(lines.map((line) => pagoEntry(this._actor(), match, this.state.venues, after, mates, line)));
+  }
+  async recordCreditLoad({ match, player, amount }) {
+    const money = Math.round(Number(amount) * 100) / 100;
+    if (!(money > 0)) return;
+    const saved = match?.id ? (this.state.matches.find((item) => item.id === match.id) || match) : null;
+    const mates = saved ? this.state.players.filter((item) => item.matchId === saved.id) : [];
+    await this._appendLogs([pagoEntry(this._actor(), saved, this.state.venues, player, mates, {
+      type: 'crédito cargado', method: 'credito', amount: money,
+    })]);
   }
   // Solo los campos del pago (y updatedAt): así entra por la regla corta de
   // pagos en firestore.rules. La regla general de players, con un invitado,
@@ -2207,6 +2392,14 @@ export class FirebaseStore {
     const { doc, writeBatch } = this.fs;
     const player = this.state.players.find((item) => item.id === id);
     const match = this.state.matches.find((item) => item.id === player?.matchId);
+    if (player) {
+      const mates = this.state.players.filter((item) => item.matchId === player.matchId);
+      await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
+        type: 'baja',
+        ...playerLogFields(player, mates),
+        detail: player.waiting === true ? 'En la lista de espera' : '',
+      })]);
+    }
     const nextTeams = dropPlayer(match?.teams, id);
     const localCount = this.state.players.filter((item) => item.matchId === player?.matchId).length;
     const dropLink = isShortCode(player?.shortCode);
