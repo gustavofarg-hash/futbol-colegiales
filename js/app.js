@@ -2668,7 +2668,7 @@ function renderRegistro(r) {
       <li class="slot log-row">
         <div class="who">
           <div class="name">${esc(entry.type)}</div>
-          <div class="sub"><span>${esc(logWhen(entry))}</span><span>${esc(entry.actorName || '')}</span></div>
+          <div class="sub"><span>${esc(logWhen(entry))}</span>${section === 'pagos' && entry.actorName ? `<span>Registró: ${esc(entry.actorName)}</span>` : `<span>${esc(entry.actorName || '')}</span>`}${section === 'pagos' && entry.paidTo ? `<span>Cobró: ${esc(entry.paidTo)}</span>` : ''}</div>
           <div class="sub">${esc(logText(entry))}</div>
         </div>
       </li>`).join('')}</ul>`

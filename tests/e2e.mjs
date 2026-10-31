@@ -3372,6 +3372,12 @@ const pagos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ')
 const pagoTypes = await page.$$eval('#log-list .name', (els) => els.map((el) => el.textContent.trim()));
 check('Registro de pagos separa los medios y deja el crédito cargado arriba del pago', pagos.includes('Efectivo') && pagos.includes('Transferencia') && pagos.includes('Crédito $500') && pagoTypes[0] === 'crédito cargado', `${pagoTypes.slice(0, 4).join(', ')} ${pagos.slice(0, 240)}`);
 check('Cada pago dice el partido guardado, además de cuándo se anotó', pagos.includes('Lunes 19/10 · 23:40 · Polideportivo Colegiales') && /19\/10\/2026 · \d{2}:\d{2}/.test(pagos), pagos.slice(0, 360));
+const pagoRows = await page.$$eval('#log-list .log-row', (els) => els.map((el) => el.innerText.replace(/\s+/g, ' ')));
+const efectivo = pagoRows.find((row) => row.includes('Efectivo')) || '';
+const creditoPago = pagoRows.find((row) => row.includes('Crédito $500')) || '';
+const creditoCarga = pagoRows.find((row) => row.includes('crédito cargado')) || '';
+check('Efectivo y transferencia dicen quién cobró y quién lo registró', efectivo.includes('Cobró: Gustavo') && efectivo.includes('Registró: Gustavo') && pagoRows.some((row) => row.includes('Transferencia') && row.includes('Cobró: Gustavo')), efectivo);
+check('El crédito aplicado y la carga no inventan quién cobró', !creditoPago.includes('Cobró:') && !creditoCarga.includes('Cobró:'), `${creditoPago} || ${creditoCarga}`);
 await page.evaluate(async () => {
   const app = window.__app;
   const me = { uid: app.session.user.uid, name: app.session.user.name, role: app.session.user.role };

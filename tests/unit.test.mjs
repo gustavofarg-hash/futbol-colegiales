@@ -2613,6 +2613,16 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.equal(pagoMatchText({ section: 'pagos', type: 'pago', matchLabel: '', matchDate: '2026-10-18', matchTime: '18:00' }), 'Domingo 18/10 · 18:00');
   assert.equal(pagoMatchText({ section: 'pagos', type: 'pago', matchId: 'gone', matchLabel: '' }), 'Partido');
   assert.equal(pagoMatchText({ ...early, matchLabel: early.matchLabel }), early.matchLabel);
+  const day = { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Polideportivo Colegiales' };
+  const cash = pagoEntry(actor, day, [], { name: 'Ana', cashTo: 'Martín', transferTo: 'Gustavo' }, [], { type: 'pago', method: 'efectivo', amount: 2000 });
+  const wire = pagoEntry(actor, day, [], { name: 'Ana', cashTo: 'Martín', transferTo: 'Gustavo' }, [], { type: 'pago', method: 'transferencia', amount: 3000 });
+  const split = pagoEntry(actor, day, [], { name: 'Ana', transferParts: [{ to: 'Gustavo', amount: 1000 }, { to: 'Martín', amount: 2000 }] }, [], { type: 'pago', method: 'transferencia', amount: 3000 });
+  const creditPay = pagoEntry(actor, day, [], { name: 'Ana', creditTo: 'Gustavo', cashTo: 'Martín' }, [], { type: 'pago', method: 'credito', amount: 500 });
+  assert.equal(cash.paidTo, 'Martín');
+  assert.equal(wire.paidTo, 'Gustavo');
+  assert.equal(split.paidTo, 'Gustavo · Martín');
+  assert.equal(creditPay.paidTo, undefined);
+  assert.equal(load.paidTo, undefined);
 });
 
 test('el error del backup nombra la colección y el documento', () => {

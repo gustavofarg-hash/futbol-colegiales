@@ -3,7 +3,7 @@
 // del partido en ese momento, porque un partido borrado ya no existe.
 import { isRestricted } from './access.js';
 import { addDays, capitalize, labelDate, toEpoch, todayISO } from './dates.js';
-import { formatARS, paymentParts } from './payments.js';
+import { formatARS, hasPaymentDirection, paymentParts } from './payments.js';
 import { venueLabel } from './venues.js';
 
 export const LOG_LIMIT = 200;
@@ -231,11 +231,31 @@ export function partidoEntry(actor, match, venues, extra = {}) {
   return blankLog({ ...fields, section: 'partidos', ...extra }, actor);
 }
 
+/** Quién cobró el efectivo o la transferencia, el desplegable del pago. El crédito no. */
+function collectorOf(player, method) {
+  if (method === 'efectivo') {
+    if (hasPaymentDirection(player)) return clean(player?.cashTo, 40);
+    return clean(player?.receivedBy, 40);
+  }
+  if (method !== 'transferencia') return '';
+  const parts = Array.isArray(player?.transferParts) ? player.transferParts : [];
+  if (parts.length > 1) {
+    const names = [];
+    for (const part of parts) {
+      const name = clean(part?.to, 40);
+      if (name && !names.some((have) => have.toLowerCase() === name.toLowerCase())) names.push(name);
+    }
+    return names.join(' · ').slice(0, 80);
+  }
+  if (hasPaymentDirection(player)) return clean(player?.transferTo, 40);
+  return clean(player?.receivedBy, 40);
+}
+
 export function pagoEntry(actor, match, venues, player, mates, line) {
   const fields = matchLogFields(match || { id: player?.matchId || '' }, venues);
   fields.editors = editorsOf(match, actor?.uid);
   if (!match) fields.matchLabel = 'Sin partido';
-  return blankLog({
+  const entry = blankLog({
     ...fields,
     section: 'pagos',
     type: line?.type || 'pago',
@@ -244,6 +264,9 @@ export function pagoEntry(actor, match, venues, player, mates, line) {
     detail: line?.detail || '',
     ...playerLogFields(player, mates),
   }, actor);
+  const paidTo = collectorOf(player, entry.method);
+  if (paidTo) entry.paidTo = paidTo;
+  return entry;
 }
 
 export function logWhen(entry) {
