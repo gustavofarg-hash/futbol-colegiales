@@ -419,6 +419,7 @@ function freePlayPatch(who, now) {
     transferParts: null,
     fromCredit: null,
     creditTo: null,
+    awaiting: null,
   };
 }
 
@@ -534,8 +535,38 @@ export function paymentRecord(input, who, now = Date.now()) {
       creditTo: credit > 0 ? creditTo : null,
       transferReceivedAt: null,
       transferReceivedBy: null,
+      ...('awaiting' in (input || {}) ? { awaiting: cleanAwaiting(input.awaiting) } : {}),
     },
   };
+}
+
+export function cleanAwaiting(list) {
+  if (!Array.isArray(list) || !list.length) return null;
+  const out = [];
+  for (const item of list) {
+    const amount = roundARS(item?.amount);
+    const kind = item?.kind === 'transfer' || item?.kind === 'credit' || item?.kind === 'cash' ? item.kind : '';
+    const to = String(item?.to || '').trim().slice(0, 40);
+    const toUid = String(item?.toUid || '').trim().slice(0, 128);
+    const id = String(item?.id || '').trim().slice(0, 40);
+    if (!kind || !(amount > 0) || !to || !toUid || !id) continue;
+    out.push({ id, kind, amount, to, toUid, at: Number(item.at) || Date.now() });
+    if (out.length >= 8) break;
+  }
+  return out.length ? out : null;
+}
+
+export function awaitingItems(player) {
+  return Array.isArray(player?.awaiting) ? player.awaiting.filter((item) => item && item.amount > 0 && item.to) : [];
+}
+
+export function awaitingText(player) {
+  const items = awaitingItems(player);
+  if (!items.length) return '';
+  return items.map((item) => {
+    const kind = item.kind === 'transfer' ? 'Transferencia' : item.kind === 'credit' ? 'Crédito' : 'Efectivo';
+    return `Pendiente de confirmar: ${kind} ${formatARS(item.amount)} · ${item.to}`;
+  }).join(' · ');
 }
 
 function legacyPaymentRecord(input, who, now) {

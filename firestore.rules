@@ -157,7 +157,7 @@ service cloud.firestore {
     function moneyKeys() {
       return ['paid', 'amount', 'method', 'paidUpdatedBy', 'paidUpdatedAt', 'receivedBy',
           'cash', 'transfer', 'pendingTransfer', 'transferReceivedAt', 'transferReceivedBy',
-          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo'];
+          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo', 'awaiting'];
     }
     function waitKeys() {
       return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt'];
@@ -192,7 +192,8 @@ service cloud.firestore {
           && (!('transferParts' in d) || d.transferParts == null || transferPartsOk(d.transferParts))
           && (!('freePlay' in d) || d.freePlay is bool)
           && (!('fromCredit' in d) || d.fromCredit == null || (d.fromCredit is number && d.fromCredit >= 0 && d.fromCredit <= 1000000000))
-          && (!('creditTo' in d) || d.creditTo == null || (d.creditTo is string && d.creditTo.size() > 0 && d.creditTo.size() <= 40));
+          && (!('creditTo' in d) || d.creditTo == null || (d.creditTo is string && d.creditTo.size() > 0 && d.creditTo.size() <= 40))
+          && (!('awaiting' in d) || d.awaiting == null || awaitingListOk(d.awaiting));
     }
     function validPlayerState(d) {
       return validWait(d) && validConfirm(d) && validGoals(d) && validStamp(d);
@@ -223,6 +224,41 @@ service cloud.firestore {
           && (!('signedUpWithName' in d) || (d.signedUpWithName is string && d.signedUpWithName.size() > 0 && d.signedUpWithName.size() <= 40));
     }
 
+    function awaitingItemOk(p) {
+      return p is map
+          && p.keys().hasOnly(['id', 'kind', 'amount', 'to', 'toUid', 'at'])
+          && p.id is string && p.id.size() > 0 && p.id.size() <= 40
+          && (p.kind == 'cash' || p.kind == 'transfer' || p.kind == 'credit')
+          && p.amount is number && p.amount > 0 && p.amount <= 1000000000
+          && p.to is string && p.to.size() > 0 && p.to.size() <= 40
+          && p.toUid is string && p.toUid.size() > 0 && p.toUid.size() <= 128
+          && p.at is number;
+    }
+    function awaitingListOk(list) {
+      return list is list && list.size() <= 8
+          && (list.size() < 1 || awaitingItemOk(list[0]))
+          && (list.size() < 2 || awaitingItemOk(list[1]))
+          && (list.size() < 3 || awaitingItemOk(list[2]))
+          && (list.size() < 4 || awaitingItemOk(list[3]))
+          && (list.size() < 5 || awaitingItemOk(list[4]))
+          && (list.size() < 6 || awaitingItemOk(list[5]))
+          && (list.size() < 7 || awaitingItemOk(list[6]))
+          && (list.size() < 8 || awaitingItemOk(list[7]));
+    }
+    function awaitingForMe() {
+      return resource.data.keys().hasAny(['awaiting'])
+          && resource.data.awaiting is list
+          && (
+            (resource.data.awaiting.size() > 0 && resource.data.awaiting[0].toUid == request.auth.uid)
+            || (resource.data.awaiting.size() > 1 && resource.data.awaiting[1].toUid == request.auth.uid)
+            || (resource.data.awaiting.size() > 2 && resource.data.awaiting[2].toUid == request.auth.uid)
+            || (resource.data.awaiting.size() > 3 && resource.data.awaiting[3].toUid == request.auth.uid)
+            || (resource.data.awaiting.size() > 4 && resource.data.awaiting[4].toUid == request.auth.uid)
+            || (resource.data.awaiting.size() > 5 && resource.data.awaiting[5].toUid == request.auth.uid)
+            || (resource.data.awaiting.size() > 6 && resource.data.awaiting[6].toUid == request.auth.uid)
+            || (resource.data.awaiting.size() > 7 && resource.data.awaiting[7].toUid == request.auth.uid)
+          );
+    }
     function transferPartOk(p) {
       return p is map
           && p.keys().hasOnly(['to', 'amount'])
@@ -542,6 +578,13 @@ service cloud.firestore {
       allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(moneyKeys().concat(['updatedAt']))
           && isActiveStaff()
           && (!('adders' in resource.data) || resource.data.adders.hasAny([request.auth.uid, '*']))
+          && phoneGone(request.resource.data)
+          && validMoney(request.resource.data);
+      // Quien tiene que confirmar un cobro puede aplicarlo o rechazarlo
+      // aunque no pueda anotar en el partido.
+      allow update: if request.resource.data.diff(resource.data).affectedKeys().hasOnly(moneyKeys().concat(['updatedAt']))
+          && isActiveStaff()
+          && awaitingForMe()
           && phoneGone(request.resource.data)
           && validMoney(request.resource.data);
       allow update: if isActiveStaff() && validPlayerUpdate() && invitedByOk() && confirmationWriteOk()

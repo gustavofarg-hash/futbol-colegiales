@@ -13,6 +13,7 @@ import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBo
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
+import { planRows } from '../js/settle.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
@@ -2695,7 +2696,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v79');
+  assert.equal(version, 'f7c-v80');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
@@ -2917,4 +2918,31 @@ test('Drive: permiso drive.file y subida a la carpeta de backups', async () => {
 
   const denied = async () => ({ ok: false, status: 403, json: async () => ({ error: { message: 'Drive API has not been used in project' } }) });
   await assert.rejects(ensureBackupFolder('tok', denied), (e) => e.code === 'drive/403' && /Drive API/.test(e.message));
+});
+
+test('lo que sobra del partido queda en quien lo cobró y primero se cubre al de Se anotó con', () => {
+  const parts = [
+    { kind: 'cash', amount: 9000, name: 'Gustavo', uid: 'gus', confirmed: true },
+    { kind: 'transfer', amount: 9000, name: 'Gustavo', uid: 'gus', confirmed: true },
+  ];
+  const [row] = planRows({
+    rows: [{ due: 9000, signupName: 'Gustavo', parts }],
+    debts: [{ id: 'old', owed: 2000, label: 'Jueves 01/10 · 20:00 hs', organizerName: 'Gustavo' }],
+  });
+  assert.equal(row.applied.used.reduce((sum, item) => sum + item.amount, 0), 9000);
+  assert.equal(row.applied.settlements[0].amount, 2000);
+  assert.equal(row.applied.credits[0].amount, 7000);
+  assert.equal(row.applied.credits[0].name, 'Gustavo');
+  const other = planRows({
+    rows: [{
+      due: 5000,
+      signupName: 'Gustavo',
+      parts: [{ kind: 'transfer', amount: 8000, name: 'Martín', uid: 'mar', confirmed: false }],
+    }],
+    debts: [],
+  })[0];
+  assert.equal(other.applied.used.length, 0);
+  assert.equal(other.pending[0].amount, 8000);
+  assert.equal(other.projected.used[0].name, 'Martín');
+  assert.equal(other.projected.credits[0].amount, 3000);
 });
