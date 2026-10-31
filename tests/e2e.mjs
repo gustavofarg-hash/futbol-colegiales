@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v79');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v80');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3695,6 +3695,117 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.locator('#profile-nick').evaluate((el) => el.blur());
   await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Apodo'));
   await assertGuestPromo(ficha3, 'Pedro Ficha3', 3);
+}
+
+{
+  const over = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    app.store.setActor(me);
+    const a = await app.store.addMatch({ date: '2026-11-20', time: '19:00', price: 5000 }, me.name);
+    const b = await app.store.addMatch({ date: '2026-11-20', time: '21:00', price: 5000 }, me.name);
+    const phone = '11 4444-8080';
+    const by = (id) => app.matches.find((item) => item.id === id) || { id };
+    await app.store.addPlayer(by(a), { name: 'Paga De Mas', phone }, me.name);
+    await app.store.addPlayer(by(b), { name: 'Paga De Mas', phone }, me.name);
+    return a;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, over);
+  await page.waitForSelector('.slot:has-text("Paga De Mas") .pay-btn');
+  await page.click('.slot:has-text("Paga De Mas") .pay-btn');
+  await page.waitForSelector('#pay-form [name=cash]');
+  await page.fill('#pay-form [name=cash]', '9000');
+  await page.fill('#pay-form [name=transfer]', '9000');
+  await page.waitForFunction(() => (document.querySelector('#pay-over')?.textContent || '').includes('de más'));
+  check('Al pasar el total de la promo avisa lo que sobra', (await page.locator('#pay-over').innerText()).includes('9.000') && (await page.locator('#pay-over').innerText()).includes('Gustavo'));
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForSelector('#pay-over-ask');
+  check('Guardar de más pide confirmación', (await page.locator('#pay-over-ask').innerText()).includes('¿Guardar'));
+  await page.click('#pay-over-no');
+  check('Cancelar deja la hoja de pago abierta', await page.locator('#pay-form').count() === 1);
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForSelector('#pay-over-yes');
+  await page.click('#pay-over-yes');
+  await page.waitForFunction(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const rows = Object.values(db.players).filter((item) => item.name === 'Paga De Mas' && item.matchId);
+    const paid = rows.filter((item) => item.amount === 4500);
+    const credit = Object.values(db.credits || {}).find((item) => item?.name === 'Paga De Mas');
+    return paid.length === 2 && credit && credit.amount === 9000;
+  });
+  check('Los $9.000 de más quedan como saldo y cada partido cobra $4.500', true);
+  await page.click('.slot:has-text("Paga De Mas") .more-btn');
+  await page.waitForSelector('#menu-credit');
+  check('La ficha del jugador muestra el saldo y no los $18.000', (await page.locator('#menu-credit').innerText()).includes('$9.000') && !(await page.locator('#sheet').innerText()).includes('$18.000'));
+  await page.click('#sheet [data-close]');
+  const pendingId = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const id = await app.store.addMatch({ date: '2026-11-21', time: '19:00', price: 5000 }, me.name);
+    const match = app.matches.find((item) => item.id === id) || { id };
+    await app.store.addPlayer(match, { name: 'Confirma Martin', phone: '11 4444-8081' }, me.name);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, pendingId);
+  await page.waitForSelector('.slot:has-text("Confirma Martin") .pay-btn');
+  await page.click('.slot:has-text("Confirma Martin") .pay-btn');
+  await page.waitForSelector('#pay-form [name=transfer]');
+  await page.fill('#pay-form [name=transfer]', '8000');
+  await page.selectOption('#pay-form [name=transferTo]', { label: 'Martín' });
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForSelector('#pay-over-yes');
+  await page.click('#pay-over-yes');
+  await page.waitForSelector('#pay-awaiting, .pay-pending');
+  check('El cobro de otro organizador queda pendiente de confirmar', (await page.locator('.slot:has-text("Confirma Martin")').innerText()).includes('Pendiente de confirmar'));
+  const okId = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const id = await app.store.addMatch({ date: '2026-11-22', time: '19:00', price: 5000 }, me.name);
+    const match = app.matches.find((item) => item.id === id) || { id };
+    await app.store.addPlayer(match, { name: 'Confirma Ok', phone: '11 4444-8082' }, me.name);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, okId);
+  await page.waitForSelector('.slot:has-text("Confirma Ok") .pay-btn');
+  await page.click('.slot:has-text("Confirma Ok") .pay-btn');
+  await page.waitForSelector('#pay-form [name=transfer]');
+  await page.fill('#pay-form [name=transfer]', '5000');
+  await page.selectOption('#pay-form [name=transferTo]', { label: 'Martín' });
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForTimeout(300);
+  if (await page.locator('#pay-over-yes').count()) await page.click('#pay-over-yes');
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.evaluate(() => { location.hash = '#/'; });
+  await page.waitForSelector('#confirm-banner');
+  check('Martín ve el aviso al entrar', (await page.locator('#confirm-banner').innerText()).includes('para confirmar'));
+  await page.click('#confirm-banner');
+  await page.waitForSelector('#confirm-list');
+  check('La lista deja confirmar varios pagos', await page.locator('#confirm-list li').count() === 2 && await page.locator('#confirm-many').count() === 1);
+  await page.locator('#confirm-list li', { hasText: 'Confirma Ok' }).locator('[data-confirm-ok]').click();
+  await page.waitForFunction(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((item) => item.name === 'Confirma Ok');
+    return row && row.transfer === 5000 && !row.awaiting;
+  });
+  check('Confirmar aplica el cobro de Martín', true);
+  await page.locator('#confirm-list li', { hasText: 'Confirma Martin' }).locator('[data-confirm-no]').click();
+  await page.waitForFunction(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((item) => item.name === 'Confirma Martin');
+    return row && !row.awaiting;
+  });
+  check('Rechazar borra el pago y lo anota en Pagos', (await page.locator('#log-list').innerText()).includes('pago rechazado'));
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
 }
 
 const fresh = await ctx.newPage();

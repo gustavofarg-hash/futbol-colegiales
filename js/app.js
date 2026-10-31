@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { allocateAcrossDebts, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
+import { allocateAcrossDebts, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -31,6 +31,7 @@ import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, splitPaymentAcross } from './prices.js';
+import { planRows } from './settle.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
@@ -39,7 +40,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v79';
+const APP_VERSION = 'f7c-v80';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -383,15 +384,99 @@ function inviteClass(player) {
 }
 function payMarkup(player) {
   const pending = pendingStatusText(player);
+  const waiting = awaitingText(player);
   const headline = paymentHeadline(player);
   const cls = player.paid === true ? 'ok' : 'no';
   const line = headline ? `<div class="pay-line ${cls}">${esc(headline)}</div>` : '';
   const badge = pending ? `<div class="pay-pending">${esc(pending)}</div>` : '';
-  return line + badge;
+  const hold = waiting ? `<div class="pay-pending" id="pay-awaiting">${esc(waiting)}</div>` : '';
+  return line + badge + hold;
 }
 function promoOf(player) {
   if (!player || player.waiting === true) return null;
   return promoForPlayer({ player, players: app.players, matches: app.matches, prices: app.prices });
+}
+function myAwaiting() {
+  const uid = actor().uid;
+  if (!uid) return [];
+  const rows = [];
+  for (const player of app.players || []) {
+    for (const item of awaitingItems(player)) {
+      if (item.toUid !== uid) continue;
+      const match = knownMatches().find((entry) => entry.id === player.matchId);
+      rows.push({ ...item, player, match });
+    }
+  }
+  return rows;
+}
+function confirmBanner() {
+  const rows = myAwaiting();
+  if (!rows.length) return '';
+  const n = rows.length;
+  return `<a class="remind-banner" id="confirm-banner" href="#/registro/pagos"><strong>Tenés ${n} ${n === 1 ? 'pago' : 'pagos'} para confirmar</strong></a>`;
+}
+function olderDebts(player, skipIds) {
+  const key = personKey(player, app.players);
+  const skip = new Set(skipIds || []);
+  const rows = [];
+  for (const other of app.players) {
+    if (!other || skip.has(other.id) || personKey(other, app.players) !== key) continue;
+    const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices() });
+    if (!(owed > 0)) continue;
+    const match = knownMatches().find((item) => item.id === other.matchId);
+    if (!match) continue;
+    rows.push({
+      id: other.id,
+      owed,
+      label: fmtWhen(match),
+      organizerName: other.signedUpWithName || other.addedBy || '',
+      date: match.date || '',
+      time: match.time || '',
+    });
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || String(a.id).localeCompare(String(b.id)));
+  return rows;
+}
+function receiptParts({ cash, cashTo, transfer, transferTo, credit, creditTo }) {
+  const me = actor();
+  const uidOf = (name) => {
+    if (!name) return '';
+    if (sameOrganizer(name, me.name)) return me.uid;
+    return organizerUidByName(name);
+  };
+  const part = (kind, amount, name) => {
+    const money = roundMoney(amount);
+    if (!(money > 0)) return null;
+    const uid = uidOf(name);
+    return { kind, amount: money, name: name || me.name, uid, confirmed: !uid || uid === me.uid };
+  };
+  return [part('cash', cash, cashTo), part('transfer', transfer, transferTo), part('credit', credit, creditTo)].filter(Boolean);
+}
+function overpayText(rows) {
+  const settlements = [];
+  const credits = [];
+  const pending = [];
+  for (const row of rows || []) {
+    for (const item of row.projected?.settlements || []) settlements.push(item);
+    for (const item of row.projected?.credits || []) credits.push(item);
+    for (const item of row.pending || []) pending.push(item);
+  }
+  const extra = roundMoney(settlements.reduce((sum, item) => sum + item.amount, 0) + credits.reduce((sum, item) => sum + item.amount, 0));
+  const bits = [];
+  if (settlements.length) bits.push(settlements.map((item) => `${formatARS(item.amount)} cancelan ${item.label}`).join(', '));
+  if (credits.length) {
+    const by = new Map();
+    for (const item of credits) by.set(item.name, roundMoney((by.get(item.name) || 0) + item.amount));
+    bits.push([...by.entries()].map(([name, amount]) => `${formatARS(amount)} quedan como saldo a favor con ${name}`).join(', '));
+  }
+  let text = extra > 0 ? `Paga ${formatARS(extra)} de más: ${bits.join('. ')}.` : '';
+  if (pending.length) {
+    const names = [...new Set(pending.map((item) => item.name).filter(Boolean))];
+    const money = formatARS(roundMoney(pending.reduce((sum, item) => sum + item.amount, 0)));
+    text = `${text} ${names.join(' y ')} tiene que confirmar ${money}.`.trim();
+  }
+  const confirm = extra > 0 ? `Paga ${formatARS(extra)} de más. ¿Guardar y ${bits.join(' y ')}?` : '';
+  return { extra, text, confirm };
 }
 function promoBadge(player) {
   const promo = promoOf(player);
@@ -650,7 +735,7 @@ function renderHome() {
     ? 'Los que vienen después están en el botón de abajo.'
     : 'Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.';
   if (!replaceView(`
-    ${reminderBanners(next)}
+    ${confirmBanner()}${reminderBanners(next)}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
       <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
@@ -2658,6 +2743,99 @@ function statsPeriodBody(grain, id) {
     </section>`;
 }
 
+async function resolveAwaiting(playerId, ids, accept) {
+  const player = app.players.find((item) => item.id === playerId);
+  if (!player) return;
+  const wanted = new Set(ids);
+  const mine = awaitingItems(player).filter((item) => wanted.has(item.id) && item.toUid === actor().uid);
+  const rest = awaitingItems(player).filter((item) => !mine.some((row) => row.id === item.id));
+  if (!mine.length) return;
+  if (!accept) {
+    await app.store.updatePlayer(playerId, { awaiting: rest.length ? rest : null });
+    for (const item of mine) {
+      await app.store.logPlayerPago(playerId, {
+        type: 'pago rechazado',
+        method: item.kind === 'transfer' ? 'transferencia' : item.kind === 'credit' ? 'credito' : 'efectivo',
+        amount: item.amount,
+        paidTo: item.to,
+        detail: 'No lo recibí',
+      });
+    }
+    return;
+  }
+  const [plan] = planRows({
+    rows: [{
+      due: amountOwed(player, { players: app.players, matches: knownMatches(), prices: livePrices() }),
+      signupName: player.signedUpWithName || player.addedBy || '',
+      parts: mine.map((item) => ({ kind: item.kind, amount: item.amount, name: item.to, uid: item.toUid, confirmed: true })),
+    }],
+    debts: olderDebts(player, [player.id]),
+  });
+  const prev = paymentParts(player);
+  let cash = prev.cash;
+  let transfer = prev.transfer;
+  let credit = prev.credit;
+  let cashTo = player.cashTo || '';
+  let transferTo = player.transferTo || '';
+  let creditTo = player.creditTo || '';
+  const transferBits = Array.isArray(player.transferParts) ? player.transferParts.map((part) => ({ ...part })) : [];
+  for (const slice of plan.applied.used) {
+    if (slice.kind === 'cash') { cash = roundMoney(cash + slice.amount); cashTo = slice.name; }
+    else if (slice.kind === 'transfer') {
+      transfer = roundMoney(transfer + slice.amount);
+      transferBits.push({ to: slice.name, amount: slice.amount });
+      transferTo = slice.name;
+    } else { credit = roundMoney(credit + slice.amount); creditTo = slice.name; }
+  }
+  await app.store.setPayment(playerId, {
+    paid: true, split: true, freePlay: false,
+    cash, transfer, pendingTransfer: prev.pending, fromCredit: credit,
+    cashTo: cash > 0 ? cashTo : null,
+    transferTo: transferBits.length <= 1 && transfer > 0 ? transferTo : null,
+    transferParts: transferBits.length > 1 ? transferBits : null,
+    pendingTo: prev.pending > 0 ? player.pendingTo : null,
+    creditTo: credit > 0 ? creditTo : null,
+    awaiting: rest.length ? rest : null,
+  }, app.who);
+  for (const item of plan.applied.credits || []) {
+    const organizerUid = item.uid || actor().uid;
+    await app.store.adjustCredit({ personKey: personKey(player, app.players), organizerUid, organizerName: item.name, name: player.name, delta: item.amount }, app.who);
+    await app.store.recordCreditLoad({ match: null, player: { ...player, creditTo: item.name }, amount: item.amount, solo: true });
+  }
+  for (const item of plan.applied.settlements || []) {
+    const who = app.players.find((row) => row.id === item.id);
+    if (!who) continue;
+    const old = paymentParts(who);
+    await app.store.setPayment(who.id, {
+      paid: true, split: true, freePlay: false,
+      cash: item.kind === 'cash' ? roundMoney(old.cash + item.amount) : old.cash,
+      transfer: item.kind === 'transfer' ? roundMoney(old.transfer + item.amount) : old.transfer,
+      pendingTransfer: old.pending,
+      fromCredit: item.kind === 'credit' ? roundMoney(old.credit + item.amount) : old.credit,
+      cashTo: item.kind === 'cash' ? item.name : who.cashTo,
+      transferTo: item.kind === 'transfer' ? item.name : who.transferTo,
+      pendingTo: who.pendingTo,
+      creditTo: item.kind === 'credit' ? item.name : who.creditTo,
+    }, app.who);
+  }
+}
+
+function confirmQueueHtml() {
+  const rows = myAwaiting();
+  if (!rows.length) return '';
+  const n = rows.length;
+  const kind = (item) => item.kind === 'transfer' ? 'Transferencia' : item.kind === 'credit' ? 'Crédito' : 'Efectivo';
+  return `<section id="confirm-queue">
+    <h2 class="section">Para confirmar</h2>
+    <p class="hint" id="confirm-count">Tenés ${n} ${n === 1 ? 'pago' : 'pagos'} para confirmar.</p>
+    <ul class="slots" id="confirm-list">${rows.map((row) => `<li class="slot confirm-row">
+      <label class="checkline"><input type="checkbox" data-confirm-pick="${esc(row.id)}" data-player="${esc(row.player.id)}"><span>${esc(row.player.name)} · ${esc(row.match ? fmtWhen(row.match) : '')} · ${kind(row)} ${esc(formatARS(row.amount))}</span></label>
+      <div class="slot-actions"><button type="button" class="btn" data-confirm-ok="${esc(row.id)}" data-player="${esc(row.player.id)}">Confirmar</button><button type="button" class="btn" data-confirm-no="${esc(row.id)}" data-player="${esc(row.player.id)}">Rechazar</button></div>
+    </li>`).join('')}</ul>
+    <button type="button" class="btn primary" id="confirm-many">Confirmar seleccionados</button>
+  </section>`;
+}
+
 function renderRegistro(r) {
   const section = r.section === 'pagos' ? 'pagos' : 'partidos';
   if (!app.logRange) app.logRange = weekRange();
@@ -2685,6 +2863,7 @@ function renderRegistro(r) {
         <button type="submit" class="btn" id="log-apply">Ver</button>
       </form>
       <p class="hint" id="log-hint">Últimos 20 días, hasta hoy. Tocá Ver para usar otras fechas.</p>
+      ${confirmQueueHtml()}
       ${list}
     </div>`)) return;
   const form = $('#log-range');
@@ -2697,6 +2876,22 @@ function renderRegistro(r) {
     render();
   };
   form.onsubmit = (e) => { e.preventDefault(); apply(); };
+  const queue = $('#confirm-queue');
+  if (queue) queue.onclick = async (event) => {
+    const ok = event.target.closest('[data-confirm-ok]');
+    const no = event.target.closest('[data-confirm-no]');
+    const many = event.target.closest('#confirm-many');
+    const runOne = async (playerId, id, accept) => {
+      await resolveAwaiting(playerId, [id], accept);
+      render();
+    };
+    if (ok) return runOne(ok.dataset.player, ok.dataset.confirmOk, true);
+    if (no) return runOne(no.dataset.player, no.dataset.confirmNo, false);
+    if (!many) return;
+    const picks = [...queue.querySelectorAll('[data-confirm-pick]:checked')];
+    for (const pick of picks) await resolveAwaiting(pick.dataset.player, [pick.dataset.confirmPick], true);
+    render();
+  };
 }
 
 function renderUsers() {
@@ -3609,6 +3804,7 @@ function openPaymentForm(m, p, opts = {}) {
           </div>
         </div>
         <div id="pay-promo-split" hidden></div>
+        <p class="hint pay-over" id="pay-over" hidden></p>
       </div>
       <div class="field"><div class="err" id="pay-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" ${back ? 'id="pay-back"' : 'data-close'}>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
@@ -3715,14 +3911,51 @@ function openPaymentForm(m, p, opts = {}) {
       pending: pendingNow.amount,
       credit: creditNow.amount,
     }, promo.rows.length);
-    const totals = shares.map((share) => roundMoney(share.cash + share.transfer + share.pending + share.credit));
+    const planned = paymentPlan();
+    const totals = planned
+      ? planned.map((row) => roundMoney((row.applied?.used || []).reduce((sum, slice) => sum + slice.amount, 0) + (row.pendingTransfer || 0) + (row.fromCredit || 0)))
+      : shares.map((share) => roundMoney(share.cash + share.transfer + share.pending + share.credit));
     const uneven = totals.some((total, i) => i > 0 && total !== totals[0]);
     const lines = promo.rows.map((row, i) => `<li><span>${esc(fmtWhen(row.match))}</span><b>${esc(formatARS(totals[i] || 0))}</b></li>`).join('');
     const odd = uneven ? '<p class="hint">El peso que sobra queda en el primer partido.</p>' : '';
     box.hidden = false;
     box.innerHTML = `<p class="hint">Se reparte en partes iguales entre estos partidos.</p><ul class="pay-split-preview">${lines}</ul>${odd}`;
   };
-  for (const input of [form.cash, form.transfer, form.pending]) bindAmountField(input, { fillPrice: true, amountFor: suggestedAmount, onFilled: paintPromoSplit });
+  const paymentPlan = () => {
+    const cashNow = readMoney(form.cash.value);
+    const transferNow = readMoney(form.transfer.value);
+    const creditNow = readMoney(form.fromCredit.value);
+    const pendingNow = readMoney(form.pending.value);
+    if (!cashNow.ok || !transferNow.ok || !creditNow.ok || !pendingNow.ok) return null;
+    const promo = (!oldestBox?.checked && !splitBox?.checked) ? promoOf(p) : null;
+    const group = promo && promo.rows.length >= 2 ? promo.rows : [{ player: p, match: m }];
+    const shares = splitPaymentAcross({
+      cash: cashNow.amount, transfer: transferNow.amount, pending: pendingNow.amount, credit: creditNow.amount,
+    }, group.length);
+    const debts = olderDebts(p, group.map((row) => row.player.id));
+    const planned = planRows({
+      rows: group.map((row, i) => ({
+        due: group.length > 1 ? (promo.shares[i] || 0) : priceOfMatch(row.match || m, livePrices()),
+        signupName: row.player.signedUpWithName || row.player.addedBy || '',
+        parts: receiptParts({
+          cash: shares[i].cash, cashTo: form.cashTo.value,
+          transfer: shares[i].transfer, transferTo: form.transferTo.value,
+          credit: 0, creditTo: '',
+        }),
+      })),
+      debts,
+    });
+    return planned.map((item, i) => ({ ...item, player: group[i].player, match: group[i].match || m, pendingTransfer: shares[i].pending, fromCredit: shares[i].credit }));
+  };
+  const paintOverpay = () => {
+    const box = $('#pay-over');
+    if (!box) return;
+    const note = overpayText(paymentPlan() || []);
+    box.hidden = !note.text;
+    box.textContent = note.text;
+  };
+  const refreshPayHints = () => { paintPromoSplit(); paintOverpay(); };
+  for (const input of [form.cash, form.transfer, form.pending]) bindAmountField(input, { fillPrice: true, amountFor: suggestedAmount, onFilled: refreshPayHints });
   bindAmountField(form.fromCredit);
   const splitBox = $('#pay-split-guests');
   const splitLine = $('#pay-split-guests-line');
@@ -3846,7 +4079,7 @@ function openPaymentForm(m, p, opts = {}) {
       paintPromoSplit();
     };
     for (const input of [form.cash, form.transfer, form.pending, form.fromCredit]) {
-      input.addEventListener('input', () => { paintGuestSplit(); paintOldest(); paintPromoSplit(); });
+      input.addEventListener('input', () => { paintGuestSplit(); paintOldest(); paintPromoSplit(); paintOverpay(); });
     }
     paintGuestSplit();
   }
@@ -3856,10 +4089,12 @@ function openPaymentForm(m, p, opts = {}) {
       paintGuestSplit();
       paintOldest();
       paintPromoSplit();
+      paintOverpay();
     };
     paintOldest();
   }
   paintPromoSplit();
+  paintOverpay();
   const receive = $('#btn-receive-pending');
   if (receive) receive.onclick = () => {
     const job = Promise.resolve(app.store.markTransferReceived(p.id, app.who)).catch((error) => {
@@ -3883,7 +4118,7 @@ function openPaymentForm(m, p, opts = {}) {
   };
   if (freeBox) freeBox.onchange = paintFree;
   if (freeBox?.checked) paintFree();
-  form.onsubmit = (e) => {
+  form.onsubmit = async (e) => {
     e.preventDefault();
     if (freeBox?.checked) {
       const entries = [{ id: p.id, input: { freePlay: true, paid: true, split: true } }];
@@ -4062,20 +4297,112 @@ function openPaymentForm(m, p, opts = {}) {
       leave(job);
       return;
     }
-    const freshPromo = promoOf(p);
-    const applyAll = !!(freshPromo && freshPromo.rows.length >= 2 && !oldestBox?.checked && !splitBox?.checked);
-    if (applyAll) {
-      const shares = splitPaymentAcross({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount, credit: fromCredit.amount }, freshPromo.rows.length);
-      const entries = freshPromo.rows.map((row, i) => ({ id: row.player.id, input: payInput(shares[i]) }));
-      finishPay(entries, freshPromo.rows.map((row) => row.player), 'Promo aplicada');
+    const planned = paymentPlan();
+    if (!planned) { $('#pay-err').textContent = 'Revisá los montos.'; return; }
+    const note = overpayText(planned);
+    if (note.extra > 0) {
+      const ask = document.createElement('div');
+      ask.id = 'pay-over-ask';
+      ask.innerHTML = `<p class="hint">${esc(note.confirm)}</p><div class="sheet-actions"><button type="button" class="btn" id="pay-over-no">Cancelar</button><button type="button" class="btn primary" id="pay-over-yes">Sí</button></div>`;
+      form.appendChild(ask);
+      const yes = await new Promise((resolve) => {
+        $('#pay-over-yes').onclick = () => { ask.remove(); resolve(true); };
+        $('#pay-over-no').onclick = () => { ask.remove(); resolve(false); };
+      });
+      if (!yes) return;
+    }
+    const entries = [];
+    const grants = [];
+    const debtAdds = [];
+    for (const row of planned) {
+      const used = row.applied?.used || [];
+      let cashSum = 0; let cashTo = '';
+      let transferSum = 0; const transferBits = [];
+      let creditSum = 0; let creditTo = '';
+      for (const slice of used) {
+        if (slice.kind === 'cash') { cashSum = roundMoney(cashSum + slice.amount); cashTo = cashTo || slice.name; }
+        else if (slice.kind === 'transfer') { transferSum = roundMoney(transferSum + slice.amount); transferBits.push({ to: slice.name, amount: slice.amount }); }
+        else { creditSum = roundMoney(creditSum + slice.amount); creditTo = creditTo || slice.name; }
+      }
+      creditSum = roundMoney(creditSum + (row.fromCredit || 0));
+      if (creditSum > 0 && !creditTo) creditTo = loggedInStaffName();
+      const awaiting = (row.pending || []).map((item) => ({
+        id: Math.random().toString(36).slice(2, 10),
+        kind: item.kind, amount: item.amount, to: item.name, toUid: item.uid, at: Date.now(),
+      }));
+      const money = cashSum + transferSum + creditSum + (row.pendingTransfer || 0);
+      if (money > 0) {
+        entries.push({
+          id: row.player.id,
+          input: {
+            ...payInput({ cash: cashSum, transfer: transferSum, pending: row.pendingTransfer || 0, credit: creditSum }),
+            cashTo: cashSum > 0 ? cashTo : null,
+            transferTo: transferBits.length === 1 ? transferBits[0].to : null,
+            transferParts: transferBits.length > 1 ? transferBits : null,
+            creditTo: creditSum > 0 ? creditTo : null,
+            pendingTo: row.pendingTransfer > 0 ? form.pendingTo.value : null,
+            ...(awaiting.length ? { awaiting } : {}),
+          },
+        });
+      } else if (awaiting.length) {
+        entries.push({ id: row.player.id, awaitingOnly: awaiting });
+      }
+      for (const item of row.applied?.settlements || []) debtAdds.push(item);
+      for (const item of row.applied?.credits || []) {
+        const organizerUid = item.uid || organizerUidByName(item.name);
+        if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+        grants.push({ personKey: personKey(p, app.players), organizerUid, organizerName: item.name, name: p.name, delta: item.amount });
+      }
+    }
+    if (!entries.length && !grants.length) { $('#pay-err').textContent = 'Poné un monto.'; return; }
+    const people = planned.map((row) => row.player);
+    const delta = creditDelta(people, entries);
+    if (delta < 0 && roundMoney(-delta) > creditBalance(app.credits, personKey(p, app.players), actor().uid)) {
+      $('#pay-err').textContent = 'No alcanza el saldo a favor.';
       return;
     }
-    const keepParts = roundMoney(transfer.amount) === parts.transfer && Array.isArray(p.transferParts) && p.transferParts.length > 1;
-    const rec = {
-      ...payInput({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount, credit: fromCredit.amount }),
-      transferParts: keepParts ? p.transferParts : null,
-    };
-    finishPay([{ id: p.id, input: rec }], [p], 'Pago guardado');
+    const job = (async () => {
+      const done = [];
+      try {
+        const moves = mergeCreditMoves([...(delta ? [creditMoveFor(p, delta)] : []), ...grants]);
+        for (const move of moves) {
+          await app.store.adjustCredit(move, app.who);
+          done.push(move);
+        }
+        for (const entry of entries) {
+          if (entry.awaitingOnly) await app.store.updatePlayer(entry.id, { awaiting: entry.awaitingOnly });
+          else await app.store.setPayment(entry.id, entry.input, app.who);
+        }
+        for (const item of debtAdds) {
+          const who = app.players.find((player) => player.id === item.id);
+          if (!who) continue;
+          const prev = paymentParts(who);
+          const cash = item.kind === 'cash' ? roundMoney(prev.cash + item.amount) : prev.cash;
+          const transfer = item.kind === 'transfer' ? roundMoney(prev.transfer + item.amount) : prev.transfer;
+          const credit = item.kind === 'credit' ? roundMoney(prev.credit + item.amount) : prev.credit;
+          await app.store.setPayment(who.id, {
+            paid: true, split: true, freePlay: false,
+            cash, transfer, pendingTransfer: prev.pending, fromCredit: credit,
+            cashTo: cash > 0 ? (item.kind === 'cash' ? item.name : who.cashTo) : null,
+            transferTo: transfer > 0 ? (item.kind === 'transfer' ? item.name : who.transferTo) : null,
+            pendingTo: prev.pending > 0 ? who.pendingTo : null,
+            creditTo: credit > 0 ? (item.kind === 'credit' ? item.name : who.creditTo) : null,
+          }, app.who);
+        }
+        for (const grant of grants) {
+          await app.store.recordCreditLoad({ match: null, player: { ...p, creditTo: grant.organizerName }, amount: grant.delta, solo: true });
+        }
+        for (const row of planned) {
+          for (const item of row.pending || []) {
+            await app.store.logPlayerPago(row.player.id, { type: 'pago pendiente', method: item.kind === 'transfer' ? 'transferencia' : item.kind === 'credit' ? 'credito' : 'efectivo', amount: item.amount, paidTo: item.name, detail: 'Pendiente de confirmar' });
+          }
+        }
+      } catch (error) {
+        for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
+        throw error;
+      }
+    })();
+    leave(run(job, note.extra > 0 ? 'Pago guardado. Lo que sobra quedó anotado.' : (planned.length > 1 ? 'Promo aplicada' : 'Pago guardado')));
   };
 }
 function roundMoney(n) {

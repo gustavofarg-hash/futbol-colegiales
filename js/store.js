@@ -923,6 +923,14 @@ class LocalStore {
     this._logPayment(db, before ? { id, ...before } : null, db.players[id] ? { id, ...db.players[id] } : null);
     if (paymentLines(before, db.players[id]).length) this._save(db);
   }
+  async logPlayerPago(playerId, line) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!player || !line?.type) return;
+    const match = db.matches[player.matchId] ? { id: player.matchId, ...db.matches[player.matchId] } : { id: player.matchId };
+    this._pushLogs(db, [pagoEntry(this._actor(), match, this._venuesOf(db), { id: playerId, ...player }, this._matesOf(db, player.matchId), line)]);
+    this._save(db);
+  }
   async adjustCredit(input, who) {
     const id = creditDocId(input?.personKey, input?.organizerUid);
     if (!id) throw Object.assign(new Error('Falta el jugador o el organizador.'), { code: 'invalid-credit' });
@@ -2258,6 +2266,13 @@ export class FirebaseStore {
     const match = this.state.matches.find((item) => item.id === before.matchId) || null;
     const mates = this.state.players.filter((item) => item.matchId === before.matchId);
     await this._appendLogs(lines.map((line) => pagoEntry(this._actor(), match, this.state.venues, after, mates, line)));
+  }
+  async logPlayerPago(playerId, line) {
+    const player = this.state.players.find((item) => item.id === playerId);
+    if (!player || !line?.type) return;
+    const match = this.state.matches.find((item) => item.id === player.matchId) || { id: player.matchId };
+    const mates = this.state.players.filter((item) => item.matchId === player.matchId);
+    await this._appendLogs([pagoEntry(this._actor(), match, this.state.venues, player, mates, line)]);
   }
   async adjustCredit(input, who) {
     const id = creditDocId(input?.personKey, input?.organizerUid);
