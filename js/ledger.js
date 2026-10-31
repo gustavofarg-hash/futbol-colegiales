@@ -349,6 +349,7 @@ export function playerDebt({ person, players, matches, prices, organizer = null,
     const when = [numericDate(match.date), shortHour(match.time)].filter(Boolean).join(' · ');
     rows.push({
       matchId: match.id,
+      playerId: player.id || '',
       date: match.date || '',
       time: match.time || '',
       owed,

@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v75** (rama `cursor/deuda-abre-menu-c20d`, 31/10/2026): cada línea roja de deuda bajo «Debe en total», en el menú del jugador y en la ficha, abre el menú de ese jugador en ese partido si quien está logueado puede anotar ahí. Ahí está Cargar pago, también en un partido ya jugado. Si no puede anotar, la línea sigue siendo texto rojo y no hace nada. `firestore.rules` no cambió.
 **Actualizada para f7c-v74** (rama `cursor/registro-cobro-c20d`, 31/10/2026): en Registro > Pagos, el efectivo y la transferencia dicen «Cobró» con el desplegable del pago, al lado de «Registró». Una transferencia repartida es una sola línea con todos los que cobraron. El crédito cobra el organizador que estaba logueado. Una carga que no paga deudas se lee «Carga de crédito» y la ve solo quien la hizo. Una edición o un borrado muestran quién cobraba y quién cobra. El pago no se guarda si falta quién cobró el efectivo o la transferencia. Las líneas viejas no se rellenan. `firestore.rules` acepta `paidTo`.
 **Actualizada para f7c-v73** (rama `cursor/registro-20-dias-c20d`, 31/10/2026): Registro arranca en los últimos 20 días según cuándo se anotó la línea (hoy inclusive, desde hace 20 días). Un partido futuro entra si el evento se anotó en esa ventana. Desde/Hasta filtra recién al tocar Ver, en Partidos y en Pagos. Ve la línea quien podía ver el partido o anotar y quitar jugadores, más el creador y quien la anotó. Las líneas viejas no se reescriben. `firestore.rules` no cambió.
 **Actualizada para f7c-v72** (rama `cursor/registro-pagos-partido-c20d`, 31/10/2026): en Registro > Pagos, cada línea dice qué partido se pagó (fecha, hora y sede, la misma etiqueta que en Partidos), además de cuándo se anotó el pago. El crédito repartido en varios partidos nombra cada uno. Una carga de crédito sin partido dice «Carga de crédito». Usa la copia guardada en la línea, así un partido borrado sigue figurando. `firestore.rules` no cambió.
@@ -18,7 +19,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **e2e 641/641 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 96/96 OK** (`node --test tests/unit.test.mjs`). El e2e de v74 revisa quién cobró, la carga privada y que el efectivo exige un cobrador.
+Pruebas sobre esta copia: **e2e 646/646 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 96/96 OK** (`node --test tests/unit.test.mjs`). El e2e de v75 revisa que la deuda abre el menú del partido, también uno ya jugado, y que la de solo lectura no se toca.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 

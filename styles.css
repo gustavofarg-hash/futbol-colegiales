@@ -571,6 +571,23 @@ button.team-name {
 .debt-stack .debt-total { margin: 0; }
 .debt-stack .ledger-list { margin: 0; gap: 2px; }
 .debt-stack .ledger-list li { color: var(--danger); }
+.debt-stack .debt-jump {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  line-height: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  min-height: 0;
+}
 .stat-dates { margin: 0; padding-left: 18px; color: var(--muted); }
 .pnote { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; background: var(--card); }
 .pnote .when { font-size: 0.8125rem; font-weight: 700; color: var(--muted); }
