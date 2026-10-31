@@ -766,7 +766,7 @@ service cloud.firestore {
     // Registro. Se agrega, no se corrige. El admin puede borrar al resetear.
     // editors se copió del partido: * o los uids que podían ver y editar.
     function validLog(d) {
-      return d.keys().hasOnly(['at', 'actorUid', 'actorName', 'section', 'type', 'matchId', 'matchDate', 'matchTime', 'matchLabel', 'editors', 'playerName', 'hostName', 'detail', 'amount', 'method'])
+      return d.keys().hasOnly(['at', 'actorUid', 'actorName', 'section', 'type', 'matchId', 'matchDate', 'matchTime', 'matchLabel', 'editors', 'playerName', 'hostName', 'detail', 'amount', 'method', 'paidTo'])
           && d.at is number && d.at > 0
           && d.actorUid is string && d.actorUid == request.auth.uid && d.actorUid.size() > 0 && d.actorUid.size() <= 128
           && d.actorName is string && d.actorName.size() > 0 && d.actorName.size() <= 40
@@ -782,6 +782,7 @@ service cloud.firestore {
           && d.detail is string && d.detail.size() <= 200
           && d.amount is number && d.amount >= 0 && d.amount <= 1000000000
           && (d.method == '' || d.method == 'efectivo' || d.method == 'transferencia' || d.method == 'credito')
+          && (!d.keys().hasAny(['paidTo']) || (d.paidTo is string && d.paidTo.size() <= 80))
           && (d.editors.hasAny(['*']) || d.editors.hasAny([request.auth.uid]));
     }
     function canReadLog(d) {

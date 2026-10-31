@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v73');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v74');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3372,6 +3372,25 @@ const pagos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ')
 const pagoTypes = await page.$$eval('#log-list .name', (els) => els.map((el) => el.textContent.trim()));
 check('Registro de pagos separa los medios y deja el crédito cargado arriba del pago', pagos.includes('Efectivo') && pagos.includes('Transferencia') && pagos.includes('Crédito $500') && pagoTypes[0] === 'crédito cargado', `${pagoTypes.slice(0, 4).join(', ')} ${pagos.slice(0, 240)}`);
 check('Cada pago dice el partido guardado, además de cuándo se anotó', pagos.includes('Lunes 19/10 · 23:40 · Polideportivo Colegiales') && /19\/10\/2026 · \d{2}:\d{2}/.test(pagos), pagos.slice(0, 360));
+const pagoRows = await page.$$eval('#log-list .log-row', (els) => els.map((el) => el.innerText.replace(/\s+/g, ' ')));
+const efectivo = pagoRows.find((row) => row.includes('Efectivo')) || '';
+const transferencia = pagoRows.find((row) => row.includes('Transferencia')) || '';
+const creditoPago = pagoRows.find((row) => row.includes('Crédito $500')) || '';
+check('Efectivo, transferencia y crédito dicen quién cobró y quién registró', efectivo.includes('Cobró: Gustavo') && efectivo.includes('Registró: Gustavo') && transferencia.includes('Cobró: Gustavo') && creditoPago.includes('Cobró: Gustavo'), `${efectivo} || ${transferencia} || ${creditoPago}`);
+const privado = await page.evaluate(async () => {
+  const app = window.__app;
+  const me = app.session.user;
+  app.store.setActor(me);
+  await app.store.recordCreditLoad({ match: { id: 'partido-ajeno', date: '2026-10-19', time: '23:40', viewers: ['*'], adders: ['*'] }, player: { name: 'Carga Privada', creditTo: me.name }, amount: 1000, solo: true });
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const line = Object.values(db.log).find((row) => row.playerName === 'Carga Privada');
+  app.store.setActor({ uid: 'otro-organizador', name: 'Otro', role: 'organizer' });
+  const hidden = !(app.log || []).some((row) => row.playerName === 'Carga Privada');
+  app.store.setActor(me);
+  const shown = (app.log || []).some((row) => row.playerName === 'Carga Privada');
+  return { editors: line?.editors || [], matchLabel: line?.matchLabel || '', paidTo: line?.paidTo || '', hidden, shown };
+});
+check('La carga sin deuda la ve solo quien la hizo', privado.hidden && privado.shown && privado.editors.length === 1 && privado.editors[0] === (await page.evaluate(() => window.__app.session.user.uid)) && privado.matchLabel === '' && privado.paidTo === 'Gustavo', JSON.stringify(privado));
 await page.evaluate(async () => {
   const app = window.__app;
   const me = { uid: app.session.user.uid, name: app.session.user.name, role: app.session.user.role };
@@ -3403,6 +3422,30 @@ await page.fill('#log-to', '2026-10-19');
 check('Las fechas nuevas siguen sin aplicarse', await page.locator('#log-empty').count() === 1);
 await page.click('#log-apply');
 await page.waitForSelector('#log-list');
+const exige = await page.evaluate(async () => {
+  const app = window.__app;
+  const me = app.session.user;
+  app.store.setActor(me);
+  const id = await app.store.addMatch({ date: '2026-10-19', time: '23:55', note: 'Exige cobrador', price: 5000 }, me.name);
+  const match = app.matches.find((item) => item.id === id) || { id, date: '2026-10-19', time: '23:55' };
+  await app.store.addPlayer(match, { name: 'Sin Cobrador', phone: '' }, me.name);
+  return id;
+});
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, exige);
+await page.waitForSelector('.slot:has-text("Sin Cobrador") .pay-btn');
+await page.click('.slot:has-text("Sin Cobrador") .pay-btn');
+await page.waitForSelector('#pay-form [name=cash]');
+await page.fill('#pay-form [name=cash]', '1000');
+await page.locator('#pay-form [name=cashTo]').evaluate((el) => {
+  const opt = document.createElement('option');
+  opt.value = '';
+  el.add(opt, el.firstChild);
+  el.value = '';
+});
+await page.click('#pay-form button[type=submit]');
+await page.waitForFunction(() => (document.querySelector('#pay-err')?.textContent || '').includes('Elegí quién cobró el efectivo'));
+check('Sin quién cobró el efectivo, el pago no se guarda', (await page.locator('#pay-err').innerText()).includes('Elegí quién cobró el efectivo'));
+await page.click('#pay-form [data-close]');
 
 async function seedPromoGuests(count, label) {
   const day = seedPromoGuests.nextDay || 2;

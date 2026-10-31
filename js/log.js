@@ -3,7 +3,7 @@
 // del partido en ese momento, porque un partido borrado ya no existe.
 import { isRestricted } from './access.js';
 import { addDays, capitalize, labelDate, toEpoch, todayISO } from './dates.js';
-import { formatARS, paymentParts } from './payments.js';
+import { formatARS, hasPaymentDirection, paymentParts } from './payments.js';
 import { venueLabel } from './venues.js';
 
 export const LOG_LIMIT = 200;
@@ -162,9 +162,50 @@ const MONEY = [
   ['credit', 'credito'],
 ];
 
+function collectorNames(player, method) {
+  if (!player) return [];
+  const one = (value) => {
+    const name = clean(value, 40);
+    return name ? [name] : [];
+  };
+  if (method === 'efectivo') {
+    return one(hasPaymentDirection(player) ? player.cashTo : player.receivedBy);
+  }
+  if (method === 'transferencia') {
+    const parts = Array.isArray(player.transferParts) ? player.transferParts : [];
+    if (parts.length > 1) {
+      const names = [];
+      for (const part of parts) {
+        const name = clean(part?.to, 40);
+        if (name && !names.some((have) => have.toLowerCase() === name.toLowerCase())) names.push(name);
+      }
+      return names;
+    }
+    return one(hasPaymentDirection(player) ? player.transferTo : player.receivedBy);
+  }
+  if (method === 'credito') return one(player.creditTo);
+  return [];
+}
+
+function joinCollectors(names) {
+  return names.filter(Boolean).join(' · ').slice(0, 80);
+}
+
+/** Antes y después. Si se borró, el después es «nadie». Si no cambió, un solo nombre. */
+function collectorShift(beforeNames, afterNames, removed) {
+  const before = joinCollectors(beforeNames);
+  const after = joinCollectors(afterNames);
+  if (removed) return before ? `${before} → nadie` : '';
+  if (!before || before === after) return after;
+  if (!after) return `${before} → nadie`;
+  return `${before} → ${after}`;
+}
+
 /**
- * Una línea por medio cuyo monto cambió.
+ * Una línea por medio cuyo monto cambió, o cuyo cobrador cambió.
  * Subir un monto es un pago por la diferencia. Bajarlo es una edición o un borrado.
+ * En una edición o un borrado, paidTo dice quién cobraba y quién cobra ahora.
+ * Una transferencia repartida es una sola línea con todos los que cobraron.
  */
 export function paymentLines(before, after) {
   const prev = paymentParts(before);
@@ -173,16 +214,33 @@ export function paymentLines(before, after) {
   for (const [key, method] of MONEY) {
     const oldAmount = prev[key] || 0;
     const newAmount = next[key] || 0;
-    if (oldAmount === newAmount) continue;
-    if (newAmount === 0) lines.push({ type: 'pago borrado', method, amount: oldAmount, detail: '' });
-    else if (oldAmount === 0 || newAmount > oldAmount) {
-      lines.push({ type: 'pago', method, amount: Math.round((newAmount - oldAmount) * 100) / 100, detail: '' });
+    const beforeNames = collectorNames(before, method);
+    const afterNames = collectorNames(after, method);
+    const sameWho = joinCollectors(beforeNames) === joinCollectors(afterNames);
+    if (oldAmount === newAmount && sameWho) continue;
+    if (newAmount === 0) {
+      lines.push({
+        type: 'pago borrado',
+        method,
+        amount: oldAmount,
+        detail: '',
+        paidTo: collectorShift(beforeNames, [], true),
+      });
+    } else if (oldAmount === 0 || (newAmount > oldAmount && sameWho)) {
+      lines.push({
+        type: 'pago',
+        method,
+        amount: Math.round((newAmount - oldAmount) * 100) / 100,
+        detail: '',
+        paidTo: joinCollectors(afterNames),
+      });
     } else {
       lines.push({
         type: 'pago editado',
         method,
-        amount: newAmount,
-        detail: `antes ${formatARS(oldAmount)}`,
+        amount: newAmount || oldAmount,
+        detail: oldAmount !== newAmount ? `antes ${formatARS(oldAmount)}` : '',
+        paidTo: collectorShift(beforeNames, afterNames, false),
       });
     }
   }
@@ -235,7 +293,7 @@ export function pagoEntry(actor, match, venues, player, mates, line) {
   const fields = matchLogFields(match || { id: player?.matchId || '' }, venues);
   fields.editors = editorsOf(match, actor?.uid);
   if (!match) fields.matchLabel = 'Sin partido';
-  return blankLog({
+  const entry = blankLog({
     ...fields,
     section: 'pagos',
     type: line?.type || 'pago',
@@ -244,6 +302,20 @@ export function pagoEntry(actor, match, venues, player, mates, line) {
     detail: line?.detail || '',
     ...playerLogFields(player, mates),
   }, actor);
+  const fromLine = clean(line?.paidTo, 80);
+  const fromPlayer = joinCollectors(collectorNames(player, entry.method));
+  let paidTo = fromLine || fromPlayer;
+  if (entry.method === 'credito' && !paidTo) paidTo = clean(actor?.name, 40);
+  if (paidTo) entry.paidTo = paidTo;
+  if (line?.solo === true) {
+    const uid = clean(actor?.uid, 128);
+    entry.editors = uid ? [uid] : entry.editors;
+    entry.matchId = '';
+    entry.matchDate = '';
+    entry.matchTime = '';
+    entry.matchLabel = '';
+  }
+  return entry;
 }
 
 export function logWhen(entry) {
