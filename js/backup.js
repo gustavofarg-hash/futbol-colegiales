@@ -34,6 +34,7 @@ export const BACKUP_COLLECTIONS = Object.freeze([
   'users',
   'credits',
   'log',
+  'compensations',
 ]);
 
 export const COLLECTION_LABELS = Object.freeze({
@@ -50,6 +51,7 @@ export const COLLECTION_LABELS = Object.freeze({
   users: 'Cuentas',
   credits: 'Saldos a favor',
   log: 'Registro',
+  compensations: 'Compensaciones',
 });
 
 const ID_MAX = 700;

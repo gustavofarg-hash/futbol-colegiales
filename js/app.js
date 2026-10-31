@@ -32,6 +32,7 @@ import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
+import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
@@ -40,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v80';
+const APP_VERSION = 'f7c-v81';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -982,6 +983,160 @@ function historyVenueState() {
   return { options, all, selected: all ? null : picked };
 }
 
+function dayMatches(date) {
+  return knownMatches().filter((match) => match.date === date && match.cancelled !== true);
+}
+function dayBundle(date) {
+  const matches = dayMatches(date);
+  const players = (app.players || []).filter((player) => matches.some((match) => match.id === player.matchId));
+  const staff = staffUsers(app.users);
+  return { matches, players, staff, calc: dayCompensation(matches, players, staff) };
+}
+function savedCompensation(date) {
+  return (app.compensations || []).find((row) => row.date === date || row.id === date) || null;
+}
+function canSeeDayCompensation(date) {
+  return dayMatches(date).some((match) => canAdd(match, actor().uid));
+}
+function compensationDoc(date, body) {
+  return {
+    date,
+    fingerprint: String(body?.fingerprint || ''),
+    changed: body?.changed === true,
+    computedAt: Number(body?.computedAt) || Date.now(),
+    rows: (body?.rows || []).map((row) => ({
+      uid: String(row.uid || ''),
+      name: String(row.name || ''),
+      collected: Number(row.collected) || 0,
+      entitled: Number(row.entitled) || 0,
+    })),
+    transfers: (body?.transfers || []).map((transfer) => ({
+      fromUid: String(transfer.fromUid || ''),
+      fromName: String(transfer.fromName || ''),
+      toUid: String(transfer.toUid || ''),
+      toName: String(transfer.toName || ''),
+      amount: Number(transfer.amount) || 0,
+      doneAt: transfer.doneAt == null ? null : Number(transfer.doneAt),
+      stale: transfer.stale === true,
+      removed: transfer.removed === true,
+    })),
+  };
+}
+const compBusy = new Set();
+function refreshCompensation(date) {
+  const saved = savedCompensation(date);
+  if (!saved || compBusy.has(date) || !app.store?.saveCompensation) return saved;
+  const { matches, players, staff, calc } = dayBundle(date);
+  const fingerprint = compensationFingerprint(matches, players, staff);
+  if (fingerprint === saved.fingerprint) return saved;
+  const next = calc.missing.length
+    ? compensationDoc(date, { ...saved, fingerprint, changed: true, computedAt: Date.now() })
+    : compensationDoc(date, {
+      fingerprint,
+      changed: true,
+      computedAt: Date.now(),
+      rows: calc.rows,
+      transfers: reconcileTransfers(saved.transfers, calc.transfers),
+    });
+  compBusy.add(date);
+  Promise.resolve(app.store.saveCompensation(date, next)).finally(() => compBusy.delete(date));
+  return next;
+}
+function historyWithCompensation(matches) {
+  const groups = [];
+  for (const match of matches) {
+    const last = groups[groups.length - 1];
+    if (!last || last.date !== match.date) groups.push({ date: match.date, matches: [match] });
+    else last.matches.push(match);
+  }
+  return groups.map((group) => `${compensationBlock(group.date)}${group.matches.map((item) => matchCard(item, { fullDate: true })).join('')}`).join('');
+}
+function matchCompensationHtml(date) {
+  if (!canSeeDayCompensation(date)) return '';
+  const saved = refreshCompensation(date);
+  const { calc } = dayBundle(date);
+  if (!saved) return `<button type="button" class="btn block" id="btn-comp" data-comp-make="${esc(date)}">Hacer cálculo de compensación del día</button>`;
+  return `<section id="comp-detail">${compensationDetail(saved, calc)}</section>`;
+}
+function compensationBlock(date) {
+  if (!canSeeDayCompensation(date)) return '';
+  const saved = refreshCompensation(date);
+  if (!saved) return `<li class="comp-slot"><button type="button" class="btn block" data-comp-make="${esc(date)}">Hacer cálculo de compensación del día</button></li>`;
+  const open = app.compOpen === date;
+  const { calc } = dayBundle(date);
+  return `<li class="comp-slot"><button type="button" class="btn block" data-comp-toggle="${esc(date)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '▾' : '▸'} Compensación del día${saved.changed ? ' · El cálculo cambió' : ''}</button>${open ? `<div id="comp-detail">${compensationDetail(saved, calc)}</div>` : ''}</li>`;
+}
+function compensationDetail(doc, calc) {
+  const notice = doc.changed ? '<p class="hint" id="comp-changed">El cálculo cambió</p>' : '';
+  if (calc?.missing?.length) {
+    const lines = calc.missing.map((item) => {
+      const match = knownMatches().find((row) => row.id === item.matchId);
+      return `<li>${esc(item.name)} · ${esc(match ? fmtWhen(match) : '')}</li>`;
+    }).join('');
+    return `${notice}<p class="hint">Falta indicar cómo pagan.</p><ul class="pay-split-preview" id="comp-missing">${lines}</ul>`;
+  }
+  const rows = (doc.rows || []).map((row) => `<li><b>${esc(row.name)}</b> cobró ${esc(formatARS(row.collected))} · le corresponden ${esc(formatARS(row.entitled))}</li>`).join('');
+  const moves = (doc.transfers || []).map((transfer) => {
+    const note = transfer.removed ? ' · ya no corresponde' : (transfer.stale ? ' · cambió' : '');
+    const done = transfer.doneAt ? ` · Transferido ${esc(numericDate(todayISO(new Date(transfer.doneAt))))}` : '';
+    const label = `${transfer.fromName} le pasa ${formatARS(transfer.amount)} a ${transfer.toName}`;
+    const button = transfer.doneAt || transfer.removed ? '' : `<button type="button" class="btn" data-comp-done="${esc(transfer.fromUid)}|${esc(transfer.toUid)}" data-comp-date="${esc(doc.date)}">Transferido</button>`;
+    return `<li class="comp-transfer"><span>${esc(label)}${done}${esc(note)}</span>${button}</li>`;
+  }).join('');
+  const empty = moves ? '' : '<p class="hint">Nadie le tiene que pasar plata a otro.</p>';
+  return `${notice}<ul class="pay-split-preview" id="comp-rows">${rows}</ul>${moves ? `<ul class="comp-moves" id="comp-transfers">${moves}</ul>` : empty}`;
+}
+async function runCompensation(date) {
+  const { matches, players, staff, calc } = dayBundle(date);
+  if (calc.missing.length) {
+    const lines = calc.missing.map((item) => {
+      const match = matches.find((row) => row.id === item.matchId);
+      return `<li>${esc(item.name)} · ${esc(match ? fmtWhen(match) : item.matchId)}</li>`;
+    }).join('');
+    openSheet(`<h3>Falta indicar cómo pagan</h3><p class="hint">Antes del cálculo, cada jugador tiene que tener efectivo, transferencia, crédito, transfiere después o juega gratis.</p><ul class="pay-split-preview" id="comp-missing">${lines}</ul><div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
+    return;
+  }
+  const saved = savedCompensation(date);
+  const fingerprint = compensationFingerprint(matches, players, staff);
+  await app.store.saveCompensation(date, compensationDoc(date, {
+    fingerprint,
+    changed: !!(saved && saved.fingerprint && saved.fingerprint !== fingerprint),
+    computedAt: Date.now(),
+    rows: calc.rows,
+    transfers: reconcileTransfers(saved?.transfers, calc.transfers),
+  }));
+  app.compOpen = date;
+}
+async function markCompensationPaid(date, key) {
+  const saved = savedCompensation(date);
+  if (!saved) return;
+  const [fromUid, toUid] = String(key || '').split('|');
+  const transfers = (saved.transfers || []).map((transfer) => transfer.fromUid === fromUid && transfer.toUid === toUid ? { ...transfer, doneAt: Date.now(), stale: false, removed: false } : transfer);
+  const move = transfers.find((transfer) => transfer.fromUid === fromUid && transfer.toUid === toUid);
+  await app.store.saveCompensation(date, compensationDoc(date, { ...saved, transfers }));
+  const match = dayMatches(date)[0];
+  if (move && match) {
+    await app.store.logCompensation(match, {
+      type: 'compensación',
+      method: 'transferencia',
+      amount: move.amount,
+      paidTo: move.toName,
+      detail: `${move.fromName} le pasó ${formatARS(move.amount)} a ${move.toName}`,
+    });
+  }
+}
+function bindCompensation(root) {
+  if (!root) return;
+  root.querySelectorAll('[data-comp-make]').forEach((btn) => { btn.onclick = () => runCompensation(btn.dataset.compMake); });
+  root.querySelectorAll('[data-comp-toggle]').forEach((btn) => {
+    btn.onclick = () => {
+      app.compOpen = app.compOpen === btn.dataset.compToggle ? '' : btn.dataset.compToggle;
+      render();
+    };
+  });
+  root.querySelectorAll('[data-comp-done]').forEach((btn) => { btn.onclick = () => markCompensationPaid(btn.dataset.compDate, btn.dataset.compDone); });
+}
+
 function renderHistory() {
   const filter = app.historyFilter || {};
   const caption = app.historyMeta?.caption || 'Partidos pasados, los más recientes primero.';
@@ -1027,7 +1182,7 @@ function renderHistory() {
     <p class="hint" id="hist-caption">${esc(caption)}</p>
     <button type="button" class="btn block" id="btn-hist-import">Importar partidos desde texto</button>
     ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
-    ${past.length ? `<ul class="match-list" id="list-history">${past.map((item) => matchCard(item, { fullDate: true })).join('')}</ul>` : `
+    ${past.length ? `<ul class="match-list" id="list-history">${historyWithCompensation(past)}</ul>` : `
       <div class="empty" id="list-history"><div class="big">📅</div><p><b>${esc(emptyLead)}</b></p>
       <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}`)) return;
   $('#history-filter').onsubmit = (e) => {
@@ -1041,6 +1196,7 @@ function renderHistory() {
   };
   const histImport = $('#btn-hist-import');
   if (histImport) histImport.onclick = () => openHistoryImport();
+  bindCompensation($('#list-history'));
   const clear = $('#hist-clear');
   if (clear) clear.onclick = () => {
     app.historyFilter = null;
@@ -1165,6 +1321,7 @@ function renderMatch(id) {
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
     ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
+    ${canAdd(m, who.uid) ? matchCompensationHtml(m.date) : ''}
     <div class="actionbar"><div class="actionbar-inner match-actions">
       <button class="btn share-btn" id="btn-share" aria-label="Compartir lista">${ICON.share}</button>
       ${readOnly ? '' : `<button class="btn add-choice" id="btn-add-wait" ${block ? 'disabled' : ''}>${block ? esc(block) : 'Anotar en lista de espera'}</button>
@@ -1173,6 +1330,7 @@ function renderMatch(id) {
 
   if ($('#btn-remind')) $('#btn-remind').onclick = () => openReminders(m);
   bindReminderBanners();
+  bindCompensation($('#view'));
   if ($('#btn-add-player')) $('#btn-add-player').onclick = () => { if (!block) openPlayerForm(m); };
   if ($('#btn-add-wait')) $('#btn-add-wait').onclick = () => { if (!block) openPlayerForm(m, null, { waiting: true }); };
   const onRow = (e) => {
@@ -2120,6 +2278,11 @@ function openMatchForm(m) {
       <label class="field"><span>N° de cancha (opcional)</span><input name="court" id="match-court-input" maxlength="20" placeholder="Ej: 3" autocomplete="off" value="${esc(m?.court || '')}"></label>
       <label class="field"><span>Valor del partido</span><input name="price" id="match-price-input" inputmode="numeric" autocomplete="off" value="${priceOfMatch(m, livePrices())}"></label>
       <p class="hint">Por jugador. Arranca con el valor de Ajustes y se puede cambiar en este partido.</p>
+      <fieldset class="comp-choice" id="match-split">
+        <legend>¿Cómo reparten ganancias?</legend>
+        <label class="checkline"><input type="radio" name="splitMode" id="match-split-equal" value="equal"${splitModeOf(m) === 'equal' ? ' checked' : ''}><span>El total del partido en partes iguales</span></label>
+        <label class="checkline"><input type="radio" name="splitMode" id="match-split-signed" value="signed"${splitModeOf(m) === 'signed' ? ' checked' : ''}><span>Cada uno la cantidad que anotó</span></label>
+      </fieldset>
       <label class="field"><span>Nota (opcional)</span><input type="text" name="note" maxlength="300" placeholder="Ej: cancha 2, traer pechera" value="${esc(m?.note || '')}"></label>
       ${editingAccess ? accessEditor(m) : ''}
       <div class="field"><div class="err" id="mf-err"></div></div>
@@ -2149,6 +2312,7 @@ function openMatchForm(m) {
     const price = parsePriceInput(f.get('price'));
     if (!price.ok) { $('#mf-err').textContent = price.error; return; }
     data.price = price.amount;
+    data.splitMode = f.get('splitMode') === 'signed' ? 'signed' : 'equal';
     const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
     if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
     if (editingAccess) data.access = readAccessForm();
@@ -5101,6 +5265,7 @@ async function boot() {
     app.prices = prices || null;
     app.credits = credits || [];
     app.creditsError = creditsError || null;
+    app.compensations = view.compensations || [];
     app.log = view.log || [];
     app.logError = view.logError || '';
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);
@@ -5112,7 +5277,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     if (!changed) return;

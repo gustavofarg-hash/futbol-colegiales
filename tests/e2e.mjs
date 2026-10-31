@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v80');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v81');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3806,6 +3806,150 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.fill('#login-password', 'demo-gustavo');
   await page.click('#login-form button[type=submit]');
   await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+}
+
+{
+  require('node:fs').mkdirSync('/opt/cursor/artifacts/screenshots', { recursive: true });
+  const shot = async (name, selector, align = 'center') => {
+    if (selector) {
+      await page.locator(selector).evaluate(async (el, how) => {
+        const place = () => {
+          const scroller = document.scrollingElement || document.documentElement;
+          if (how === 'bottom') {
+            const bar = document.querySelector('.actionbar');
+            const barH = bar && getComputedStyle(bar).position === 'fixed' ? bar.getBoundingClientRect().height : 0;
+            const bottom = el.getBoundingClientRect().bottom + scroller.scrollTop;
+            scroller.scrollTop = Math.max(0, bottom - window.innerHeight + barH + 28);
+            return;
+          }
+          if (how === 'under') {
+            const tabs = document.querySelector('.tabbar');
+            const tabsBottom = tabs ? tabs.getBoundingClientRect().bottom : 120;
+            const y = el.getBoundingClientRect().top + scroller.scrollTop - tabsBottom - 8;
+            scroller.scrollTop = Math.max(0, y);
+            return;
+          }
+          el.scrollIntoView({ block: 'center' });
+        };
+        place();
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        place();
+      }, align);
+    }
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: `/opt/cursor/artifacts/screenshots/${name}.png` });
+  };
+  await page.evaluate(() => { location.hash = '#/'; });
+  await page.waitForSelector('#btn-add-match');
+  await page.click('#btn-add-match');
+  await page.waitForSelector('#match-split');
+  const options = await page.locator('#match-split').innerText();
+  check('Al crear el partido se elige cómo se reparten las ganancias', options.includes('El total del partido en partes iguales') && options.includes('Cada uno la cantidad que anotó') && await page.locator('#match-split-equal').isChecked());
+  await shot('v81-opcion-partido', '#match-split');
+  await page.click('#match-form [data-close]');
+  const setup = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    app.store.setActor(me);
+    const martin = app.users.find((user) => user.name === 'Martín');
+    const id = await app.store.addMatch({ date: '2026-11-23', time: '19:00', price: 5000, splitMode: 'signed', note: 'Compensación' }, me.name);
+    const match = app.matches.find((item) => item.id === id) || { id, date: '2026-11-23', time: '19:00' };
+    const ana = await app.store.addPlayer(match, { name: 'Ana Compensa', phone: '11 4444-8181', signedUpWith: me.uid, signedUpWithName: me.name }, me.name);
+    const beto = await app.store.addPlayer(match, { name: 'Beto Compensa', phone: '11 4444-8182', signedUpWith: martin.uid, signedUpWithName: martin.name }, me.name);
+    return { id, ana, beto, martinUid: martin.uid };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, setup.id);
+  await page.waitForSelector('#btn-edit-match');
+  await page.click('#btn-edit-match');
+  await page.waitForSelector('#match-split-signed');
+  check('Editar partido conserva cómo se reparten las ganancias', await page.locator('#match-split-signed').isChecked());
+  await page.click('#match-form [data-close]');
+  await page.waitForSelector('#btn-comp');
+  await page.click('#btn-comp');
+  await page.waitForSelector('#comp-missing');
+  check('Sin pago no calcula y nombra al jugador', (await page.locator('#comp-missing').innerText()).includes('Ana Compensa') && (await page.locator('#comp-missing').innerText()).includes('Beto Compensa'));
+  await shot('v81-falta-pago', '#comp-missing');
+  await page.click('#sheet [data-close]');
+  await page.evaluate(async ({ ana, beto, martinUid }) => {
+    const app = window.__app;
+    const me = app.session.user;
+    await app.store.setPayment(ana, {
+      paid: true, split: true, freePlay: false,
+      cash: 5000, transfer: 0, pendingTransfer: 0, fromCredit: 0, cashTo: 'Gustavo',
+      awaiting: [{ id: 'await81', kind: 'transfer', amount: 5000, to: 'Martín', toUid: martinUid, at: Date.now() }],
+    }, me.name);
+    await app.store.setPayment(beto, {
+      paid: true, split: true, freePlay: false,
+      cash: 0, transfer: 0, pendingTransfer: 5000, fromCredit: 0, pendingTo: 'Martín',
+    }, me.name);
+    const hist = await app.store.addMatch({
+      date: '2026-10-16', time: '21:00', price: 5000, splitMode: 'equal', note: 'Partes iguales',
+      access: {
+        solo: false, viewers: ['*'], adders: [me.uid, martinUid], limits: [], createdByUid: me.uid,
+        adderNames: [{ uid: me.uid, name: me.name }, { uid: martinUid, name: 'Martín' }],
+      },
+    }, me.name);
+    const hmatch = app.matches.find((item) => item.id === hist) || { id: hist, date: '2026-10-16', time: '21:00' };
+    const solo = await app.store.addPlayer(hmatch, { name: 'Sol Compensa', phone: '11 4444-8183', signedUpWith: me.uid, signedUpWithName: me.name }, me.name);
+    await app.store.setPayment(solo, {
+      paid: true, split: true, freePlay: false,
+      cash: 10000, transfer: 0, pendingTransfer: 0, fromCredit: 0, cashTo: 'Gustavo',
+    }, me.name);
+  }, setup);
+  await page.waitForSelector('#btn-comp');
+  await page.click('#btn-comp');
+  await page.waitForSelector('#comp-transfers');
+  const detail = await page.locator('#comp-detail').innerText();
+  check('Lo pendiente de confirmar cuenta como cobrado por ese organizador', detail.includes('Martín le pasa $5.000 a Gustavo') && detail.includes('$10.000'));
+  await shot('v81-calculo-partido', '#comp-detail', 'bottom');
+  await page.click('[data-comp-done]');
+  await page.waitForFunction(() => (document.querySelector('#comp-transfers')?.textContent || '').includes('Transferido'));
+  check('Transferido queda con la fecha', (await page.locator('#comp-transfers').innerText()).includes('Transferido 19/10/2026'));
+  await shot('v81-transferido', '#comp-detail', 'bottom');
+  await page.evaluate(() => { location.hash = '#/registro/pagos'; });
+  await page.waitForSelector('#log-list');
+  check('El registro anota la compensación', (await page.locator('#log-list').innerText()).includes('Martín le pasó $5.000 a Gustavo'));
+  await page.evaluate(() => { location.hash = '#/historial'; });
+  await page.waitForSelector('#hist-day');
+  await page.fill('#hist-day', '2026-10-16');
+  await page.click('#hist-apply');
+  await page.waitForSelector('[data-comp-make="2026-10-16"]');
+  await page.click('[data-comp-make="2026-10-16"]');
+  await page.waitForSelector('[data-comp-toggle="2026-10-16"]');
+  await page.click('[data-comp-toggle="2026-10-16"]');
+  await page.waitForFunction(() => !document.querySelector('#comp-detail'));
+  await shot('v81-historial-cerrado', '[data-comp-toggle="2026-10-16"]');
+  await page.click('[data-comp-toggle="2026-10-16"]');
+  await page.waitForSelector('#comp-detail');
+  const histText = await page.locator('#comp-detail').innerText();
+  check('El total se reparte entre todos los que pueden anotar', histText.includes('Gustavo le pasa $5.000 a Martín') && histText.includes('cobró $0') && histText.includes('le corresponden $5.000'), histText);
+  await shot('v81-historial-abierto', '#comp-detail', 'bottom');
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.evaluate(() => { location.hash = '#/registro/pagos'; });
+  await page.waitForSelector('#confirm-list');
+  await page.locator('#confirm-list li', { hasText: 'Ana Compensa' }).locator('[data-confirm-no]').click();
+  await page.waitForFunction(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((item) => item.name === 'Ana Compensa');
+    return row && !row.awaiting;
+  });
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, setup.id);
+  await page.waitForSelector('#comp-changed');
+  const changed = await page.locator('#comp-detail').innerText();
+  check('Si se rechaza el cobro, el cálculo cambia solo', changed.includes('El cálculo cambió') && changed.includes('ya no corresponde') && !changed.includes('$10.000'));
+  await shot('v81-calculo-cambio', '#comp-detail', 'bottom');
 }
 
 const fresh = await ctx.newPage();

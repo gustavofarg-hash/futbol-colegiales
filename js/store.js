@@ -369,6 +369,7 @@ function matchDoc(data, who) {
     ...(size.perTeam ? { perTeam: size.perTeam } : {}),
     ...(cleanCourt(data.court) ? { court: cleanCourt(data.court) } : {}),
     ...(storedMatchPrice(data) != null ? { price: storedMatchPrice(data) } : {}),
+    splitMode: data.splitMode === 'signed' ? 'signed' : 'equal',
     source: data.source || 'manual',
     sourceRef: data.sourceRef || null,
     sourceText: data.sourceText || null,
@@ -405,6 +406,7 @@ function cleanMatchPatch(data) {
     else rest.price = price;
   }
   if ('cancelled' in rest) rest.cancelled = rest.cancelled === true;
+  if ('splitMode' in rest) rest.splitMode = rest.splitMode === 'signed' ? 'signed' : 'equal';
   if (rest.cancelled === false) {
     rest.cancelledAt = null;
     rest.cancelledBy = null;
@@ -516,6 +518,7 @@ function localCollections(db) {
     users: {},
     credits: db.credits || {},
     log: db.log || {},
+    compensations: db.compensations || {},
   };
 }
 
@@ -576,7 +579,7 @@ class LocalStore {
   _load() {
     try {
       const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {}, contacts: { players: {}, roster: {} } };
-      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {}; db.credits ||= {}; db.log ||= {};
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {}; db.credits ||= {}; db.compensations ||= {}; db.log ||= {};
       ensureContacts(db);
       migratePhones(db);
       return db;
@@ -709,6 +712,7 @@ class LocalStore {
     const venues = Object.entries(db.venues || {}).map(([id, venue]) => ({ id, ...venue }));
     const prices = db.settings?.prices || null;
     const credits = Object.entries(db.credits || {}).map(([id, row]) => ({ id, ...row }));
+    const compensations = Object.entries(db.compensations || {}).map(([id, row]) => ({ id, ...row }));
     const log = Object.entries(db.log || {})
       .map(([id, row]) => ({ id, ...row }))
       .filter((row) => canSeeLog(row, uid) && inLogRange(row, this._logRange))
@@ -720,7 +724,7 @@ class LocalStore {
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
       players, roster, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
-      credits, creditsError: null, log, logError: '',
+      credits, creditsError: null, compensations, log, logError: '',
     }));
   }
   async init() {
@@ -771,6 +775,18 @@ class LocalStore {
         if (db.contacts.players[pid]) db.contacts.players[pid].viewers = copied.viewers;
       }
     }
+    this._save(db);
+  }
+  async saveCompensation(date, body) {
+    const db = this._load();
+    db.compensations ||= {};
+    db.compensations[date] = { ...body, date };
+    this._save(db);
+  }
+  async logCompensation(match, line) {
+    const db = this._load();
+    const saved = match?.id && db.matches[match.id] ? { id: match.id, ...db.matches[match.id] } : (match || null);
+    this._pushLogs(db, [pagoEntry(this._actor(), saved, this._venuesOf(db), { name: 'Compensación', matchId: match?.id || '' }, [], line)]);
     this._save(db);
   }
   async deleteMatch(id) {
@@ -1262,6 +1278,7 @@ class LocalStore {
     db.links = structuredClone(docs.links);
     db.credits = structuredClone(docs.credits || {});
     db.log = structuredClone(docs.log || {});
+    db.compensations = structuredClone(docs.compensations || {});
     ensureContacts(db);
     db.contacts.players = structuredClone(docs.playerContacts);
     db.contacts.roster = structuredClone(docs.rosterContacts);
@@ -1311,7 +1328,7 @@ export class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
     this._logRange = weekRange();
   }
   setHistoryFilter(filter) {
@@ -1698,6 +1715,13 @@ export class FirebaseStore {
     this._listenUpcoming();
     this._listenHistory();
     this._listenLog();
+    watch(collection(this.db, 'compensations'), null, (snap) => {
+      this.state.compensations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this._emit();
+    }, () => {
+      this.state.compensations = [];
+      this._emit();
+    });
     watch(collection(this.db, 'players'), null, (snap) => {
       this._noteSnap(snap);
       this._buckets.players.broad = take(snap);
@@ -1926,6 +1950,14 @@ export class FirebaseStore {
     await setDoc(doc(this.db, 'matches', id), body);
     await this._appendLogs([partidoEntry(this._actor(), { id, ...body }, this.state.venues, { type: 'nuevo partido' })]);
     return id;
+  }
+  async saveCompensation(date, body) {
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'compensations', date), { ...body, date });
+  }
+  async logCompensation(match, line) {
+    const saved = this.state.matches.find((item) => item.id === match?.id) || match || null;
+    await this._appendLogs([pagoEntry(this._actor(), saved, this.state.venues, { name: 'Compensación', matchId: match?.id || '' }, [], line)]);
   }
   async addMatches(list, who) {
     const { doc, writeBatch } = this.fs;
