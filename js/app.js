@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v81';
+const APP_VERSION = 'f7c-v82';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -964,12 +964,12 @@ function renderTeams(id) {
       nameDragged = true;
       release(playerId, document.elementFromPoint(e.clientX, e.clientY));
     });
-    $('#btn-teams-shuffle').onclick = () => {
-      if (!confirm('¿Seguro que querés rearmar los equipos al azar?')) return;
+    $('#btn-teams-shuffle').onclick = async () => {
+      if (!(await askConfirm('¿Seguro que querés rearmar los equipos al azar?'))) return;
       save(balanceTeams(rated(), { cap: slots }), 'Equipos mezclados');
     };
-    $('#btn-teams-clear').onclick = () => {
-      if (!confirm('¿Seguro que querés resetear los equipos?')) return;
+    $('#btn-teams-clear').onclick = async () => {
+      if (!(await askConfirm('¿Seguro que querés resetear los equipos?', { danger: true }))) return;
       save(emptyTeams(), 'Equipos limpios');
     };
   }
@@ -1370,13 +1370,13 @@ function renderMatch(id) {
   $('#btn-teams').onclick = () => { location.hash = `#/partido/${encodeURIComponent(m.id)}/equipos`; };
   if ($('#btn-edit-match')) $('#btn-edit-match').onclick = () => openMatchForm(m);
   if ($('#btn-notes')) $('#btn-notes').onclick = () => openNotes(m);
-  if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = () => {
-    if (!confirm('¿Seguro que querés cancelar el partido?')) return;
+  if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = async () => {
+    if (!(await askConfirm('¿Seguro que querés cancelar el partido?', { danger: true }))) return;
     openCancel(m);
   };
   if ($('#btn-reactivate-match')) $('#btn-reactivate-match').onclick = () => reactivateMatch(m);
-  if ($('#btn-del-match')) $('#btn-del-match').onclick = () => {
-    if (!confirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs?`)) return;
+  if ($('#btn-del-match')) $('#btn-del-match').onclick = async () => {
+    if (!(await askConfirm(`¿Borrar el partido del ${labelDate(m.date)} ${m.time} hs?`, { danger: true }))) return;
     run(app.store.deleteMatch(m.id), 'Partido borrado');
     location.hash = '#/';
   };
@@ -1683,8 +1683,8 @@ function openCancel(m) {
   };
 }
 
-function reactivateMatch(m) {
-  if (!confirm('¿Volver a activar este partido?')) return;
+async function reactivateMatch(m) {
+  if (!(await askConfirm('¿Volver a activar este partido?'))) return;
   run(app.store.updateMatch(m.id, { cancelled: false }, app.who), 'Partido reactivado');
 }
 
@@ -1695,7 +1695,7 @@ async function offerCancelWhatsApp(match) {
     toast(people.some(phoneHidden) ? PRIVATE_WA_TEXT : 'Nadie tiene WhatsApp para avisar la cancelación.');
     return;
   }
-  if (!confirm('¿Avisar por WhatsApp a los jugadores que se canceló?')) return;
+  if (!(await askConfirm('¿Avisar por WhatsApp a los jugadores que se canceló?'))) return;
   const rows = links.map((link) => `
     <li class="remind-row">
       <div class="who"><div class="name">${esc(link.name)}</div></div>
@@ -1922,7 +1922,7 @@ function openSettings() {
       : 'Sin permiso no hay aviso. El cartel en la app sigue igual.');
   };
   const clr = $('#set-clear');
-  if (clr) clr.onclick = () => { if (confirm('¿Borrar todos los partidos y jugadores de demo?')) { app.store.clearAll(); closeSheet(); toast('Datos de demo borrados'); } };
+  if (clr) clr.onclick = async () => { if (await askConfirm('¿Borrar todos los partidos y jugadores de demo?', { danger: true })) { app.store.clearAll(); closeSheet(); toast('Datos de demo borrados'); } };
   const forget = $('#set-forget');
   if (forget) forget.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
   $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
@@ -2223,7 +2223,7 @@ function openVenues() {
       $('#venue-err').textContent = isVenueDenied(error) ? VENUES_DENIED_WRITE : (error?.message || 'No se pudo guardar');
     });
   };
-  $('#venue-list').onclick = (e) => {
+  $('#venue-list').onclick = async (e) => {
     const edit = e.target.closest('[data-venue-edit]');
     if (edit) {
       const venue = (app.venues || []).find((item) => item.id === edit.dataset.venueEdit) || list.find((item) => item.id === edit.dataset.venueEdit);
@@ -2235,7 +2235,7 @@ function openVenues() {
     const venue = (app.venues || []).find((item) => item.id === toggle.dataset.venueActive);
     if (!venue) return;
     const next = venue.active === false;
-    if (!next && !confirm(`¿Desactivar ${venue.name}? Los partidos que ya la usan la siguen mostrando.`)) return;
+    if (!next && !(await askConfirm(`¿Desactivar ${venue.name}? Los partidos que ya la usan la siguen mostrando.`, { danger: true }))) return;
     Promise.resolve(app.store.updateVenue(venue.id, { active: next })).then(() => openVenues()).catch((error) => {
       toast(isVenueDenied(error) ? VENUES_DENIED_WRITE : (error?.message || 'No se pudo cambiar'));
     });
@@ -2295,7 +2295,7 @@ function openMatchForm(m) {
     $('#match-size-hint').textContent = `Fútbol ${n} contra ${n} (${capacityFor(n)} jugadores)`;
   };
   perSelect.addEventListener('change', paintSize);
-  $('#match-form').onsubmit = (e) => {
+  $('#match-form').onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
     const data = { date: f.get('date'), time: f.get('time'), note: String(f.get('note') || '').trim() };
@@ -2314,7 +2314,7 @@ function openMatchForm(m) {
     data.price = price.amount;
     data.splitMode = f.get('splitMode') === 'signed' ? 'signed' : 'equal';
     const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
-    if (dup && !confirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?')) return;
+    if (dup && !(await askConfirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?'))) return;
     if (editingAccess) data.access = readAccessForm();
     closeSheet();
     if (splitNear([{ date: data.date }]).later.length) rememberLater(true);
@@ -2629,14 +2629,14 @@ function openRosterForm(person) {
   };
 }
 
-function deleteRosterPlayer(person) {
+async function deleteRosterPlayer(person) {
   if (!person) return;
   const signed = rosterMatchCount(app.players, person);
   if (signed) {
     toast(rosterInMatchMessage(person.name, signed));
     return;
   }
-  if (!confirm(`¿Borrar a ${person.name} de Jugadores? No lo quita de los partidos.`)) return;
+  if (!(await askConfirm(`¿Borrar a ${person.name} de Jugadores? No lo quita de los partidos.`, { danger: true }))) return;
   Promise.resolve(app.store.deleteRoster(person.id)).then(() => toast(`${person.name} borrado`)).catch((err) => {
     if (err?.code === 'roster-in-match') toast(err.message);
     else if (isRosterDenied(err)) showError(ROSTER_DENIED_WRITE);
@@ -3091,7 +3091,7 @@ function renderUsers() {
       .then(() => { form.reset(); toast('Organizador creado'); renderUsers(); })
       .catch((error) => { $('#user-err').textContent = error?.message || 'No se pudo crear'; });
   };
-  $('#user-list').onclick = (e) => {
+  $('#user-list').onclick = async (e) => {
     const toggle = e.target.closest('[data-user-active]');
     if (toggle) {
       const user = app.users.find((item) => item.uid === toggle.dataset.userActive);
@@ -3102,7 +3102,7 @@ function renderUsers() {
     const del = e.target.closest('[data-user-del]');
     if (!del) return;
     const user = app.users.find((item) => item.uid === del.dataset.userDel);
-    if (!user || !confirm(`¿Borrar a ${user.name}? La cuenta de acceso queda en Firebase hasta que la borres en la consola.`)) return;
+    if (!user || !(await askConfirm(`¿Borrar a ${user.name}? La cuenta de acceso queda en Firebase hasta que la borres en la consola.`, { danger: true }))) return;
     Promise.resolve(app.session.deleteOrganizer(user.uid)).then(() => renderUsers()).catch((error) => toast(error?.message || 'No se pudo borrar'));
   };
 }
@@ -3289,7 +3289,7 @@ function bindPartidos(person) {
   });
   const tent = $('#signup-tentative');
   if (tent) tent.addEventListener('change', () => { draft.tentative = tent.checked; });
-  list.addEventListener('click', (event) => {
+  list.addEventListener('click', async (event) => {
     const open = event.target.closest('[data-open-match]');
     if (open) {
       location.hash = `#/partido/${encodeURIComponent(open.dataset.openMatch)}`;
@@ -3301,10 +3301,10 @@ function bindPartidos(person) {
     const match = player ? matchById(player.matchId) : null;
     if (!player || !match) return;
     if (!canAdd(match, actor().uid)) { toast('Este partido es de solo lectura.'); return; }
-    if (!confirm(`¿Quitar a ${person.name} de ${labelDate(match.date)} ${match.time || ''} hs?`)) return;
+    if (!(await askConfirm(`¿Quitar a ${person.name} de ${labelDate(match.date)} ${match.time || ''} hs?`, { danger: true }))) return;
     removeMatchPlayer(match, player, { asked: true });
   });
-  button.onclick = () => {
+  button.onclick = async () => {
     const chosen = [];
     for (const id of [...draft.ids]) {
       const match = matchById(id);
@@ -3321,7 +3321,7 @@ function bindPartidos(person) {
     const waits = chosen.filter((row) => row.state.willWait);
     if (waits.length) {
       const which = waits.map((row) => `${labelDate(row.match.date)} ${row.match.time || ''} hs`).join(', ');
-      if (!confirm(`En ${which} no hay lugar: va a quedar en la lista de espera. ¿Seguís?`)) return;
+      if (!(await askConfirm(`En ${which} no hay lugar: va a quedar en la lista de espera. ¿Seguís?`))) return;
     }
     button.disabled = true;
     const tentative = draft.tentative;
@@ -3464,7 +3464,7 @@ function focusField(el) {
 }
 
 /** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
-function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
+async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
   const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
@@ -3494,7 +3494,7 @@ function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved
     return false;
   }
   const warning = friends.length && !onWait ? waitWarning(place.spots, place.wait) : '';
-  if (warning && !confirm(warning)) return false;
+  if (warning && !(await askConfirm(warning))) return false;
   const signup = readSignup(document.querySelector('#player-form, #friend-form'));
   const known = host?.rosterId ? app.roster.find((person) => person.id === host.rosterId) : null;
   const share = host?.phoneShared === true || known?.phoneShared === true;
@@ -3769,18 +3769,18 @@ function openPlayerForm(m, p, opts = {}) {
         focusField(next);
       }
     };
-    $('#roster-hits').addEventListener('click', (e) => {
+    $('#roster-hits').addEventListener('click', async (e) => {
       const btn = e.target.closest('[data-pick]');
       if (!btn || btn.disabled) return;
       const person = app.roster.find((r) => r.id === btn.dataset.pick);
       if (!person) return;
-      const result = addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
+      const result = await addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
       if (result === ALREADY_IN_MATCH) $('#pf-err').textContent = result;
     });
     setTimeout(() => find.focus(), 50);
   }
   if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [] });
-  form.onsubmit = (e) => {
+  form.onsubmit = async (e) => {
     e.preventDefault();
     const name = form.name.value.trim();
     const phoneRaw = form.phone ? form.phone.value.trim() : null;
@@ -3872,7 +3872,7 @@ function openPlayerForm(m, p, opts = {}) {
       })(), promoRenames.length ? 'Nombre actualizado en los partidos del día' : (editingFriend ? 'Invitado actualizado' : 'Jugador actualizado'));
       return;
     }
-    const result = addSignedPlayer(m, { name, phone, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
+    const result = await addSignedPlayer(m, { name, phone, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
     if (result === ALREADY_IN_MATCH) $('#pf-err').textContent = result;
   };
 }
@@ -4778,13 +4778,13 @@ function bindPlayerNotes(scope, player, person) {
   if (add && !add.disabled) add.onclick = () => openNoteForm(person, null, player);
   const notes = scope?.querySelector('#notes');
   if (!notes) return;
-  notes.onclick = (e) => {
+  notes.onclick = async (e) => {
     const edit = e.target.closest('[data-note-edit]');
     if (edit) return openNoteForm(person, (person.notes || []).find((n) => n.id === edit.dataset.noteEdit), player);
     const del = e.target.closest('[data-note-del]');
     if (!del) return;
     const note = (person.notes || []).find((n) => n.id === del.dataset.noteDel);
-    if (!note || !confirm('¿Borrar esta nota?')) return;
+    if (!note || !(await askConfirm('¿Borrar esta nota?', { danger: true }))) return;
     saveProfile(person.id, { notes: (person.notes || []).filter((n) => n.id !== note.id) }, () => {
       if (player && sheet.open) reopenPlayerMenu(player);
     });
@@ -4969,6 +4969,48 @@ function openPlayerMenu(m, p) {
   if (match) $('#pm-del').onclick = () => removeMatchPlayer(match, p);
 }
 
+const ask = $('#ask');
+function askConfirm(message, { danger = false } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let pushed = false;
+    const finish = (ok, fromPop = false) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('popstate', onPop);
+      ask.removeEventListener('cancel', onCancel);
+      ask.removeEventListener('close', onClose);
+      ask.onclick = null;
+      if (ask.open) ask.close();
+      if (pushed && !fromPop) {
+        const done = () => {
+          window.removeEventListener('popstate', done);
+          resolve(!!ok);
+        };
+        window.addEventListener('popstate', done);
+        history.back();
+        return;
+      }
+      resolve(!!ok);
+    };
+    const onPop = () => finish(false, true);
+    const onCancel = (event) => { event.preventDefault(); finish(false); };
+    const onClose = () => finish(false);
+    ask.innerHTML = `<div class="ask-card" id="app-ask"><p id="app-ask-text"></p><div class="sheet-actions"><button type="button" class="btn" id="ask-cancel">Cancelar</button><button type="button" class="btn ${danger ? 'danger solid' : 'primary'}" id="ask-ok">Aceptar</button></div></div>`;
+    ask.querySelector('#app-ask-text').textContent = String(message || '');
+    ask.querySelector('#ask-cancel').onclick = () => finish(false);
+    ask.querySelector('#ask-ok').onclick = () => finish(true);
+    ask.onclick = (event) => { if (event.target === ask) finish(false); };
+    ask.addEventListener('cancel', onCancel);
+    ask.addEventListener('close', onClose);
+    if (!ask.open) ask.showModal();
+    ask.querySelector('#ask-ok').focus();
+    history.pushState({ ask: 1 }, '');
+    pushed = true;
+    window.addEventListener('popstate', onPop);
+  });
+}
+
 function askYesNo(title) {
   return new Promise((resolve) => {
     let settled = false;
@@ -4999,7 +5041,7 @@ function askYesNo(title) {
 async function removeMatchPlayer(m, p, { asked = false } = {}) {
   const fromMain = !isWaiting(p);
   const friends = guestsOf(m.id, p.id);
-  if (!asked && !confirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`)) return;
+  if (!asked && !(await askConfirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`, { danger: true }))) return;
   const dropFriends = friends.length > 0 && await askYesNo(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
@@ -5066,7 +5108,7 @@ function openFriendForm(m, host) {
     </form>`);
   const form = $('#friend-form');
   bindGuestQty({ min: 1, value: 1, taken: friendNamesOf(m.id, host.id) });
-  form.onsubmit = (e) => {
+  form.onsubmit = async (e) => {
     e.preventDefault();
     const rows = friendRowValues();
     if (!rows.length) { $('#friend-err').textContent = 'Agregá al menos un invitado.'; return; }
@@ -5074,7 +5116,7 @@ function openFriendForm(m, host) {
     const also = sameDay.filter((row) => !row.blocked && picked.has(row.match.id));
     // Los nombres salen de este partido; en los otros van los mismos (mismo anfitrión + nombre = misma persona).
     const resolved = resolveFriendNames(rows, friendNamesOf(m.id, host.id));
-    const result = addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also });
+    const result = await addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also });
     if (result === ALREADY_IN_MATCH) $('#friend-err').textContent = result;
   };
 }

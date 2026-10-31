@@ -645,6 +645,18 @@ dialog.sheet[open] {
   display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden;
 }
 dialog.sheet::backdrop { background: rgba(0,0,0,.45); }
+dialog.ask {
+  width: min(22rem, calc(100vw - 32px)); max-width: calc(100vw - 32px);
+  margin: auto; padding: 0; border: 0; background: transparent; color: var(--text);
+}
+dialog.ask:not([open]) { display: none; }
+dialog.ask::backdrop { background: rgba(0,0,0,.62); }
+.ask-card {
+  background: var(--card); color: var(--text); border: 1px solid var(--line);
+  border-radius: 22px; padding: 18px 16px 14px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.45);
+}
+.ask-card p { margin: 0 0 16px; font-size: 1.0625rem; font-weight: 700; line-height: 1.35; }
 @keyframes up { from { transform: translateY(40px); opacity: .6; } to { transform: none; opacity: 1; } }
 .sheet-body {
   width: 100%; max-width: 640px; margin: 0 auto;
