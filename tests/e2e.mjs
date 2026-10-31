@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v72');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v73');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3352,13 +3352,20 @@ await page.evaluate(async () => {
     date: '2026-10-19', time: '23:41', note: 'Registro ajeno',
     access: { solo: true, viewers: ['otro-organizador'], adders: ['otro-organizador'], viewerNames: [], adderNames: [], limits: [], createdByUid: 'otro-organizador' },
   }, 'Otro');
+  const soloVe = await app.store.addMatch({
+    date: '2026-10-19', time: '23:42', note: 'Solo ver',
+    access: { solo: true, viewers: [me.uid, 'otro-organizador'], adders: ['otro-organizador'], viewerNames: [], adderNames: [], limits: [], createdByUid: 'otro-organizador' },
+  }, 'Otro');
+  const matchVe = app.matches.find((item) => item.id === soloVe) || { id: soloVe, date: '2026-10-19', time: '23:42', viewers: [me.uid, 'otro-organizador'], adders: ['otro-organizador'], createdByUid: 'otro-organizador' };
+  await app.store.addPlayer(matchVe, { name: 'Visible Por Ver', phone: '' }, 'Otro');
   app.store.setActor(me);
   await app.store.setLogRange({ from: '2026-10-13', to: '2026-10-19' });
 });
 await page.evaluate(() => { location.hash = '#/registro/partidos'; });
 await page.waitForSelector('#log-list');
 const partidos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
-check('Registro de partidos anota el alta, el invitado y no el partido ajeno', partidos.includes('nuevo partido') && partidos.includes('alta') && partidos.includes('Invitado 1 (invitado de Anfitrión Log)') && partidos.includes('En la lista de espera') && !partidos.includes('23:41'), partidos.slice(0, 300));
+check('Registro de partidos anota el alta, el invitado y no el partido ajeno', partidos.includes('nuevo partido') && partidos.includes('alta') && partidos.includes('Invitado 1 (invitado de Anfitrión Log)') && partidos.includes('En la lista de espera') && !partidos.includes('23:41'), partidos.slice(0, 400));
+check('Quien solo puede ver el partido igual ve su registro', partidos.includes('Visible Por Ver') && partidos.includes('23:42'));
 await page.click('#log-mode a[href="#/registro/pagos"]');
 await page.waitForFunction(() => location.hash.includes('/pagos') && document.querySelector('#log-list .name')?.textContent.trim() === 'crédito cargado');
 const pagos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');

@@ -2573,7 +2573,9 @@ test('estadísticas: cobrado contra lo que correspondía, por mes y por año', (
 
 test('el registro copia quién podía editar y separa los pagos', () => {
   assert.deepEqual(editorsOf({ viewers: ['*'], adders: ['*'] }), ['*']);
-  assert.deepEqual(editorsOf({ viewers: ['a', 'b'], adders: ['b'], createdByUid: 'a' }, 'z'), ['b', 'a', 'z']);
+  assert.deepEqual(editorsOf({ viewers: ['*'], adders: ['b'] }), ['*']);
+  assert.deepEqual(editorsOf({ viewers: ['a', 'b'], adders: ['b'], createdByUid: 'a' }, 'z'), ['a', 'b', 'z']);
+  assert.deepEqual(editorsOf({ viewers: ['v'], adders: ['adder'], createdByUid: 'c' }, 'z'), ['v', 'adder', 'c', 'z']);
   assert.deepEqual(playerLogFields({ name: 'Invitado 1', invitedBy: 'h', invitedByName: 'Juan' }, []), {
     playerName: 'Invitado 1',
     hostName: 'Juan',
@@ -2632,7 +2634,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v72');
+  assert.equal(version, 'f7c-v73');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
