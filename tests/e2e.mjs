@@ -149,7 +149,7 @@ check('A 390px las cuatro pestañas no desbordan', tabFit.overflow <= 1 && tabFi
 check('Próximos partidos queda activo', await page.getAttribute('#tab-proximos', 'aria-current') === 'page');
 await page.click('#btn-settings');
 check('Ajustes dice quién entró', (await page.textContent('#set-who')).includes('Entraste como Gustavo'));
-check('El filtro de lo propio arranca apagado', !(await page.isChecked('#set-mine')));
+check('Ajustes ya no ofrece filtrar lo propio', await page.locator('#set-mine, #set-mine-line').count() === 0 && !(await page.locator('#sheet').innerText()).includes('Solo lo que anoté') && !(await page.locator('#sheet').innerText()).includes('Oculta en Próximos partidos'));
 const settingsBars = await page.evaluate(() => {
   const tabs = document.querySelector('#tabbar').getBoundingClientRect();
   const body = document.querySelector('.sheet-body').getBoundingClientRect();
@@ -539,19 +539,10 @@ await page2.waitForFunction(() => document.body.innerText.includes('Efectivo') &
 check('La otra pestaña se actualiza sola', (await page2.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500'));
 await page2.close();
 
-await page.click('#btn-settings');
-await page.check('#set-mine');
-await page.waitForFunction(() => document.querySelector('#mine-filter') && ![...document.querySelectorAll('#slots .name')].some((el) => el.textContent === 'Pedro Gómez'));
-check('Mis oculta a quien no anoté ni cobré', (await page.locator('#slots .name', { hasText: 'Pedro Gómez' }).count()) === 0);
-check('Mis muestra a quien anoté y a quien le cobré',
-  (await page.locator('#slots .name', { hasText: 'Nico R.' }).count()) === 1
-  && (await page.locator('#slots .name', { hasText: 'Juan Pérez' }).count()) === 1);
+check('Sin el filtro, Pedro sigue en el partido', (await page.locator('#slots .name', { hasText: 'Pedro Gómez' }).count()) === 1 && (await page.locator('#slots .name', { hasText: 'Nico R.' }).count()) === 1 && (await page.locator('#slots .name', { hasText: 'Juan Pérez' }).count()) === 1);
 check('El cupo sigue siendo el del partido', (await page.textContent('#slot-count')) === '3/14');
 const mineText = (await page.textContent('#mine-stats')).replace(/\s+/g, ' ');
 check('Estadística propia del partido', mineText.includes('Anotaste 1') && mineText.includes('Cobraste $4.500'), mineText);
-await page.uncheck('#set-mine');
-await page.waitForSelector('#slots .name:text-is("Pedro Gómez")');
-await page.click('dialog.sheet [data-close]');
 
 // Lista de espera con lugares libres: queda al final, no ocupa un cupo
 await page.click('#btn-add-wait');

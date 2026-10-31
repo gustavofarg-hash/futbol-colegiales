@@ -13,7 +13,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **e2e 556/556 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 94/94 OK** (`node --test tests/unit.test.mjs`). El e2e de v69 revisa que «Cargar crédito» es verde y queda bajo el saldo, y que el detalle de la deuda queda bajo el total, en rojo.
+Pruebas sobre esta copia: **e2e 555/555 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 94/94 OK** (`node --test tests/unit.test.mjs`). El e2e de v69 revisa que «Cargar crédito» es verde y queda bajo el saldo, y que el detalle de la deuda queda bajo el total, en rojo.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
@@ -115,7 +115,7 @@ Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reempla
 |---|---|---|---|
 | 19/10 (#3) | Aviso 2 horas antes y recordatorios | ✅ | «Aviso 2 horas antes», «Enviar recordatorios», `js/reminders.js` |
 | 19/10 (#4), 27/10 (#30, #40) | Tamaño del texto: A−/A+, achicar hasta 8px, elegirlo de una lista en Ajustes | ✅ | `index.html:49–51`, `#set-text-size` (`app.js:1526`) |
-| 20/10 (#15) | El filtro «Mis» pasó a Ajustes: «Solo lo que anoté y lo que cobré» | ✅ | `#set-mine` (`app.js:1515`) |
+| 20/10 (#15) | El filtro «Mis» pasó a Ajustes: «Solo lo que anoté y lo que cobré» | ↩️ | **v70, a pedido:** se sacó de Ajustes el casillero y el texto «Oculta… no cambia». Las listas muestran a todos, como con el filtro apagado. Al abrir se borra `f7c-mine` si quedó guardado |
 | 20/10 (#11) | Elegir desde qué app de WhatsApp salen los mensajes | ↩️ | Se sacó a propósito en #15 |
 | 20/10 (#25) | La app se llama «Mis Partidos» | ✅ | `index.html`, manifest |
 | 26/10 (#27 C1) | «Compartir app» | ✅ | `#set-share-app`, `js/share.js` |

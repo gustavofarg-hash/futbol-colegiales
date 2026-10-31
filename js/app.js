@@ -102,7 +102,6 @@ const app = {
   creditsError: null,
   users: [],
   role: '',
-  mine: false,
   session: null,
   payFilter: '',
   signupDraft: null,
@@ -122,6 +121,12 @@ window.__app = app; // útil para depurar / tests
 
 function clearWaChoice() {
   try { localStorage.removeItem(WA_CHOICE_KEY); } catch { /* modo privado */ }
+}
+function clearMineFilter() {
+  try {
+    localStorage.removeItem('f7c-mine');
+    sessionStorage.removeItem('f7c-mine');
+  } catch { /* modo privado */ }
 }
 function waHref(phone, text) {
   return waSendUrl({ phone: phone || '', text: text || '' });
@@ -268,10 +273,6 @@ const playersOf = (matchId) => {
 const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
-function minePlayer(p) {
-  if (sameOrganizer(p.addedBy, app.who)) return true;
-  return paymentShares(p).some((share) => share.kind !== 'pending' && share.amount > 0 && sameOrganizer(share.name, app.who));
-}
 function payOrganizerNames(extra = []) {
   return organizerChoices(app.organizers, { unreadable: !!app.organizersError, extra });
 }
@@ -635,18 +636,16 @@ function matchCard(m, opts = {}) {
 
 function renderHome() {
   const upcoming = currentMatches(app.matches);
-  const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && minePlayer(p))) : upcoming;
-  const { next, later } = splitNear(all);
+  const { next, later } = splitNear(upcoming);
   const open = app.showLater && later.length > 0;
   const emptyHint = later.length
     ? 'Los que vienen después están en el botón de abajo.'
     : 'Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.';
   if (!replaceView(`
     ${reminderBanners(next)}
-    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
-      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
+      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
       <p class="small">${emptyHint}</p></div>`}
     ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
     ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
@@ -1004,13 +1003,13 @@ function renderMatch(id) {
     return;
   }
   const everyone = playersOf(id);
-  const ps = app.mine ? everyone.filter(minePlayer) : everyone;
+  const ps = everyone;
   const cap = capOf(m);
   const who = actor();
   const readOnly = !canAdd(m, who.uid);
   const block = addBlock(m);
   const slots = [];
-  for (let i = 0; i < (app.mine ? ps.length : Math.max(cap, everyone.length)); i++) {
+  for (let i = 0; i < Math.max(cap, everyone.length); i++) {
     const p = ps[i];
     if (!p) {
       slots.push(readOnly || block
@@ -1069,7 +1068,6 @@ function renderMatch(id) {
     ${readOnly ? '<p class="hint" id="match-readonly">Solo lectura. No podés anotar ni cambiar este partido.</p>' : ''}
     ${reminderBanners([m])}
     ${readOnly || m.cancelled ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
-    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
@@ -1184,7 +1182,7 @@ function listText(m) {
 
 function waitingSection(m, full, readOnly) {
   const allWait = waitingOf(m.id);
-  const wait = app.mine ? allWait.filter(minePlayer) : allWait;
+  const wait = allWait;
   const rows = wait.map((p, i) => {
     const idx = allWait.findIndex((item) => item.id === p.id);
     const first = idx <= 0;
@@ -1606,8 +1604,6 @@ function openSettings() {
     <h3>Ajustes</h3>
     ${demo ? '<p class="hint">Modo demo: los datos se guardan solo en este dispositivo.</p>' : ''}
     <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
-    <label class="checkline" id="set-mine-line"><input type="checkbox" id="set-mine"${app.mine ? ' checked' : ''}><span>Solo lo que anoté y lo que cobré</span></label>
-    <p class="hint">Oculta en Próximos partidos y en el partido lo de los demás organizadores. El cupo del partido no cambia.</p>
     <form id="price-form" novalidate>
       <p class="hint">Precios. Los ven todos al toque.</p>
       ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
@@ -1679,8 +1675,6 @@ function openSettings() {
   const forget = $('#set-forget');
   if (forget) forget.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
   $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
-  const mine = $('#set-mine');
-  if (mine) mine.onchange = () => { app.mine = mine.checked; render(); };
 }
 
 function saveBackupFile(filename, text) {
@@ -4470,6 +4464,7 @@ function syncTextSize() {
 
 async function boot() {
   clearWaChoice();
+  clearMineFilter();
   $('#venue-name').textContent = 'Agenda de partidos';
   $('#btn-back').onclick = () => {
     const r = route();
