@@ -3332,7 +3332,7 @@ check('El partido viejo figura pagado con crédito', (await page.locator('.slot 
 
 await page.evaluate(() => { location.hash = '#/registro/partidos'; });
 await page.waitForSelector('#log-hint');
-check('El registro arranca 20 días atrás, por cuándo se anotó', (await page.inputValue('#log-from')) === '2026-09-29' && (await page.inputValue('#log-to')) === '2026-10-19' && (await page.locator('#log-hint').innerText()).includes('Últimos 20 días'));
+check('El registro arranca 20 días atrás, por cuándo se anotó', (await page.inputValue('#log-from')) === '2026-09-29' && (await page.inputValue('#log-to')) === '2026-10-19' && (await page.locator('#log-hint').innerText()).includes('Últimos 20 días') && (await page.locator('#log-apply').innerText()) === 'Ver');
 await page.evaluate(async () => {
   const app = window.__app;
   const me = { uid: app.session.user.uid, name: app.session.user.name, role: app.session.user.role };
@@ -3387,10 +3387,14 @@ check('El crédito aplicado a varios partidos nombra cada uno', cruce.includes('
 check('La carga de crédito sin partido se lee como carga, y el partido borrado sigue en el pago', cruce.includes('Carga de crédito') && cruce.includes('Deuda Cruce') && cruce.includes('Domingo 18/10 · 18:00 · Polideportivo Colegiales'), cruce.slice(0, 420));
 await page.fill('#log-from', '2026-09-01');
 await page.fill('#log-to', '2026-09-02');
+check('Cambiar Desde y Hasta no filtra hasta tocar Ver', await page.locator('#log-list').count() === 1 && await page.locator('#log-empty').count() === 0);
+await page.click('#log-apply');
 await page.waitForSelector('#log-empty');
-check('El filtro de fechas deja el registro vacío', (await page.locator('#log-empty').innerText()).includes('No hay registros'));
+check('Ver aplica el rango y deja el registro vacío', (await page.locator('#log-empty').innerText()).includes('No hay registros'));
 await page.fill('#log-from', '2026-10-13');
 await page.fill('#log-to', '2026-10-19');
+check('Las fechas nuevas siguen sin aplicarse', await page.locator('#log-empty').count() === 1);
+await page.click('#log-apply');
 await page.waitForSelector('#log-list');
 
 async function seedPromoGuests(count, label) {
