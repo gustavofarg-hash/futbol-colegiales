@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v71');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v72');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3361,6 +3361,27 @@ await page.waitForFunction(() => location.hash.includes('/pagos') && document.qu
 const pagos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
 const pagoTypes = await page.$$eval('#log-list .name', (els) => els.map((el) => el.textContent.trim()));
 check('Registro de pagos separa los medios y deja el crédito cargado arriba del pago', pagos.includes('Efectivo') && pagos.includes('Transferencia') && pagos.includes('Crédito $500') && pagoTypes[0] === 'crédito cargado', `${pagoTypes.slice(0, 4).join(', ')} ${pagos.slice(0, 240)}`);
+check('Cada pago dice el partido guardado, además de cuándo se anotó', pagos.includes('Lunes 19/10 · 23:40 · Polideportivo Colegiales') && /19\/10\/2026 · \d{2}:\d{2}/.test(pagos), pagos.slice(0, 360));
+await page.evaluate(async () => {
+  const app = window.__app;
+  const me = { uid: app.session.user.uid, name: app.session.user.name, role: app.session.user.role };
+  app.store.setActor(me);
+  const early = await app.store.addMatch({ date: '2026-10-18', time: '18:00', note: 'Credito viejo', price: 5000 }, me.name);
+  const late = await app.store.addMatch({ date: '2026-10-19', time: '22:00', note: 'Credito nuevo', price: 5000 }, me.name);
+  const m1 = app.matches.find((item) => item.id === early) || { id: early, date: '2026-10-18', time: '18:00' };
+  const m2 = app.matches.find((item) => item.id === late) || { id: late, date: '2026-10-19', time: '22:00' };
+  const a = await app.store.addPlayer(m1, { name: 'Deuda Cruce', phone: '' }, me.name);
+  const b = await app.store.addPlayer(m2, { name: 'Deuda Cruce', phone: '' }, me.name);
+  await app.store.setPayment(a, { paid: true, split: true, fromCredit: 2000, cash: 0, transfer: 0, pendingTransfer: 0, creditTo: me.name }, me.name);
+  await app.store.setPayment(b, { paid: true, split: true, fromCredit: 3000, cash: 0, transfer: 0, pendingTransfer: 0, creditTo: me.name }, me.name);
+  await app.store.recordCreditLoad({ match: null, player: { name: 'Deuda Cruce' }, amount: 5000 });
+  await app.store.deletePlayer(a);
+  await app.store.deleteMatch(early);
+});
+await page.waitForFunction(() => (document.querySelector('#log-list')?.innerText || '').includes('Carga de crédito'));
+const cruce = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
+check('El crédito aplicado a varios partidos nombra cada uno', cruce.includes('Domingo 18/10 · 18:00 · Polideportivo Colegiales') && cruce.includes('Crédito $2.000') && cruce.includes('Lunes 19/10 · 22:00 · Polideportivo Colegiales') && cruce.includes('Crédito $3.000'), cruce.slice(0, 420));
+check('La carga de crédito sin partido se lee como carga, y el partido borrado sigue en el pago', cruce.includes('Carga de crédito') && cruce.includes('Deuda Cruce') && cruce.includes('Domingo 18/10 · 18:00 · Polideportivo Colegiales'), cruce.slice(0, 420));
 await page.fill('#log-from', '2026-09-01');
 await page.fill('#log-to', '2026-09-02');
 await page.waitForSelector('#log-empty');

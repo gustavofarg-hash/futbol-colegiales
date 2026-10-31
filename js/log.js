@@ -187,6 +187,26 @@ export function paymentLines(before, after) {
   return lines;
 }
 
+function datedMatch(date, time) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return '';
+  return `${capitalize(labelDate(date))} · ${time || '--:--'}`;
+}
+
+/**
+ * Partido guardado en la línea. No busca el partido vivo: si lo borraron,
+ * queda la copia. Una línea vieja sin esa copia arma la fecha y la hora,
+ * o un texto corto si no hay nada más.
+ */
+export function pagoMatchText(entry) {
+  const label = clean(entry?.matchLabel, 160);
+  if (label && label !== 'Sin partido') return label;
+  const fromParts = datedMatch(clean(entry?.matchDate, 10), clean(entry?.matchTime, 5));
+  if (fromParts) return fromParts;
+  if (entry?.type === 'crédito cargado') return 'Carga de crédito';
+  if (clean(entry?.matchId, 80)) return 'Partido';
+  return '';
+}
+
 export function logText(entry) {
   const player = entry?.playerName
     ? (entry.hostName ? `${entry.playerName} (invitado de ${entry.hostName})` : entry.playerName)
@@ -194,10 +214,11 @@ export function logText(entry) {
   if (entry?.section === 'pagos') {
     const method = METHODS[entry.method] || entry.method || '';
     const money = formatARS(entry.amount || 0);
-    if (entry.type === 'crédito cargado') return [player, `${method} ${money}`].filter(Boolean).join(' · ');
-    if (entry.type === 'pago borrado') return [player, `${method} borrado ${money}`].filter(Boolean).join(' · ');
-    if (entry.type === 'pago editado') return [player, `${method} ${money}`, entry.detail].filter(Boolean).join(' · ');
-    return [player, `${method} ${money}`].filter(Boolean).join(' · ');
+    const match = pagoMatchText(entry);
+    if (entry.type === 'crédito cargado') return [match, player, `${method} ${money}`].filter(Boolean).join(' · ');
+    if (entry.type === 'pago borrado') return [match, player, `${method} borrado ${money}`].filter(Boolean).join(' · ');
+    if (entry.type === 'pago editado') return [match, player, `${method} ${money}`, entry.detail].filter(Boolean).join(' · ');
+    return [match, player, `${method} ${money}`].filter(Boolean).join(' · ');
   }
   return [entry?.matchLabel, player, entry?.detail].filter(Boolean).join(' · ');
 }
