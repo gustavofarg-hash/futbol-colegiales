@@ -25,6 +25,7 @@ import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from 
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { countedGoals, matchTake, periodBuckets } from './stats.js';
+import { logText, logWhen, weekRange } from './log.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditLine, creditLoadSummary, creditPanelRows } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
@@ -38,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v69';
+const APP_VERSION = 'f7c-v70';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -100,9 +101,11 @@ const app = {
   pricesError: null,
   credits: [],
   creditsError: null,
+  log: [],
+  logError: '',
+  logRange: null,
   users: [],
   role: '',
-  mine: false,
   session: null,
   payFilter: '',
   signupDraft: null,
@@ -122,6 +125,12 @@ window.__app = app; // útil para depurar / tests
 
 function clearWaChoice() {
   try { localStorage.removeItem(WA_CHOICE_KEY); } catch { /* modo privado */ }
+}
+function clearMineFilter() {
+  try {
+    localStorage.removeItem('f7c-mine');
+    sessionStorage.removeItem('f7c-mine');
+  } catch { /* modo privado */ }
 }
 function waHref(phone, text) {
   return waSendUrl({ phone: phone || '', text: text || '' });
@@ -268,10 +277,6 @@ const playersOf = (matchId) => {
 const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
-function minePlayer(p) {
-  if (sameOrganizer(p.addedBy, app.who)) return true;
-  return paymentShares(p).some((share) => share.kind !== 'pending' && share.amount > 0 && sameOrganizer(share.name, app.who));
-}
 function payOrganizerNames(extra = []) {
   return organizerChoices(app.organizers, { unreadable: !!app.organizersError, extra });
 }
@@ -437,6 +442,7 @@ function route() {
     try { picked = raw ? decodeURIComponent(raw) : ''; } catch { picked = raw; }
     return { name: 'stats', mode, id: picked };
   }
+  if (name === 'registro') return { name: 'registro', section: id === 'pagos' ? 'pagos' : 'partidos' };
   if (name === 'jugadores' || name === 'pagos') return { name: 'roster' };
   if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
@@ -463,7 +469,7 @@ function openOnUpcoming() {
     sessionStorage.removeItem('f7c-tab');
     sessionStorage.removeItem('f7c-later');
     const name = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || '';
-    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial' || name === 'estadisticas';
+    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial' || name === 'estadisticas' || name === 'registro';
     if (section && location.hash && location.hash !== '#/' && location.hash !== '#') {
       history.replaceState(null, '', `${location.pathname}${location.search}#/`);
     }
@@ -475,7 +481,7 @@ openOnUpcoming();
 function savedTab() {
   try {
     const value = sessionStorage.getItem('f7c-tab');
-    if (value === 'roster' || value === 'history' || value === 'home' || value === 'stats') return value;
+    if (value === 'roster' || value === 'history' || value === 'home' || value === 'stats' || value === 'registro') return value;
   } catch {}
   return 'home';
 }
@@ -483,12 +489,14 @@ function hashForTab(tab) {
   if (tab === 'history') return '#/historial';
   if (tab === 'roster') return '#/jugadores';
   if (tab === 'stats') return '#/estadisticas';
+  if (tab === 'registro') return '#/registro';
   return '#/';
 }
 function tabFor(r) {
   if (r.name === 'history') return 'history';
   if (r.name === 'roster') return 'roster';
   if (r.name === 'stats') return 'stats';
+  if (r.name === 'registro') return 'registro';
   if (r.name === 'home') return 'home';
   if (r.name === 'match' || r.name === 'teams') {
     const match = matchById(r.id);
@@ -505,7 +513,7 @@ function tabFor(r) {
 }
 function paintTabs(r) {
   const tab = tabFor(r);
-  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats') {
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats' || r.name === 'registro') {
     try { sessionStorage.setItem('f7c-tab', tab); } catch {}
   }
   document.querySelectorAll('#tabbar a').forEach((link) => {
@@ -513,7 +521,7 @@ function paintTabs(r) {
     if (on) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
-  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || (r.name === 'stats' && !r.id);
+  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro' || (r.name === 'stats' && !r.id);
   $('#btn-back').hidden = root || !app.loaded;
   requestAnimationFrame(placeBars);
 }
@@ -543,7 +551,7 @@ function render() {
   const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
   const brand = $('#venue-name');
   if (brand) brand.textContent = shownVenue;
-  const key = `${r.name}:${r.mode || ''}:${r.id || ''}`;
+  const key = `${r.name}:${r.mode || ''}:${r.section || ''}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
   const y = same ? (document.scrollingElement?.scrollTop || 0) : 0;
@@ -554,6 +562,7 @@ function render() {
   else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
   else if (r.name === 'stats') renderStats(r);
+  else if (r.name === 'registro') renderRegistro(r);
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'users') renderUsers();
@@ -635,18 +644,16 @@ function matchCard(m, opts = {}) {
 
 function renderHome() {
   const upcoming = currentMatches(app.matches);
-  const all = app.mine ? upcoming.filter((m) => app.players.some((p) => p.matchId === m.id && minePlayer(p))) : upcoming;
-  const { next, later } = splitNear(all);
+  const { next, later } = splitNear(upcoming);
   const open = app.showLater && later.length > 0;
   const emptyHint = later.length
     ? 'Los que vienen después están en el botón de abajo.'
     : 'Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.';
   if (!replaceView(`
     ${reminderBanners(next)}
-    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
-      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>${app.mine ? 'No anotaste ni cobraste en estos partidos.' : 'No hay partidos en los próximos 7 días.'}</b></p>
+      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
       <p class="small">${emptyHint}</p></div>`}
     ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
     ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
@@ -1004,13 +1011,13 @@ function renderMatch(id) {
     return;
   }
   const everyone = playersOf(id);
-  const ps = app.mine ? everyone.filter(minePlayer) : everyone;
+  const ps = everyone;
   const cap = capOf(m);
   const who = actor();
   const readOnly = !canAdd(m, who.uid);
   const block = addBlock(m);
   const slots = [];
-  for (let i = 0; i < (app.mine ? ps.length : Math.max(cap, everyone.length)); i++) {
+  for (let i = 0; i < Math.max(cap, everyone.length); i++) {
     const p = ps[i];
     if (!p) {
       slots.push(readOnly || block
@@ -1069,7 +1076,6 @@ function renderMatch(id) {
     ${readOnly ? '<p class="hint" id="match-readonly">Solo lectura. No podés anotar ni cambiar este partido.</p>' : ''}
     ${reminderBanners([m])}
     ${readOnly || m.cancelled ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
-    ${app.mine ? '<p class="hint" id="mine-filter">Viendo solo lo que anotaste y cobraste.</p>' : ''}
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
@@ -1184,7 +1190,7 @@ function listText(m) {
 
 function waitingSection(m, full, readOnly) {
   const allWait = waitingOf(m.id);
-  const wait = app.mine ? allWait.filter(minePlayer) : allWait;
+  const wait = allWait;
   const rows = wait.map((p, i) => {
     const idx = allWait.findIndex((item) => item.id === p.id);
     const first = idx <= 0;
@@ -1604,10 +1610,8 @@ function openSettings() {
   const demo = app.session?.mode !== 'firebase';
   openSheet(`
     <h3>Ajustes</h3>
-    <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
+    ${demo ? '<p class="hint">Modo demo: los datos se guardan solo en este dispositivo.</p>' : ''}
     <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
-    <label class="checkline" id="set-mine-line"><input type="checkbox" id="set-mine"${app.mine ? ' checked' : ''}><span>Solo lo que anoté y lo que cobré</span></label>
-    <p class="hint">Oculta en Próximos partidos y en el partido lo de los demás organizadores. El cupo del partido no cambia.</p>
     <form id="price-form" novalidate>
       <p class="hint">Precios. Los ven todos al toque.</p>
       ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
@@ -1679,8 +1683,6 @@ function openSettings() {
   const forget = $('#set-forget');
   if (forget) forget.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
   $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
-  const mine = $('#set-mine');
-  if (mine) mine.onchange = () => { app.mine = mine.checked; render(); };
 }
 
 function saveBackupFile(filename, text) {
@@ -2654,6 +2656,46 @@ function statsPeriodBody(grain, id) {
       <h2>Por organizador</h2>
       ${moneyList(bucket.byOrganizer, 'Nadie cobró.')}
     </section>`;
+}
+
+function renderRegistro(r) {
+  const section = r.section === 'pagos' ? 'pagos' : 'partidos';
+  if (!app.logRange) app.logRange = weekRange();
+  const range = app.logRange;
+  const rows = (app.log || []).filter((entry) => entry.section === section);
+  const list = rows.length
+    ? `<ul class="slots" id="log-list">${rows.map((entry) => `
+      <li class="slot log-row">
+        <div class="who">
+          <div class="name">${esc(entry.type)}</div>
+          <div class="sub"><span>${esc(logWhen(entry))}</span><span>${esc(entry.actorName || '')}</span></div>
+          <div class="sub">${esc(logText(entry))}</div>
+        </div>
+      </li>`).join('')}</ul>`
+    : `<p class="empty-wait" id="log-empty">${app.logError ? esc(app.logError) : 'No hay registros en estas fechas.'}</p>`;
+  if (!replaceView(`
+    <div id="log-view">
+      <div class="seg stats-seg" id="log-mode">
+        <a class="btn ${section === 'partidos' ? 'primary' : ''}" href="#/registro/partidos"${section === 'partidos' ? ' aria-current="page"' : ''}>Partidos</a>
+        <a class="btn ${section === 'pagos' ? 'primary' : ''}" href="#/registro/pagos"${section === 'pagos' ? ' aria-current="page"' : ''}>Pagos</a>
+      </div>
+      <form id="log-range" class="log-range">
+        <label class="field"><span>Desde</span><input type="date" id="log-from" value="${esc(range.from)}" aria-label="Desde"></label>
+        <label class="field"><span>Hasta</span><input type="date" id="log-to" value="${esc(range.to)}" aria-label="Hasta"></label>
+      </form>
+      <p class="hint">Últimos 7 días, hasta hoy. Se puede cambiar el rango.</p>
+      ${list}
+    </div>`)) return;
+  const form = $('#log-range');
+  const apply = () => {
+    const from = $('#log-from').value;
+    const to = $('#log-to').value;
+    if (!from || !to || from > to) return;
+    app.logRange = { from, to };
+    app.store?.setLogRange?.(app.logRange);
+    render();
+  };
+  form.onchange = apply;
 }
 
 function renderUsers() {
@@ -4223,6 +4265,12 @@ function openCreditForm({ player, person, panel }) {
           delta: plan.leftover,
         }, app.who);
       }
+      const creditMatch = player?.matchId ? matchById(player.matchId) : null;
+      await app.store.recordCreditLoad({
+        match: creditMatch,
+        player: player || { name: fullName },
+        amount: money.amount,
+      });
     })();
     run(job, summary);
   };
@@ -4470,6 +4518,7 @@ function syncTextSize() {
 
 async function boot() {
   clearWaChoice();
+  clearMineFilter();
   $('#venue-name').textContent = 'Agenda de partidos';
   $('#btn-back').onclick = () => {
     const r = route();
@@ -4572,6 +4621,8 @@ async function boot() {
     app.prices = prices || null;
     app.credits = credits || [];
     app.creditsError = creditsError || null;
+    app.log = view.log || [];
+    app.logError = view.logError || '';
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);
     app.rosterError = rosterError || null;
     if (organizersError && organizersError !== app.organizersError) showError(organizersError);
@@ -4581,7 +4632,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     if (!changed) return;

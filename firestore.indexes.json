@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "editors", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "at", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

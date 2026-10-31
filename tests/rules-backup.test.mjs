@@ -462,11 +462,12 @@ test('el backup del tamaño real se carga, el admin sigue por uid y el error no 
       links: 478,
       users: 3,
       credits: 0,
+      log: 0,
     });
     const summary = await store.importDatabase(backup);
     assert.deepEqual(summary.counts, {
       matches: 28, players: 122, roster: 61, venues: 3, organizers: 0, settings: 0,
-      confirmations: 144, playerContacts: 42, rosterContacts: 18, links: 478, users: 3, credits: 0,
+      confirmations: 144, playerContacts: 42, rosterContacts: 18, links: 478, users: 3, credits: 0, log: 0,
     });
     assert.ok(sizes.length > 20);
     assert.ok(sizes.every((n) => n === 1), `lotes: ${sizes.slice(0, 8).join(',')}… (${sizes.length})`);

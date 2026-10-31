@@ -33,6 +33,7 @@ export const BACKUP_COLLECTIONS = Object.freeze([
   'links',
   'users',
   'credits',
+  'log',
 ]);
 
 export const COLLECTION_LABELS = Object.freeze({
@@ -48,6 +49,7 @@ export const COLLECTION_LABELS = Object.freeze({
   links: 'Links',
   users: 'Cuentas',
   credits: 'Saldos a favor',
+  log: 'Registro',
 });
 
 const ID_MAX = 700;

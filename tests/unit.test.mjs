@@ -12,6 +12,7 @@ import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
+import { editorsOf, inLogRange, matchEditDetail, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
@@ -2487,6 +2488,34 @@ test('estadísticas: cobrado contra lo que correspondía, por mes y por año', (
   assert.deepEqual(countedGoals([{}]), { tracked: false, goals: 0 });
 });
 
+test('el registro copia quién podía editar y separa los pagos', () => {
+  assert.deepEqual(editorsOf({ viewers: ['*'], adders: ['*'] }), ['*']);
+  assert.deepEqual(editorsOf({ viewers: ['a', 'b'], adders: ['b'], createdByUid: 'a' }, 'z'), ['b', 'a', 'z']);
+  assert.deepEqual(playerLogFields({ name: 'Invitado 1', invitedBy: 'h', invitedByName: 'Juan' }, []), {
+    playerName: 'Invitado 1',
+    hostName: 'Juan',
+  });
+  const before = { paid: true, split: true, cash: 1000, transfer: 0, fromCredit: 0 };
+  const after = { paid: true, split: true, cash: 0, transfer: 2500, fromCredit: 500 };
+  const lines = paymentLines(before, after);
+  assert.deepEqual(lines.map((line) => line.type + ':' + line.method + ':' + line.amount), [
+    'pago borrado:efectivo:1000',
+    'pago:transferencia:2500',
+    'pago:credito:500',
+  ]);
+  const edited = matchEditDetail(
+    { date: '2026-10-19', time: '21:00', price: 5000, venueId: 'a', venueName: 'Colegiales' },
+    { date: '2026-10-19', time: '22:00', price: 4000, venueId: 'b', venueName: 'Nueva' },
+  );
+  assert.match(edited, /Horario/);
+  assert.match(edited, /Precio/);
+  assert.match(edited, /Sede/);
+  const week = weekRange(new Date('2026-10-19T13:00:00-03:00'));
+  assert.deepEqual(week, { from: '2026-10-13', to: '2026-10-19' });
+  assert.equal(inLogRange({ at: Date.parse('2026-10-13T00:00:00-03:00') }, week), true);
+  assert.equal(inLogRange({ at: Date.parse('2026-10-12T23:00:00-03:00') }, week), false);
+});
+
 test('el error del backup nombra la colección y el documento', () => {
   assert.equal(BACKUP_WRITE_BATCH, 1);
   const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
@@ -2506,7 +2535,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v69');
+  assert.equal(version, 'f7c-v70');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));

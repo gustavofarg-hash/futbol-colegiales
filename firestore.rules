@@ -763,10 +763,44 @@ service cloud.firestore {
       allow delete: if isActiveStaff();
     }
 
+    // Registro. Se agrega, no se corrige. El admin puede borrar al resetear.
+    // editors se copió del partido: * o los uids que podían ver y editar.
+    function validLog(d) {
+      return d.keys().hasOnly(['at', 'actorUid', 'actorName', 'section', 'type', 'matchId', 'matchDate', 'matchTime', 'matchLabel', 'editors', 'playerName', 'hostName', 'detail', 'amount', 'method'])
+          && d.at is number && d.at > 0
+          && d.actorUid is string && d.actorUid == request.auth.uid && d.actorUid.size() > 0 && d.actorUid.size() <= 128
+          && d.actorName is string && d.actorName.size() > 0 && d.actorName.size() <= 40
+          && (d.section == 'partidos' || d.section == 'pagos')
+          && d.type is string && d.type.size() > 0 && d.type.size() <= 40
+          && d.matchId is string && d.matchId.size() <= 80
+          && d.matchDate is string && d.matchDate.size() <= 10
+          && d.matchTime is string && d.matchTime.size() <= 5
+          && d.matchLabel is string && d.matchLabel.size() <= 160
+          && d.editors is list && d.editors.size() > 0 && d.editors.size() <= 31
+          && d.playerName is string && d.playerName.size() <= 80
+          && d.hostName is string && d.hostName.size() <= 80
+          && d.detail is string && d.detail.size() <= 200
+          && d.amount is number && d.amount >= 0 && d.amount <= 1000000000
+          && (d.method == '' || d.method == 'efectivo' || d.method == 'transferencia' || d.method == 'credito')
+          && (d.editors.hasAny(['*']) || d.editors.hasAny([request.auth.uid]));
+    }
+    function canReadLog(d) {
+      return d.keys().hasAll(['editors']) && d.editors is list
+          && (d.editors.hasAny(['*']) || d.editors.hasAny([request.auth.uid]));
+    }
+    match /log/{entryId} {
+      allow read: if isActiveStaff() && canReadLog(resource.data);
+      allow create: if isActiveStaff() && validLog(request.resource.data) && entryId.size() > 0 && entryId.size() <= 80;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     // Backup, carga y reset. isAdmin() exige cuenta activa con role == admin.
     // Un organizador no entra: sigue sin ver un Solo yo ajeno ni un teléfono privado.
+    // El registro no se reescribe ni por el admin: solo se borra en el reset.
     match /{document=**} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow write: if isAdmin() && !request.path.matches('/databases/[^/]+/documents/log/[^/]+');
     }
 
     match /{document=**} {
