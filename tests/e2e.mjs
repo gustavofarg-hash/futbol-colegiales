@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v77');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v78');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -494,9 +494,12 @@ check('Tocar el monto no lo marca: el cursor queda al final', await page.$eval('
 await page.keyboard.press('Backspace');
 check('Borrar corrige el último dígito, no vacía el monto', await page.$eval('#pay-form [name=cash]', (el) => el.value === '500'));
 await page.fill('#pay-form [name=cash]', '');
-await page.locator('#pay-form [name=transfer]').click();
-await page.keyboard.press('1');
-check('El primer número reemplaza el precio sugerido, sin marcarlo', await page.$eval('#pay-form [name=transfer]', (el) => el.value === '1' && el.selectionStart === 1 && el.selectionEnd === 1));
+const transferBox = await page.locator('#pay-form [name=transfer]').boundingBox();
+await page.touchscreen.tap(transferBox.x + 10, transferBox.y + transferBox.height / 2);
+await page.waitForTimeout(80);
+check('Un toque del celular completa la transferencia y deja el cursor al final', await page.$eval('#pay-form [name=transfer]', (el) => el.value.replace(/\./g, '') === '5000' && el.selectionStart === el.value.length && el.selectionEnd === el.value.length && el.type === 'text'));
+await page.keyboard.press('Backspace');
+check('En el celular, borrar saca el último dígito del precio', await page.$eval('#pay-form [name=transfer]', (el) => el.value === '500' && el.selectionStart === 3 && el.selectionEnd === 3));
 await page.fill('#pay-form [name=fromCredit]', '2500');
 await page.locator('#pay-form [name=cash]').click();
 await page.locator('#pay-form [name=fromCredit]').click();
