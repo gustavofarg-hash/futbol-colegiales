@@ -12,7 +12,7 @@ import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
-import { editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
+import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
@@ -2613,6 +2613,30 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.equal(pagoMatchText({ section: 'pagos', type: 'pago', matchLabel: '', matchDate: '2026-10-18', matchTime: '18:00' }), 'Domingo 18/10 · 18:00');
   assert.equal(pagoMatchText({ section: 'pagos', type: 'pago', matchId: 'gone', matchLabel: '' }), 'Partido');
   assert.equal(pagoMatchText({ ...early, matchLabel: early.matchLabel }), early.matchLabel);
+  const day = { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Polideportivo Colegiales' };
+  const cash = pagoEntry(actor, day, [], { name: 'Ana', cashTo: 'Martín', transferTo: 'Gustavo' }, [], { type: 'pago', method: 'efectivo', amount: 2000 });
+  assert.equal(cash.paidTo, 'Martín');
+  const splitPay = paymentLines(
+    { cash: 0, transfer: 0, fromCredit: 0 },
+    { cash: 0, transfer: 3000, fromCredit: 0, transferParts: [{ to: 'Gustavo', amount: 1000 }, { to: 'Martín', amount: 2000 }] },
+  );
+  assert.equal(splitPay.length, 1);
+  assert.equal(splitPay[0].paidTo, 'Gustavo · Martín');
+  const editedPay = paymentLines({ cash: 2000, cashTo: 'Martín' }, { cash: 2000, cashTo: 'Gustavo' });
+  assert.equal(editedPay[0].type, 'pago editado');
+  assert.equal(editedPay[0].paidTo, 'Martín → Gustavo');
+  const deletedPay = paymentLines({ cash: 2000, cashTo: 'Martín' }, { cash: 0, cashTo: null });
+  assert.equal(deletedPay[0].type, 'pago borrado');
+  assert.equal(deletedPay[0].paidTo, 'Martín → nadie');
+  const creditLine = pagoEntry(actor, day, [], { name: 'Ana', creditTo: 'Gustavo' }, [], { type: 'pago', method: 'credito', amount: 500 });
+  assert.equal(creditLine.paidTo, 'Gustavo');
+  const solo = pagoEntry({ uid: 'gus', name: 'Gustavo' }, { id: 'm', date: '2026-10-19', time: '21:00', viewers: ['*'], adders: ['*'] }, [], { name: 'Ana' }, [], { type: 'crédito cargado', method: 'credito', amount: 8000, solo: true });
+  assert.deepEqual(solo.editors, ['gus']);
+  assert.equal(solo.matchLabel, '');
+  assert.equal(pagoMatchText(solo), 'Carga de crédito');
+  assert.equal(solo.paidTo, 'Gustavo');
+  assert.equal(canSeeLog(solo, 'otro'), false);
+  assert.equal(canSeeLog(solo, 'gus'), true);
 });
 
 test('el error del backup nombra la colección y el documento', () => {
@@ -2634,7 +2658,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v73');
+  assert.equal(version, 'f7c-v74');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));

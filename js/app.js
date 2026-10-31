@@ -39,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v73';
+const APP_VERSION = 'f7c-v74';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2668,7 +2668,7 @@ function renderRegistro(r) {
       <li class="slot log-row">
         <div class="who">
           <div class="name">${esc(entry.type)}</div>
-          <div class="sub"><span>${esc(logWhen(entry))}</span><span>${esc(entry.actorName || '')}</span></div>
+          <div class="sub"><span>${esc(logWhen(entry))}</span>${section === 'pagos' && entry.actorName ? `<span>Registró: ${esc(entry.actorName)}</span>` : `<span>${esc(entry.actorName || '')}</span>`}${section === 'pagos' && entry.paidTo ? `<span>Cobró: ${esc(entry.paidTo)}</span>` : ''}</div>
           <div class="sub">${esc(logText(entry))}</div>
         </div>
       </li>`).join('')}</ul>`
@@ -3840,6 +3840,9 @@ function openPaymentForm(m, p) {
     const fromCredit = readMoney(form.fromCredit.value);
     if (!fromCredit.ok) { $('#pay-err').textContent = fromCredit.error; return; }
     if (cash.amount + transfer.amount + pending.amount + fromCredit.amount <= 0) { $('#pay-err').textContent = 'Poné un monto.'; return; }
+    const keepTransferParts = roundMoney(transfer.amount) === parts.transfer && Array.isArray(p.transferParts) && p.transferParts.length > 1 && p.transferParts.every((part) => String(part?.to || '').trim());
+    if (cash.amount > 0 && !String(form.cashTo.value || '').trim()) { $('#pay-err').textContent = 'Elegí quién cobró el efectivo.'; return; }
+    if (transfer.amount > 0 && !keepTransferParts && !String(form.transferTo.value || '').trim()) { $('#pay-err').textContent = 'Elegí quién cobró la transferencia.'; return; }
     const creditTo = loggedInStaffName();
     const payInput = (part) => ({
       paid: true,
@@ -4266,11 +4269,13 @@ function openCreditForm({ player, person, panel }) {
           delta: plan.leftover,
         }, app.who);
       }
-      const creditMatch = player?.matchId ? matchById(player.matchId) : null;
+      const pureLoad = plan.rows.length === 0;
+      const creditMatch = !pureLoad && player?.matchId ? matchById(player.matchId) : null;
       await app.store.recordCreditLoad({
         match: creditMatch,
-        player: player || { name: fullName },
+        player: { ...(player || {}), name: player?.name || fullName, creditTo },
         amount: money.amount,
+        solo: pureLoad,
       });
     })();
     run(job, summary);

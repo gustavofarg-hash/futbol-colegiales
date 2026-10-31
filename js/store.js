@@ -986,14 +986,14 @@ class LocalStore {
     this._logPayment(db, before, db.players[id] ? { id, ...db.players[id] } : null);
     if (paymentLines(before, db.players[id]).length) this._save(db);
   }
-  async recordCreditLoad({ match, player, amount }) {
+  async recordCreditLoad({ match, player, amount, solo }) {
     const money = Math.round(Number(amount) * 100) / 100;
     if (!(money > 0)) return;
     const db = this._load();
-    const saved = match?.id ? (db.matches[match.id] || match) : null;
+    const saved = !solo && match?.id ? (db.matches[match.id] || match) : null;
     const mates = saved ? this._matesOf(db, saved.id) : [];
     this._pushLogs(db, [pagoEntry(this._actor(), saved ? { id: saved.id || match.id, ...saved } : null, this._venuesOf(db), player, mates, {
-      type: 'crédito cargado', method: 'credito', amount: money,
+      type: 'crédito cargado', method: 'credito', amount: money, solo: solo === true,
     })]);
     this._save(db);
   }
@@ -2342,13 +2342,13 @@ export class FirebaseStore {
     const mates = this.state.players.filter((item) => item.matchId === player.matchId);
     await this._appendLogs(lines.map((line) => pagoEntry(this._actor(), match, this.state.venues, after, mates, line)));
   }
-  async recordCreditLoad({ match, player, amount }) {
+  async recordCreditLoad({ match, player, amount, solo }) {
     const money = Math.round(Number(amount) * 100) / 100;
     if (!(money > 0)) return;
-    const saved = match?.id ? (this.state.matches.find((item) => item.id === match.id) || match) : null;
+    const saved = !solo && match?.id ? (this.state.matches.find((item) => item.id === match.id) || match) : null;
     const mates = saved ? this.state.players.filter((item) => item.matchId === saved.id) : [];
     await this._appendLogs([pagoEntry(this._actor(), saved, this.state.venues, player, mates, {
-      type: 'crédito cargado', method: 'credito', amount: money,
+      type: 'crédito cargado', method: 'credito', amount: money, solo: solo === true,
     })]);
   }
   // Solo los campos del pago (y updatedAt): así entra por la regla corta de
