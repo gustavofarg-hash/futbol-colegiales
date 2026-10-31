@@ -1,7 +1,7 @@
 // Precios del partido y promos del mismo día. Puro: la UI lee el documento
 // settings/prices y, si todavía no existe, usa estos defaults.
 import { toEpoch } from './dates.js';
-import { formatARS, roundARS } from './payments.js';
+import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { personKey } from './roster.js';
 
 export const DEFAULT_PRICES = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
@@ -77,13 +77,13 @@ function whenOf(match) {
  */
 export function sameDayTitulars({ player, players, matches }) {
   const key = playerPromoKey(player, players);
-  if (!key || player?.waiting === true) return [];
+  if (!key || player?.waiting === true || isFreePlay(player)) return [];
   const own = (matches || []).find((match) => match.id === player.matchId);
   const date = own?.date || player.matchDate;
   if (!date) return [];
   const byMatch = new Map();
   for (const other of players || []) {
-    if (other?.waiting === true) continue;
+    if (other?.waiting === true || isFreePlay(other)) continue;
     if (playerPromoKey(other, players) !== key) continue;
     const match = (matches || []).find((item) => item.id === other.matchId);
     const day = match?.date || other.matchDate;
@@ -146,4 +146,107 @@ export function promoForPlayer({ player, players, matches, prices }) {
   const index = Math.max(0, rows.findIndex((row) => row.player.id === player.id));
   const shares = splitEven(offer.total, rows.length);
   return { ...offer, rows, index, share: shares[index] ?? offer.total, shares };
+}
+
+function addNamed(parts, name, amount) {
+  const money = roundARS(amount);
+  if (!(money > 0)) return;
+  const key = String(name || '').trim();
+  const found = parts.find((part) => part.name === key);
+  if (found) found.amount = roundARS(found.amount + money);
+  else parts.push({ name: key, amount: money });
+}
+
+/**
+ * Al marcar un partido de la promo como gratis, lo ya cobrado se acomoda
+ * al precio nuevo (un partido suelto, o la promo de los que quedan).
+ * Lo que sobra vuelve como saldo a quien lo había cobrado.
+ * Los partidos que quedan se reparten ese cobro en partes iguales;
+ * el peso que sobra queda en el primero. «Transfiere después» no se movió:
+ * todavía no se cobró.
+ */
+export function promoRefundAfterFree({ player, players, matches, prices }) {
+  const rows = sameDayTitulars({ player, players, matches });
+  if (!player || rows.length < 2) return null;
+  const others = rows.filter((row) => row.player.id !== player.id);
+  const norm = normalizePrices(prices);
+  const newDue = others.length >= 2
+    ? promoOffer(others.length, norm).total
+    : others.length === 1
+      ? priceOfMatch(others[0].match, norm)
+      : 0;
+  const ordered = [...others, rows.find((row) => row.player.id === player.id)].filter(Boolean);
+  const slices = [];
+  for (const row of ordered) {
+    for (const share of paymentShares(row.player)) {
+      if (share.kind === 'pending' || !(share.amount > 0)) continue;
+      slices.push({
+        kind: share.kind === 'received' ? 'cash' : share.kind,
+        name: String(share.name || '').trim(),
+        amount: roundARS(share.amount),
+      });
+    }
+  }
+  const received = roundARS(slices.reduce((sum, slice) => sum + slice.amount, 0));
+  const keptTotal = Math.min(received, roundARS(newDue));
+  let room = keptTotal;
+  const kept = [];
+  const creditByName = new Map();
+  for (const slice of slices) {
+    const take = roundARS(Math.min(slice.amount, Math.max(0, room)));
+    const extra = roundARS(slice.amount - take);
+    if (take > 0) kept.push({ ...slice, amount: take });
+    if (extra > 0) creditByName.set(slice.name, roundARS((creditByName.get(slice.name) || 0) + extra));
+    room = roundARS(room - take);
+  }
+  const targets = splitEven(keptTotal, others.length);
+  const buckets = others.map((row) => ({
+    playerId: row.player.id,
+    cashParts: [],
+    transferParts: [],
+    creditParts: [],
+    pending: paymentParts(row.player).pending,
+    pendingTo: String(row.player.pendingTo || row.player.paidUpdatedBy || '').trim(),
+  }));
+  let index = 0;
+  let filled = 0;
+  for (const slice of kept) {
+    let left = slice.amount;
+    while (left > 0 && index < buckets.length) {
+      const cap = roundARS((targets[index] || 0) - filled);
+      if (!(cap > 0)) { index += 1; filled = 0; continue; }
+      const take = roundARS(Math.min(left, cap));
+      const bucket = buckets[index];
+      if (slice.kind === 'transfer') addNamed(bucket.transferParts, slice.name, take);
+      else if (slice.kind === 'credit') addNamed(bucket.creditParts, slice.name, take);
+      else addNamed(bucket.cashParts, slice.name, take);
+      filled = roundARS(filled + take);
+      left = roundARS(left - take);
+      if (filled >= (targets[index] || 0) - 0.001) { index += 1; filled = 0; }
+    }
+  }
+  const largest = (parts) => [...parts].sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name))[0]?.name || '';
+  const payments = buckets.map((bucket) => {
+    const cash = roundARS(bucket.cashParts.reduce((sum, part) => sum + part.amount, 0));
+    const transferParts = bucket.transferParts.filter((part) => part.amount > 0);
+    const transfer = roundARS(transferParts.reduce((sum, part) => sum + part.amount, 0));
+    const creditParts = bucket.creditParts.filter((part) => part.amount > 0);
+    const credit = roundARS(creditParts.reduce((sum, part) => sum + part.amount, 0));
+    return {
+      playerId: bucket.playerId,
+      cash,
+      cashTo: cash > 0 ? largest(bucket.cashParts) : '',
+      transfer,
+      transferTo: transferParts.length === 1 ? transferParts[0].name : '',
+      transferParts: transferParts.length > 1 ? transferParts.map((part) => ({ to: part.name, amount: part.amount })) : null,
+      fromCredit: credit,
+      creditTo: credit > 0 ? largest(creditParts) : '',
+      pending: bucket.pending,
+      pendingTo: bucket.pending > 0 ? bucket.pendingTo : '',
+    };
+  }).filter((row) => row.cash + row.transfer + row.fromCredit + row.pending > 0);
+  const credits = [...creditByName.entries()]
+    .filter(([, amount]) => amount > 0)
+    .map(([name, amount]) => ({ name, amount }));
+  return { newDue, received, credits, payments };
 }

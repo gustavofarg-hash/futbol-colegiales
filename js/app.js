@@ -30,7 +30,7 @@ import { canOfferCredit, creditAgainstDebts, creditBalance, creditLine, creditLo
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
-import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, splitPaymentAcross } from './prices.js';
+import { PRICES_DENIED_WRITE, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, splitPaymentAcross } from './prices.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
@@ -39,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v78';
+const APP_VERSION = 'f7c-v79';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3543,9 +3543,6 @@ function openPaymentForm(m, p, opts = {}) {
   const parts = paymentParts(p);
   const known = p.paid === true || p.paid === false || parts.pending > 0 || parts.split;
   const promo = promoOf(p);
-  const prices = livePrices();
-  const totalSuggest = promo ? promo.total : prices.matchPrice;
-  let suggestion = 0;
   const directed = hasPaymentDirection(p);
   const staffDefault = loggedInStaffName();
   const initialTo = (kind) => {
@@ -3582,7 +3579,6 @@ function openPaymentForm(m, p, opts = {}) {
       ${receivedNote}
       <label class="checkline" id="free-play-line"><input type="checkbox" id="pay-free" name="freePlay"${isFreePlay(p) ? ' checked' : ''}><span>Juega gratis</span></label>
       <div id="pay-details">
-        ${promo ? `<label class="pay-apply"><input type="checkbox" id="pay-apply-promo"><span id="pay-apply-label">Aplicar a los ${promo.count} partidos</span></label>` : ''}
         <label class="pay-apply" id="pay-split-guests-line" hidden><input type="checkbox" id="pay-split-guests"><span>Dividir entre él y sus invitados</span></label>
         <div id="pay-split-preview" hidden></div>
         <label class="pay-apply" id="pay-oldest-line" hidden><input type="checkbox" id="pay-oldest"><span>Cancelar primero las deudas más viejas</span></label>
@@ -3612,6 +3608,7 @@ function openPaymentForm(m, p, opts = {}) {
             <select name="pendingTo" aria-label="A quién le va a transferir"></select>
           </div>
         </div>
+        <div id="pay-promo-split" hidden></div>
       </div>
       <div class="field"><div class="err" id="pay-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" ${back ? 'id="pay-back"' : 'data-close'}>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
@@ -3629,8 +3626,6 @@ function openPaymentForm(m, p, opts = {}) {
     const fresh = promoOf(p);
     const badge = $('#pay-promo');
     if (badge) badge.innerHTML = fresh ? `<div class="promo-badge">${esc(fresh.label)}</div>` : '';
-    const applyLabel = $('#pay-apply-label');
-    if (applyLabel && fresh) applyLabel.textContent = `Aplicar a los ${fresh.count} partidos`;
   };
   paintSelect(form.cashTo, initialTo('cash'));
   paintSelect(form.transferTo, initialTo('transfer'));
@@ -3653,7 +3648,7 @@ function openPaymentForm(m, p, opts = {}) {
   // campo seguía vacío y el cursor quedaba al principio. Acá el precio se pone
   // en el toque y otra vez en el foco, y el cursor se manda al final después
   // de que el navegador lo deje al principio. No se marca el texto.
-  const bindAmountField = (input, { fillPrice = false } = {}) => {
+  const bindAmountField = (input, { fillPrice = false, amountFor = null, onFilled = null } = {}) => {
     if (!input) return;
     let fromTap = false;
     let armClick = false;
@@ -3673,8 +3668,10 @@ function openPaymentForm(m, p, opts = {}) {
       if (fillPrice) {
         const current = readMoney(input.value);
         if (current.ok && current.amount === 0) {
-          input.value = moneyText(priceOfMatch(m, livePrices())) || '0';
+          const price = typeof amountFor === 'function' ? amountFor() : priceOfMatch(m, livePrices());
+          input.value = moneyText(price) || '0';
           arm();
+          if (typeof onFilled === 'function') onFilled();
           return;
         }
       }
@@ -3696,7 +3693,36 @@ function openPaymentForm(m, p, opts = {}) {
     input.addEventListener('keydown', drop);
     input.addEventListener('input', drop);
   };
-  for (const input of [form.cash, form.transfer, form.pending]) bindAmountField(input, { fillPrice: true });
+  const suggestedAmount = () => {
+    const promo = promoOf(p);
+    if (promo?.total > 0) return promo.total;
+    return priceOfMatch(m, livePrices());
+  };
+  const paintPromoSplit = () => {
+    const box = $('#pay-promo-split');
+    if (!box) return;
+    const promo = promoOf(p);
+    const blocked = splitBox?.checked || oldestBox?.checked;
+    if (!promo || promo.rows.length < 2 || blocked) { box.hidden = true; box.innerHTML = ''; return; }
+    const cashNow = readMoney(form.cash.value);
+    const transferNow = readMoney(form.transfer.value);
+    const pendingNow = readMoney(form.pending.value);
+    const creditNow = readMoney(form.fromCredit.value);
+    if (!cashNow.ok || !transferNow.ok || !pendingNow.ok || !creditNow.ok) { box.hidden = true; box.innerHTML = ''; return; }
+    const shares = splitPaymentAcross({
+      cash: cashNow.amount,
+      transfer: transferNow.amount,
+      pending: pendingNow.amount,
+      credit: creditNow.amount,
+    }, promo.rows.length);
+    const totals = shares.map((share) => roundMoney(share.cash + share.transfer + share.pending + share.credit));
+    const uneven = totals.some((total, i) => i > 0 && total !== totals[0]);
+    const lines = promo.rows.map((row, i) => `<li><span>${esc(fmtWhen(row.match))}</span><b>${esc(formatARS(totals[i] || 0))}</b></li>`).join('');
+    const odd = uneven ? '<p class="hint">El peso que sobra queda en el primer partido.</p>' : '';
+    box.hidden = false;
+    box.innerHTML = `<p class="hint">Se reparte en partes iguales entre estos partidos.</p><ul class="pay-split-preview">${lines}</ul>${odd}`;
+  };
+  for (const input of [form.cash, form.transfer, form.pending]) bindAmountField(input, { fillPrice: true, amountFor: suggestedAmount, onFilled: paintPromoSplit });
   bindAmountField(form.fromCredit);
   const splitBox = $('#pay-split-guests');
   const splitLine = $('#pay-split-guests-line');
@@ -3817,41 +3843,23 @@ function openPaymentForm(m, p, opts = {}) {
       if (splitBox.checked && oldestBox) oldestBox.checked = false;
       paintGuestSplit();
       paintOldest();
+      paintPromoSplit();
     };
     for (const input of [form.cash, form.transfer, form.pending, form.fromCredit]) {
-      input.addEventListener('input', () => { paintGuestSplit(); paintOldest(); });
+      input.addEventListener('input', () => { paintGuestSplit(); paintOldest(); paintPromoSplit(); });
     }
     paintGuestSplit();
   }
   if (oldestBox) {
     oldestBox.onchange = () => {
-      if (oldestBox.checked) {
-        if (splitBox) splitBox.checked = false;
-        const apply = $('#pay-apply-promo');
-        if (apply) apply.checked = false;
-      }
+      if (oldestBox.checked && splitBox) splitBox.checked = false;
       paintGuestSplit();
       paintOldest();
+      paintPromoSplit();
     };
     paintOldest();
   }
-  const applyBox = $('#pay-apply-promo');
-  if (applyBox) applyBox.onchange = () => {
-    if (applyBox.checked && oldestBox) { oldestBox.checked = false; paintOldest(); }
-    const fresh = promoOf(p);
-    const total = fresh?.total ?? totalSuggest;
-    const cashNow = readMoney(form.cash.value);
-    const transferNow = readMoney(form.transfer.value);
-    const pendingNow = readMoney(form.pending.value);
-    const othersZero = cashNow.ok && transferNow.ok && pendingNow.ok && transferNow.amount === 0 && pendingNow.amount === 0;
-    if (applyBox.checked) {
-      if (othersZero && cashNow.amount === 0) form.cash.value = moneyText(total);
-      suggestion = total;
-    } else if (othersZero && suggestion > 0 && cashNow.amount === suggestion) {
-      form.cash.value = '';
-      suggestion = 0;
-    } else suggestion = 0;
-  };
+  paintPromoSplit();
   const receive = $('#btn-receive-pending');
   if (receive) receive.onclick = () => {
     const job = Promise.resolve(app.store.markTransferReceived(p.id, app.who)).catch((error) => {
@@ -3879,6 +3887,66 @@ function openPaymentForm(m, p, opts = {}) {
     e.preventDefault();
     if (freeBox?.checked) {
       const entries = [{ id: p.id, input: { freePlay: true, paid: true, split: true } }];
+      const refund = promoRefundAfterFree({ player: p, players: app.players, matches: app.matches, prices: livePrices() });
+      if (refund) {
+        for (const row of refund.payments) {
+          entries.push({
+            id: row.playerId,
+            input: {
+              paid: true,
+              split: true,
+              freePlay: false,
+              cash: row.cash,
+              transfer: row.transfer,
+              pendingTransfer: row.pending,
+              fromCredit: row.fromCredit,
+              cashTo: row.cash > 0 ? row.cashTo : null,
+              transferTo: row.transfer > 0 ? row.transferTo : null,
+              transferParts: row.transferParts,
+              pendingTo: row.pending > 0 ? row.pendingTo : null,
+              creditTo: row.fromCredit > 0 ? row.creditTo : null,
+            },
+          });
+        }
+        const key = personKey(p, app.players);
+        if (refund.credits.length && !key) { $('#pay-err').textContent = 'No se puede guardar el saldo sin identificar al jugador.'; return; }
+        const grants = [];
+        for (const credit of refund.credits) {
+          const organizerName = credit.name || actor().name;
+          const organizerUid = organizerUidByName(organizerName) || (sameOrganizer(organizerName, actor().name) ? actor().uid : '');
+          if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+          grants.push({
+            personKey: key,
+            organizerUid,
+            organizerName,
+            name: p.name,
+            delta: credit.amount,
+          });
+        }
+        const job = (async () => {
+          const done = [];
+          try {
+            for (const move of grants) {
+              await app.store.adjustCredit(move, app.who);
+              done.push(move);
+            }
+            await writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who));
+            for (const credit of grants) {
+              await app.store.recordCreditLoad({
+                match: null,
+                player: { ...p, creditTo: credit.organizerName },
+                amount: credit.delta,
+                solo: true,
+              });
+            }
+          } catch (error) {
+            for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
+            throw error;
+          }
+        })();
+        leave(run(job, grants.length ? 'Juega gratis. Lo que sobra quedó como saldo a favor.' : 'Juega gratis'));
+        return;
+      }
       const delta = creditDelta([p], entries);
       const job = delta
         ? savePaymentsSpendingCredit(entries, 'Juega gratis', creditMoveFor(p, delta))
@@ -3995,7 +4063,7 @@ function openPaymentForm(m, p, opts = {}) {
       return;
     }
     const freshPromo = promoOf(p);
-    const applyAll = !!applyBox?.checked && freshPromo && freshPromo.rows.length >= 2;
+    const applyAll = !!(freshPromo && freshPromo.rows.length >= 2 && !oldestBox?.checked && !splitBox?.checked);
     if (applyAll) {
       const shares = splitPaymentAcross({ cash: cash.amount, transfer: transfer.amount, pending: pending.amount, credit: fromCredit.amount }, freshPromo.rows.length);
       const entries = freshPromo.rows.map((row, i) => ({ id: row.player.id, input: payInput(shares[i]) }));
