@@ -39,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v74';
+const APP_VERSION = 'f7c-v75';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -4092,7 +4092,13 @@ function playerPanelPieces(player, person, ids, debtKey) {
   const err = app.creditsError ? `<p class="hint" id="${ids.err}">${esc(app.creditsError)}</p>` : '';
   const button = canOfferCredit(me) ? `<button type="button" class="btn primary block" id="${ids.button}">Cargar crédito</button>` : '';
   const rows = debt.rows.length
-    ? `<ul class="ledger-list" id="debt-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>`
+    ? `<ul class="ledger-list" id="debt-list">${debt.rows.map((row) => {
+      const match = knownMatches().find((item) => item.id === row.matchId);
+      const who = app.players.find((item) => item.id === row.playerId);
+      const open = !!(match && who && canAdd(match, actor().uid));
+      if (!open) return `<li>${esc(row.text)}</li>`;
+      return `<li><button type="button" class="debt-jump" data-debt-player="${esc(row.playerId)}" data-debt-match="${esc(row.matchId)}">${esc(row.text)}</button></li>`;
+    }).join('')}</ul>`
     : '';
   const creditStack = (creditHtml || button) ? `<div class="credit-stack">${creditHtml}${button}</div>` : '';
   const debtStack = (debtHtml || rows) ? `<div class="debt-stack">${debtHtml}${rows}</div>` : '';
@@ -4124,6 +4130,15 @@ function bindPlayerPanel(scope, player, person, ids, panel) {
       });
     });
   }
+  const debtList = scope?.querySelector('#debt-list');
+  if (debtList) debtList.onclick = (event) => {
+    const jump = event.target.closest('[data-debt-player]');
+    if (!jump) return;
+    const match = knownMatches().find((item) => item.id === jump.dataset.debtMatch);
+    const who = app.players.find((item) => item.id === jump.dataset.debtPlayer);
+    if (!match || !who || !canAdd(match, actor().uid)) return;
+    openPlayerMenu(match, who);
+  };
   const btn = scope?.querySelector(`#${ids.button}`);
   if (btn) btn.onclick = () => openCreditForm({ player, person, panel });
   const statsBtn = scope?.querySelector(`#${ids.stats}`);

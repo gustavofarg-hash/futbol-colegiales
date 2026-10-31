@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v74');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v75');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3422,6 +3422,47 @@ await page.fill('#log-to', '2026-10-19');
 check('Las fechas nuevas siguen sin aplicarse', await page.locator('#log-empty').count() === 1);
 await page.click('#log-apply');
 await page.waitForSelector('#log-list');
+const deuda = await page.evaluate(async () => {
+  const app = window.__app;
+  const me = app.session.user;
+  app.store.setActor(me);
+  const past = await app.store.addMatch({ date: '2026-10-01', time: '20:00', note: 'Deuda historial', price: 5000 }, me.name);
+  const next = await app.store.addMatch({ date: '2026-10-20', time: '21:00', note: 'Deuda proxima', price: 5000 }, me.name);
+  const locked = await app.store.addMatch({
+    date: '2026-10-12', time: '19:00', note: 'Deuda solo ver', price: 5000,
+    access: { solo: true, viewers: [me.uid, 'otro'], adders: ['otro'], viewerNames: [], adderNames: [], limits: [], createdByUid: 'otro' },
+  }, 'Otro');
+  const phone = '11 5555-7575';
+  const byId = (id) => app.matches.find((item) => item.id === id) || { id };
+  await app.store.addPlayer(byId(past), { name: 'Debe Varios', phone }, me.name);
+  const here = await app.store.addPlayer(byId(next), { name: 'Debe Varios', phone }, me.name);
+  app.store.setActor({ uid: 'otro', name: 'Otro', role: 'organizer' });
+  await app.store.addPlayer(byId(locked), { name: 'Debe Varios', phone }, 'Otro');
+  app.store.setActor(me);
+  return { next, here };
+});
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, deuda.next);
+await page.waitForSelector('.slot:has-text("Debe Varios") .more-btn');
+await page.click('.slot:has-text("Debe Varios") .more-btn');
+await page.waitForSelector('#debt-list');
+check('La deuda que puede cobrar se puede tocar', await page.locator('#debt-list button.debt-jump', { hasText: '01/10/2026' }).count() === 1 && await page.locator('#debt-list button.debt-jump', { hasText: '20/10/2026' }).count() === 1);
+check('La deuda de un partido que no puede cobrar queda como texto', await page.locator('#debt-list li', { hasText: '12/10/2026' }).locator('button').count() === 0 && (await page.locator('#debt-list li', { hasText: '12/10/2026' }).innerText()).includes('$5.000'));
+await page.click('#debt-list button.debt-jump:has-text("01/10/2026")');
+await page.waitForSelector('#pm-pay');
+check('Tocar la deuda del historial abre el menú de ese partido', (await page.locator('#pm-pay').innerText()) === 'Cargar pago');
+await page.click('#pm-pay');
+await page.waitForSelector('#pay-form .hint');
+check('El pago que se abre es el del 01/10', (await page.locator('#pay-form .hint').first().innerText()).includes('01/10'));
+await page.click('#pay-form [data-close]');
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, deuda.next);
+await page.waitForSelector('.slot:has-text("Debe Varios") .who');
+await page.click('.slot:has-text("Debe Varios") .who');
+await page.waitForSelector('#profile #debt-list button.debt-jump');
+await page.click('#profile #debt-list button.debt-jump:has-text("20/10/2026")');
+await page.waitForSelector('#pm-pay');
+check('Desde la ficha, la deuda abre el menú de ese partido', (await page.locator('#pm-pay').innerText()) === 'Cargar pago' && (await page.locator('#pay-form').count()) === 0);
+await page.click('dialog.sheet [data-close]');
+
 const exige = await page.evaluate(async () => {
   const app = window.__app;
   const me = app.session.user;
