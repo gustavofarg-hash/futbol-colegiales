@@ -39,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v76';
+const APP_VERSION = 'f7c-v77';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3643,17 +3643,58 @@ function openPaymentForm(m, p, opts = {}) {
     paintSelect(form.pendingTo, form.pendingTo.value);
     paintPrices();
   };
-  const fillMatchPrice = (input) => {
-    if (!input) return;
-    const current = readMoney(input.value);
-    if (!current.ok || current.amount !== 0) return;
-    input.value = moneyText(priceOfMatch(m, livePrices())) || '0';
-    // Queda seleccionado: el próximo número reemplaza el precio y borrar lo vacía.
-    try { input.select(); } catch { /* algunos navegadores no seleccionan en el foco */ }
+  const caretAtEnd = (input) => {
+    const end = String(input.value || '').length;
+    try { input.setSelectionRange(end, end); } catch { /* el navegador puede rechazar el rango */ }
   };
-  for (const input of [form.cash, form.transfer, form.pending]) {
-    input.addEventListener('focus', () => fillMatchPrice(input));
-  }
+  // El toque no marca el monto: en Android eso abre Cortar/Copiar/Pegar.
+  // El cursor queda al final para corregir con borrar. Si el campo estaba vacío
+  // o en 0, el primer número igual reemplaza el precio recién puesto, sin marcarlo.
+  const bindAmountField = (input, { fillPrice = false } = {}) => {
+    if (!input) return;
+    let replaceValue = null;
+    let pinTap = false;
+    const pin = () => caretAtEnd(input);
+    input.addEventListener('pointerdown', () => { pinTap = document.activeElement !== input; });
+    input.addEventListener('focus', () => {
+      replaceValue = null;
+      // Solo un toque completa el precio. Un focus de programa (borrar el campo, por ejemplo)
+      // no tiene que reescribir el monto ni mover el cursor.
+      if (!pinTap) return;
+      if (fillPrice) {
+        const current = readMoney(input.value);
+        if (current.ok && current.amount === 0) {
+          input.value = moneyText(priceOfMatch(m, livePrices())) || '0';
+          replaceValue = input.value;
+        }
+      } else if (input.value === '0') replaceValue = '0';
+    });
+    input.addEventListener('pointerup', (event) => {
+      if (!pinTap) return;
+      pinTap = false;
+      // El toque, después del foco, marca el texto. Se cancela y el cursor queda al final.
+      event.preventDefault();
+      pin();
+      setTimeout(pin, 0);
+    });
+    input.addEventListener('beforeinput', (event) => {
+      if (replaceValue == null || input.value !== replaceValue) return;
+      const deleting = event.inputType === 'deleteContentBackward' || event.inputType === 'deleteContentForward' || event.inputType === 'deleteByCut';
+      if (deleting) { replaceValue = null; return; }
+      const inserting = event.inputType === 'insertText' || event.inputType === 'insertCompositionText' || event.inputType === 'insertFromPaste';
+      if (!inserting) return;
+      const data = event.data;
+      if (data == null) { replaceValue = null; return; }
+      if (replaceValue === '0' && !/^[1-9]$/.test(data)) { replaceValue = null; return; }
+      event.preventDefault();
+      input.value = data;
+      replaceValue = null;
+      pin();
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+  for (const input of [form.cash, form.transfer, form.pending]) bindAmountField(input, { fillPrice: true });
+  bindAmountField(form.fromCredit);
   const splitBox = $('#pay-split-guests');
   const splitLine = $('#pay-split-guests-line');
   const oldestBox = $('#pay-oldest');
