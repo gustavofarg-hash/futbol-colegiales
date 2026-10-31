@@ -1604,7 +1604,7 @@ function openSettings() {
   const demo = app.session?.mode !== 'firebase';
   openSheet(`
     <h3>Ajustes</h3>
-    <p class="hint">${demo ? 'Modo demo: los datos se guardan solo en este dispositivo.' : '✅ Conectado a Firebase: los datos se comparten en tiempo real.'}</p>
+    ${demo ? '<p class="hint">Modo demo: los datos se guardan solo en este dispositivo.</p>' : ''}
     <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
     <label class="checkline" id="set-mine-line"><input type="checkbox" id="set-mine"${app.mine ? ' checked' : ''}><span>Solo lo que anoté y lo que cobré</span></label>
     <p class="hint">Oculta en Próximos partidos y en el partido lo de los demás organizadores. El cupo del partido no cambia.</p>
