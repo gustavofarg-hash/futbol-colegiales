@@ -2683,7 +2683,7 @@ function renderRegistro(r) {
         <label class="field"><span>Desde</span><input type="date" id="log-from" value="${esc(range.from)}" aria-label="Desde"></label>
         <label class="field"><span>Hasta</span><input type="date" id="log-to" value="${esc(range.to)}" aria-label="Hasta"></label>
       </form>
-      <p class="hint">Últimos 7 días, hasta hoy. Se puede cambiar el rango.</p>
+      <p class="hint" id="log-hint">Últimos 20 días, hasta hoy. Se puede cambiar el rango.</p>
       ${list}
     </div>`)) return;
   const form = $('#log-range');

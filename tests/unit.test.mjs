@@ -2594,9 +2594,10 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.match(edited, /Precio/);
   assert.match(edited, /Sede/);
   const week = weekRange(new Date('2026-10-19T13:00:00-03:00'));
-  assert.deepEqual(week, { from: '2026-10-13', to: '2026-10-19' });
-  assert.equal(inLogRange({ at: Date.parse('2026-10-13T00:00:00-03:00') }, week), true);
-  assert.equal(inLogRange({ at: Date.parse('2026-10-12T23:00:00-03:00') }, week), false);
+  assert.deepEqual(week, { from: '2026-09-29', to: '2026-10-19' });
+  assert.equal(inLogRange({ at: Date.parse('2026-09-29T00:00:00-03:00') }, week), true);
+  assert.equal(inLogRange({ at: Date.parse('2026-09-28T23:00:00-03:00') }, week), false);
+  assert.equal(inLogRange({ at: Date.parse('2026-10-19T12:00:00-03:00'), matchDate: '2026-11-15' }, week), true);
   const actor = { uid: 'g', name: 'Gustavo' };
   const early = pagoEntry(actor, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Polideportivo Colegiales' }, [], { name: 'Ana', matchId: 'm1' }, [], { type: 'pago', method: 'efectivo', amount: 2000 });
   const late = pagoEntry(actor, { id: 'm2', date: '2026-10-19', time: '22:30', venueName: 'Polideportivo Colegiales' }, [], { name: 'Ana', matchId: 'm2' }, [], { type: 'pago', method: 'credito', amount: 1500 });

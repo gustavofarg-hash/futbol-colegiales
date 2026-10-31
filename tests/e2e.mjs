@@ -3330,6 +3330,9 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, viejas.older
 await page.waitForSelector('.slot .pay-line');
 check('El partido viejo figura pagado con crédito', (await page.locator('.slot .pay-line').innerText()).includes('Crédito') && (await page.locator('.slot .pay-line').innerText()).includes('Gustavo'));
 
+await page.evaluate(() => { location.hash = '#/registro/partidos'; });
+await page.waitForSelector('#log-hint');
+check('El registro arranca 20 días atrás, por cuándo se anotó', (await page.inputValue('#log-from')) === '2026-09-29' && (await page.inputValue('#log-to')) === '2026-10-19' && (await page.locator('#log-hint').innerText()).includes('Últimos 20 días'));
 await page.evaluate(async () => {
   const app = window.__app;
   const me = { uid: app.session.user.uid, name: app.session.user.name, role: app.session.user.role };

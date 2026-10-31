@@ -7,7 +7,8 @@ import { formatARS, paymentParts } from './payments.js';
 import { venueLabel } from './venues.js';
 
 export const LOG_LIMIT = 200;
-export const LOG_DAYS = 7;
+/** Días hacia atrás, sin contar hoy. El rango es ese día inclusive hasta hoy. */
+export const LOG_DAYS = 20;
 
 const METHODS = {
   efectivo: 'Efectivo',
@@ -109,7 +110,7 @@ export function blankLog(partial, actor) {
 
 export function weekRange(now = new Date()) {
   const today = todayISO(now);
-  return { from: addDays(today, -(LOG_DAYS - 1)), to: today };
+  return { from: addDays(today, -LOG_DAYS), to: today };
 }
 
 export function rangeMillis(range) {
