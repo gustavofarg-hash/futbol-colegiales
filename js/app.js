@@ -39,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v75';
+const APP_VERSION = 'f7c-v76';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3530,8 +3530,16 @@ function readMoney(raw) {
   if (String(raw ?? '').trim() === '') return { ok: true, amount: 0 };
   return parseAmount(raw);
 }
-function openPaymentForm(m, p) {
+function openPaymentForm(m, p, opts = {}) {
   if (!p || !canAdd(m, actor().uid)) return;
+  const back = typeof opts.returnTo === 'function' ? opts.returnTo : null;
+  const leave = (job) => {
+    if (!back) {
+      closeSheet();
+      return job;
+    }
+    return Promise.resolve(job).then(() => back());
+  };
   const parts = paymentParts(p);
   const known = p.paid === true || p.paid === false || parts.pending > 0 || parts.split;
   const promo = promoOf(p);
@@ -3606,9 +3614,11 @@ function openPaymentForm(m, p) {
         </div>
       </div>
       <div class="field"><div class="err" id="pay-err"></div></div>
-      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+      <div class="sheet-actions"><button type="button" class="btn" ${back ? 'id="pay-back"' : 'data-close'}>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
     </form>`);
   const form = $('#pay-form');
+  const payBack = $('#pay-back');
+  if (payBack && back) payBack.onclick = () => back();
   const paintSelect = (select, selected) => {
     const names = payStaffNames([selected, ...paymentShares(p).map((share) => share.name)]);
     const current = names.find((name) => sameOrganizer(name, selected)) || names[0] || '';
@@ -3800,14 +3810,14 @@ function openPaymentForm(m, p) {
   };
   const receive = $('#btn-receive-pending');
   if (receive) receive.onclick = () => {
-    closeSheet();
-    run(Promise.resolve(app.store.markTransferReceived(p.id, app.who)).catch((error) => {
+    const job = Promise.resolve(app.store.markTransferReceived(p.id, app.who)).catch((error) => {
       const fail = error instanceof Error ? error : new Error(String(error?.message || error));
       fail.playerId = p.id;
       fail.paymentWrite = true;
       if (error?.code) fail.code = error.code;
       throw fail;
-    }), 'Transferencia marcada como cobrada');
+    });
+    leave(run(job, 'Transferencia marcada como cobrada'));
   };
   const freeBox = $('#pay-free');
   const paintFree = () => {
@@ -3826,9 +3836,10 @@ function openPaymentForm(m, p) {
     if (freeBox?.checked) {
       const entries = [{ id: p.id, input: { freePlay: true, paid: true, split: true } }];
       const delta = creditDelta([p], entries);
-      closeSheet();
-      if (delta) savePaymentsSpendingCredit(entries, 'Juega gratis', creditMoveFor(p, delta));
-      else savePayments(entries, 'Juega gratis');
+      const job = delta
+        ? savePaymentsSpendingCredit(entries, 'Juega gratis', creditMoveFor(p, delta))
+        : savePayments(entries, 'Juega gratis');
+      leave(job);
       return;
     }
     const cash = readMoney(form.cash.value);
@@ -3867,9 +3878,10 @@ function openPaymentForm(m, p) {
         $('#pay-err').textContent = 'No se puede descontar el crédito sin identificar al jugador.';
         return;
       }
-      closeSheet();
-      if (delta) savePaymentsSpendingCredit(entries, okMsg, creditMoveFor(p, delta));
-      else savePayments(entries, okMsg);
+      const job = delta
+        ? savePaymentsSpendingCredit(entries, okMsg, creditMoveFor(p, delta))
+        : savePayments(entries, okMsg);
+      leave(job);
     };
     if (oldestBox?.checked && debtsOf().length >= 2) {
       const plan = oldestPlan();
@@ -3934,9 +3946,8 @@ function openPaymentForm(m, p) {
         return;
       }
       const msg = ['Pago dividido', ...notes.map((item) => item.text)].filter(Boolean).join(' ');
-      closeSheet();
-      if (moves.length) savePaymentsSpendingCredit(entries, msg, moves);
-      else savePayments(entries, msg);
+      const job = moves.length ? savePaymentsSpendingCredit(entries, msg, moves) : savePayments(entries, msg);
+      leave(job);
       return;
     }
     const freshPromo = promoOf(p);
@@ -4137,7 +4148,16 @@ function bindPlayerPanel(scope, player, person, ids, panel) {
     const match = knownMatches().find((item) => item.id === jump.dataset.debtMatch);
     const who = app.players.find((item) => item.id === jump.dataset.debtPlayer);
     if (!match || !who || !canAdd(match, actor().uid)) return;
-    openPlayerMenu(match, who);
+    const fromMenu = !!player;
+    openPaymentForm(match, who, {
+      returnTo: fromMenu
+        ? () => {
+          const fresh = app.players.find((item) => item.id === player.id) || player;
+          const home = knownMatches().find((item) => item.id === fresh.matchId) || null;
+          openPlayerMenu(home, fresh);
+        }
+        : () => closeSheet(),
+    });
   };
   const btn = scope?.querySelector(`#${ids.button}`);
   if (btn) btn.onclick = () => openCreditForm({ player, person, panel });
