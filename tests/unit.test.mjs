@@ -7,7 +7,7 @@ import { allocateAcrossDebts, collectedLine, formatARS, parseAmount, paymentFail
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
-import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from '../js/guests.js';
+import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
@@ -183,6 +183,89 @@ test('renombrar un invitado de la promo no toca al invitado de otro anfitrión',
   const credits = JSON.parse(mem.get(store.key)).credits;
   assert.equal(Object.values(credits).some((row) => row.personKey === oldKey), false);
   assert.equal(Object.values(credits).find((row) => row.personKey === newKey).amount, 800);
+  const thirdHost = { id: 'v3', name: 'Vinicio', phoneKey: phone('ab'), hasPhone: true, matchId: 'd' };
+  const guestC = { id: 'g4', name: 'Invitado 1', invitedBy: 'v3', matchId: 'd', guestAuto: true };
+  const waiting = { id: 'g5', name: 'Invitado 1', invitedBy: 'v1', matchId: 'a', guestAuto: true, waiting: true };
+  const trio = [vinicio, vinicio2, thirdHost, ernesto, ernesto2, guestA, guestB, guestC, otherA, otherB, waiting];
+  const trioMatches = [...matches, { id: 'd', date: '2026-10-30', time: '22:30' }];
+  assert.deepEqual(sameDayPromoGuestTwins({ player: guestA, players: trio, matches: trioMatches }).map((row) => row.id).sort(), ['g2', 'g4', 'g5']);
+  assert.equal(sameDayPromoGuestTwins({ player: guestA, players: trio, matches: trioMatches }).some((row) => row.id === 'o2'), false);
+  assert.deepEqual(sameDayPromoGuestNickPatches({ player: guestA, shortName: 'Pedro', players, matches }).map((row) => row.id), ['g2']);
+  assert.equal(sameDayPromoGuestNickPatches({ player: otherA, shortName: 'Pedro', players, matches }).some((row) => row.id === 'g2'), false);
+});
+
+test('el apodo del menú se copia a los partidos del día y la promo no baja a precio pleno', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-promo-guest';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const ids = [];
+  for (const time of ['19:00', '21:00', '22:30']) {
+    ids.push(await store.addMatch({ date: '2026-10-30', time, price: 5000 }, 'Gustavo'));
+  }
+  const otherDay = await store.addMatch({ date: '2026-10-31', time: '19:00', price: 5000 }, 'Gustavo');
+  const load = () => {
+    const db = JSON.parse(mem.get(store.key));
+    return {
+      matches: Object.entries(db.matches).map(([id, row]) => ({ id, ...row })),
+      players: Object.entries(db.players).map(([id, row]) => ({ id, ...row })),
+    };
+  };
+  const matchOf = (id) => load().matches.find((row) => row.id === id);
+  const hosts = [];
+  const guests = [];
+  const others = [];
+  for (const id of ids) {
+    const match = matchOf(id);
+    const host = await store.addPlayer(match, { name: 'Vinicio', phone: '11 5555-0101' }, 'Gustavo');
+    const other = await store.addPlayer(match, { name: 'Ernesto', phone: '11 5555-0202' }, 'Gustavo');
+    hosts.push(host);
+    guests.push(await store.addPlayer(match, { name: 'Invitado 1', phone: '', invitedBy: host, invitedByName: 'Vinicio', guestAuto: true }, 'Gustavo'));
+    others.push(await store.addPlayer(match, { name: 'Invitado 1', phone: '', invitedBy: other, invitedByName: 'Ernesto', guestAuto: true }, 'Gustavo'));
+  }
+  const awayMatch = matchOf(otherDay);
+  const awayHost = await store.addPlayer(awayMatch, { name: 'Vinicio', phone: '11 5555-0101' }, 'Gustavo');
+  const away = await store.addPlayer(awayMatch, { name: 'Invitado 1', phone: '', invitedBy: awayHost, invitedByName: 'Vinicio', guestAuto: true }, 'Gustavo');
+  await store.setPlayerShortName(guests[0], 'Pedro Menu');
+  let saved = load();
+  const nick = (id) => saved.players.find((row) => row.id === id)?.shortName;
+  assert.equal(nick(guests[0]), 'Pedro Menu');
+  assert.equal(nick(guests[1]), 'Pedro Menu');
+  assert.equal(nick(guests[2]), 'Pedro Menu');
+  assert.equal(nick(others[0]), undefined);
+  assert.equal(nick(away), undefined);
+  const owed = (id) => amountOwed(saved.players.find((row) => row.id === id), saved);
+  assert.equal(owed(guests[0]), 4000);
+  assert.equal(owed(guests[1]), 4000);
+  assert.equal(owed(guests[2]), 4000);
+  assert.equal(promoForPlayer({ player: saved.players.find((row) => row.id === guests[1]), ...saved, prices: null }).label, 'Promo 3 partidos por $12.000');
+  await store.updatePlayer(guests[0], { name: 'Pedro Nombre', guestAuto: false, invitedBy: hosts[0], invitedByName: 'Vinicio' });
+  saved = load();
+  assert.deepEqual(guests.map((id) => saved.players.find((row) => row.id === id).name), ['Pedro Nombre', 'Pedro Nombre', 'Pedro Nombre']);
+  assert.equal(saved.players.find((row) => row.id === others[1]).name, 'Invitado 1');
+  assert.equal(amountOwed(saved.players.find((row) => row.id === guests[2]), saved), 4000);
+  assert.equal(promoForPlayer({ player: saved.players.find((row) => row.id === guests[0]), ...saved, prices: null }).label, 'Promo 3 partidos por $12.000');
+  const rosterId = await store.addRoster({ name: 'Pedro Nombre' }, 'Gustavo');
+  await store.updatePlayer(guests[0], { rosterId });
+  saved = load();
+  assert.deepEqual(guests.map((id) => saved.players.find((row) => row.id === id).rosterId), [rosterId, rosterId, rosterId]);
+  assert.equal(saved.players.find((row) => row.id === others[0]).rosterId, undefined);
+  assert.equal(amountOwed(saved.players.find((row) => row.id === guests[1]), saved), 4000);
+  await store.setRosterNick(rosterId, 'Ficha');
+  saved = load();
+  assert.deepEqual(guests.map((id) => saved.players.find((row) => row.id === id).shortName), ['Ficha', 'Ficha', 'Ficha']);
+  assert.notEqual(saved.players.find((row) => row.id === others[2]).shortName, 'Ficha');
+  await store.updateRoster(rosterId, { name: 'Pedro Perfil' });
+  saved = load();
+  assert.deepEqual(guests.map((id) => saved.players.find((row) => row.id === id).name), ['Pedro Perfil', 'Pedro Perfil', 'Pedro Perfil']);
+  assert.equal(saved.players.find((row) => row.id === others[2]).name, 'Invitado 1');
+  assert.equal(promoForPlayer({ player: saved.players.find((row) => row.id === guests[2]), ...saved, prices: null }).label, 'Promo 3 partidos por $12.000');
+  assert.equal(amountOwed(saved.players.find((row) => row.id === guests[0]), saved), 4000);
 });
 
 test('lo que sobra de un pago dividido queda como saldo de quien paga', () => {
@@ -2535,7 +2618,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v70');
+  assert.equal(version, 'f7c-v71');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));

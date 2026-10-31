@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v70');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v71');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3368,6 +3368,164 @@ check('El filtro de fechas deja el registro vacío', (await page.locator('#log-e
 await page.fill('#log-from', '2026-10-13');
 await page.fill('#log-to', '2026-10-19');
 await page.waitForSelector('#log-list');
+
+async function seedPromoGuests(count, label) {
+  const day = seedPromoGuests.nextDay || 2;
+  seedPromoGuests.nextDay = day + 1;
+  const date = `2026-11-${String(day).padStart(2, '0')}`;
+  return page.evaluate(async ({ count, label, date, day }) => {
+    const store = window.__app.store;
+    const times = ['18:00', '21:00', '22:30'];
+    const ids = [];
+    for (let i = 0; i < count; i++) ids.push(await store.addMatch({ date, time: times[i], note: `${label} ${i + 1}`, price: 5000 }, 'Gustavo'));
+    const guests = [];
+    const others = [];
+    const host = `Vinicio ${label}`;
+    const other = `Ernesto ${label}`;
+    const hostPhone = `11 7000-${String(1000 + day).slice(-4)}`;
+    const otherPhone = `11 7000-${String(5000 + day).slice(-4)}`;
+    for (const id of ids) {
+      const match = window.__app.matches.find((item) => item.id === id) || { id, date, capacity: 14 };
+      const hostId = await store.addPlayer(match, { name: host, phone: hostPhone }, 'Gustavo');
+      const otherId = await store.addPlayer(match, { name: other, phone: otherPhone }, 'Gustavo');
+      guests.push(await store.addPlayer(match, { name: 'Invitado 1', phone: '', invitedBy: hostId, invitedByName: host, guestAuto: true }, 'Gustavo'));
+      others.push(await store.addPlayer(match, { name: 'Invitado 1', phone: '', invitedBy: otherId, invitedByName: other, guestAuto: true }, 'Gustavo'));
+    }
+    return { ids, guests, others, host, other };
+  }, { count, label, date, day });
+}
+async function closeMenu() {
+  if (await page.locator('dialog.sheet[open] [data-close]').count()) await page.locator('dialog.sheet[open] [data-close]').first().click();
+}
+async function assertGuestPromo(fix, visibleName, count) {
+  const promo = count >= 3 ? 'Promo 3 partidos por $12.000' : 'Promo 2 partidos por $9.000';
+  const share = count >= 3 ? '$4.000' : '$4.500';
+  const total = count >= 3 ? '$12.000' : '$9.000';
+  for (const id of fix.ids) {
+    await page.evaluate(() => { location.hash = '#/jugadores'; });
+    await page.waitForFunction(() => location.hash.includes('jugadores'));
+    await page.evaluate((mid) => { location.hash = `#/partido/${mid}`; }, id);
+    await page.waitForSelector('#slots li.guest-row .promo-badge');
+    const row = page.locator('#slots li.guest-row', { hasText: `invitado de ${fix.host}` });
+    const text = (await row.innerText()).replace(/\s+/g, ' ');
+    check(`${visibleName} queda en el partido (${count}) con ${promo}`, text.includes(visibleName) && text.includes(promo), text);
+    const otherName = await page.locator('#slots li.guest-row', { hasText: `invitado de ${fix.other}` }).locator('.name').innerText();
+    check(`Otro anfitrión no se renombra (${visibleName}, ${count})`, otherName === 'Invitado 1', otherName);
+  }
+  await page.locator('#slots li.guest-row', { hasText: `invitado de ${fix.host}` }).locator('.more-btn').click();
+  await page.waitForSelector('#menu-debt');
+  const debt = (await page.locator('#menu-panel').innerText()).replace(/\s+/g, ' ');
+  const shares = debt.split(share).length - 1;
+  check(`La promo no vuelve a $5.000 (${visibleName}, ${count})`, debt.includes(`Debe en total: ${total}`) && shares === count && !debt.includes('$5.000'), debt);
+  await closeMenu();
+}
+
+{
+  const menu2 = await seedPromoGuests(2, 'Menu');
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, menu2.ids[0]);
+  await page.waitForSelector(`[data-menu="${menu2.guests[0]}"]`);
+  await page.locator(`[data-menu="${menu2.guests[0]}"]`).click();
+  await page.waitForSelector('#menu-nick');
+  await page.fill('#menu-nick', 'Pedro Menu');
+  await page.locator('#menu-nick').evaluate((el) => el.blur());
+  await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Apodo'));
+  await closeMenu();
+  await assertGuestPromo(menu2, 'Pedro Menu', 2);
+
+  const menu3 = await seedPromoGuests(3, 'Menu3');
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, menu3.ids[0]);
+  await page.waitForSelector(`[data-menu="${menu3.guests[0]}"]`);
+  await page.locator(`[data-menu="${menu3.guests[0]}"]`).click();
+  await page.waitForSelector('#menu-nick');
+  await page.fill('#menu-nick', 'Pedro Menu3');
+  await page.locator('#menu-nick').evaluate((el) => el.blur());
+  await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Apodo'));
+  await closeMenu();
+  await assertGuestPromo(menu3, 'Pedro Menu3', 3);
+
+  async function editGuest(fix, { name, nick } = {}) {
+    await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, fix.ids[0]);
+    await page.waitForSelector(`[data-menu="${fix.guests[0]}"]`);
+    await page.locator(`[data-menu="${fix.guests[0]}"]`).click();
+    await page.click('#pm-edit');
+    await page.waitForSelector('#player-name');
+    if (name) await page.fill('#player-name', name);
+    if (nick) await page.fill('#player-nick', nick);
+    await page.click('#player-form button[type=submit]');
+    await page.waitForFunction(() => {
+      const text = document.querySelector('#toast')?.textContent || '';
+      return text.includes('partidos del día') || text.includes('actualizado') || text.includes('Apodo');
+    });
+  }
+  const name2 = await seedPromoGuests(2, 'Nombre');
+  await editGuest(name2, { name: 'Pedro Nombre' });
+  check('El formulario avisa que el nombre pasó a los partidos del día', (await page.evaluate(() => document.querySelector('#toast')?.textContent || '')).includes('partidos del día'));
+  await assertGuestPromo(name2, 'Pedro Nombre', 2);
+  const name3 = await seedPromoGuests(3, 'Nombre3');
+  await editGuest(name3, { name: 'Pedro Nombre3' });
+  await assertGuestPromo(name3, 'Pedro Nombre3', 3);
+
+  const nick2 = await seedPromoGuests(2, 'Apodo');
+  await editGuest(nick2, { nick: 'Pedro Apodo' });
+  await assertGuestPromo(nick2, 'Pedro Apodo', 2);
+  const nick3 = await seedPromoGuests(3, 'Apodo3');
+  await editGuest(nick3, { nick: 'Pedro Apodo3' });
+  await assertGuestPromo(nick3, 'Pedro Apodo3', 3);
+
+  async function editFromTeams(fix, nick) {
+    await page.evaluate((id) => { location.hash = `#/partido/${id}/equipos`; }, fix.ids[0]);
+    await page.waitForSelector(`[data-team-name="${fix.guests[0]}"]`);
+    await page.locator(`[data-team-name="${fix.guests[0]}"]`).click();
+    await page.waitForSelector('#menu-nick');
+    await page.fill('#menu-nick', nick);
+    await page.locator('#menu-nick').evaluate((el) => el.blur());
+    await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Apodo'));
+    await closeMenu();
+  }
+  const team2 = await seedPromoGuests(2, 'Equipo');
+  await editFromTeams(team2, 'Pedro Equipo');
+  await assertGuestPromo(team2, 'Pedro Equipo', 2);
+  const team3 = await seedPromoGuests(3, 'Equipo3');
+  await editFromTeams(team3, 'Pedro Equipo3');
+  await assertGuestPromo(team3, 'Pedro Equipo3', 3);
+
+  async function openGuestProfile(fix) {
+    await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, fix.ids[0]);
+    await page.waitForSelector(`[data-menu="${fix.guests[0]}"]`);
+    await page.locator(`[data-menu="${fix.guests[0]}"]`).click();
+    await page.click('#pm-profile');
+    await page.waitForSelector('#profile h2.section');
+  }
+  const perfil2 = await seedPromoGuests(2, 'Perfil');
+  await openGuestProfile(perfil2);
+  await page.waitForSelector('#profile-name');
+  await page.fill('#profile-name', 'Pedro Perfil');
+  await page.locator('#profile-name').evaluate((el) => el.blur());
+  await page.waitForFunction(() => (document.querySelector('#profile h2.section')?.textContent || '').includes('Pedro Perfil'));
+  await assertGuestPromo(perfil2, 'Pedro Perfil', 2);
+  const perfil3 = await seedPromoGuests(3, 'Perfil3');
+  await openGuestProfile(perfil3);
+  await page.waitForSelector('#profile-name');
+  await page.fill('#profile-name', 'Pedro Perfil3');
+  await page.locator('#profile-name').evaluate((el) => el.blur());
+  await page.waitForFunction(() => (document.querySelector('#profile h2.section')?.textContent || '').includes('Pedro Perfil3'));
+  await assertGuestPromo(perfil3, 'Pedro Perfil3', 3);
+
+  const ficha2 = await seedPromoGuests(2, 'Ficha');
+  await openGuestProfile(ficha2);
+  await page.waitForSelector('#profile-nick');
+  await page.fill('#profile-nick', 'Pedro Ficha');
+  await page.locator('#profile-nick').evaluate((el) => el.blur());
+  await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Apodo'));
+  await assertGuestPromo(ficha2, 'Pedro Ficha', 2);
+  const ficha3 = await seedPromoGuests(3, 'Ficha3');
+  await openGuestProfile(ficha3);
+  await page.waitForSelector('#profile-nick');
+  await page.fill('#profile-nick', 'Pedro Ficha3');
+  await page.locator('#profile-nick').evaluate((el) => el.blur());
+  await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Apodo'));
+  await assertGuestPromo(ficha3, 'Pedro Ficha3', 3);
+}
 
 const fresh = await ctx.newPage();
 fresh.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

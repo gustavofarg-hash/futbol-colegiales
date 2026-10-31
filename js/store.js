@@ -95,9 +95,9 @@ import { bumpGoals, bumpScore, dropPlayer, nextInGoalAt, scoreRecord, teamsRecor
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
-import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName } from './guests.js';
+import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, phoneIdentity, rosterInMatchMessage, rosterMatchCount } from './roster.js';
+import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, personKey, phoneIdentity, rosterInMatchMessage, rosterMatchCount } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -261,6 +261,26 @@ function rosterPlayers(db) {
     ...row,
     phone: row.phone || contacts[id]?.phone || '',
   }));
+}
+
+function dbPlayers(db) {
+  return Object.entries(db.players || {}).map(([id, row]) => ({ id, ...row }));
+}
+
+function dbMatches(db) {
+  return Object.entries(db.matches || {}).map(([id, row]) => ({ id, ...row }));
+}
+
+/** Chequea el renombre del invitado en los otros partidos antes de escribir. */
+function assertPromoGuestEdits(players, sync, actor) {
+  for (const item of sync) {
+    const other = players.find((row) => row.id === item.id);
+    if (!other) continue;
+    if (playerPatchEditsIdentity(item.patch, other) && !canEditPlayer(other, actor)) throw editLockedError();
+    if (!playerPatchEditsIdentity(item.patch, other)) continue;
+    const mates = players.filter((row) => row.matchId === other.matchId);
+    refuseDuplicate(mates, identityAfterEdit(other, item.patch), other.id);
+  }
 }
 
 /**
@@ -861,24 +881,38 @@ class LocalStore {
   async updatePlayer(id, data) {
     const db = this._load(); if (!db.players[id]) return;
     const player = db.players[id];
-    const mates = Object.entries(db.players)
-      .filter(([, row]) => row.matchId === player.matchId)
-      .map(([pid, row]) => ({ id: pid, ...row }));
+    const players = dbPlayers(db);
+    const self = players.find((row) => row.id === id);
+    const mates = players.filter((row) => row.matchId === player.matchId);
     refuseGuestHost(mates, data, player);
     if (playerPatchEditsIdentity(data, player) && !canEditPlayer(player, this.actor)) throw editLockedError();
     if (playerPatchEditsIdentity(data, player)) {
       refuseDuplicate(mates, identityAfterEdit(player, data), id);
     }
+    const sync = sameDayPromoGuestEditPatches({ player: self, patch: data || {}, players, matches: dbMatches(db) });
+    assertPromoGuestEdits(players, sync, this.actor);
+    const oldKey = sync.length ? personKey(self, players) : '';
     const { phone, ...rest } = data || {};
     applySignupPatch(rest);
-    Object.assign(player, rest, { updatedAt: Date.now() });
+    const now = Date.now();
+    Object.assign(player, rest, { updatedAt: now });
     delete player.phone;
     if ('phone' in (data || {})) {
       const visible = typeof data.phoneShared === 'boolean' ? data.phoneShared : undefined;
       writeContact(db, 'players', id, phone, player, player.addedByUid || this.actor?.uid || '', visible);
     }
     if (data?.waiting === true) this._dropFromTeams(db, player.matchId, id);
+    for (const item of sync) {
+      const row = db.players[item.id];
+      if (!row) continue;
+      Object.assign(row, item.patch, { updatedAt: now });
+    }
     this._save(db);
+    if (!oldKey) return;
+    const preview = dbPlayers(db);
+    const fresh = preview.find((row) => row.id === id);
+    const newKey = personKey(fresh, preview);
+    if (newKey && newKey !== oldKey) await this.moveCredit(oldKey, newKey, fresh?.name || '');
   }
   async setPayment(id, input, who) {
     const rec = paymentRecord(input, who);
@@ -1056,13 +1090,22 @@ class LocalStore {
     cur.updatedAt = Date.now();
     this._save(db);
   }
-  /** El apodo de este jugador en este partido. Vacío: vuelve al de su ficha. */
+  /** El apodo de este jugador en este partido. Vacío: vuelve al de su ficha. El de un invitado de la promo se copia a sus otros partidos del día. */
   async setPlayerShortName(id, value) {
     const db = this._load(); const player = db.players[id]; if (!player) return;
     if (!canWritePlayer(player, this.actor)) throw editLockedError();
+    const players = dbPlayers(db);
+    const self = players.find((row) => row.id === id);
     const short = cleanShortName(value);
+    const now = Date.now();
     if (short) player.shortName = short; else delete player.shortName;
-    player.updatedAt = Date.now();
+    player.updatedAt = now;
+    for (const item of sameDayPromoGuestNickPatches({ player: self, shortName: short, players, matches: dbMatches(db) })) {
+      const row = db.players[item.id];
+      if (!row || !canWritePlayer(row, this.actor)) continue;
+      if (item.shortName) row.shortName = item.shortName; else delete row.shortName;
+      row.updatedAt = now;
+    }
     this._save(db);
   }
   async patchRoster(id, patch) {
@@ -2132,6 +2175,11 @@ export class FirebaseStore {
       const mates = this.state.players.filter((row) => row.matchId === cur.matchId);
       refuseDuplicate(mates, identityAfterEdit(cur, data), id);
     }
+    const sync = cur.id
+      ? sameDayPromoGuestEditPatches({ player: cur, patch: data || {}, players: this.state.players, matches: this.state.matches })
+      : [];
+    assertPromoGuestEdits(this.state.players, sync, this.actor);
+    const oldKey = sync.length ? personKey(cur, this.state.players) : '';
     const { phone, ...rest } = data || {};
     applySignupPatch(rest);
     const patch = { ...rest, updatedAt: Date.now() };
@@ -2180,6 +2228,19 @@ export class FirebaseStore {
       await batch.commit();
     } else {
       await updateDoc(doc(this.db, 'players', id), patch);
+    }
+    for (const item of sync) {
+      await updateDoc(doc(this.db, 'players', item.id), { ...item.patch, updatedAt: patch.updatedAt });
+    }
+    if (oldKey) {
+      const preview = this.state.players.map((row) => {
+        if (row.id === id) return { ...row, ...rest };
+        const extra = sync.find((item) => item.id === row.id);
+        return extra ? { ...row, ...extra.patch } : row;
+      });
+      const fresh = preview.find((row) => row.id === id);
+      const newKey = personKey(fresh, preview);
+      if (newKey && newKey !== oldKey) await this.moveCredit(oldKey, newKey, fresh?.name || '');
     }
     const token = data.confirmToken || cur?.confirmToken;
     if (!token) return;
@@ -2528,7 +2589,18 @@ export class FirebaseStore {
     if (cur && !canWritePlayer(cur, this.actor)) throw editLockedError();
     const { doc, updateDoc, deleteField } = this.fs;
     const short = cleanShortName(value);
-    await updateDoc(doc(this.db, 'players', id), { shortName: short || deleteField(), updatedAt: Date.now() });
+    const now = Date.now();
+    await updateDoc(doc(this.db, 'players', id), { shortName: short || deleteField(), updatedAt: now });
+    if (!cur) return;
+    for (const item of sameDayPromoGuestNickPatches({ player: cur, shortName: short, players: this.state.players, matches: this.state.matches })) {
+      const other = this.state.players.find((row) => row.id === item.id);
+      if (other && !canWritePlayer(other, this.actor)) continue;
+      try {
+        await updateDoc(doc(this.db, 'players', item.id), { shortName: item.shortName || deleteField(), updatedAt: now });
+      } catch (e) {
+        if (e?.code !== 'permission-denied') throw e;
+      }
+    }
   }
   async patchRoster(id, patch) {
     const cur = this.state.roster.find((r) => r.id === id);
