@@ -604,6 +604,7 @@ button.team-name {
 .seg .btn { flex: 1; min-height: 48px; }
 .log-range { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 8px; }
 .log-range .field { margin: 0; }
+.log-range .btn { grid-column: 1 / -1; }
 .log-row .sub { flex-wrap: wrap; }
 .stats-seg { gap: 4px; margin: 0 0 12px; }
 .stats-seg .btn { min-width: 0; padding: 8px 2px; font-size: 0.8rem; }

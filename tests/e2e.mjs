@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v72');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v73');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3330,6 +3330,9 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, viejas.older
 await page.waitForSelector('.slot .pay-line');
 check('El partido viejo figura pagado con crédito', (await page.locator('.slot .pay-line').innerText()).includes('Crédito') && (await page.locator('.slot .pay-line').innerText()).includes('Gustavo'));
 
+await page.evaluate(() => { location.hash = '#/registro/partidos'; });
+await page.waitForSelector('#log-hint');
+check('El registro arranca 20 días atrás, por cuándo se anotó', (await page.inputValue('#log-from')) === '2026-09-29' && (await page.inputValue('#log-to')) === '2026-10-19' && (await page.locator('#log-hint').innerText()).includes('Últimos 20 días') && (await page.locator('#log-apply').innerText()) === 'Ver');
 await page.evaluate(async () => {
   const app = window.__app;
   const me = { uid: app.session.user.uid, name: app.session.user.name, role: app.session.user.role };
@@ -3349,13 +3352,20 @@ await page.evaluate(async () => {
     date: '2026-10-19', time: '23:41', note: 'Registro ajeno',
     access: { solo: true, viewers: ['otro-organizador'], adders: ['otro-organizador'], viewerNames: [], adderNames: [], limits: [], createdByUid: 'otro-organizador' },
   }, 'Otro');
+  const soloVe = await app.store.addMatch({
+    date: '2026-10-19', time: '23:42', note: 'Solo ver',
+    access: { solo: true, viewers: [me.uid, 'otro-organizador'], adders: ['otro-organizador'], viewerNames: [], adderNames: [], limits: [], createdByUid: 'otro-organizador' },
+  }, 'Otro');
+  const matchVe = app.matches.find((item) => item.id === soloVe) || { id: soloVe, date: '2026-10-19', time: '23:42', viewers: [me.uid, 'otro-organizador'], adders: ['otro-organizador'], createdByUid: 'otro-organizador' };
+  await app.store.addPlayer(matchVe, { name: 'Visible Por Ver', phone: '' }, 'Otro');
   app.store.setActor(me);
   await app.store.setLogRange({ from: '2026-10-13', to: '2026-10-19' });
 });
 await page.evaluate(() => { location.hash = '#/registro/partidos'; });
 await page.waitForSelector('#log-list');
 const partidos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
-check('Registro de partidos anota el alta, el invitado y no el partido ajeno', partidos.includes('nuevo partido') && partidos.includes('alta') && partidos.includes('Invitado 1 (invitado de Anfitrión Log)') && partidos.includes('En la lista de espera') && !partidos.includes('23:41'), partidos.slice(0, 300));
+check('Registro de partidos anota el alta, el invitado y no el partido ajeno', partidos.includes('nuevo partido') && partidos.includes('alta') && partidos.includes('Invitado 1 (invitado de Anfitrión Log)') && partidos.includes('En la lista de espera') && !partidos.includes('23:41'), partidos.slice(0, 400));
+check('Quien solo puede ver el partido igual ve su registro', partidos.includes('Visible Por Ver') && partidos.includes('23:42'));
 await page.click('#log-mode a[href="#/registro/pagos"]');
 await page.waitForFunction(() => location.hash.includes('/pagos') && document.querySelector('#log-list .name')?.textContent.trim() === 'crédito cargado');
 const pagos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
@@ -3384,10 +3394,14 @@ check('El crédito aplicado a varios partidos nombra cada uno', cruce.includes('
 check('La carga de crédito sin partido se lee como carga, y el partido borrado sigue en el pago', cruce.includes('Carga de crédito') && cruce.includes('Deuda Cruce') && cruce.includes('Domingo 18/10 · 18:00 · Polideportivo Colegiales'), cruce.slice(0, 420));
 await page.fill('#log-from', '2026-09-01');
 await page.fill('#log-to', '2026-09-02');
+check('Cambiar Desde y Hasta no filtra hasta tocar Ver', await page.locator('#log-list').count() === 1 && await page.locator('#log-empty').count() === 0);
+await page.click('#log-apply');
 await page.waitForSelector('#log-empty');
-check('El filtro de fechas deja el registro vacío', (await page.locator('#log-empty').innerText()).includes('No hay registros'));
+check('Ver aplica el rango y deja el registro vacío', (await page.locator('#log-empty').innerText()).includes('No hay registros'));
 await page.fill('#log-from', '2026-10-13');
 await page.fill('#log-to', '2026-10-19');
+check('Las fechas nuevas siguen sin aplicarse', await page.locator('#log-empty').count() === 1);
+await page.click('#log-apply');
 await page.waitForSelector('#log-list');
 
 async function seedPromoGuests(count, label) {

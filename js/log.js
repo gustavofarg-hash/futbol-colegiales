@@ -7,7 +7,8 @@ import { formatARS, paymentParts } from './payments.js';
 import { venueLabel } from './venues.js';
 
 export const LOG_LIMIT = 200;
-export const LOG_DAYS = 7;
+/** Días hacia atrás, sin contar hoy. El rango es ese día inclusive hasta hoy. */
+export const LOG_DAYS = 20;
 
 const METHODS = {
   efectivo: 'Efectivo',
@@ -28,21 +29,22 @@ function unique(ids) {
   return out;
 }
 
-/** Quién podía ver y editar el partido cuando pasó el evento. `*` = todos. */
+/**
+ * Quién puede ver la línea: quien podía ver el partido o anotar y quitar
+ * jugadores, más el creador y quien anotó el evento. `*` = todos.
+ * Se copia al escribir. Las líneas viejas no se reescriben: el registro
+ * no se edita, y mirar el permiso de ahora cambiaría la historia.
+ */
 export function editorsOf(match, actorUid = '') {
   const me = clean(actorUid, 128);
   if (!match) return me ? [me] : ['*'];
   const creator = clean(match.createdByUid, 128);
-  if (!isRestricted(match)) {
-    const adders = Array.isArray(match.adders) ? match.adders : null;
-    if (!adders || !adders.length || adders.includes('*')) return ['*'];
-    return unique([...adders, creator, me]).filter((id) => id && id !== '*').slice(0, 31);
-  }
-  const viewers = match.viewers.filter((id) => id && id !== '*');
+  if (!isRestricted(match)) return ['*'];
+  const viewers = (Array.isArray(match.viewers) ? match.viewers : []).filter((id) => id && id !== '*');
   const adders = Array.isArray(match.adders) ? match.adders : null;
   const openAdd = !adders || !adders.length || adders.includes('*');
-  const ids = openAdd ? viewers : viewers.filter((id) => adders.includes(id));
-  return unique([...ids, creator, me]).slice(0, 31);
+  const adderIds = openAdd ? [] : adders.filter((id) => id && id !== '*');
+  return unique([...viewers, ...adderIds, creator, me]).slice(0, 31);
 }
 
 export function canSeeLog(entry, uid) {
@@ -109,7 +111,7 @@ export function blankLog(partial, actor) {
 
 export function weekRange(now = new Date()) {
   const today = todayISO(now);
-  return { from: addDays(today, -(LOG_DAYS - 1)), to: today };
+  return { from: addDays(today, -LOG_DAYS), to: today };
 }
 
 export function rangeMillis(range) {

@@ -39,7 +39,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v72';
+const APP_VERSION = 'f7c-v73';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2682,8 +2682,9 @@ function renderRegistro(r) {
       <form id="log-range" class="log-range">
         <label class="field"><span>Desde</span><input type="date" id="log-from" value="${esc(range.from)}" aria-label="Desde"></label>
         <label class="field"><span>Hasta</span><input type="date" id="log-to" value="${esc(range.to)}" aria-label="Hasta"></label>
+        <button type="submit" class="btn" id="log-apply">Ver</button>
       </form>
-      <p class="hint">Últimos 7 días, hasta hoy. Se puede cambiar el rango.</p>
+      <p class="hint" id="log-hint">Últimos 20 días, hasta hoy. Tocá Ver para usar otras fechas.</p>
       ${list}
     </div>`)) return;
   const form = $('#log-range');
@@ -2695,7 +2696,7 @@ function renderRegistro(r) {
     app.store?.setLogRange?.(app.logRange);
     render();
   };
-  form.onchange = apply;
+  form.onsubmit = (e) => { e.preventDefault(); apply(); };
 }
 
 function renderUsers() {
