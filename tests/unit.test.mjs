@@ -16,7 +16,7 @@ import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, 
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
-import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, splitEven, splitPaymentAcross } from '../js/prices.js';
+import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, numericDate, shortHour, toEpoch } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
@@ -1774,6 +1774,42 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(four.shares.reduce((sum, n) => sum + n, 0), 17000);
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).label, 'Promo 3 partidos por $10.000');
   assert.equal(promoOffer(3, { matchPrice: 4000, promo2Price: 7000, promo3Price: 10000 }).total, 10000);
+  const freeDay = [
+    { id: 'g1', matchId: 'a', phone, waiting: false, freePlay: true, paid: true },
+    { id: 'g2', matchId: 'b', phone, waiting: false },
+  ];
+  assert.equal(promoForPlayer({ player: freeDay[1], players: freeDay, matches, prices: null }), null);
+  assert.equal(promoForPlayer({ player: freeDay[0], players: freeDay, matches, prices: null }), null);
+  const threeFree = [
+    { id: 'h1', matchId: 'a', phone, waiting: false, freePlay: true, paid: true },
+    { id: 'h2', matchId: 'b', phone, waiting: false },
+    { id: 'h3', matchId: 'c', phone, waiting: false },
+  ];
+  const promoTwo = promoForPlayer({ player: threeFree[1], players: threeFree, matches, prices: null });
+  assert.equal(promoTwo.count, 2);
+  assert.equal(promoTwo.total, 9000);
+  assert.equal(promoTwo.share, 4500);
+  const paidPair = [
+    { id: 'i1', matchId: 'a', phone, waiting: false, paid: true, split: true, cash: 4500, transfer: 0, fromCredit: 0, cashTo: 'Gustavo' },
+    { id: 'i2', matchId: 'b', phone, waiting: false, paid: true, split: true, cash: 4500, transfer: 0, fromCredit: 0, cashTo: 'Gustavo' },
+  ];
+  const refund = promoRefundAfterFree({ player: paidPair[1], players: paidPair, matches, prices: null });
+  assert.equal(refund.newDue, 5000);
+  assert.equal(refund.received, 9000);
+  assert.deepEqual(refund.credits, [{ name: 'Gustavo', amount: 4000 }]);
+  assert.equal(refund.payments.length, 1);
+  assert.equal(refund.payments[0].playerId, 'i1');
+  assert.equal(refund.payments[0].cash, 5000);
+  assert.equal(refund.payments[0].cashTo, 'Gustavo');
+  const mixed = [
+    { id: 'j1', matchId: 'a', phone, waiting: false, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
+    { id: 'j2', matchId: 'b', phone, waiting: false, paid: true, split: true, cash: 0, transfer: 4500, transferTo: 'Martín', fromCredit: 0 },
+  ];
+  const mixedRefund = promoRefundAfterFree({ player: mixed[1], players: mixed, matches, prices: null });
+  assert.equal(mixedRefund.payments[0].cash, 4500);
+  assert.equal(mixedRefund.payments[0].transfer, 500);
+  assert.equal(mixedRefund.payments[0].transferTo, 'Martín');
+  assert.deepEqual(mixedRefund.credits, [{ name: 'Martín', amount: 4000 }]);
 });
 
 test('promo de invitados: es quien invita + el nombre del invitado', () => {
@@ -2659,7 +2695,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v78');
+  assert.equal(version, 'f7c-v79');
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
