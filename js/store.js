@@ -1409,8 +1409,14 @@ export class FirebaseStore {
   async resetDatabase() {
     requireAdmin(this.actor);
     const ops = [];
-    for (const name of BACKUP_COLLECTIONS) {
-      if (name === 'users') continue;
+    // Primero lo que las reglas miran en otro documento (teléfono → jugador →
+    // partido). El partido al final: borrarlo con jugadores hacía fallar el permiso.
+    const order = [
+      'links', 'log', 'compensations', 'credits', 'confirmations',
+      'playerContacts', 'rosterContacts', 'players', 'roster', 'organizers',
+      'settings', 'venues', 'matches',
+    ];
+    for (const name of order) {
       const current = await this._readCollection(name);
       for (const id of Object.keys(current)) ops.push({ kind: 'delete', segments: [name, id] });
     }

@@ -89,12 +89,12 @@ service cloud.firestore {
       return !('viewers' in d) || d.viewers == null || (d.viewers is list && d.viewers.hasAny(['*']));
     }
     function isViewer(d) {
-      return isPublic(d) || (d.viewers is list && (d.viewers.hasAny([request.auth.uid]) || d.createdByUid == request.auth.uid));
+      return isPublic(d) || (d.viewers is list && (d.viewers.hasAny([request.auth.uid]) || d.get('createdByUid', '') == request.auth.uid));
     }
     function isAdder(d) {
       return isViewer(d) && (
         !('adders' in d) || d.adders == null
-        || (d.adders is list && (d.adders.hasAny(['*']) || d.adders.hasAny([request.auth.uid]) || d.createdByUid == request.auth.uid))
+        || (d.adders is list && (d.adders.hasAny(['*']) || d.adders.hasAny([request.auth.uid]) || d.get('createdByUid', '') == request.auth.uid))
       );
     }
     function accessSame() {
@@ -105,7 +105,7 @@ service cloud.firestore {
           && request.resource.data.get('limits', null) == resource.data.get('limits', null);
     }
     function isCreator() {
-      return resource.data.createdByUid == request.auth.uid;
+      return resource.data.get('createdByUid', '') == request.auth.uid;
     }
     function legacyStamp() {
       return !('viewers' in resource.data)
@@ -538,9 +538,13 @@ service cloud.firestore {
       // está, vale 0 y un partido viejo se puede borrar. La regla no puede
       // contar los documentos de players: quien edita el partido podría
       // poner el contador en 0 y después borrarlo.
-      allow delete: if isActiveStaff()
-          && ((isPublic(resource.data) && isAdder(resource.data)) || isCreator())
-          && resource.data.get('playerCount', 0) == 0;
+      // El admin (reset) borra igual aunque haya jugadores o falte createdByUid.
+      // isAdmin() va primero: si no, leer un campo que no está tira error y
+      // Firebase niega el pedido entero, también el permiso de admin.
+      allow delete: if isAdmin()
+          || (isActiveStaff()
+              && ((isPublic(resource.data) && isAdder(resource.data)) || isCreator())
+              && resource.data.get('playerCount', 0) == 0);
     }
 
     function invitedByUnchanged() {
@@ -599,7 +603,8 @@ service cloud.firestore {
             )
             || playerFollowsMatch()
           );
-      allow delete: if isActiveStaff() && (!('adders' in resource.data) || resource.data.adders.hasAny([request.auth.uid, '*']));
+      allow delete: if isAdmin()
+          || (isActiveStaff() && (!('adders' in resource.data) || (resource.data.adders is list && resource.data.adders.hasAny([request.auth.uid, '*']))));
     }
 
     match /roster/{rosterId} {
@@ -624,7 +629,7 @@ service cloud.firestore {
       allow create, update: if isActiveStaff()
           && venueId.matches('^[a-z0-9][a-z0-9-]{0,39}$')
           && validVenue(request.resource.data);
-      allow delete: if false;
+      allow delete: if isAdmin();
     }
 
     match /organizers/{organizerId} {
@@ -713,10 +718,14 @@ service cloud.firestore {
           && exists(playerPath(playerId))
           && contactViewersFollow(playerId)
           && isAdder(matchData(get(playerPath(playerId)).data.matchId));
-      allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
-      allow delete: if isActiveStaff() && !exists(playerPath(playerId));
-      allow delete: if isActiveStaff() && exists(playerPath(playerId))
-          && isAdder(matchData(get(playerPath(playerId)).data.matchId));
+      // isAdmin() primero: el reset borra teléfonos ajenos sin mirar el partido.
+      // Si esa lectura falla, Firebase niega todo el pedido.
+      allow delete: if isAdmin()
+          || (isActiveStaff() && resource.data.get('ownerUid', '') == request.auth.uid)
+          || (isActiveStaff() && !exists(playerPath(playerId)))
+          || (isActiveStaff() && exists(playerPath(playerId))
+              && exists(/databases/$(database)/documents/matches/$(get(playerPath(playerId)).data.get('matchId', 'x')))
+              && isAdder(matchData(get(playerPath(playerId)).data.matchId)));
     }
 
     match /rosterContacts/{rosterId} {
