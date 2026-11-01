@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v85');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v86');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3886,6 +3886,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   check('Editar partido conserva cómo se reparten las ganancias', await page.locator('#match-split-signed').isChecked());
   await page.click('#match-form [data-close]');
   await page.waitForSelector('#btn-comp');
+  check('En el partido el botón nombra el día', (await page.locator('#btn-comp').innerText()).includes('Hacer cálculo de compensación del día LUNES 23/11/2026'));
   await page.click('#btn-comp');
   await page.waitForSelector('#comp-missing');
   check('Sin pago no calcula y nombra al jugador', (await page.locator('#comp-missing').innerText()).includes('Ana Compensa') && (await page.locator('#comp-missing').innerText()).includes('Beto Compensa'));
@@ -3922,6 +3923,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForSelector('#comp-transfers');
   const detail = await page.locator('#comp-detail').innerText();
   check('Lo pendiente de confirmar cuenta como cobrado por ese organizador', detail.includes('Martín le pasa $5.000 a Gustavo') && detail.includes('$10.000'));
+  check('El detalle se titula con el día', (await page.locator('#comp-title').innerText()) === 'Compensación del día LUNES 23/11/2026');
   await shot('v81-calculo-partido', '#comp-detail', 'bottom');
   await page.click('[data-comp-done]');
   await page.waitForFunction(() => (document.querySelector('#comp-transfers')?.textContent || '').includes('Transferido'));
@@ -3935,8 +3937,18 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.fill('#hist-day', '2026-10-16');
   await page.click('#hist-apply');
   await page.waitForSelector('[data-comp-make="2026-10-16"]');
+  const makeLabel = (await page.locator('[data-comp-make="2026-10-16"]').innerText()).replace(/\s+/g, ' ');
+  const makeFit = await page.locator('[data-comp-make="2026-10-16"]').evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    return { inside: box.right <= window.innerWidth + 1 && box.left >= -1, wraps: el.scrollWidth <= el.clientWidth + 1, tall: el.getBoundingClientRect().height >= 48 };
+  });
+  check('En Historial el botón nombra el día y entra en 390px', makeLabel.includes('Hacer cálculo de compensación del día VIERNES 16/10/2026') && makeFit.inside && makeFit.wraps && makeFit.tall, `${makeLabel} ${JSON.stringify(makeFit)}`);
   await page.click('[data-comp-make="2026-10-16"]');
   await page.waitForSelector('[data-comp-toggle="2026-10-16"]');
+  const head = (await page.locator('[data-comp-toggle="2026-10-16"]').innerText()).replace(/\s+/g, ' ');
+  check('La fila del historial nombra el día', head.includes('Compensación del día VIERNES 16/10/2026') && !head.includes('El cálculo cambió'), head);
+  await page.locator('[data-comp-toggle="2026-10-16"]').evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v86-historial-compensacion.png' });
   await page.click('[data-comp-toggle="2026-10-16"]');
   await page.waitForFunction(() => !document.querySelector('#comp-detail'));
   await shot('v81-historial-cerrado', '[data-comp-toggle="2026-10-16"]');
@@ -3970,6 +3982,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForSelector('#comp-changed');
   const changed = await page.locator('#comp-detail').innerText();
   check('Si se rechaza el cobro, el cálculo cambia solo', changed.includes('El cálculo cambió') && changed.includes('ya no corresponde') && !changed.includes('$10.000'));
+  check('El título cambiado deja la fecha antes del aviso', (await page.locator('#comp-title').innerText()) === 'Compensación del día LUNES 23/11/2026 · El cálculo cambió');
   await shot('v81-calculo-cambio', '#comp-detail', 'bottom');
 }
 
@@ -4225,7 +4238,7 @@ async function assertGuestPromo(fix, visibleName, count) {
     return scroller.scrollTop;
   });
   check('El historial queda desplazado antes de pagar', placed > 40, String(placed));
-  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Uno' }).click();
+  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Uno' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-form');
   check('Faltan pagar abre el pago y no el menú del jugador', await page.locator('#menu-panel').count() === 0 && await page.locator('#pm-pay').count() === 0 && (await page.locator('#pay-form h3').innerText()) === 'Pago');
   await page.fill('#pay-form [name=cash]', '5000');
@@ -4260,7 +4273,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   }, placed);
   check('Guardar vuelve a la lista abierta, en el mismo lugar, y saca al que pagó', afterPay.hash === '#/historial' && !afterPay.menu && afterPay.open && afterPay.text.includes('Vuelve Dos') && afterPay.text.includes('$5.000') && !afterPay.text.includes('Vuelve Uno') && Math.abs(afterPay.scroll - placed) < 40, JSON.stringify(afterPay));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v85-historial-vuelve.png' });
-  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).click();
+  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-back');
   await page.click('#pay-back');
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
@@ -4276,7 +4289,7 @@ async function assertGuestPromo(fix, visibleName, count) {
     };
   }, placed);
   check('Cancelar también vuelve a la lista', afterCancel.hash === '#/historial' && !afterCancel.menu && afterCancel.open && afterCancel.text.includes('Vuelve Dos') && Math.abs(afterCancel.scroll - placed) < 40, JSON.stringify(afterCancel));
-  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).click();
+  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-form');
   await page.fill('#pay-form [name=cash]', '5000');
   await page.click('#pay-form button[type=submit]');

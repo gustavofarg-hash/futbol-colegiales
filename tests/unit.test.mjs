@@ -19,7 +19,7 @@ import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, cred
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { addDays, numericDate, shortHour, toEpoch } from '../js/dates.js';
+import { addDays, compensationWhen, numericDate, shortHour, toEpoch } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -47,6 +47,15 @@ test('fecha numérica dd/mm/aaaa', () => {
   assert.equal(numericDate('2023-12-12'), '12/12/2023');
   assert.equal(numericDate('2026-10-08'), '08/10/2026');
   assert.equal(numericDate(''), '');
+});
+
+test('la compensación nombra el día en mayúsculas y la fecha local', () => {
+  assert.equal(compensationWhen('2026-10-29'), 'JUEVES 29/10/2026');
+  assert.equal(compensationWhen('2026-10-16'), 'VIERNES 16/10/2026');
+  assert.equal(compensationWhen('2026-11-23'), 'LUNES 23/11/2026');
+  assert.equal(compensationWhen('2026-10-21'), 'MIÉRCOLES 21/10/2026');
+  assert.equal(compensationWhen('2026-10-24'), 'SÁBADO 24/10/2026');
+  assert.equal(compensationWhen(''), '');
 });
 
 test('hora corta de la lista', () => {
@@ -2760,7 +2769,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v85');
+  assert.equal(version, 'f7c-v86');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
