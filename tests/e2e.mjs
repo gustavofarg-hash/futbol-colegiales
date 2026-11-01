@@ -4383,7 +4383,7 @@ async function assertGuestPromo(fix, visibleName, count) {
     const app = window.__app;
     const me = app.session.user;
     const { phoneKey } = await import('./js/privacy.js');
-    const { canonicalPhone } = await import('./js/phone.js');
+    const { canonicalPhone } = await import('./js/roster.js');
     const hash = phoneKey(canonicalPhone('11 5555-8787'));
     await app.store.adjustCredit({
       personKey: `p:${hash}`,
@@ -4432,13 +4432,14 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForSelector('#log-list');
   const autoLog = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
   check('Registro marca el pago como crédito automático', autoLog.includes('Crédito automático') && autoLog.includes('Credito Auto'), autoLog.slice(0, 240));
-  await page.locator('#log-list').locator('text=Crédito automático').first().scrollIntoViewIfNeeded();
+  await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
+  await page.locator('#log-list .log-row', { hasText: 'Crédito automático' }).first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v88-registro-credito.png' });
   const cupo = await page.evaluate(async () => {
     const app = window.__app;
     const me = app.session.user;
     const { phoneKey } = await import('./js/privacy.js');
-    const { canonicalPhone } = await import('./js/phone.js');
+    const { canonicalPhone } = await import('./js/roster.js');
     const hash = phoneKey(canonicalPhone('11 5555-8788'));
     await app.store.adjustCredit({ personKey: `p:${hash}`, organizerUid: me.uid, organizerName: me.name, name: 'Credito Espera', delta: 5000 }, me.name);
     return app.store.addMatch({ date: '2026-11-09', time: '19:00', price: 5000, note: 'Credito espera', capacity: 1 }, me.name);
@@ -4463,9 +4464,11 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.click('#ask-ok');
   await page.waitForSelector('#ask-yes');
   await page.click('#ask-yes');
+  await page.waitForFunction(() => (document.querySelector('#sheet')?.innerText || '').includes('WhatsApp'));
+  await page.click('#ask-no');
   await page.waitForFunction(() => {
     const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((player) => player.name === 'Credito Espera');
-    return row && row.waiting !== true && row.autoCredit === true && row.fromCredit === 5000;
+    return !document.querySelector('#sheet')?.open && row && row.waiting !== true && row.autoCredit === true && row.fromCredit === 5000;
   });
   check('Al subir de la espera se paga con el saldo de quien se anotó', true);
   await page.locator('.slot', { has: page.locator('.name:text-is("Credito Espera")') }).locator('.more-btn').click();

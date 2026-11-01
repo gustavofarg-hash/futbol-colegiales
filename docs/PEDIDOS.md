@@ -32,7 +32,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **e2e 719/719 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 100/100 OK** (`node --test tests/unit.test.mjs`). El e2e de v87 revisa el desliz entre pestañas, el borde, el desliz corto o vertical, y que un partido o una ficha no cambian de pestaña.
+Pruebas sobre esta copia: **e2e 728/728 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 100/100 OK** (`node --test tests/unit.test.mjs`). El e2e de v88 revisa que el saldo paga al anotarse y al subir de la espera, que la promo usa la parte del día, y que al quitar o cancelar vuelve solo el crédito automático.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
