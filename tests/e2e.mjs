@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v89');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v90');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4425,9 +4425,10 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForFunction(() => {
     const rows = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((player) => player.name === 'Credito Auto');
     const late = rows.find((player) => player.matchDate === '2026-11-08' && String(player.matchId || '').includes('2100'));
-    return late && late.autoCredit === true && late.fromCredit === 3000;
+    const early = rows.find((player) => player.matchDate === '2026-11-08' && String(player.matchId || '').includes('1900'));
+    return early?.autoCredit === true && early.fromCredit === 4500 && late && late.autoCredit === true && late.fromCredit === 3500;
   });
-  check('Con promo usa la parte del día y, si no alcanza, deja el resto como deuda', (await page.locator('.slot', { has: page.locator('.name:text-is("Credito Auto")') }).innerText()).includes('Crédito'));
+  check('Con promo el primero baja a la parte del día y el segundo usa lo que queda', (await page.locator('.slot', { has: page.locator('.name:text-is("Credito Auto")') }).innerText()).includes('Crédito'));
   await page.evaluate(() => { location.hash = '#/registro/pagos'; });
   await page.waitForSelector('#log-list');
   const autoLog = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
@@ -4489,9 +4490,10 @@ async function assertGuestPromo(fix, visibleName, count) {
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
     const row = Object.values(db.players).find((player) => player.name === 'Credito Auto' && String(player.matchId || '').includes('1900'));
     const credit = Object.values(db.credits || {}).find((item) => item.name === 'Credito Auto');
-    return row && row.autoCredit !== true && credit && credit.amount === 5000;
+    const late = Object.values(db.players).find((player) => player.name === 'Credito Auto' && String(player.matchId || '').includes('2100'));
+    return row && row.autoCredit !== true && late?.fromCredit === 3500 && credit && credit.amount === 4500;
   });
-  check('Al cancelar el partido vuelve solo el crédito automático', true);
+  check('Al cancelar el partido vuelve solo el crédito automático de ese partido', true);
   await page.evaluate(() => { location.hash = '#/registro/pagos'; });
   await page.waitForSelector('#log-list');
   check('Registro anota la devolución del crédito', (await page.locator('#log-list').innerText()).includes('Crédito devuelto'));
@@ -4616,6 +4618,141 @@ async function assertGuestPromo(fix, visibleName, count) {
     return { fromCredit: mid?.fromCredit || 0, credit };
   });
   check('La segunda vez no vuelve a descontar', twice.fromCredit === 1000 && twice.credit === 4000, JSON.stringify(twice));
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  const promoDay = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/roster.js');
+    const hash = phoneKey(canonicalPhone('11 5555-8910'));
+    await app.store.adjustCredit({
+      personKey: `p:${hash}`, organizerUid: me.uid, organizerName: me.name, name: 'Promo Reajusta', delta: 9000,
+    }, me.name);
+    return app.store.addMatch({ date: '2026-11-12', time: '19:00', price: 5000, note: 'Promo reajusta', capacity: 14 }, me.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#player-name');
+  await page.fill('#player-name', 'Promo Reajusta');
+  await page.fill('#player-form [name=phone]', '11 5555-8910');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((player) => player.name === 'Promo Reajusta');
+    return row && row.autoCredit === true && row.fromCredit === 5000;
+  });
+  const secondPromo = await page.evaluate(async () => {
+    const app = window.__app;
+    return app.store.addMatch({ date: '2026-11-12', time: '21:00', price: 5000, note: 'Promo reajusta tarde', capacity: 14 }, app.session.user.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, secondPromo);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Promo Reajusta');
+  await page.fill('#player-form [name=phone]', '11 5555-8910');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const rows = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((player) => player.name === 'Promo Reajusta');
+    return rows.length === 2 && rows.every((row) => row.autoCredit === true && row.fromCredit === 4500);
+  });
+  const balanced = await page.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const credit = Object.values(db.credits || {}).find((row) => row.name === 'Promo Reajusta')?.amount ?? 0;
+    return credit;
+  });
+  check('Al entrar a la promo los dos partidos quedan en $4.500, no $5.000 más $4.500', balanced === 0, String(balanced));
+  await page.evaluate(() => { location.hash = '#/registro/pagos'; });
+  await page.waitForSelector('#log-list');
+  const promoLog = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
+  check('Registro anota el ajuste del crédito automático', promoLog.includes('Crédito devuelto') && promoLog.includes('Promo Reajusta') && promoLog.includes('$500'), promoLog.slice(0, 320));
+  await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
+  await page.locator('#log-list .log-row', { hasText: 'Promo Reajusta' }).first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v90-registro-promo.png' });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, secondPromo);
+  await page.waitForSelector('.slot:has-text("Promo Reajusta") .more-btn');
+  await page.locator('.slot', { has: page.locator('.name:text-is("Promo Reajusta")') }).locator('.more-btn').click();
+  await page.click('#pm-del');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const left = Object.values(db.players).find((player) => player.name === 'Promo Reajusta');
+    const credit = Object.values(db.credits || {}).find((row) => row.name === 'Promo Reajusta')?.amount ?? 0;
+    return left && left.autoCredit === true && left.fromCredit === 5000 && credit === 4000 && !Object.values(db.players).some((player) => player.name === 'Promo Reajusta' && String(player.matchId || '').includes('2100'));
+  });
+  check('Al salir de la promo el que queda vuelve a $5.000 y el resto sigue de saldo', true);
+  const partialEarly = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/roster.js');
+    await app.store.adjustCredit({
+      personKey: `p:${phoneKey(canonicalPhone('11 5555-8911'))}`,
+      organizerUid: me.uid, organizerName: me.name, name: 'Promo Parcial', delta: 6000,
+    }, me.name);
+    return app.store.addMatch({ date: '2026-11-13', time: '19:00', price: 5000, note: 'Promo parcial', capacity: 14 }, me.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, partialEarly);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Promo Parcial');
+  await page.fill('#player-form [name=phone]', '11 5555-8911');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((player) => player.name === 'Promo Parcial' && player.fromCredit === 5000));
+  const partialLate = await page.evaluate(async () => window.__app.store.addMatch({ date: '2026-11-13', time: '21:00', price: 5000, note: 'Promo parcial tarde', capacity: 14 }, window.__app.session.user.name));
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, partialLate);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Promo Parcial');
+  await page.fill('#player-form [name=phone]', '11 5555-8911');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const rows = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((player) => player.name === 'Promo Parcial');
+    const early = rows.find((player) => String(player.matchId || '').includes('1900'));
+    const late = rows.find((player) => String(player.matchId || '').includes('2100'));
+    return early?.fromCredit === 4500 && late?.autoCredit === true && late.fromCredit === 1500;
+  });
+  check('Si el saldo no alcanza, la deuda del segundo es la parte de la promo', true);
+  const triple = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/roster.js');
+    await app.store.adjustCredit({
+      personKey: `p:${phoneKey(canonicalPhone('11 5555-8912'))}`,
+      organizerUid: me.uid, organizerName: me.name, name: 'Promo Tres', delta: 20000,
+    }, me.name);
+    return app.store.addMatch({ date: '2026-11-14', time: '18:00', price: 5000, note: 'Promo tres', capacity: 14 }, me.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, triple);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Promo Tres');
+  await page.fill('#player-form [name=phone]', '11 5555-8912');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((player) => player.name === 'Promo Tres' && player.fromCredit === 5000));
+  for (const time of ['20:00', '22:00']) {
+    const id = await page.evaluate(async (time) => window.__app.store.addMatch({ date: '2026-11-14', time, price: 5000, note: 'Promo tres', capacity: 14 }, window.__app.session.user.name), time);
+    await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, id);
+    await page.waitForSelector('#btn-add-player');
+    await page.click('#btn-add-player');
+    await page.fill('#player-name', 'Promo Tres');
+    await page.fill('#player-form [name=phone]', '11 5555-8912');
+    await page.click('#player-form button[type=submit]');
+    const mark = time === '20:00' ? 4500 : 4000;
+    await page.waitForFunction((mark) => {
+      const rows = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((player) => player.name === 'Promo Tres');
+      return rows.length >= (mark === 4500 ? 2 : 3) && rows.every((player) => player.fromCredit === mark);
+    }, mark);
+  }
+  const triplePay = await page.evaluate(() => {
+    const rows = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((player) => player.name === 'Promo Tres');
+    return rows.map((player) => player.fromCredit || 0).sort((a, b) => a - b);
+  });
+  check('Con tres partidos la promo 3 deja $4.000 en cada uno', triplePay.join() === '4000,4000,4000', JSON.stringify(triplePay));
 }
 
 const fresh = await ctx.newPage();

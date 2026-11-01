@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
@@ -2745,6 +2745,10 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.equal(autoCreditTake(5000, 3000).pay, 3000);
   assert.equal(autoCreditTake(5000, 3000).left, 2000);
   assert.equal(autoCreditTake(0, 3000).pay, 0);
+  assert.equal(autoCreditExcess({ received: 5000, fromCredit: 5000, auto: true, share: 4500 }), 500);
+  assert.equal(autoCreditExcess({ received: 5000, fromCredit: 200, auto: true, share: 4500 }), 200);
+  assert.equal(autoCreditExcess({ received: 5000, fromCredit: 5000, auto: false, share: 4500 }), 0);
+  assert.equal(autoCreditExcess({ received: 3000, fromCredit: 3000, auto: true, share: 4500 }), 0);
   assert.equal(paymentRecord({ paid: true, split: true, cash: 0, transfer: 0, pendingTransfer: 0, fromCredit: 4500, creditTo: 'Gustavo', autoCredit: true }, 'Gustavo').patch.autoCredit, true);
   assert.equal(paymentRecord({ paid: true, split: true, cash: 5000, transfer: 0, pendingTransfer: 0, fromCredit: 0, cashTo: 'Gustavo' }, 'Gustavo').patch.autoCredit, null);
   const deletedPay = paymentLines({ cash: 2000, cashTo: 'Martín' }, { cash: 0, cashTo: null });
@@ -2815,7 +2819,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v89');
+  assert.equal(version, 'f7c-v90');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
