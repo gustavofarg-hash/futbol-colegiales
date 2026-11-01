@@ -717,6 +717,26 @@ dialog.ask::backdrop { background: rgba(0,0,0,.62); }
 #btn-hist-import { white-space: normal; text-align: center; line-height: 1.15; margin: 0 0 12px; }
 .sheet-actions { display: flex; gap: 10px; margin-top: 6px; }
 .sheet-actions .btn { flex: 1; }
+.pay-sheet {
+  display: flex; flex-direction: column; overflow: hidden;
+  padding-bottom: 0;
+}
+#pay-form {
+  display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; overflow: hidden;
+}
+#pay-scroll {
+  overflow-y: auto; min-height: 0; flex: 1 1 auto;
+  padding-bottom: 18px;
+  -webkit-overflow-scrolling: touch;
+}
+#pay-form > .sheet-actions {
+  flex: none; position: relative; z-index: 2;
+  margin: 0 -18px 0;
+  padding: 10px 18px calc(12px + var(--safe-b));
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+#pay-over-ask { flex: none; margin: 0 0 4px; }
 
 .choice { display: grid; gap: 10px; margin: 14px 0 4px; }
 .choice .btn { min-height: 60px; font-size: 1.125rem; }

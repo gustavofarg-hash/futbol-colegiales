@@ -1,7 +1,7 @@
 // Precios del partido y promos del mismo día. Puro: la UI lee el documento
 // settings/prices y, si todavía no existe, usa estos defaults.
 import { toEpoch } from './dates.js';
-import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
+import { allocateAcrossDebts, formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { personKey } from './roster.js';
 
 export const DEFAULT_PRICES = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
@@ -138,6 +138,56 @@ export function splitPaymentAcross({ cash = 0, transfer = 0, pending = 0, credit
   return cashShares.map((part, i) => ({ cash: part, transfer: transferShares[i], pending: pendingShares[i], credit: creditShares[i] }));
 }
 
+/**
+ * Tope de cada persona al dividir un pago.
+ * Con promo, el total del día. Con un solo partido, el precio de ese partido.
+ */
+export function guestPromoCap({ person, players, matches, prices }) {
+  const rows = sameDayTitulars({ player: person, players, matches });
+  const norm = normalizePrices(prices);
+  if (rows.length >= 2) return { rows, cap: promoOffer(rows.length, norm).total };
+  if (rows.length === 1) return { rows, cap: priceOfMatch(rows[0].match, norm) };
+  return { rows, cap: 0 };
+}
+
+/**
+ * Reparte el pago entre el anfitrión y sus invitados, en ese orden, hasta lo que
+ * cada uno debe (la promo del día, o el partido si no tiene promo).
+ * Lo de cada persona se parte en partes iguales entre sus partidos; el peso que
+ * sobra queda en el más temprano. Lo que no entra en esas deudas queda afuera.
+ */
+export function allocateGuestPromo({ people, players, matches, prices, cash = 0, transfer = 0, pending = 0, credit = 0 } = {}) {
+  const bills = (people || []).map((person) => ({ person, ...guestPromoCap({ person, players, matches, prices }) }));
+  const dues = bills.map((bill) => bill.cap);
+  const cashSplit = allocateAcrossDebts(cash, dues);
+  const transferSplit = allocateAcrossDebts(transfer, dues);
+  const pendingSplit = allocateAcrossDebts(pending, dues);
+  const creditSplit = allocateAcrossDebts(credit, dues);
+  const rows = bills.map((bill, i) => {
+    const part = {
+      cash: cashSplit.parts[i],
+      transfer: transferSplit.parts[i],
+      pending: pendingSplit.parts[i],
+      credit: creditSplit.parts[i],
+    };
+    const shares = bill.rows.length ? splitPaymentAcross(part, bill.rows.length) : [];
+    return {
+      person: bill.person,
+      cap: bill.cap,
+      ...part,
+      matches: bill.rows.map((row, j) => ({ player: row.player, match: row.match, ...shares[j] })),
+    };
+  });
+  return {
+    rows,
+    cashLeft: cashSplit.left,
+    transferLeft: transferSplit.left,
+    pendingLeft: pendingSplit.left,
+    creditLeft: creditSplit.left,
+    left: roundARS(cashSplit.left + transferSplit.left + pendingSplit.left + creditSplit.left),
+  };
+}
+
 /** Promo del día para este jugador, con el monto que le toca a este partido. */
 export function promoForPlayer({ player, players, matches, prices }) {
   const rows = sameDayTitulars({ player, players, matches });
@@ -158,8 +208,9 @@ function addNamed(parts, name, amount) {
 }
 
 /**
- * Al marcar un partido de la promo como gratis, lo ya cobrado se acomoda
- * al precio nuevo (un partido suelto, o la promo de los que quedan).
+ * Al salir de la promo (gratis, o quitar ese partido), lo ya cobrado se acomoda
+ * al precio nuevo: la promo de los que quedan, o el precio de un partido de Ajustes
+ * si queda uno solo. No usa el precio propio de ese partido.
  * Lo que sobra vuelve como saldo a quien lo había cobrado.
  * Los partidos que quedan se reparten ese cobro en partes iguales;
  * el peso que sobra queda en el primero. «Transfiere después» no se movió:
@@ -173,7 +224,7 @@ export function promoRefundAfterFree({ player, players, matches, prices }) {
   const newDue = others.length >= 2
     ? promoOffer(others.length, norm).total
     : others.length === 1
-      ? priceOfMatch(others[0].match, norm)
+      ? norm.matchPrice
       : 0;
   const ordered = [...others, rows.find((row) => row.player.id === player.id)].filter(Boolean);
   const slices = [];

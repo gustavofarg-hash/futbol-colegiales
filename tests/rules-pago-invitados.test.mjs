@@ -53,7 +53,7 @@ test('pago dividido: él y sus 3 invitados se guardan (admin y organizador)', as
       if (!rec.ok) throw new Error(rec.error);
       return updateDoc(doc(db, 'players', id), { ...rec.patch, updatedAt: 101 });
     };
-    // Lo que manda el formulario con "Dividir entre él y sus invitados".
+    // Lo que manda el formulario con "Dividir el pago entre él y sus invitados".
     const share = { paid: true, split: true, freePlay: false, cash: 5000, transfer: 0, pendingTransfer: 0, cashTo: 'Gus', transferTo: null, pendingTo: null };
     for (const id of ['host', ...guests]) await assertSucceeds(write(admin, id, share, 'Gus'));
 
