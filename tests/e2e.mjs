@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v82');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v83');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4009,6 +4009,65 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForFunction(() => !document.body.innerText.includes('Gonza'));
   check('Aceptar quita a Gonza del partido', true);
   await page.emulateMedia({ colorScheme: 'light' });
+}
+
+{
+  require('node:fs').mkdirSync('/opt/cursor/artifacts/screenshots', { recursive: true });
+  const kept = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    app.store.setActor(me);
+    const martin = app.users.find((user) => user.name === 'Martín');
+    const id = await app.store.addMatch({ date: '2026-11-27', time: '19:00', price: 5000, splitMode: 'equal', note: 'Sigue el cálculo' }, me.name);
+    const match = app.matches.find((item) => item.id === id) || { id, date: '2026-11-27' };
+    const ana = await app.store.addPlayer(match, { name: 'Ramiro Calculo', phone: '11 4444-8390', signedUpWith: martin.uid, signedUpWithName: martin.name }, me.name);
+    await app.store.setPayment(ana, {
+      paid: true, split: true, freePlay: false,
+      cash: 0, transfer: 0, pendingTransfer: 5000, fromCredit: 0, pendingTo: 'Martín',
+    }, me.name);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, kept);
+  await page.waitForSelector('#btn-comp');
+  await page.evaluate(() => {
+    window.__compSave = window.__app.store.saveCompensation.bind(window.__app.store);
+    window.__app.store.saveCompensation = async () => {
+      throw Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+    };
+  });
+  await page.click('#btn-comp');
+  await page.waitForSelector('#app-ask-text');
+  check('Si no se puede guardar el cálculo, avisa y lo deja en pantalla', (await page.locator('#app-ask-text').innerText()).includes('faltan actualizar las reglas de Firebase') && (await page.locator('#comp-rows').innerText()).includes('Ramiro') === false && (await page.locator('#comp-rows').count()) === 1);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v83-calculo-aviso.png' });
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => !document.querySelector('#ask')?.open);
+  check('El cálculo sigue visible después del aviso', await page.locator('#comp-detail').count() === 1 && await page.locator('#btn-comp').count() === 0);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v83-calculo-visible.png' });
+  await page.evaluate(() => {
+    window.__app.store.saveCompensation = window.__compSave;
+    delete window.__app.compHeld;
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, kept);
+  await page.waitForSelector('#btn-comp');
+  await page.click('#btn-comp');
+  await page.waitForSelector('#comp-rows');
+  const shown = await page.locator('#comp-detail').innerText();
+  check('Guardado de verdad, el cálculo muestra lo que transfiere después', shown.includes('Martín') && shown.includes('$5.000') && await page.locator('#btn-comp').count() === 0, shown);
+  await page.reload();
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, kept);
+  await page.waitForSelector('#comp-detail');
+  check('Después de recargar, el cálculo sigue y no vuelve el botón', await page.locator('#btn-comp').count() === 0 && (await page.locator('#comp-rows').innerText()).includes('$5.000'));
+  await page.locator('#comp-detail').evaluate((el) => {
+    const scroller = document.scrollingElement || document.documentElement;
+    const bar = document.querySelector('.actionbar');
+    const barH = bar && getComputedStyle(bar).position === 'fixed' ? bar.getBoundingClientRect().height : 0;
+    const bottom = el.getBoundingClientRect().bottom + scroller.scrollTop;
+    scroller.scrollTop = Math.max(0, bottom - window.innerHeight + barH + 28);
+  });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v83-calculo-recarga.png' });
 }
 
 const fresh = await ctx.newPage();

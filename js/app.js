@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v82';
+const APP_VERSION = 'f7c-v83';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1023,12 +1023,39 @@ function compensationDoc(date, body) {
   };
 }
 const compBusy = new Set();
+function holdCompensation(doc) {
+  app.compHeld = app.compHeld || {};
+  const row = { id: doc.date, ...doc };
+  app.compHeld[doc.date] = row;
+  const rest = (app.compensations || []).filter((item) => item.date !== doc.date && item.id !== doc.date);
+  app.compensations = [...rest, row];
+}
+function mergeHeldCompensations(list) {
+  const held = app.compHeld || {};
+  const out = [...(list || [])];
+  for (const [date, doc] of Object.entries(held)) {
+    const found = out.some((row) => row.date === date || row.id === date);
+    if (found) delete held[date];
+    else out.push(doc);
+  }
+  return out;
+}
+function compensationSaveError(error) {
+  const code = String(error?.code || '');
+  const message = String(error?.message || '');
+  if (code === 'permission-denied' || code === 'permission_denied' || code.endsWith('/permission-denied') || /insufficient permissions/i.test(message)) {
+    return 'No se pudo guardar el cálculo: faltan actualizar las reglas de Firebase.';
+  }
+  const detail = message.replace(/^FirebaseError:\s*/i, '').trim();
+  return detail ? `No se pudo guardar el cálculo. ${detail}` : 'No se pudo guardar el cálculo.';
+}
 function refreshCompensation(date) {
   const saved = savedCompensation(date);
   if (!saved || compBusy.has(date) || !app.store?.saveCompensation) return saved;
   const { matches, players, staff, calc } = dayBundle(date);
   const fingerprint = compensationFingerprint(matches, players, staff);
   if (fingerprint === saved.fingerprint) return saved;
+  if (app.compHeld?.[date]) return saved;
   const next = calc.missing.length
     ? compensationDoc(date, { ...saved, fingerprint, changed: true, computedAt: Date.now() })
     : compensationDoc(date, {
@@ -1039,7 +1066,8 @@ function refreshCompensation(date) {
       transfers: reconcileTransfers(saved.transfers, calc.transfers),
     });
   compBusy.add(date);
-  Promise.resolve(app.store.saveCompensation(date, next)).finally(() => compBusy.delete(date));
+  holdCompensation(next);
+  Promise.resolve(app.store.saveCompensation(date, next)).catch(() => holdCompensation(next)).finally(() => compBusy.delete(date));
   return next;
 }
 function historyWithCompensation(matches) {
@@ -1098,14 +1126,23 @@ async function runCompensation(date) {
   }
   const saved = savedCompensation(date);
   const fingerprint = compensationFingerprint(matches, players, staff);
-  await app.store.saveCompensation(date, compensationDoc(date, {
+  const doc = compensationDoc(date, {
     fingerprint,
     changed: !!(saved && saved.fingerprint && saved.fingerprint !== fingerprint),
     computedAt: Date.now(),
     rows: calc.rows,
     transfers: reconcileTransfers(saved?.transfers, calc.transfers),
-  }));
+  });
+  holdCompensation(doc);
   app.compOpen = date;
+  render();
+  try {
+    await app.store.saveCompensation(date, doc);
+  } catch (error) {
+    holdCompensation(doc);
+    render();
+    await askNotice(compensationSaveError(error));
+  }
 }
 async function markCompensationPaid(date, key) {
   const saved = savedCompensation(date);
@@ -1972,7 +2009,7 @@ function openResetDb() {
   if (app.role !== 'admin') return;
   openSheet(`
     <h3>Resetear base de datos</h3>
-    <p class="backup-warn">Se borra todo lo cargado: partidos, jugadores, plantel, pagos, sedes, precios, teléfonos y links. Las cuentas para entrar quedan. Conviene hacer un backup antes.</p>
+    <p class="backup-warn">Se borra todo lo cargado: partidos, jugadores, plantel, pagos, sedes, precios, teléfonos, links, compensaciones y el registro. Las cuentas para entrar quedan. Conviene hacer un backup antes.</p>
     <p class="hint">Si después no hay sedes, al abrir de nuevo vuelve Polideportivo Colegiales.</p>
     <div class="menu">
       <button type="button" class="btn" id="reset-go-backup">Hacer backup</button>
@@ -4970,7 +5007,10 @@ function openPlayerMenu(m, p) {
 }
 
 const ask = $('#ask');
-function askConfirm(message, { danger = false } = {}) {
+function askNotice(message) {
+  return askConfirm(message, { notice: true });
+}
+function askConfirm(message, { danger = false, notice = false } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     let pushed = false;
@@ -4996,10 +5036,12 @@ function askConfirm(message, { danger = false } = {}) {
     const onPop = () => finish(false, true);
     const onCancel = (event) => { event.preventDefault(); finish(false); };
     const onClose = () => finish(false);
-    ask.innerHTML = `<div class="ask-card" id="app-ask"><p id="app-ask-text"></p><div class="sheet-actions"><button type="button" class="btn" id="ask-cancel">Cancelar</button><button type="button" class="btn ${danger ? 'danger solid' : 'primary'}" id="ask-ok">Aceptar</button></div></div>`;
+    const cancel = notice ? '' : '<button type="button" class="btn" id="ask-cancel">Cancelar</button>';
+    ask.innerHTML = `<div class="ask-card" id="app-ask"><p id="app-ask-text"></p><div class="sheet-actions">${cancel}<button type="button" class="btn ${danger ? 'danger solid' : 'primary'}" id="ask-ok">Aceptar</button></div></div>`;
     ask.querySelector('#app-ask-text').textContent = String(message || '');
-    ask.querySelector('#ask-cancel').onclick = () => finish(false);
-    ask.querySelector('#ask-ok').onclick = () => finish(true);
+    const cancelBtn = ask.querySelector('#ask-cancel');
+    if (cancelBtn) cancelBtn.onclick = () => finish(false);
+    ask.querySelector('#ask-ok').onclick = () => finish(!notice);
     ask.onclick = (event) => { if (event.target === ask) finish(false); };
     ask.addEventListener('cancel', onCancel);
     ask.addEventListener('close', onClose);
@@ -5307,7 +5349,7 @@ async function boot() {
     app.prices = prices || null;
     app.credits = credits || [];
     app.creditsError = creditsError || null;
-    app.compensations = view.compensations || [];
+    app.compensations = mergeHeldCompensations(view.compensations || []);
     app.log = view.log || [];
     app.logError = view.logError || '';
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);
