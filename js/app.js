@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v84';
+const APP_VERSION = 'f7c-v85';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -5419,6 +5419,10 @@ async function boot() {
       const player = app.players.find((item) => item.id === owePlayer.dataset.owePlayer);
       if (!player) return;
       const match = knownMatches().find((item) => item.id === player.matchId) || null;
+      if (match && canAdd(match, actor().uid)) {
+        openOwePayment(match, player);
+        return;
+      }
       openPlayerMenu(match, player);
       return;
     }
@@ -5617,12 +5621,39 @@ async function fixOverflow() {
   finally { fixingOverflow = false; }
 }
 
+function consumeOweScroll() {
+  const top = app.oweReturnScroll;
+  if (top == null) return;
+  app.oweReturnScroll = null;
+  const apply = () => {
+    const scroller = document.scrollingElement;
+    if (scroller) scroller.scrollTop = top;
+  };
+  apply();
+  requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
+}
+function openOwePayment(match, player) {
+  if (!app.oweOpen) app.oweOpen = new Set();
+  app.oweOpen.add(match.id);
+  const hash = location.hash;
+  app.oweReturnScroll = document.scrollingElement?.scrollTop || 0;
+  openPaymentForm(match, player, {
+    returnTo: () => {
+      if (!app.oweOpen) app.oweOpen = new Set();
+      app.oweOpen.add(match.id);
+      if (location.hash !== hash) location.hash = hash;
+      if (sheet.open) closeSheet();
+      else consumeOweScroll();
+    },
+  });
+}
 sheet.addEventListener('close', () => {
   restoreTabs();
   placeBars();
   app.refreshPaySheet = null;
   pendingRender = false;
   render();
+  consumeOweScroll();
   // El formulario cerrado no puede dejar ids repetidos (notas del menú y de la ficha).
   // Se vacía después: si en este mismo turno se abre otra hoja, no hay que pisarla.
   queueMicrotask(() => {
