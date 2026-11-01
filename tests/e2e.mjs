@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v88');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v89');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4495,6 +4495,127 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.evaluate(() => { location.hash = '#/registro/pagos'; });
   await page.waitForSelector('#log-list');
   check('Registro anota la devolución del crédito', (await page.locator('#log-list').innerText()).includes('Crédito devuelto'));
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  const before = await page.evaluate(async () => {
+    const app = window.__app;
+    const { autoCreditPassKey } = await import('./js/credit.js');
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/roster.js');
+    const me = app.session.user;
+    const martin = app.users.find((user) => user.name === 'Martín');
+    localStorage.setItem(autoCreditPassKey(me.uid), '1');
+    const key = (phone) => `p:${phoneKey(canonicalPhone(phone))}`;
+    const add = (date, time, note) => app.store.addMatch({ date, time, price: 5000, capacity: 14, note }, me.name);
+    const oldId = await add('2026-11-01', '18:00', 'Retro viejo');
+    const midId = await add('2026-11-02', '18:00', 'Retro medio');
+    const pastId = await add('2026-10-16', '18:00', 'Retro pasado');
+    const cancelId = await add('2026-11-03', '18:00', 'Retro cancelado');
+    const waitId = await add('2026-11-04', '18:00', 'Retro espera');
+    const promoEarly = await add('2026-11-10', '19:00', 'Retro promo');
+    const promoLate = await add('2026-11-10', '21:00', 'Retro promo tarde');
+    const otherId = await add('2026-11-05', '18:00', 'Retro ajeno');
+    const partialId = await add('2026-11-06', '18:00', 'Retro parcial');
+    const match = (id) => app.matches.find((item) => item.id === id) || { id };
+    const person = (name, phone, signup = {}) => ({ name, phone, ...signup });
+    await app.store.addPlayer(match(oldId), person('Retro Viejo', '11 5555-8901', { signedUpWith: '', signedUpWithName: '' }), me.name);
+    await app.store.addPlayer(match(midId), person('Retro Viejo', '11 5555-8901'), me.name);
+    await app.store.addPlayer(match(pastId), person('Retro Viejo', '11 5555-8901'), me.name);
+    await app.store.addPlayer(match(cancelId), person('Retro Viejo', '11 5555-8901'), me.name);
+    await app.store.updateMatch(cancelId, { cancelled: true }, me.name);
+    await app.store.addPlayer(match(waitId), person('Retro Espera', '11 5555-8904'), me.name, { waiting: true });
+    await app.store.addPlayer(match(promoEarly), person('Retro Promo', '11 5555-8902'), me.name);
+    await app.store.addPlayer(match(promoLate), person('Retro Promo', '11 5555-8902'), me.name);
+    await app.store.addPlayer(match(otherId), person('Retro Ajeno', '11 5555-8905', { signedUpWith: martin.uid, signedUpWithName: martin.name }), me.name);
+    const partial = await app.store.addPlayer(match(partialId), person('Retro Parcial', '11 5555-8903'), me.name);
+    await app.store.setPayment(partial, {
+      paid: true, split: true, freePlay: false, cash: 2000, transfer: 0, pendingTransfer: 0, fromCredit: 0, cashTo: me.name,
+    }, me.name);
+    await app.store.adjustCredit({ personKey: key('11 5555-8901'), organizerUid: me.uid, organizerName: me.name, name: 'Retro Viejo', delta: 6000 }, me.name);
+    await app.store.adjustCredit({ personKey: key('11 5555-8902'), organizerUid: me.uid, organizerName: me.name, name: 'Retro Promo', delta: 9000 }, me.name);
+    await app.store.adjustCredit({ personKey: key('11 5555-8903'), organizerUid: me.uid, organizerName: me.name, name: 'Retro Parcial', delta: 3000 }, me.name);
+    await app.store.adjustCredit({ personKey: key('11 5555-8904'), organizerUid: me.uid, organizerName: me.name, name: 'Retro Espera', delta: 5000 }, me.name);
+    await app.store.adjustCredit({ personKey: key('11 5555-8905'), organizerUid: martin.uid, organizerName: martin.name, name: 'Retro Ajeno', delta: 5000 }, me.name);
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((item) => item.name === 'Retro Viejo' && item.matchDate === '2026-11-01');
+    return { unpaid: row && row.autoCredit !== true && !(row.fromCredit > 0), martin: !!martin?.uid };
+  });
+  check('Antes del pase, quien ya estaba anotado sigue debiendo', before.unpaid && before.martin, JSON.stringify(before));
+  await page.evaluate(async () => {
+    const { autoCreditPassKey } = await import('./js/credit.js');
+    localStorage.removeItem(autoCreditPassKey(window.__app.uid));
+  });
+  await page.reload();
+  await page.waitForFunction(() => {
+    const uid = window.__app?.uid;
+    return !!uid && localStorage.getItem('f7c-auto-credit-pass:' + uid) === '1';
+  });
+  const passed = await page.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const rows = Object.values(db.players);
+    const credits = Object.values(db.credits || {});
+    const on = (name, date) => rows.find((row) => row.name === name && row.matchDate === date);
+    const credit = (name) => credits.find((row) => row.name === name)?.amount ?? 0;
+    const past = on('Retro Viejo', '2026-10-16');
+    const cancel = on('Retro Viejo', '2026-11-03');
+    const wait = on('Retro Espera', '2026-11-04');
+    const other = on('Retro Ajeno', '2026-11-05');
+    const old = on('Retro Viejo', '2026-11-01');
+    const mid = on('Retro Viejo', '2026-11-02');
+    const promos = rows.filter((row) => row.name === 'Retro Promo').map((row) => row.fromCredit || 0).sort((a, b) => a - b);
+    const partial = on('Retro Parcial', '2026-11-06');
+    return {
+      old: old?.fromCredit || 0,
+      oldAuto: old?.autoCredit === true,
+      mid: mid?.fromCredit || 0,
+      midAuto: mid?.autoCredit === true,
+      promos,
+      partial: partial?.fromCredit || 0,
+      partialCash: partial?.cash || 0,
+      partialAuto: partial?.autoCredit === true,
+      past: past?.autoCredit === true || (past?.fromCredit || 0) > 0,
+      cancel: cancel?.autoCredit === true || (cancel?.fromCredit || 0) > 0,
+      wait: wait?.waiting === true && wait?.autoCredit !== true,
+      other: other?.autoCredit === true || (other?.fromCredit || 0) > 0,
+      espera: credit('Retro Espera'),
+      ajeno: credit('Retro Ajeno'),
+      viejo: credit('Retro Viejo'),
+      promo: credit('Retro Promo'),
+    };
+  });
+  check('El pase usa primero el partido más viejo y la promo, y deja el resto como deuda', passed.old === 5000 && passed.oldAuto && passed.mid === 1000 && passed.midAuto && passed.promos.join() === '4500,4500' && passed.partial === 3000 && passed.partialCash === 2000 && passed.partialAuto && passed.viejo === 0 && passed.promo === 0, JSON.stringify(passed));
+  check('No toca un partido ya jugado, uno cancelado, la espera ni el saldo de otro organizador', passed.past === false && passed.cancel === false && passed.wait === true && passed.other === false && passed.espera === 5000 && passed.ajeno === 5000, JSON.stringify(passed));
+  await page.evaluate(() => { location.hash = '#/registro/pagos'; });
+  await page.waitForSelector('#log-list');
+  const retroLog = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
+  check('Registro marca el pase como crédito automático', retroLog.includes('Crédito automático') && retroLog.includes('Retro Viejo'), retroLog.slice(0, 280));
+  await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
+  await page.locator('#log-list .log-row', { hasText: 'Retro Viejo' }).first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v89-registro-retro.png' });
+  await page.evaluate(async () => {
+    const app = window.__app;
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/roster.js');
+    const me = app.session.user;
+    await app.store.adjustCredit({
+      personKey: `p:${phoneKey(canonicalPhone('11 5555-8901'))}`,
+      organizerUid: me.uid,
+      organizerName: me.name,
+      name: 'Retro Viejo',
+      delta: 4000,
+    }, me.name);
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  await page.waitForTimeout(1200);
+  const twice = await page.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const mid = Object.values(db.players).find((row) => row.name === 'Retro Viejo' && row.matchDate === '2026-11-02');
+    const credit = Object.values(db.credits || {}).find((row) => row.name === 'Retro Viejo')?.amount ?? 0;
+    return { fromCredit: mid?.fromCredit || 0, credit };
+  });
+  check('La segunda vez no vuelve a descontar', twice.fromCredit === 1000 && twice.credit === 4000, JSON.stringify(twice));
 }
 
 const fresh = await ctx.newPage();
