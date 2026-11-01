@@ -38,6 +38,18 @@ export function autoCreditTake(owed, balance) {
   return { pay, left: roundARS(due - pay) };
 }
 
+/**
+ * Si el partido ya se pagó con crédito automático por encima de la parte
+ * de la promo, eso es lo que vuelve al saldo. El efectivo no se toca.
+ */
+export function autoCreditExcess({ received = 0, fromCredit = 0, auto = false, share = 0 } = {}) {
+  if (auto !== true) return 0;
+  const over = roundARS((Number(received) || 0) - (Number(share) || 0));
+  const credit = roundARS(Math.max(0, Number(fromCredit) || 0));
+  if (!(over > 0) || !(credit > 0)) return 0;
+  return roundARS(Math.min(credit, over));
+}
+
 export function roundARS(n) {
   return Math.round(Number(n) * 100) / 100;
 }

@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -30,7 +30,7 @@ import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, c
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
-import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, splitPaymentAcross } from './prices.js';
+import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, sameDayTitulars, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v89';
+const APP_VERSION = 'f7c-v90';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -235,13 +235,54 @@ function creditOrganizerOf(player) {
   const found = organizerUidByName(name);
   return found ? { uid: found, name } : null;
 }
-/** Si hay saldo con quien se anotó, cubre el precio de este partido (la promo, si aplica). */
-async function applyAutoCredit(playerId) {
+/** Si la promo bajó el precio, devuelve al saldo la parte de más del crédito automático. */
+async function releaseAutoCreditExcess(playerId) {
+  const player = app.players.find((item) => item.id === playerId);
+  if (!player || player.autoCredit !== true || player.waiting === true || isFreePlay(player)) return 0;
+  const matches = knownMatches();
+  const match = matches.find((item) => item.id === player.matchId);
+  if (!match || match.cancelled === true || matchAlreadyPlayed(match)) return 0;
+  const promo = promoForPlayer({ player, players: app.players, matches, prices: livePrices() });
+  if (!promo) return 0;
+  const prev = paymentParts(player);
+  const excess = autoCreditExcess({ received: prev.received, fromCredit: prev.credit, auto: true, share: promo.share });
+  if (!(excess > 0)) return 0;
+  const org = creditOrganizerOf(player);
+  const key = personKey(player, app.players);
+  if (!org?.uid || !key) return 0;
+  const nextCredit = roundMoney(prev.credit - excess);
+  const move = { personKey: key, organizerUid: org.uid, organizerName: org.name, name: player.name, delta: excess };
+  await app.store.adjustCredit(move, app.who);
+  try {
+    await app.store.setPayment(player.id, {
+      paid: true,
+      split: true,
+      freePlay: false,
+      cash: prev.cash,
+      transfer: prev.transfer,
+      pendingTransfer: prev.pending,
+      fromCredit: nextCredit,
+      cashTo: prev.cash > 0 ? player.cashTo : null,
+      transferTo: prev.transfer > 0 ? player.transferTo : null,
+      pendingTo: prev.pending > 0 ? player.pendingTo : null,
+      creditTo: nextCredit > 0 ? org.name : null,
+      autoCredit: nextCredit > 0,
+      transferParts: player.transferParts || null,
+    }, app.who);
+  } catch (error) {
+    await app.store.adjustCredit({ ...move, delta: -excess }, app.who);
+    throw error;
+  }
+  return excess;
+}
+/** Cubre con saldo hasta lo que debe, o hasta cap si se pasó. */
+async function chargeAutoCredit(playerId, cap) {
   const player = app.players.find((item) => item.id === playerId);
   if (!player || player.waiting === true || isFreePlay(player)) return 0;
   const match = knownMatches().find((item) => item.id === player.matchId);
   if (!match || match.cancelled === true || matchAlreadyPlayed(match)) return 0;
-  const owed = amountOwed(player, { players: app.players, matches: knownMatches(), prices: livePrices() });
+  let owed = amountOwed(player, { players: app.players, matches: knownMatches(), prices: livePrices() });
+  if (cap != null) owed = Math.min(owed, roundMoney(cap));
   const org = creditOrganizerOf(player);
   const key = personKey(player, app.players);
   if (!org?.uid || !key) return 0;
@@ -271,6 +312,51 @@ async function applyAutoCredit(playerId) {
     throw error;
   }
   return take.pay;
+}
+/**
+ * Si hay saldo con quien se anotó, cubre el precio de este partido.
+ * Si ese día ya hay promo, primero baja los créditos automáticos al parte
+ * de la promo (lo que sobra vuelve al saldo) y después paga del más temprano al más tarde.
+ */
+async function applyAutoCredit(playerId) {
+  const player = app.players.find((item) => item.id === playerId);
+  if (!player || player.waiting === true || isFreePlay(player)) return 0;
+  const match = knownMatches().find((item) => item.id === player.matchId);
+  if (!match || match.cancelled === true || matchAlreadyPlayed(match)) return 0;
+  const rows = sameDayTitulars({ player, players: app.players, matches: knownMatches() });
+  if (rows.length >= 2) {
+    for (const row of rows) await releaseAutoCreditExcess(row.player.id);
+  }
+  const ids = rows.length >= 2 ? rows.map((row) => row.player.id) : [playerId];
+  let total = 0;
+  for (const id of ids) total += await chargeAutoCredit(id);
+  return total;
+}
+/**
+ * Al salir de la promo, el que queda vuelve al precio suelto (Ajustes si queda uno,
+ * la promo nueva si quedan dos o más). La diferencia sale del saldo; si no alcanza, queda deuda.
+ */
+async function retargetPromoAfterExit(person) {
+  if (!person?.matchDate) return;
+  const key = personKey(person, app.players);
+  if (!key) return;
+  const mates = [];
+  for (const item of app.players) {
+    if (item.waiting === true || isFreePlay(item)) continue;
+    if (personKey(item, app.players) !== key) continue;
+    const match = knownMatches().find((row) => row.id === item.matchId);
+    if (!match || match.cancelled === true || match.date !== person.matchDate || matchAlreadyPlayed(match)) continue;
+    mates.push({ item, match });
+  }
+  mates.sort((a, b) => String(a.match.time || '').localeCompare(String(b.match.time || '')) || String(a.item.id).localeCompare(String(b.item.id)));
+  if (mates.length >= 2) {
+    await applyAutoCredit(mates[0].item.id);
+    return;
+  }
+  if (mates.length !== 1) return;
+  const target = normalizePrices(livePrices()).matchPrice;
+  const gap = roundMoney(target - paymentParts(mates[0].item).received);
+  if (gap > 0) await chargeAutoCredit(mates[0].item.id, gap);
 }
 /** Devuelve al saldo solo lo que se había descontado solo. */
 async function refundAutoCredit(player) {
@@ -4556,6 +4642,7 @@ function openPaymentForm(m, p, opts = {}) {
       const refund = promoRefundAfterFree({ player: p, players: app.players, matches: app.matches, prices: livePrices() });
       if (refund) {
         for (const row of refund.payments) {
+          const wasAuto = app.players.find((item) => item.id === row.playerId)?.autoCredit === true;
           entries.push({
             id: row.playerId,
             input: {
@@ -4571,6 +4658,7 @@ function openPaymentForm(m, p, opts = {}) {
               transferParts: row.transferParts,
               pendingTo: row.pending > 0 ? row.pendingTo : null,
               creditTo: row.fromCredit > 0 ? row.creditTo : null,
+              autoCredit: wasAuto && row.fromCredit > 0,
             },
           });
         }
@@ -5344,6 +5432,7 @@ async function unwindPromoPayment(player) {
     });
   }
   for (const row of refund.payments || []) {
+    const wasAuto = app.players.find((item) => item.id === row.playerId)?.autoCredit === true;
     await app.store.setPayment(row.playerId, {
       paid: true,
       split: true,
@@ -5357,6 +5446,7 @@ async function unwindPromoPayment(player) {
       transferParts: row.transferParts,
       pendingTo: row.pending > 0 ? row.pendingTo : null,
       creditTo: row.fromCredit > 0 ? row.creditTo : null,
+      autoCredit: wasAuto && row.fromCredit > 0,
     }, app.who);
   }
   for (const move of grants) await app.store.adjustCredit(move, app.who);
@@ -5382,14 +5472,17 @@ async function removeMatchPlayer(m, p, { asked = false } = {}) {
   const needsPromote = fromMain && !!top && mainLeft < capOf(m);
   const go = (promote) => {
     const job = (async () => {
+      const exited = [];
       for (const id of dropping) {
         const person = app.players.find((item) => item.id === id);
+        if (person && person.waiting !== true) exited.push(person);
         if (person) {
           await refundAutoCredit(person);
           await unwindPromoPayment(app.players.find((item) => item.id === id) || person);
         }
       }
       for (const id of dropping) await app.store.deletePlayer(id);
+      for (const person of exited) await retargetPromoAfterExit(person);
       if (!promote) return;
       await app.store.promoteFromWaiting(top.id);
       await applyAutoCredit(top.id);
@@ -5430,6 +5523,7 @@ async function demoteToWait(m, p) {
       }
       await app.store.updatePlayer(item.id, { waiting: true, waitOrder: order, rosterAt: null });
       order += 1;
+      await retargetPromoAfterExit(item);
     }
   })(), msg);
 }
