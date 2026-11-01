@@ -85,7 +85,7 @@ export function overflowPatches(players, capacity, opts = {}) {
   if (opts.expectedCount != null && opts.expectedCount !== list.length) return [];
   const cap = Number(capacity);
   if (!Number.isInteger(cap) || cap <= 0) return [];
-  const main = list.filter((p) => p.waiting !== true).sort(compareEntry);
+  const main = list.filter((p) => p.waiting !== true && p.noPlay !== true).sort(compareEntry);
   if (main.some((p) => entryMillis(p) == null)) return [];
   if (main.length <= cap) return [];
   let order = nextWaitOrder(list.filter((p) => p.waiting === true));

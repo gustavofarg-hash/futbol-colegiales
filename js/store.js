@@ -806,7 +806,7 @@ class LocalStore {
     refuseDuplicate(mates, data);
     refuseGuestHost(mates, data);
     const cap = match.capacity || 14;
-    const mainCount = mates.filter((p) => p.waiting !== true).length;
+    const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
     const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
@@ -917,7 +917,7 @@ class LocalStore {
       const visible = typeof data.phoneShared === 'boolean' ? data.phoneShared : undefined;
       writeContact(db, 'players', id, phone, player, player.addedByUid || this.actor?.uid || '', visible);
     }
-    if (data?.waiting === true) this._dropFromTeams(db, player.matchId, id);
+    if (data?.waiting === true || data?.noPlay === true) this._dropFromTeams(db, player.matchId, id);
     for (const item of sync) {
       const row = db.players[item.id];
       if (!row) continue;
@@ -1033,6 +1033,22 @@ class LocalStore {
   async promoteFromWaiting(id) {
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
   }
+  async setNoPlay(id, on) {
+    const next = on === true;
+    const cur = this._load().players[id];
+    if (!cur || (cur.noPlay === true) === next) return;
+    await this.updatePlayer(id, { noPlay: next });
+    const db = this._load();
+    const row = db.players[id];
+    if (!row) return;
+    const match = db.matches[row.matchId];
+    this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: row.matchId, ...match } : { id: row.matchId }, this._venuesOf(db), {
+      type: next ? 'no jugó pero pagó' : 'volvió al partido',
+      ...playerLogFields({ id, ...row }, this._matesOf(db, row.matchId)),
+      detail: '',
+    })]);
+    this._save(db);
+  }
   async clearTentative(id) {
     await this.updatePlayer(id, { tentative: null, tentativeAt: null });
   }
@@ -1056,7 +1072,7 @@ class LocalStore {
       this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: player.matchId, ...match } : { id: player.matchId }, this._venuesOf(db), {
         type: 'baja',
         ...playerLogFields({ id, ...player }, mates),
-        detail: player.waiting === true ? 'En la lista de espera' : '',
+        detail: player.noPlay === true ? 'Sin devolver el crédito' : (player.waiting === true ? 'En la lista de espera' : ''),
       })]);
       this._dropFromTeams(db, player.matchId, id);
     }
@@ -2133,7 +2149,7 @@ export class FirebaseStore {
     refuseDuplicate(mates, data);
     refuseGuestHost(mates, data);
     const cap = match.capacity || 14;
-    const mainCount = mates.filter((p) => p.waiting !== true).length;
+    const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
     const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
@@ -2275,7 +2291,7 @@ export class FirebaseStore {
       patch.phone = deleteField();
     }
     const match = this.state.matches.find((item) => item.id === cur?.matchId);
-    const nextTeams = data?.waiting === true && cur?.id ? dropPlayer(match?.teams, cur.id) : { changed: false };
+    const nextTeams = (data?.waiting === true || data?.noPlay === true) && cur?.id ? dropPlayer(match?.teams, cur.id) : { changed: false };
     if (nextTeams.changed) {
       const batch = writeBatch(this.db);
       batch.update(doc(this.db, 'players', id), patch);
@@ -2430,6 +2446,19 @@ export class FirebaseStore {
   async promoteFromWaiting(id) {
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
   }
+  async setNoPlay(id, on) {
+    const next = on === true;
+    const cur = this.state.players.find((player) => player.id === id);
+    if (!cur || (cur.noPlay === true) === next) return;
+    await this.updatePlayer(id, { noPlay: next });
+    const match = this.state.matches.find((item) => item.id === cur.matchId);
+    const mates = this.state.players.filter((item) => item.matchId === cur.matchId);
+    await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
+      type: next ? 'no jugó pero pagó' : 'volvió al partido',
+      ...playerLogFields({ ...cur, noPlay: next }, mates),
+      detail: '',
+    })]);
+  }
   async clearTentative(id) {
     await this.updatePlayer(id, { tentative: null, tentativeAt: null });
   }
@@ -2520,7 +2549,7 @@ export class FirebaseStore {
       await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
         type: 'baja',
         ...playerLogFields(player, mates),
-        detail: player.waiting === true ? 'En la lista de espera' : '',
+        detail: player.noPlay === true ? 'Sin devolver el crédito' : (player.waiting === true ? 'En la lista de espera' : ''),
       })]);
     }
     const nextTeams = dropPlayer(match?.teams, id);

@@ -78,7 +78,7 @@ export function matchTake({ match, players, matches, prices } = {}) {
     const key = personKey(player, players) || (player.id ? `id:${player.id}` : '');
     if (key) keys.add(key);
     if (player.waiting === true) waiting += 1;
-    else main += 1;
+    else if (player.noPlay !== true) main += 1;
     if (player.confirmed === 'no') noShows += 1;
     if (match?.cancelled === true) continue;
     expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
