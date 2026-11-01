@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v84');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v85');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4201,6 +4201,93 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.evaluate(() => { location.hash = '#/registro/pagos'; });
   await page.waitForSelector('#log-list');
   check('Ese saldo queda en el registro como Carga de crédito', (await page.locator('#log-list').innerText()).includes('Carga de crédito') && (await page.locator('#log-list').innerText()).includes('Maty Pikas'));
+}
+
+{
+  const vuelve = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const id = await app.store.addMatch({ date: '2026-10-18', time: '22:30', price: 5000, note: 'Vuelve pago' }, me.name);
+    const match = app.matches.find((item) => item.id === id) || { id, date: '2026-10-18', time: '22:30' };
+    await app.store.addPlayer(match, { name: 'Vuelve Uno', phone: '11 5555-8511' }, me.name);
+    await app.store.addPlayer(match, { name: 'Vuelve Dos', phone: '11 5555-8512' }, me.name);
+    return id;
+  });
+  await page.evaluate(() => { location.hash = '#/historial'; });
+  await page.waitForSelector('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-toggle');
+  await page.click('#list-history .match-item:has([data-note="Vuelve pago"]) [data-owe-toggle]');
+  await page.waitForSelector('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player');
+  const placed = await page.evaluate(() => {
+    const card = document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])');
+    const scroller = document.scrollingElement;
+    const top = card.getBoundingClientRect().top + scroller.scrollTop - 220;
+    scroller.scrollTop = Math.max(80, top);
+    return scroller.scrollTop;
+  });
+  check('El historial queda desplazado antes de pagar', placed > 40, String(placed));
+  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Uno' }).click();
+  await page.waitForSelector('#pay-form');
+  check('Faltan pagar abre el pago y no el menú del jugador', await page.locator('#menu-panel').count() === 0 && await page.locator('#pm-pay').count() === 0 && (await page.locator('#pay-form h3').innerText()) === 'Pago');
+  await page.fill('#pay-form [name=cash]', '5000');
+  await page.locator('#pay-form [name=cash]').focus();
+  const foco = await page.evaluate(() => {
+    const input = document.querySelector('#pay-form [name=cash]');
+    const clip = document.querySelector('#pay-scroll').getBoundingClientRect();
+    const box = input.getBoundingClientRect();
+    const style = getComputedStyle(input);
+    return {
+      outline: style.outlineStyle,
+      border: style.borderLeftColor,
+      left: Math.round(box.left - clip.left),
+      right: Math.round(clip.right - box.right),
+    };
+  });
+  check('El borde verde del campo enfocado entra entero', foco.outline === 'none' && foco.left >= 2 && foco.right >= 2, JSON.stringify(foco));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v85-foco-campo.png' });
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open && (document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])')?.innerText || '').includes('Vuelve Dos') && !(document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])')?.innerText || '').includes('Vuelve Uno'));
+  const afterPay = await page.evaluate((before) => {
+    const item = document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])');
+    const text = (item?.innerText || '').replace(/\s+/g, ' ');
+    return {
+      hash: location.hash,
+      scroll: document.scrollingElement?.scrollTop || 0,
+      before,
+      open: item?.querySelector('.owe-box')?.classList.contains('open') === true,
+      text,
+      menu: document.querySelector('#menu-panel') != null,
+    };
+  }, placed);
+  check('Guardar vuelve a la lista abierta, en el mismo lugar, y saca al que pagó', afterPay.hash === '#/historial' && !afterPay.menu && afterPay.open && afterPay.text.includes('Vuelve Dos') && afterPay.text.includes('$5.000') && !afterPay.text.includes('Vuelve Uno') && Math.abs(afterPay.scroll - placed) < 40, JSON.stringify(afterPay));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v85-historial-vuelve.png' });
+  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).click();
+  await page.waitForSelector('#pay-back');
+  await page.click('#pay-back');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  const afterCancel = await page.evaluate((before) => {
+    const item = document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])');
+    return {
+      hash: location.hash,
+      open: item?.querySelector('.owe-box')?.classList.contains('open') === true,
+      text: (item?.innerText || '').replace(/\s+/g, ' '),
+      menu: document.querySelector('#menu-panel') != null,
+      scroll: document.scrollingElement?.scrollTop || 0,
+      before,
+    };
+  }, placed);
+  check('Cancelar también vuelve a la lista', afterCancel.hash === '#/historial' && !afterCancel.menu && afterCancel.open && afterCancel.text.includes('Vuelve Dos') && Math.abs(afterCancel.scroll - placed) < 40, JSON.stringify(afterCancel));
+  await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).click();
+  await page.waitForSelector('#pay-form');
+  await page.fill('#pay-form [name=cash]', '5000');
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open && !document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-box'));
+  const cleared = await page.evaluate(() => {
+    const card = document.querySelector('#list-history .match-card[data-note="Vuelve pago"]');
+    const item = document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])');
+    return { card: !!card, owe: !!item?.querySelector('.owe-box'), text: (item?.innerText || '').replace(/\s+/g, ' ') };
+  });
+  check('Si no queda nadie por pagar, la tarjeta sigue y sin la lista', cleared.card && !cleared.owe && !cleared.text.includes('Faltan pagar'), JSON.stringify(cleared));
+  void vuelve;
 }
 
 const fresh = await ctx.newPage();
