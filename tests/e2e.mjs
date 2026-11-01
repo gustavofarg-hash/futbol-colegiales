@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v87');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v88');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4376,6 +4376,122 @@ async function assertGuestPromo(fix, visibleName, count) {
   });
   check('Si no queda nadie por pagar, la tarjeta sigue y sin la lista', cleared.card && !cleared.owe && !cleared.text.includes('Faltan pagar'), JSON.stringify(cleared));
   void vuelve;
+}
+
+{
+  const autoId = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/phone.js');
+    const hash = phoneKey(canonicalPhone('11 5555-8787'));
+    await app.store.adjustCredit({
+      personKey: `p:${hash}`,
+      organizerUid: me.uid,
+      organizerName: me.name,
+      name: 'Credito Auto',
+      delta: 8000,
+    }, me.name);
+    return app.store.addMatch({ date: '2026-11-08', time: '19:00', price: 5000, note: 'Credito auto', capacity: 14 }, me.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, autoId);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#player-name');
+  await page.fill('#player-name', 'Credito Auto');
+  await page.fill('#player-form [name=phone]', '11 5555-8787');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((player) => player.name === 'Credito Auto' && player.autoCredit === true);
+    return row && row.fromCredit === 5000;
+  });
+  check('Al anotarlo se paga el partido con el saldo, sin abrir Pago', (await page.locator('.slot', { has: page.locator('.name:text-is("Credito Auto")') }).locator('.pay-line').innerText()).includes('Crédito'));
+  const left = await page.evaluate(() => {
+    const credits = JSON.parse(localStorage.getItem('f7c-demo-db')).credits || {};
+    return Object.values(credits).find((row) => row.name === 'Credito Auto')?.amount;
+  });
+  check('El saldo baja lo que salió el partido', left === 3000, String(left));
+  const second = await page.evaluate(async () => {
+    const app = window.__app;
+    return app.store.addMatch({ date: '2026-11-08', time: '21:00', price: 5000, note: 'Credito promo', capacity: 14 }, app.session.user.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, second);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#player-name');
+  await page.fill('#player-name', 'Credito Auto');
+  await page.fill('#player-form [name=phone]', '11 5555-8787');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const rows = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).filter((player) => player.name === 'Credito Auto');
+    const late = rows.find((player) => player.matchDate === '2026-11-08' && String(player.matchId || '').includes('2100'));
+    return late && late.autoCredit === true && late.fromCredit === 3000;
+  });
+  check('Con promo usa la parte del día y, si no alcanza, deja el resto como deuda', (await page.locator('.slot', { has: page.locator('.name:text-is("Credito Auto")') }).innerText()).includes('Crédito'));
+  await page.evaluate(() => { location.hash = '#/registro/pagos'; });
+  await page.waitForSelector('#log-list');
+  const autoLog = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
+  check('Registro marca el pago como crédito automático', autoLog.includes('Crédito automático') && autoLog.includes('Credito Auto'), autoLog.slice(0, 240));
+  await page.locator('#log-list').locator('text=Crédito automático').first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v88-registro-credito.png' });
+  const cupo = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/phone.js');
+    const hash = phoneKey(canonicalPhone('11 5555-8788'));
+    await app.store.adjustCredit({ personKey: `p:${hash}`, organizerUid: me.uid, organizerName: me.name, name: 'Credito Espera', delta: 5000 }, me.name);
+    return app.store.addMatch({ date: '2026-11-09', time: '19:00', price: 5000, note: 'Credito espera', capacity: 1 }, me.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, cupo);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Ocupa Lugar');
+  await page.fill('#player-form [name=phone]', '11 5555-8700');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('.slot:has-text("Ocupa Lugar")');
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Credito Espera');
+  await page.fill('#player-form [name=phone]', '11 5555-8788');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#wait-list .slot:has-text("Credito Espera")');
+  const waitingCredit = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).credits || {}).find((row) => row.name === 'Credito Espera')?.amount);
+  check('En la espera no se descuenta el saldo', waitingCredit === 5000, String(waitingCredit));
+  await page.locator('.slot', { has: page.locator('.name:text-is("Ocupa Lugar")') }).locator('.more-btn').click();
+  await page.click('#pm-del');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForSelector('#ask-yes');
+  await page.click('#ask-yes');
+  await page.waitForFunction(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((player) => player.name === 'Credito Espera');
+    return row && row.waiting !== true && row.autoCredit === true && row.fromCredit === 5000;
+  });
+  check('Al subir de la espera se paga con el saldo de quien se anotó', true);
+  await page.locator('.slot', { has: page.locator('.name:text-is("Credito Espera")') }).locator('.more-btn').click();
+  await page.click('#pm-del');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => !Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((player) => player.name === 'Credito Espera'));
+  const returned = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).credits || {}).find((row) => row.name === 'Credito Espera')?.amount);
+  check('Al quitarlo vuelve el crédito automático', returned === 5000, String(returned));
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, autoId);
+  await page.waitForSelector('#btn-cancel-match');
+  await page.click('#btn-cancel-match');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForSelector('#cancel-form button[type=submit]');
+  await page.click('#cancel-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const row = Object.values(db.players).find((player) => player.name === 'Credito Auto' && String(player.matchId || '').includes('1900'));
+    const credit = Object.values(db.credits || {}).find((item) => item.name === 'Credito Auto');
+    return row && row.autoCredit !== true && credit && credit.amount === 5000;
+  });
+  check('Al cancelar el partido vuelve solo el crédito automático', true);
+  await page.evaluate(() => { location.hash = '#/registro/pagos'; });
+  await page.waitForSelector('#log-list');
+  check('Registro anota la devolución del crédito', (await page.locator('#log-list').innerText()).includes('Crédito devuelto'));
 }
 
 const fresh = await ctx.newPage();

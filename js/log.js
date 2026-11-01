@@ -218,6 +218,26 @@ export function paymentLines(before, after) {
     const afterNames = collectorNames(after, method);
     const sameWho = joinCollectors(beforeNames) === joinCollectors(afterNames);
     if (oldAmount === newAmount && sameWho) continue;
+    if (key === 'credit' && after?.autoCredit === true && newAmount > oldAmount) {
+      lines.push({
+        type: 'crédito automático',
+        method,
+        amount: Math.round((newAmount - oldAmount) * 100) / 100,
+        detail: 'Del saldo a favor',
+        paidTo: joinCollectors(afterNames),
+      });
+      continue;
+    }
+    if (key === 'credit' && before?.autoCredit === true && newAmount < oldAmount) {
+      lines.push({
+        type: 'crédito devuelto',
+        method,
+        amount: Math.round((oldAmount - newAmount) * 100) / 100,
+        detail: 'Vuelve al saldo a favor',
+        paidTo: joinCollectors(beforeNames),
+      });
+      continue;
+    }
     if (newAmount === 0) {
       lines.push({
         type: 'pago borrado',
@@ -276,6 +296,8 @@ export function logText(entry) {
     const money = formatARS(entry.amount || 0);
     const match = pagoMatchText(entry);
     if (entry.type === 'crédito cargado') return [match, player, `${method} ${money}`].filter(Boolean).join(' · ');
+    if (entry.type === 'crédito automático') return [match, player, `Crédito automático ${money}`].filter(Boolean).join(' · ');
+    if (entry.type === 'crédito devuelto') return [match, player, `Crédito devuelto ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'pago borrado') return [match, player, `${method} borrado ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'pago editado') return [match, player, `${method} ${money}`, entry.detail].filter(Boolean).join(' · ');
     if (entry.type === 'compensación') return [match, entry.detail || `${method} ${money}`].filter(Boolean).join(' · ');

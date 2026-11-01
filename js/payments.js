@@ -30,6 +30,14 @@ export const MAX_TRANSFER_PARTS = 6;
 export const PAYMENT_METHODS = ['efectivo', 'transferencia'];
 const METHOD_LABEL = { efectivo: 'Efectivo', transferencia: 'Transferencia', credito: 'Crédito' };
 
+/** Cuánto del saldo alcanza para este partido. El resto sigue debiendo. */
+export function autoCreditTake(owed, balance) {
+  const due = roundARS(Math.max(0, Number(owed) || 0));
+  const have = roundARS(Math.max(0, Number(balance) || 0));
+  const pay = roundARS(Math.min(due, have));
+  return { pay, left: roundARS(due - pay) };
+}
+
 export function roundARS(n) {
   return Math.round(Number(n) * 100) / 100;
 }
@@ -419,6 +427,7 @@ function freePlayPatch(who, now) {
     transferParts: null,
     fromCredit: null,
     creditTo: null,
+    autoCredit: null,
     awaiting: null,
   };
 }
@@ -452,6 +461,7 @@ export function paymentRecord(input, who, now = Date.now()) {
     transferParts: null,
     fromCredit: null,
     creditTo: null,
+    autoCredit: null,
   };
   if (paid === false) return { ok: true, patch: cleared };
   const cash = moneyField(input.cash, 'Efectivo inválido.');
@@ -533,6 +543,7 @@ export function paymentRecord(input, who, now = Date.now()) {
       transferParts,
       fromCredit: credit > 0 ? credit : null,
       creditTo: credit > 0 ? creditTo : null,
+      autoCredit: input?.autoCredit === true && credit > 0 ? true : null,
       transferReceivedAt: null,
       transferReceivedBy: null,
       ...('awaiting' in (input || {}) ? { awaiting: cleanAwaiting(input.awaiting) } : {}),
