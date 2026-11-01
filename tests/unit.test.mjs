@@ -18,7 +18,7 @@ import { dayCompensation, reconcileTransfers } from '../js/compensate.js';
 import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
-import { normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, splitEven, splitPaymentAcross } from '../js/prices.js';
+import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, numericDate, shortHour, toEpoch } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
@@ -1812,6 +1812,69 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(mixedRefund.payments[0].transfer, 500);
   assert.equal(mixedRefund.payments[0].transferTo, 'Martín');
   assert.deepEqual(mixedRefund.credits, [{ name: 'Martín', amount: 4000 }]);
+  const pricey = [
+    { id: 'a', date: '2026-10-30', time: '18:00', startsAt: 1, price: 8000 },
+    { id: 'b', date: '2026-10-30', time: '21:00', startsAt: 2, price: 8000 },
+  ];
+  const settings = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const fromSettings = promoRefundAfterFree({ player: paidPair[1], players: paidPair, matches: pricey, prices: settings });
+  assert.equal(fromSettings.newDue, 5000);
+  assert.equal(fromSettings.payments[0].cash, 5000);
+  assert.deepEqual(fromSettings.credits, [{ name: 'Gustavo', amount: 4000 }]);
+  const customSettings = { matchPrice: 6000, promo2Price: 9000, promo3Price: 12000 };
+  const fromCustom = promoRefundAfterFree({ player: paidPair[1], players: paidPair, matches: pricey, prices: customSettings });
+  assert.equal(fromCustom.newDue, 6000);
+  assert.equal(fromCustom.credits[0].amount, 3000);
+});
+
+test('dividir el pago usa la promo del día y no el partido suelto', () => {
+  const matches = [
+    { id: 'a', date: '2026-10-30', time: '18:00', startsAt: 1, price: 8000 },
+    { id: 'b', date: '2026-10-30', time: '21:00', startsAt: 2, price: 8000 },
+  ];
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const phone = '5491199998484';
+  const people = [
+    { id: 'hA', matchId: 'a', name: 'Maty Pikas', phone, waiting: false },
+    { id: 'hB', matchId: 'b', name: 'Maty Pikas', phone, waiting: false },
+    { id: 'g1A', matchId: 'a', name: 'Invitado 1', phone: '', invitedBy: 'hA', guestAuto: true, waiting: false },
+    { id: 'g1B', matchId: 'b', name: 'Invitado 1', phone: '', invitedBy: 'hB', guestAuto: true, waiting: false },
+    { id: 'g2A', matchId: 'a', name: 'Invitado 2', phone: '', invitedBy: 'hA', guestAuto: true, waiting: false },
+    { id: 'g2B', matchId: 'b', name: 'Invitado 2', phone: '', invitedBy: 'hB', guestAuto: true, waiting: false },
+  ];
+  const order = [people[0], people[2], people[4]];
+  const exact = allocateGuestPromo({ people: order, players: people, matches, prices, transfer: 27000 });
+  assert.equal(exact.left, 0);
+  assert.deepEqual(exact.rows.map((row) => row.transfer), [9000, 9000, 9000]);
+  assert.deepEqual(exact.rows.map((row) => row.cap), [9000, 9000, 9000]);
+  for (const row of exact.rows) {
+    assert.deepEqual(row.matches.map((item) => item.transfer), [4500, 4500]);
+    assert.equal(row.matches[0].match.id, 'a');
+  }
+  const surplus = allocateGuestPromo({ people: order, players: people, matches, prices, transfer: 30000 });
+  assert.equal(surplus.left, 3000);
+  assert.equal(surplus.transferLeft, 3000);
+  assert.deepEqual(surplus.rows.map((row) => row.transfer), [9000, 9000, 9000]);
+  const short = allocateGuestPromo({ people: order, players: people, matches, prices, transfer: 20000 });
+  assert.equal(short.left, 0);
+  assert.deepEqual(short.rows.map((row) => row.transfer), [9000, 9000, 2000]);
+  assert.deepEqual(short.rows[2].matches.map((item) => item.transfer), [1000, 1000]);
+  const solo = { id: 'g3A', matchId: 'a', name: 'Invitado 3', phone: '', invitedBy: 'hA', guestAuto: true, waiting: false };
+  const plain = allocateGuestPromo({
+    people: [people[0], solo],
+    players: [...people, solo],
+    matches,
+    prices,
+    transfer: 17000,
+  });
+  assert.equal(plain.rows[0].cap, 9000);
+  assert.equal(plain.rows[1].cap, 8000);
+  assert.equal(plain.left, 0);
+  assert.equal(plain.rows[1].matches.length, 1);
+  assert.equal(plain.rows[1].matches[0].transfer, 8000);
+  const peso = allocateGuestPromo({ people: [people[0]], players: people, matches, prices, transfer: 1001 });
+  assert.deepEqual(peso.rows[0].matches.map((item) => item.transfer), [501, 500]);
+  assert.equal(peso.rows[0].matches[0].match.id, 'a');
 });
 
 test('promo de invitados: es quien invita + el nombre del invitado', () => {
@@ -2697,7 +2760,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v83');
+  assert.equal(version, 'f7c-v84');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

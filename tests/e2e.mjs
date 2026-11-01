@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v83');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v84');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4068,6 +4068,139 @@ async function assertGuestPromo(fix, visibleName, count) {
     scroller.scrollTop = Math.max(0, bottom - window.innerHeight + barH + 28);
   });
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v83-calculo-recarga.png' });
+}
+
+{
+  require('node:fs').mkdirSync('/opt/cursor/artifacts/screenshots', { recursive: true });
+  const payId = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const recent = await app.store.addMatch({ date: '2026-11-28', time: '19:00', price: 5000, note: 'Orden pago' }, me.name);
+    const older = await app.store.addMatch({ date: '2026-11-02', time: '19:00', price: 5000, note: 'Orden pago viejo' }, me.name);
+    const recentMatch = app.matches.find((item) => item.id === recent) || { id: recent, date: '2026-11-28' };
+    const olderMatch = app.matches.find((item) => item.id === older) || { id: older, date: '2026-11-02' };
+    const host = await app.store.addPlayer(recentMatch, { name: 'Orden Pago', phone: '11 4444-8484' }, me.name);
+    await app.store.addPlayer(recentMatch, { name: 'Invitado 1', invitedBy: host, invitedByName: 'Orden Pago', guestAuto: true }, me.name);
+    await app.store.addPlayer(olderMatch, { name: 'Orden Pago', phone: '11 4444-8484' }, me.name);
+    return recent;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, payId);
+  await page.waitForSelector('.slot:has-text("Orden Pago") .pay-btn');
+  await page.locator('.slot', { has: page.locator('.name:text-is("Orden Pago")') }).locator('.pay-btn').click();
+  await page.waitForSelector('#pay-form');
+  const order = await page.evaluate(() => {
+    const free = document.querySelector('#free-play-line');
+    const oldest = document.querySelector('#pay-oldest-line');
+    const split = document.querySelector('#pay-split-guests-line');
+    const follows = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+    return {
+      label: split?.querySelector('span')?.textContent || '',
+      bothShown: oldest?.hidden === false && split?.hidden === false,
+      freeThenOldest: follows(free, oldest),
+      oldestThenSplit: follows(oldest, split),
+      oldestThenPreview: oldest?.nextElementSibling?.id === 'pay-oldest-preview',
+      splitThenPreview: split?.nextElementSibling?.id === 'pay-split-preview',
+    };
+  });
+  check('Dividir el pago queda debajo de cancelar las deudas más viejas', order.label === 'Dividir el pago entre él y sus invitados' && order.bothShown && order.freeThenOldest && order.oldestThenSplit && order.oldestThenPreview && order.splitThenPreview, JSON.stringify(order));
+  await page.locator('#pay-scroll').evaluate((el) => { el.scrollTop = 0; });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v84-pago-orden.png' });
+  await page.click('#pay-form [data-close]');
+}
+
+{
+  const maty = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const early = await app.store.addMatch({ date: '2026-10-30', time: '18:00', price: 5000, note: 'Maty promo' }, me.name);
+    const late = await app.store.addMatch({ date: '2026-10-30', time: '21:00', price: 5000, note: 'Maty promo tarde' }, me.name);
+    const by = (id, date, time) => app.matches.find((item) => item.id === id) || { id, date, time, capacity: 14 };
+    const hostA = await app.store.addPlayer(by(early, '2026-10-30', '18:00'), { name: 'Maty Pikas', phone: '11 5555-3030' }, me.name);
+    const hostB = await app.store.addPlayer(by(late, '2026-10-30', '21:00'), { name: 'Maty Pikas', phone: '11 5555-3030' }, me.name);
+    await app.store.addPlayer(by(early, '2026-10-30', '18:00'), { name: 'Invitado 1', invitedBy: hostA, invitedByName: 'Maty Pikas', guestAuto: true }, me.name);
+    await app.store.addPlayer(by(late, '2026-10-30', '21:00'), { name: 'Invitado 1', invitedBy: hostB, invitedByName: 'Maty Pikas', guestAuto: true }, me.name);
+    await app.store.addPlayer(by(early, '2026-10-30', '18:00'), { name: 'Invitado 2', invitedBy: hostA, invitedByName: 'Maty Pikas', guestAuto: true }, me.name);
+    await app.store.addPlayer(by(late, '2026-10-30', '21:00'), { name: 'Invitado 2', invitedBy: hostB, invitedByName: 'Maty Pikas', guestAuto: true }, me.name);
+    return { early, late };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, maty.early);
+  await page.waitForSelector('.slot:has-text("Maty Pikas") .pay-btn');
+  await page.locator('.slot', { has: page.locator('.name:text-is("Maty Pikas")') }).locator('.pay-btn').click();
+  await page.waitForSelector('#pay-split-guests');
+  await page.locator('#pay-split-guests').check();
+  await page.fill('#pay-form [name=transfer]', '27000');
+  await page.waitForSelector('#pay-split-preview li');
+  const matyPreview = (await page.locator('#pay-split-preview').innerText()).replace(/\s+/g, ' ');
+  const matyOver = await page.locator('#pay-over').count() ? (await page.locator('#pay-over').innerText()) : '';
+  const nine = (matyPreview.match(/\$9\.000/g) || []).length;
+  check('Dividir $27.000 muestra $9.000 por persona y no sobra', nine === 3 && matyPreview.includes('Maty Pikas') && matyPreview.includes('Invitado 1') && matyPreview.includes('Invitado 2') && !matyPreview.includes('Sobra') && !matyOver.includes('de más') && await page.locator('#pay-over').isHidden(), matyPreview + ' | ' + matyOver);
+  const pinMid = await page.evaluate(() => {
+    const scroll = document.querySelector('#pay-scroll');
+    const dock = document.querySelector('#pay-form > .sheet-actions');
+    const sheetBox = dock.closest('.sheet-body').getBoundingClientRect();
+    scroll.scrollTop = Math.max(40, scroll.scrollHeight / 2);
+    const dockBox = dock.getBoundingClientRect();
+    const scrollBox = scroll.getBoundingClientRect();
+    return {
+      scrolled: scroll.scrollTop > 0,
+      dockInView: dockBox.top >= 0 && dockBox.bottom <= window.innerHeight + 1 && dockBox.height >= 44,
+      dockAtSheet: Math.abs(dockBox.bottom - sheetBox.bottom) <= 2,
+      labels: [...dock.querySelectorAll('button')].map((btn) => btn.textContent),
+      scrollEndsAbove: scrollBox.bottom <= dockBox.top + 1,
+    };
+  });
+  check('Cancelar y Guardar quedan fijos al pie mientras se baja el pago', pinMid.scrolled && pinMid.dockInView && pinMid.dockAtSheet && pinMid.labels.join('|') === 'Cancelar|Guardar' && pinMid.scrollEndsAbove, JSON.stringify(pinMid));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v84-pago-botones.png' });
+  await page.locator('#pay-scroll').evaluate((el) => { el.scrollTop = 0; });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v84-pago-maty.png' });
+  await page.locator('#pay-form [name=pending]').focus();
+  const lifted = await page.evaluate(() => window.__app.syncPayDock({ viewHeight: 480, offsetTop: 0, innerHeight: window.innerHeight }));
+  const keyboard = await page.evaluate(() => {
+    const dock = document.querySelector('#pay-form > .sheet-actions').getBoundingClientRect();
+    const field = document.querySelector('#pay-form [name=pending]').getBoundingClientRect();
+    const scroll = document.querySelector('#pay-scroll').getBoundingClientRect();
+    return {
+      dockBottom: Math.round(dock.bottom),
+      dockTop: Math.round(dock.top),
+      fieldTop: Math.round(field.top),
+      fieldBottom: Math.round(field.bottom),
+      scrollTop: Math.round(scroll.top),
+      scrollBottom: Math.round(scroll.bottom),
+    };
+  });
+  check('Con el teclado abierto los botones quedan en la zona visible', lifted.inset > 200 && keyboard.dockBottom <= 500 && keyboard.fieldTop >= keyboard.scrollTop - 2 && keyboard.fieldBottom <= keyboard.scrollBottom + 2 && keyboard.fieldBottom <= keyboard.dockTop + 1, JSON.stringify({ lifted, keyboard }));
+  await page.evaluate(() => window.__app.syncPayDock());
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('dialog.sheet[open]'));
+  const saved = await page.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const rows = Object.values(db.players).filter((player) => player.name === 'Maty Pikas' || (player.invitedByName === 'Maty Pikas' && (player.name === 'Invitado 1' || player.name === 'Invitado 2')));
+    const credits = Object.values(db.credits || {}).filter((row) => row.name === 'Maty Pikas' || row.name === 'Invitado 1' || row.name === 'Invitado 2');
+    return {
+      count: rows.length,
+      transfers: rows.map((player) => player.transfer).sort((a, b) => a - b),
+      credits: credits.map((row) => row.amount),
+    };
+  });
+  check('Los $27.000 quedan $4.500 en cada partido y no hay saldo', saved.count === 6 && saved.transfers.every((amount) => amount === 4500) && saved.credits.length === 0, JSON.stringify(saved));
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, maty.late);
+  await page.waitForSelector('.slot:has-text("Invitado 1") .more-btn');
+  await page.locator('.slot', { has: page.locator('.name:text-is("Invitado 1")') }).locator('.more-btn').click();
+  await page.click('#pm-del');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => !document.querySelector('#ask')?.open && !Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((player) => player.name === 'Invitado 1' && player.invitedByName === 'Maty Pikas' && player.matchDate === '2026-10-30' && String(player.matchId || '').includes('2100')));
+  const dropped = await page.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const left = Object.values(db.players).find((player) => player.name === 'Invitado 1' && player.invitedByName === 'Maty Pikas');
+    const credit = Object.values(db.credits || {}).find((row) => row.name === 'Maty Pikas');
+    const log = Object.values(db.log || {}).find((row) => row.type === 'crédito cargado' && row.playerName === 'Maty Pikas');
+    return { transfer: left?.transfer, credit: credit?.amount, organizer: credit?.organizerName, log: log?.amount || 0 };
+  });
+  check('Si el invitado queda en un partido, cobra el precio de Ajustes y el sobrante es saldo de Maty', dropped.transfer === 5000 && dropped.credit === 4000 && dropped.organizer === 'Gustavo' && dropped.log === 4000, JSON.stringify(dropped));
+  await page.evaluate(() => { location.hash = '#/registro/pagos'; });
+  await page.waitForSelector('#log-list');
+  check('Ese saldo queda en el registro como Carga de crédito', (await page.locator('#log-list').innerText()).includes('Carga de crédito') && (await page.locator('#log-list').innerText()).includes('Maty Pikas'));
 }
 
 const fresh = await ctx.newPage();
