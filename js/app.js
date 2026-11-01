@@ -26,7 +26,7 @@ import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWri
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
-import { canOfferCredit, creditAgainstDebts, creditBalance, creditLine, creditLoadSummary, creditPanelRows } from './credit.js';
+import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditLine, creditLoadSummary, creditPanelRows, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v88';
+const APP_VERSION = 'f7c-v89';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -103,6 +103,8 @@ const app = {
   pricesError: null,
   credits: [],
   creditsError: null,
+  creditsReady: false,
+  playersReady: false,
   log: [],
   logError: '',
   logRange: null,
@@ -300,6 +302,74 @@ async function refundAutoCredit(player) {
   } : { paid: false, split: true, autoCredit: false }, app.who);
   return amount;
 }
+
+const AUTO_CREDIT_PASS_WAIT = 500;
+let autoCreditPassTimer = 0;
+let autoCreditPassRunning = false;
+let autoCreditPassAttempts = 0;
+
+function autoCreditPassDone(uid) {
+  const key = autoCreditPassKey(uid);
+  if (!key) return true;
+  try { return localStorage.getItem(key) === '1'; }
+  catch { return true; }
+}
+
+function markAutoCreditPass(uid) {
+  const key = autoCreditPassKey(uid);
+  if (!key) return;
+  try { localStorage.setItem(key, '1'); }
+  catch { /* el próximo arranque lo reintenta */ }
+}
+
+/** Una vez que el saldo y los jugadores ya se leyeron, espera un instante y aplica. */
+function scheduleRetroactiveAutoCredit() {
+  const uid = actor().uid;
+  if (!uid || autoCreditPassTimer || autoCreditPassRunning || autoCreditPassDone(uid)) return;
+  if (app.fromCache || app.creditsError || app.creditsReady !== true || app.playersReady !== true) return;
+  autoCreditPassTimer = setTimeout(() => { runRetroactiveAutoCredit(); }, AUTO_CREDIT_PASS_WAIT);
+}
+
+async function runRetroactiveAutoCredit() {
+  autoCreditPassTimer = 0;
+  const uid = actor().uid;
+  if (!uid || autoCreditPassRunning || autoCreditPassDone(uid)) return;
+  if (app.fromCache || app.creditsError || app.creditsReady !== true || app.playersReady !== true) {
+    scheduleRetroactiveAutoCredit();
+    return;
+  }
+  autoCreditPassRunning = true;
+  let failed = false;
+  try {
+    const ids = retroactiveCreditIds({
+      players: app.players,
+      matches: knownMatches(),
+      prices: livePrices(),
+      organizerUid: uid,
+      organizerOf: (player) => creditOrganizerOf(player)?.uid || '',
+    });
+    for (const id of ids) {
+      try { await applyAutoCredit(id); }
+      catch (error) {
+        failed = true;
+        console.warn(error);
+      }
+    }
+    if (!failed && actor().uid === uid && app.fromCache !== true && app.creditsReady === true) markAutoCreditPass(uid);
+  } catch (error) {
+    failed = true;
+    console.warn(error);
+  } finally {
+    autoCreditPassRunning = false;
+  }
+  if (failed) {
+    autoCreditPassAttempts += 1;
+    if (autoCreditPassAttempts < 3 && !autoCreditPassDone(uid)) {
+      autoCreditPassTimer = setTimeout(() => { runRetroactiveAutoCredit(); }, 1500);
+    }
+  }
+}
+
 function creditMoveFor(player, delta) {
   const me = actor();
   return {
@@ -5595,6 +5665,8 @@ async function boot() {
     app.prices = prices || null;
     app.credits = credits || [];
     app.creditsError = creditsError || null;
+    app.creditsReady = view.creditsReady === true;
+    app.playersReady = view.playersReady === true;
     app.compensations = mergeHeldCompensations(view.compensations || []);
     app.log = view.log || [];
     app.logError = view.logError || '';
@@ -5610,6 +5682,7 @@ async function boot() {
     const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
+    scheduleRetroactiveAutoCredit();
     if (!changed) return;
     if (sheet.open && app.refreshPaySheet) app.refreshPaySheet();
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe

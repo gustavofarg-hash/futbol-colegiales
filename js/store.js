@@ -724,7 +724,7 @@ class LocalStore {
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
       players, roster, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
-      credits, creditsError: null, compensations, log, logError: '',
+      credits, creditsError: null, creditsReady: true, playersReady: true, compensations, log, logError: '',
     }));
   }
   async init() {
@@ -1328,7 +1328,7 @@ export class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
     this._logRange = weekRange();
   }
   setHistoryFilter(filter) {
@@ -1728,14 +1728,20 @@ export class FirebaseStore {
       this.state.compensations = [];
       this._emit();
     });
+    const playersReady = (snap) => {
+      const meta = snap.metadata;
+      if (meta?.fromCache !== true && meta?.hasPendingWrites !== true) this.state.playersReady = true;
+    };
     watch(collection(this.db, 'players'), null, (snap) => {
       this._noteSnap(snap);
+      playersReady(snap);
       this._buckets.players.broad = take(snap);
       this._rebuild('players');
       this._backfillPlayers(snap.docs);
     }, legacyDenied('players'));
     watch(query(collection(this.db, 'players'), where('viewers', 'array-contains-any', accessIds)), null, (snap) => {
       this._noteSnap(snap);
+      playersReady(snap);
       this._buckets.players.narrow = take(snap);
       this._rebuild('players');
     });
@@ -1777,9 +1783,12 @@ export class FirebaseStore {
     watch(collection(this.db, 'credits'), null, (snap) => {
       this.state.credits = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.creditsError = null;
+      const meta = snap.metadata;
+      this.state.creditsReady = meta?.fromCache !== true && meta?.hasPendingWrites !== true;
       this._emit();
     }, (e) => {
       this.state.credits = [];
+      this.state.creditsReady = false;
       this.state.creditsError = e?.code === 'permission-denied'
         ? 'No se puede leer el saldo a favor. Hay que publicar las reglas de Firestore para credits.'
         : ('No se pudo leer el saldo a favor: ' + (e?.message || e?.code || e));

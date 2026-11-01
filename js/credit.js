@@ -1,5 +1,7 @@
 // Saldo a favor. Es de un jugador con un organizador, no de un partido.
 // Puro: el store guarda el documento y la pantalla lo muestra.
+import { amountOwed } from './ledger.js';
+import { matchAlreadyPlayed } from './profile.js';
 import { MAX_AMOUNT, formatARS, roundARS, settlementSummary, settleOldestDebts } from './payments.js';
 
 /** Id estable. personKey puede traer ":" y "|"; la barra no entra en un id. */
@@ -107,6 +109,38 @@ export function creditAgainstDebts(amount, debts) {
   const rows = (plan.rows || []).filter((row) => row.credit > 0);
   const applied = roundARS(rows.reduce((sum, row) => sum + row.credit, 0));
   return { ok: true, rows, applied, leftover: plan.left };
+}
+
+/** Marca local de que este organizador ya corrió el pase retroactivo. */
+export function autoCreditPassKey(uid) {
+  const id = String(uid || '').trim();
+  return id ? `f7c-auto-credit-pass:${id}` : '';
+}
+
+/**
+ * Quien ya estaba anotado y todavía debe, del partido más viejo al más nuevo.
+ * No entra la espera, un partido cancelado, uno ya jugado, ni el saldo de otro organizador.
+ * organizerOf resuelve «Se anotó con» (uid, o el nombre de quien lo agregó si el dato viejo no tiene uid).
+ */
+export function retroactiveCreditIds({ players, matches, prices, organizerUid, organizerOf, now } = {}) {
+  const uid = String(organizerUid || '').trim();
+  if (!uid) return [];
+  const list = Array.isArray(matches) ? matches : [];
+  const byId = new Map();
+  for (const match of list) if (match?.id) byId.set(match.id, match);
+  const rows = [];
+  for (const player of players || []) {
+    if (!player?.id || player.waiting === true) continue;
+    const match = byId.get(player.matchId);
+    if (!match || match.cancelled === true || matchAlreadyPlayed(match, now)) continue;
+    const orgUid = String((organizerOf ? organizerOf(player) : player.signedUpWith) || '').trim();
+    if (orgUid !== uid) continue;
+    const owed = amountOwed(player, { players, matches: list, prices });
+    if (!(owed > 0)) continue;
+    rows.push({ id: String(player.id), date: String(match.date || ''), time: String(match.time || '') });
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
+  return rows.map((row) => row.id);
 }
 
 /** "Se aplicó $5.000 a 01/10 21hs. Queda como saldo a favor $3.000." */

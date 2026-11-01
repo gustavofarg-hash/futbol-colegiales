@@ -15,7 +15,7 @@ import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { planRows } from '../js/settle.js';
 import { dayCompensation, reconcileTransfers } from '../js/compensate.js';
-import { canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit } from '../js/credit.js';
+import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit, retroactiveCreditIds } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -2761,6 +2761,41 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.equal(canSeeLog(solo, 'gus'), true);
 });
 
+test('el pase retroactivo recorre primero el partido más viejo', () => {
+  const now = Date.parse('2026-10-19T13:00:00-03:00');
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const matches = [
+    { id: 'past', date: '2026-10-16', time: '18:00', price: 5000 },
+    { id: 'old', date: '2026-11-01', time: '18:00', price: 5000 },
+    { id: 'late', date: '2026-11-01', time: '21:00', price: 5000 },
+    { id: 'next', date: '2026-11-02', time: '18:00', price: 5000 },
+    { id: 'cancel', date: '2026-11-03', time: '18:00', price: 5000, cancelled: true },
+    { id: 'waitm', date: '2026-11-04', time: '18:00', price: 5000 },
+  ];
+  const players = [
+    { id: 'p-past', matchId: 'past', name: 'Ana', signedUpWith: 'gus' },
+    { id: 'p-next', matchId: 'next', name: 'Ana', signedUpWith: 'gus' },
+    { id: 'p-late', matchId: 'late', name: 'Ana', signedUpWith: 'gus' },
+    { id: 'p-old', matchId: 'old', name: 'Ana', signedUpWith: 'gus' },
+    { id: 'p-cancel', matchId: 'cancel', name: 'Ana', signedUpWith: 'gus' },
+    { id: 'p-wait', matchId: 'waitm', name: 'Ana', signedUpWith: 'gus', waiting: true },
+    { id: 'p-free', matchId: 'next', name: 'Libre', signedUpWith: 'gus', freePlay: true },
+    { id: 'p-other', matchId: 'old', name: 'Otro', signedUpWith: 'martin' },
+    { id: 'p-paid', matchId: 'next', name: 'Pago', signedUpWith: 'gus', paid: true, cash: 5000, transfer: 0, pendingTransfer: 0, fromCredit: 0 },
+    { id: 'p-partial', matchId: 'old', name: 'Parcial', signedUpWith: 'gus', paid: true, cash: 2000, transfer: 0, pendingTransfer: 0, fromCredit: 0 },
+    { id: 'legacy', matchId: 'next', name: 'Viejo', addedBy: 'Gustavo' },
+  ];
+  assert.equal(amountOwed(players.find((item) => item.id === 'p-old'), { players, matches, prices }), 4500);
+  assert.deepEqual(retroactiveCreditIds({ players, matches, prices, organizerUid: 'gus', now }), ['p-old', 'p-partial', 'p-late', 'p-next']);
+  assert.deepEqual(retroactiveCreditIds({
+    players: [{ id: 'legacy', matchId: 'next', name: 'Viejo', addedBy: 'Gustavo' }],
+    matches, prices, organizerUid: 'gus', now,
+    organizerOf: (player) => (player.addedBy === 'Gustavo' ? 'gus' : ''),
+  }), ['legacy']);
+  assert.equal(autoCreditPassKey('abc'), 'f7c-auto-credit-pass:abc');
+  assert.equal(autoCreditPassKey(''), '');
+});
+
 test('el error del backup nombra la colección y el documento', () => {
   assert.equal(BACKUP_WRITE_BATCH, 1);
   const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
@@ -2780,7 +2815,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v88');
+  assert.equal(version, 'f7c-v89');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
