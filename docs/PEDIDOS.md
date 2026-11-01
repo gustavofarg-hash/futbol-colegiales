@@ -34,7 +34,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **e2e en curso** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit en curso** (`node --test tests/unit.test.mjs`). El e2e de v90 revisa que al entrar a la promo los dos partidos quedan en $4.500, que si no alcanza la deuda es esa parte, que con tres partidos quedan $4.000, y que al salir el que queda vuelve a $5.000. El de v89 revisa el pase único.
+Pruebas sobre esta copia: **e2e 738/738 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 101/101 OK** (`node --test tests/unit.test.mjs`). El e2e de v90 revisa que al entrar a la promo los dos partidos quedan en $4.500, que si no alcanza la deuda es esa parte, que con tres partidos quedan $4.000, y que al salir el que queda vuelve a $5.000. El de v89 revisa el pase único.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
