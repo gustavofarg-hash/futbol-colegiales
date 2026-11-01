@@ -4,6 +4,7 @@ export const TZ_OFFSET = '-03:00';
 
 export const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 export const DIAS_CORTOS = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
+export const DIAS_MAYUS = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
 export const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 export const MESES_CORTOS = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 
@@ -41,6 +42,14 @@ export function toEpoch(date, time) {
 }
 export function diffDays(isoA, isoB) {
   return Math.round((Date.parse(isoB + 'T00:00:00Z') - Date.parse(isoA + 'T00:00:00Z')) / 86400000);
+}
+
+/** "JUEVES 29/10/2026" para un día YYYY-MM-DD ya calendario de Buenos Aires. */
+export function compensationWhen(iso) {
+  const name = DIAS_MAYUS[weekdayOf(iso)];
+  const num = numericDate(iso);
+  if (!name || !num) return '';
+  return `${name} ${num}`;
 }
 
 /** "22/10/2026" a partir de YYYY-MM-DD. */

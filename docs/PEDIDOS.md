@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v86** (rama `cursor/compensacion-fecha-c20d`, 01/11/2026): «Compensación del día» y «Hacer cálculo de compensación del día» agregan el día en mayúsculas y la fecha, por ejemplo «JUEVES 29/10/2026». Si decía «· El cálculo cambió», eso queda después de la fecha. `firestore.rules` no cambió.
 **Actualizada para f7c-v85** (rama `cursor/historial-vuelve-pago-c20d`, 01/11/2026): en Historial, tocar un jugador de «Faltan pagar (que anoté yo)» abre la hoja Pago. Guardar y Cancelar vuelven a esa lista abierta, en el mismo lugar de la página, con el total al día. Quien ya pagó sale de la lista. Si no queda nadie, la tarjeta sigue sin el cuadro. La deuda roja del menú y de la ficha no cambia. El borde verde de un campo con foco queda dentro del campo, así el scroll de la hoja no lo corta. `firestore.rules` no cambió.
 **Actualizada para f7c-v84** (rama `cursor/pago-dividir-orden-c20d`, 01/11/2026): en la hoja Pago, el casillero pasó a llamarse «Dividir el pago entre él y sus invitados» y queda debajo de «Cancelar primero las deudas más viejas». Sigue oculto si no hay invitados. Si está marcado, cada persona recibe hasta su promo del día (o el precio de su único partido, si no tiene promo) y ese monto se reparte en partes iguales entre sus partidos; el peso que sobra queda en el más temprano. Solo avisa saldo si de verdad sobra. Si un invitado que ya pagó la promo queda en un solo partido, se le cobra el precio de un partido de Ajustes y la diferencia queda como saldo de quien lo invitó, con el organizador que cobró, y en Registro figura «Carga de crédito». Cancelar y Guardar quedan fijos al pie de esa hoja. `firestore.rules` no cambió.
 **Actualizada para f7c-v83** (rama `cursor/calculo-reset-c20d`, 01/11/2026): si el cálculo de compensación no se puede guardar, el resultado no desaparece y un cuadro dice «No se pudo guardar el cálculo: faltan actualizar las reglas de Firebase» cuando Firebase niega el permiso. El reset del admin ahora puede borrar un partido aunque tenga jugadores: antes la regla leía `createdByUid` aunque el campo no estuviera, eso tiraba error y Firebase negaba el pedido entero. `firestore.rules` cambió en el borrado de partidos, jugadores, teléfonos y sedes.
@@ -29,7 +30,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **e2e 700/700 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 99/99 OK** (`node --test tests/unit.test.mjs`). El e2e de v85 revisa que, desde «Faltan pagar», Guardar y Cancelar vuelven a la lista abierta en el mismo lugar, y que el borde del campo enfocado no se corta. El de v84 revisa el reparto de la promo y los botones fijos.
+Pruebas sobre esta copia: **e2e 705/705 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 100/100 OK** (`node --test tests/unit.test.mjs`). El e2e de v86 revisa que la compensación dice el día y la fecha, y que el texto largo entra en 390px.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
@@ -117,7 +118,7 @@ Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reempla
 | 26/10 (#27 C4, #28 E3) | Importar el historial desde un texto, incluidas las fechas en formato viejo | ✅ | «Importar partidos desde texto», `js/parser.js` |
 | 27/10 (#41) y 29/10 (#43 R3) | Cuadro rojo «Faltan pagar (que anoté yo)» en Historial y en las tarjetas de HOY, con la lista que se despliega | ✅ | `oweBox` (`app.js`), `data-owe-toggle`. Desde v64 cuenta por «Se anotó con» (`owesOrganizer`). Si ese dato no está, sigue con «Agregó». **v85:** tocar un nombre abre Pago; Guardar y Cancelar vuelven a la lista abierta en el mismo scroll. Quien pagó todo sale de la lista |
 | 27/10 (#41) | Filtro «Partidos con deudores» | ✅ | `#hist-debtors` (`app.js:804–866`) |
-| 31/10 (v81) | **En Historial, la compensación del día se abre hacia abajo** | ✅ | Si no está hecha, el botón «Hacer cálculo de compensación del día». Si está, una fila con flecha (`data-comp-toggle`) abre el detalle. La ve quien puede anotar en algún partido de ese día. e2e del cálculo |
+| 31/10 (v81) | **En Historial, la compensación del día se abre hacia abajo** | ✅ | Si no está hecha, el botón «Hacer cálculo de compensación del día». Si está, una fila con flecha (`data-comp-toggle`) abre el detalle. La ve quien puede anotar en algún partido de ese día. **v86:** el botón, la fila y el título del detalle agregan el día y la fecha (`JUEVES 29/10/2026`). «· El cálculo cambió» queda después. e2e del cálculo |
 
 ## Equipos
 

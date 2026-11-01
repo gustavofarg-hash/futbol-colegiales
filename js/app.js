@@ -5,7 +5,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, numericDate, shortHour, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, numericDate, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v85';
+const APP_VERSION = 'f7c-v86';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -647,7 +647,8 @@ function render() {
   const key = `${r.name}:${r.mode || ''}:${r.section || ''}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
-  const y = same ? (document.scrollingElement?.scrollTop || 0) : 0;
+  const savedScroll = app.oweReturnScroll;
+  const y = savedScroll != null ? savedScroll : (same ? (document.scrollingElement?.scrollTop || 0) : 0);
   paintTabs(r);
   if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
@@ -1086,29 +1087,40 @@ function historyWithCompensation(matches) {
   }
   return groups.map((group) => `${compensationBlock(group.date)}${group.matches.map((item) => matchCard(item, { fullDate: true })).join('')}`).join('');
 }
+function compensationMakeLabel(date) {
+  const when = compensationWhen(date);
+  return when ? `Hacer cálculo de compensación del día ${when}` : 'Hacer cálculo de compensación del día';
+}
+function compensationHeadLabel(date, changed) {
+  const when = compensationWhen(date);
+  const base = when ? `Compensación del día ${when}` : 'Compensación del día';
+  return changed ? `${base} · El cálculo cambió` : base;
+}
 function matchCompensationHtml(date) {
   if (!canSeeDayCompensation(date)) return '';
   const saved = refreshCompensation(date);
   const { calc } = dayBundle(date);
-  if (!saved) return `<button type="button" class="btn block" id="btn-comp" data-comp-make="${esc(date)}">Hacer cálculo de compensación del día</button>`;
+  if (!saved) return `<button type="button" class="btn block" id="btn-comp" data-comp-make="${esc(date)}"><span class="comp-label">${esc(compensationMakeLabel(date))}</span></button>`;
   return `<section id="comp-detail">${compensationDetail(saved, calc)}</section>`;
 }
 function compensationBlock(date) {
   if (!canSeeDayCompensation(date)) return '';
   const saved = refreshCompensation(date);
-  if (!saved) return `<li class="comp-slot"><button type="button" class="btn block" data-comp-make="${esc(date)}">Hacer cálculo de compensación del día</button></li>`;
+  if (!saved) return `<li class="comp-slot"><button type="button" class="btn block" data-comp-make="${esc(date)}"><span class="comp-label">${esc(compensationMakeLabel(date))}</span></button></li>`;
   const open = app.compOpen === date;
   const { calc } = dayBundle(date);
-  return `<li class="comp-slot"><button type="button" class="btn block" data-comp-toggle="${esc(date)}" aria-expanded="${open ? 'true' : 'false'}">${open ? '▾' : '▸'} Compensación del día${saved.changed ? ' · El cálculo cambió' : ''}</button>${open ? `<div id="comp-detail">${compensationDetail(saved, calc)}</div>` : ''}</li>`;
+  const mark = open ? '▾' : '▸';
+  return `<li class="comp-slot"><button type="button" class="btn block" data-comp-toggle="${esc(date)}" aria-expanded="${open ? 'true' : 'false'}"><span class="comp-label">${mark} ${esc(compensationHeadLabel(date, saved.changed))}</span></button>${open ? `<div id="comp-detail">${compensationDetail(saved, calc)}</div>` : ''}</li>`;
 }
 function compensationDetail(doc, calc) {
+  const title = `<h3 class="comp-title" id="comp-title">${esc(compensationHeadLabel(doc.date, !!doc.changed))}</h3>`;
   const notice = doc.changed ? '<p class="hint" id="comp-changed">El cálculo cambió</p>' : '';
   if (calc?.missing?.length) {
     const lines = calc.missing.map((item) => {
       const match = knownMatches().find((row) => row.id === item.matchId);
       return `<li>${esc(item.name)} · ${esc(match ? fmtWhen(match) : '')}</li>`;
     }).join('');
-    return `${notice}<p class="hint">Falta indicar cómo pagan.</p><ul class="pay-split-preview" id="comp-missing">${lines}</ul>`;
+    return `${title}${notice}<p class="hint">Falta indicar cómo pagan.</p><ul class="pay-split-preview" id="comp-missing">${lines}</ul>`;
   }
   const rows = (doc.rows || []).map((row) => `<li><b>${esc(row.name)}</b> cobró ${esc(formatARS(row.collected))} · le corresponden ${esc(formatARS(row.entitled))}</li>`).join('');
   const moves = (doc.transfers || []).map((transfer) => {
@@ -1119,7 +1131,7 @@ function compensationDetail(doc, calc) {
     return `<li class="comp-transfer"><span>${esc(label)}${done}${esc(note)}</span>${button}</li>`;
   }).join('');
   const empty = moves ? '' : '<p class="hint">Nadie le tiene que pasar plata a otro.</p>';
-  return `${notice}<ul class="pay-split-preview" id="comp-rows">${rows}</ul>${moves ? `<ul class="comp-moves" id="comp-transfers">${moves}</ul>` : empty}`;
+  return `${title}${notice}<ul class="pay-split-preview" id="comp-rows">${rows}</ul>${moves ? `<ul class="comp-moves" id="comp-transfers">${moves}</ul>` : empty}`;
 }
 async function runCompensation(date) {
   const { matches, players, staff, calc } = dayBundle(date);
@@ -5627,7 +5639,7 @@ function consumeOweScroll() {
   app.oweReturnScroll = null;
   const apply = () => {
     const scroller = document.scrollingElement;
-    if (scroller) scroller.scrollTop = top;
+    if (scroller && scroller.scrollTop !== top) scroller.scrollTop = top;
   };
   apply();
   requestAnimationFrame(() => { apply(); requestAnimationFrame(apply); });
