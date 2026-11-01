@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v90');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v91');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4753,6 +4753,143 @@ async function assertGuestPromo(fix, visibleName, count) {
     return rows.map((player) => player.fromCredit || 0).sort((a, b) => a - b);
   });
   check('Con tres partidos la promo 3 deja $4.000 en cada uno', triplePay.join() === '4000,4000,4000', JSON.stringify(triplePay));
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cupoId = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/roster.js');
+    await app.store.adjustCredit({
+      personKey: `p:${phoneKey(canonicalPhone('11 5555-8920'))}`,
+      organizerUid: me.uid, organizerName: me.name, name: 'Nojugo Pago', delta: 5000,
+    }, me.name);
+    return app.store.addMatch({ date: '2026-11-16', time: '19:00', price: 5000, note: 'No jugo', capacity: 1 }, me.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, cupoId);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Nojugo Pago');
+  await page.fill('#player-form [name=phone]', '11 5555-8920');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).some((player) => player.name === 'Nojugo Pago' && player.fromCredit === 5000 && player.autoCredit === true));
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Espera Cupo');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#wait-list .slot:has-text("Espera Cupo")');
+  await page.locator('#slots .slot', { has: page.locator('.name:text-is("Nojugo Pago")') }).locator('.more-btn').click();
+  await page.waitForSelector('#pm-no-play');
+  const menuOrder = await page.evaluate(() => {
+    const button = document.querySelector('#pm-no-play');
+    const del = document.querySelector('#pm-del');
+    const follows = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+    return { label: button?.textContent || '', above: follows(button, del) && button?.nextElementSibling?.id === 'pm-del' };
+  });
+  check('No jugó pero pagó queda justo arriba de Quitar del partido', menuOrder.label === 'No jugó pero pagó' && menuOrder.above, JSON.stringify(menuOrder));
+  await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
+  await page.locator('#pm-no-play').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v91-menu-no-jugo.png' });
+  await page.click('#pm-no-play');
+  await page.waitForSelector('#ask-yes');
+  await page.click('#ask-yes');
+  await page.waitForFunction(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((player) => player.name === 'Nojugo Pago');
+    const credit = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).credits || {}).find((item) => item.name === 'Nojugo Pago')?.amount ?? 0;
+    return row?.noPlay === true && row.fromCredit === 5000 && row.autoCredit === true && credit === 0
+      && document.querySelector('#no-play-list')?.innerText.includes('Nojugo Pago')
+      && !document.querySelector('#slots')?.innerText.includes('Nojugo Pago')
+      && document.querySelector('#slots')?.innerText.includes('Espera Cupo');
+  });
+  const noPlayTitle = await page.locator('#no-play-title').evaluate((el) => el.textContent);
+  const slotCount = (await page.locator('#slot-count').innerText()).replace(/\s/g, '');
+  check('Pasa a No jugó pero pagó, libera el lugar y no devuelve el crédito', noPlayTitle === 'No jugó pero pagó' && slotCount === '1/1', `${noPlayTitle} ${slotCount}`);
+  await page.evaluate(() => {
+    const toast = document.querySelector('#toast');
+    if (toast) toast.hidden = true;
+    const el = document.querySelector('#no-play-title');
+    const scroller = document.scrollingElement;
+    const bar = document.querySelector('.actionbar');
+    const barH = bar ? bar.getBoundingClientRect().height : 0;
+    const top = el.getBoundingClientRect().top + scroller.scrollTop - 12;
+    scroller.scrollTop = Math.max(0, top);
+    const list = document.querySelector('#no-play-list');
+    const room = window.innerHeight - barH - 12;
+    if (list && list.getBoundingClientRect().bottom > room) {
+      scroller.scrollTop += list.getBoundingClientRect().bottom - room;
+    }
+  });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v91-lista-no-jugo.png' });
+  await page.evaluate(() => { location.hash = '#/registro/partidos'; });
+  await page.waitForFunction(() => (document.querySelector('#log-view')?.innerText || '').includes('no jugó pero pagó'));
+  check('Registro anota el pase a No jugó pero pagó', (await page.locator('#log-view').innerText()).includes('Nojugo Pago'));
+  await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
+  await page.locator('#log-list .log-row', { hasText: 'no jugó pero pagó' }).first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v91-registro-no-jugo.png' });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, cupoId);
+  await page.waitForSelector('#no-play-list .more-btn');
+  await page.locator('#no-play-list .more-btn').click();
+  await page.waitForSelector('#pm-del');
+  check('Desde esa lista se puede volver si hay lugar, y quitar no ofrece devolver', (await page.locator('#pm-back').count()) === 1 && (await page.locator('#pm-no-play').count()) === 0);
+  await page.click('#pm-del');
+  await page.waitForSelector('#ask-ok');
+  check('Quitar avisa que el pago no vuelve al saldo', (await page.locator('#app-ask-text').innerText()).includes('no vuelve al saldo'));
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const gone = !Object.values(db.players).some((player) => player.name === 'Nojugo Pago');
+    const credit = Object.values(db.credits || {}).find((item) => item.name === 'Nojugo Pago')?.amount ?? 0;
+    return gone && credit === 0;
+  });
+  check('Quitar de esa lista no devuelve el crédito automático', true);
+  const backId = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const { phoneKey } = await import('./js/privacy.js');
+    const { canonicalPhone } = await import('./js/roster.js');
+    await app.store.adjustCredit({
+      personKey: `p:${phoneKey(canonicalPhone('11 5555-8921'))}`,
+      organizerUid: me.uid, organizerName: me.name, name: 'Nojugo Vuelve', delta: 5000,
+    }, me.name);
+    return app.store.addMatch({ date: '2026-11-17', time: '19:00', price: 5000, note: 'No jugo vuelve', capacity: 2 }, me.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, backId);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.fill('#player-name', 'Nojugo Vuelve');
+  await page.fill('#player-form [name=phone]', '11 5555-8921');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#slots .slot:has-text("Nojugo Vuelve") .more-btn');
+  await page.locator('#slots .more-btn').click();
+  await page.click('#pm-no-play');
+  await page.waitForSelector('#no-play-list .slot:has-text("Nojugo Vuelve")');
+  const held = await page.evaluate(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((player) => player.name === 'Nojugo Vuelve');
+    return row?.fromCredit === 5000 && row?.noPlay === true;
+  });
+  check('Sin lista de espera también conserva el pago', held);
+  await page.locator('#no-play-list [data-no-play-back]').click();
+  await page.waitForFunction(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((player) => player.name === 'Nojugo Vuelve');
+    return row && row.noPlay !== true && row.fromCredit === 5000 && document.querySelector('#slots')?.innerText.includes('Nojugo Vuelve') && !document.querySelector('#no-play-list');
+  });
+  check('Volver al partido no lo vuelve a cobrar', true);
+  await page.locator('#slots .more-btn').click();
+  await page.click('#pm-no-play');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open && document.querySelector('#no-play-list') && document.querySelector('#btn-cancel-match'));
+  await page.locator('#btn-cancel-match').evaluate((el) => el.click());
+  await page.waitForFunction(() => document.querySelector('#ask')?.open && (document.querySelector('#app-ask-text')?.textContent || '').includes('cancelar'));
+  await page.click('#ask-ok');
+  await page.waitForSelector('#cancel-form button[type=submit]');
+  await page.click('#cancel-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const row = Object.values(db.players).find((player) => player.name === 'Nojugo Vuelve');
+    const credit = Object.values(db.credits || {}).find((item) => item.name === 'Nojugo Vuelve')?.amount ?? 0;
+    return row?.noPlay === true && row.autoCredit !== true && credit === 5000;
+  });
+  check('Cancelar el partido devuelve el crédito automático también de esa lista', true);
 }
 
 const fresh = await ctx.newPage();

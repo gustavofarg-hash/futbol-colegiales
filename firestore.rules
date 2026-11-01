@@ -161,7 +161,7 @@ service cloud.firestore {
           'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo', 'autoCredit', 'awaiting'];
     }
     function waitKeys() {
-      return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt'];
+      return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt', 'noPlay'];
     }
     function confirmKeys() {
       return ['confirmToken', 'confirmed', 'confirmedAt', 'reminderSentAt'];
@@ -205,7 +205,8 @@ service cloud.firestore {
           && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is number && d.waitOrder >= 0 && d.waitOrder <= 1000000))
           && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
           && (!('tentative' in d) || d.tentative == null || d.tentative is bool)
-          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number);
+          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number)
+          && (!('noPlay' in d) || d.noPlay is bool);
     }
     function validConfirm(d) {
       return (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))

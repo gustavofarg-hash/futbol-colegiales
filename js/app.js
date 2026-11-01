@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v90';
+const APP_VERSION = 'f7c-v91';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -511,10 +511,12 @@ const addBlock = (m) => {
   return n >= max ? limitMessage(max) : '';
 };
 const isWaiting = (p) => p.waiting === true;
+const isNoPlay = (p) => p?.noPlay === true;
 const playersOf = (matchId) => {
-  const all = app.players.filter((p) => p.matchId === matchId);
+  const all = app.players.filter((p) => p.matchId === matchId && !isNoPlay(p));
   return groupByInviter(rosterSplit(all).main, all);
 };
+const noPlayOf = (matchId) => app.players.filter((p) => p.matchId === matchId && isNoPlay(p)).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es') || String(a.id).localeCompare(String(b.id)));
 const waitingOf = (matchId) => sortWaiting(app.players.filter((p) => p.matchId === matchId && isWaiting(p)));
 const matchById = (id) => app.matches.find((m) => m.id === id);
 const fmtWhen = (m) => `${capitalize(labelDate(m.date))} · ${m.time || '--:--'} hs`;
@@ -1575,7 +1577,7 @@ function renderMatch(id) {
   const mineLine = mineSummary(app.players.filter((p) => p.matchId === id), app.who).text;
   const assigned = normalizeTeams(m.teams, everyone.map((p) => p.id));
   const teamCount = assigned.bib.length + assigned.plain.length;
-  const signed = everyone.length + waitingOf(id).length;
+  const signed = everyone.length + waitingOf(id).length + noPlayOf(id).length;
   const canEdit = canEditMatch(m, who.uid);
   const notesText = String(m.notes || '').trim();
   const hour = shortHour(m.time) || '--:--';
@@ -1609,6 +1611,7 @@ function renderMatch(id) {
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
+    ${noPlaySection(m, readOnly)}
     ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
     ${canAdd(m, who.uid) ? matchCompensationHtml(m.date) : ''}
     <div class="actionbar"><div class="actionbar-inner match-actions">
@@ -1631,6 +1634,15 @@ function renderMatch(id) {
     }
     const promote = e.target.closest('[data-promote]');
     if (promote) return promoteToMatch(m, app.players.find((p) => p.id === promote.dataset.promote), promote.disabled);
+  };
+  const noPlayList = $('#no-play-list');
+  if (noPlayList) noPlayList.onclick = (e) => {
+    const back = e.target.closest('[data-no-play-back]');
+    if (back) return restoreNoPlay(m, app.players.find((p) => p.id === back.dataset.noPlayBack));
+    const menu = e.target.closest('[data-menu]');
+    if (menu) return openPlayerMenu(m, app.players.find((p) => p.id === menu.dataset.menu));
+    const whoBtn = e.target.closest('[data-profile]');
+    if (whoBtn) return openPlayerProfile(app.players.find((p) => p.id === whoBtn.dataset.profile), m.id);
   };
   $('#wait-list').onclick = (e) => {
     onRow(e);
@@ -1710,6 +1722,14 @@ function listText(m) {
   const summary = confirmSummary(ps);
   if (ps.length) lines.push(summary.text);
   const wait = waitingOf(m.id);
+  const aside = noPlayOf(m.id);
+  if (aside.length) {
+    lines.push('', 'No jugó pero pagó:');
+    aside.forEach((p, i) => {
+      const pay = paymentStatusText(p);
+      lines.push(`${i + 1}. ${shownName(p)}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
+    });
+  }
   if (wait.length) {
     lines.push('', 'Lista de espera:');
     wait.forEach((p, i) => {
@@ -1748,6 +1768,27 @@ function waitingSection(m, full, readOnly) {
   return `
     <h2 class="section">Lista de espera</h2>
     ${wait.length ? `<ul class="slots" id="wait-list">${rows}</ul>` : '<p class="empty-wait" id="wait-list">Nadie en espera. Los que se anotan acá quedan al final, en orden de llegada.</p>'}`;
+}
+
+function noPlaySection(m, readOnly) {
+  const rows = noPlayOf(m.id);
+  if (!rows.length) return '';
+  const full = playersOf(m.id).length >= capOf(m);
+  const items = rows.map((p, i) => `
+      <li class="slot wait${inviteClass(p)}" data-player="${esc(p.id)}">
+        <span class="n">${i + 1}</span>
+        <button type="button" class="who" data-profile="${esc(p.id)}">
+          ${nameRow(p)}
+          <div class="sub">${phoneSub(p)}
+            ${friendTag(p)}${addedTag(p)}${signedUpTag(p)}</div>
+          ${payMarkup(p)}
+        </button>
+        ${readOnly ? '' : `<button type="button" class="btn promote-btn" data-no-play-back="${esc(p.id)}" ${full ? 'disabled' : ''}>Volver al partido</button>`}
+        <button type="button" class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>
+      </li>`).join('');
+  return `
+    <h2 class="section" id="no-play-title">No jugó pero pagó</h2>
+    <ul class="slots" id="no-play-list">${items}</ul>`;
 }
 
 function confirmTag(p) {
@@ -1946,7 +1987,7 @@ function openNotes(m) {
 
 function openCancel(m) {
   if (!m || matchAlreadyPlayed(m)) return;
-  const signed = playersOf(m.id).length + waitingOf(m.id).length;
+  const signed = playersOf(m.id).length + waitingOf(m.id).length + noPlayOf(m.id).length;
   openSheet(`
     <form id="cancel-form" novalidate>
       <h3>Cancelar partido</h3>
@@ -5310,7 +5351,9 @@ function openPlayerMenu(m, p) {
       <button class="btn" id="pm-edit"${own || canAnnotate || canWritePlayer(p, actorWithRole()) ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
       ${isGuest(p) ? '' : '<button class="btn" id="pm-friend">Agregar invitado</button>'}
-      ${!isWaiting(p) && canAnnotate ? '<button class="btn" id="pm-wait">Bajar a lista de espera</button>' : ''}
+      ${!isWaiting(p) && !isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-wait">Bajar a lista de espera</button>' : ''}
+      ${!isWaiting(p) && !isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-no-play">No jugó pero pagó</button>' : ''}
+      ${isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-back">Volver al partido</button>' : ''}
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
@@ -5333,7 +5376,11 @@ function openPlayerMenu(m, p) {
   if (addGuest && match) addGuest.onclick = () => openFriendForm(match, p);
   const demote = $('#pm-wait');
   if (demote && match) demote.onclick = () => demoteToWait(match, p);
-  if (match) $('#pm-del').onclick = () => removeMatchPlayer(match, p);
+  const noPlayBtn = $('#pm-no-play');
+  if (noPlayBtn && match) noPlayBtn.onclick = () => markPaidNoPlay(match, p);
+  const backBtn = $('#pm-back');
+  if (backBtn && match) backBtn.onclick = () => restoreNoPlay(match, p);
+  if (match) $('#pm-del').onclick = () => (isNoPlay(p) ? removeNoPlayPlayer(match, p) : removeMatchPlayer(match, p));
 }
 
 const ask = $('#ask');
@@ -5459,6 +5506,50 @@ async function unwindPromoPayment(player) {
     });
   }
   return true;
+}
+
+async function markPaidNoPlay(m, p) {
+  if (!m || !p || isNoPlay(p) || isWaiting(p) || !canAdd(m, actor().uid)) return;
+  const top = waitingOf(m.id)[0];
+  const mainLeft = playersOf(m.id).filter((item) => item.id !== p.id).length;
+  const needsPromote = !!top && mainLeft < capOf(m);
+  const go = (promote) => {
+    closeSheet();
+    const job = (async () => {
+      await app.store.setNoPlay(p.id, true);
+      if (!promote) return;
+      await app.store.promoteFromWaiting(top.id);
+      await applyAutoCredit(top.id);
+      await offerPromotionWhatsApp(top, m);
+    })();
+    run(job, promote ? `${top.name} pasó al partido` : `${shownName(p)} quedó en No jugó pero pagó`);
+  };
+  if (!needsPromote) {
+    closeSheet();
+    go(false);
+    return;
+  }
+  askYesNo(`¿Subir a ${top.name}, el primero de la lista de espera?`).then(go);
+}
+
+async function restoreNoPlay(m, p) {
+  if (!m || !p || !isNoPlay(p) || !canAdd(m, actor().uid)) return;
+  if (playersOf(m.id).length >= capOf(m)) {
+    toast('No hay lugar en el partido.');
+    return;
+  }
+  closeSheet();
+  run((async () => {
+    await app.store.setNoPlay(p.id, false);
+    await applyAutoCredit(p.id);
+  })(), `${shownName(p)} volvió al partido`);
+}
+
+async function removeNoPlayPlayer(m, p) {
+  if (!m || !p || !isNoPlay(p)) return;
+  if (!(await askConfirm(`¿Quitar a ${p.name} del partido? El pago no vuelve al saldo.`, { danger: true }))) return;
+  closeSheet();
+  run(app.store.deletePlayer(p.id), `${p.name} quitado`);
 }
 
 async function removeMatchPlayer(m, p, { asked = false } = {}) {
