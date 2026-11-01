@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v86');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v87');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -133,6 +133,81 @@ const demoMode = await page.evaluate(() => window.__app?.store?.mode);
 check('Modo demo (no escribe en Firestore)', demoMode === 'demo', String(demoMode));
 if (demoMode !== 'demo') { await browser.close(); process.exit(1); }
 check('Arranca sin partidos', await page.isVisible('text=No hay partidos en los próximos 7 días'));
+async function swipeView(fromX, toX, y, y2 = y) {
+  await page.evaluate(({ fromX, toX, y, y2 }) => {
+    const startEl = document.elementFromPoint(fromX, y);
+    if (!startEl) throw new Error('sin elemento');
+    const point = (type, x, py) => {
+      const target = document.elementFromPoint(x, py) || startEl;
+      const touch = new Touch({ identifier: 1, target, clientX: x, clientY: py, pageX: x, pageY: py, screenX: x, screenY: py });
+      const moving = type !== 'touchend' && type !== 'touchcancel';
+      startEl.dispatchEvent(new TouchEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        touches: moving ? [touch] : [],
+        changedTouches: [touch],
+      }));
+    };
+    point('touchstart', fromX, y);
+    point('touchmove', fromX + (toX - fromX) / 2, y + (y2 - y) / 2);
+    point('touchmove', toX, y2);
+    point('touchend', toX, y2);
+  }, { fromX, toX, y, y2 });
+}
+const tabNow = async () => page.evaluate(() => document.querySelector('#tabbar a[aria-current="page"]')?.dataset.tab || '');
+await swipeView(220, 70, 480);
+await page.waitForFunction(() => location.hash === '#/jugadores');
+const jugadoresTitle = (await page.locator('#view h2.section').first().innerText()).trim();
+check('Deslizar a la izquierda abre Jugadores', await tabNow() === 'roster' && jugadoresTitle.toLowerCase() === 'jugadores', `${await tabNow()} ${jugadoresTitle}`);
+const tabBox = await page.locator('#btn-roster').evaluate((el) => {
+  const box = el.getBoundingClientRect();
+  return box.left >= -1 && box.right <= window.innerWidth + 1 && box.top >= 0 && box.bottom <= window.innerHeight;
+});
+check('La pestaña elegida queda a la vista', tabBox);
+await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v87-swipe-jugadores.png' });
+await swipeView(70, 220, 480);
+await page.waitForFunction(() => location.hash === '#/' || location.hash === '');
+check('Deslizar a la derecha vuelve a Próximos partidos', await tabNow() === 'home');
+await swipeView(70, 220, 480);
+check('En la primera pestaña no da la vuelta', (await tabNow()) === 'home' && ((await page.evaluate(() => location.hash)) === '#/' || (await page.evaluate(() => location.hash)) === ''));
+await swipeView(160, 200, 480);
+check('Un desliz corto no cambia de pestaña', await tabNow() === 'home');
+await swipeView(180, 200, 240, 420);
+check('Un desliz vertical no cambia de pestaña', await tabNow() === 'home');
+await swipeView(8, 140, 480);
+check('Un desliz desde el borde no cambia de pestaña', await tabNow() === 'home');
+await page.evaluate(() => { location.hash = '#/registro'; });
+await page.waitForSelector('#btn-registro[aria-current="page"]');
+await swipeView(220, 70, 480);
+check('En Registro no hay pestaña siguiente', await tabNow() === 'registro');
+await page.evaluate(() => { location.hash = '#/estadisticas'; });
+await page.waitForSelector('#stats-view');
+await swipeView(220, 70, 300);
+check('En Estadísticas, deslizar a la izquierda abre Registro', await tabNow() === 'registro');
+await page.evaluate(() => { location.hash = '#/estadisticas/jugador/nadie'; });
+await page.waitForSelector('#stats-view');
+await swipeView(220, 70, 320);
+check('Dentro de un jugador de Estadísticas no cambia de pestaña', (await page.evaluate(() => location.hash)).startsWith('#/estadisticas/jugador/'));
+await page.evaluate(() => { location.hash = '#/partido/no-esta'; });
+await page.waitForSelector('#match-missing, #match-denied, .empty');
+await swipeView(220, 70, 320);
+check('El detalle de un partido no cambia de pestaña', (await page.evaluate(() => location.hash)).startsWith('#/partido/'));
+await page.evaluate(() => { location.hash = '#/jugadores'; });
+await page.waitForSelector('#roster-q');
+const rosterBox = await page.locator('#roster-q').boundingBox();
+await swipeView(rosterBox.x + 20, rosterBox.x + 20 - 120, rosterBox.y + 10);
+check('Deslizar sobre el buscador no cambia de pestaña', await tabNow() === 'roster');
+await page.click('#btn-historial');
+await page.waitForSelector('#btn-historial[aria-current="page"]');
+check('Tocar una pestaña sigue abriendo esa sección', (await page.evaluate(() => location.hash)) === '#/historial');
+await page.click('#btn-settings');
+await page.waitForSelector('#sheet[open]');
+await swipeView(220, 70, 360);
+check('Con una hoja abierta el desliz no cambia de pestaña', (await page.evaluate(() => location.hash)) === '#/historial' && await page.locator('#sheet').evaluate((el) => el.open));
+await page.click('#sheet [data-close]');
+await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForFunction(() => document.querySelector('#tab-proximos')?.getAttribute('aria-current') === 'page');
 check('La app se llama Mis Partidos', (await page.title()) === 'Mis Partidos' && (await page.textContent('.brand-title')) === 'Mis Partidos');
 check('Bajo el título dice Agenda de partidos', (await page.textContent('#venue-name')) === 'Agenda de partidos');
 await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/header-agenda.png' });

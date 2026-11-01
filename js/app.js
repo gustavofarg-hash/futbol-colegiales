@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v86';
+const APP_VERSION = 'f7c-v87';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -614,6 +614,7 @@ function paintTabs(r) {
     if (on) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   });
+  document.querySelector('#tabbar a[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro' || (r.name === 'stats' && !r.id);
   $('#btn-back').hidden = root || !app.loaded;
   requestAnimationFrame(placeBars);
@@ -5675,5 +5676,76 @@ sheet.addEventListener('close', () => {
     if (body) body.remove();
   });
 });
+
+const MAIN_TABS = ['home', 'roster', 'history', 'stats', 'registro'];
+function swipeTab() {
+  const r = route();
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro') return r.name;
+  if (r.name === 'stats' && !r.id) return 'stats';
+  return '';
+}
+function horizontalScroller(node) {
+  const view = $('#view');
+  let el = node instanceof Element ? node : null;
+  while (el && el !== view) {
+    const style = getComputedStyle(el);
+    const ox = style.overflowX;
+    if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 2) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
+function swipeBlocked(target, x) {
+  if (document.getElementById('sheet')?.open || document.getElementById('ask')?.open) return true;
+  if (!swipeTab()) return true;
+  if (x <= 20 || x >= window.innerWidth - 20) return true;
+  const el = target instanceof Element ? target : null;
+  if (!el || el.closest('.topstack, #tabbar, #tab-slot')) return true;
+  if (el.closest('input, textarea, select, [role="slider"]')) return true;
+  if (horizontalScroller(el)) return true;
+  return false;
+}
+function goSwipeTab(delta) {
+  const current = swipeTab();
+  const index = MAIN_TABS.indexOf(current);
+  const next = index + delta;
+  if (index < 0 || next < 0 || next >= MAIN_TABS.length) return;
+  const view = $('#view');
+  if (view) {
+    view.classList.remove('swipe-next', 'swipe-prev');
+    void view.offsetWidth;
+    view.classList.add(delta > 0 ? 'swipe-next' : 'swipe-prev');
+  }
+  location.hash = hashForTab(MAIN_TABS[next]);
+}
+function bindTabSwipe() {
+  if (document.body.dataset.swipe) return;
+  document.body.dataset.swipe = '1';
+  let gesture = null;
+  document.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) { gesture = null; return; }
+    const touch = event.touches[0];
+    if (swipeBlocked(event.target, touch.clientX)) { gesture = null; return; }
+    gesture = { x: touch.clientX, y: touch.clientY };
+  }, { passive: true });
+  document.addEventListener('touchmove', (event) => {
+    if (!gesture || event.touches.length !== 1) return;
+    const dx = event.touches[0].clientX - gesture.x;
+    const dy = event.touches[0].clientY - gesture.y;
+    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.5 && event.cancelable) event.preventDefault();
+  }, { passive: false });
+  document.addEventListener('touchend', (event) => {
+    if (!gesture) return;
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - gesture.x;
+    const dy = touch.clientY - gesture.y;
+    gesture = null;
+    if (Math.abs(dx) <= 60 || Math.abs(dx) <= Math.abs(dy) * 1.5) return;
+    if (event.cancelable) event.preventDefault();
+    goSwipeTab(dx < 0 ? 1 : -1);
+  }, { passive: false });
+  document.addEventListener('touchcancel', () => { gesture = null; });
+}
+bindTabSwipe();
 
 boot().catch((e) => { console.error(e); showError('Error al iniciar la app: ' + e.message); });
