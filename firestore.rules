@@ -158,7 +158,7 @@ service cloud.firestore {
     function moneyKeys() {
       return ['paid', 'amount', 'method', 'paidUpdatedBy', 'paidUpdatedAt', 'receivedBy',
           'cash', 'transfer', 'pendingTransfer', 'transferReceivedAt', 'transferReceivedBy',
-          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo', 'awaiting'];
+          'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo', 'autoCredit', 'awaiting'];
     }
     function waitKeys() {
       return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt'];
@@ -194,6 +194,7 @@ service cloud.firestore {
           && (!('freePlay' in d) || d.freePlay is bool)
           && (!('fromCredit' in d) || d.fromCredit == null || (d.fromCredit is number && d.fromCredit >= 0 && d.fromCredit <= 1000000000))
           && (!('creditTo' in d) || d.creditTo == null || (d.creditTo is string && d.creditTo.size() > 0 && d.creditTo.size() <= 40))
+          && (!('autoCredit' in d) || d.autoCredit == null || d.autoCredit is bool)
           && (!('awaiting' in d) || d.awaiting == null || awaitingListOk(d.awaiting));
     }
     function validPlayerState(d) {

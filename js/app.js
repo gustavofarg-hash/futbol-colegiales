@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
+import { autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v87';
+const APP_VERSION = 'f7c-v88';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -224,6 +224,82 @@ function promoPayer(player) {
   return app.players.find((item) => item.id === hostId) || player;
 }
 
+function creditOrganizerOf(player) {
+  const uid = String(player?.signedUpWith || '').trim();
+  const name = String(player?.signedUpWithName || player?.addedBy || '').trim();
+  if (uid) return { uid, name: name || actor().name };
+  if (!name) return null;
+  if (sameOrganizer(name, actor().name) && actor().uid) return { uid: actor().uid, name: actor().name };
+  const found = organizerUidByName(name);
+  return found ? { uid: found, name } : null;
+}
+/** Si hay saldo con quien se anotó, cubre el precio de este partido (la promo, si aplica). */
+async function applyAutoCredit(playerId) {
+  const player = app.players.find((item) => item.id === playerId);
+  if (!player || player.waiting === true || isFreePlay(player)) return 0;
+  const match = knownMatches().find((item) => item.id === player.matchId);
+  if (!match || match.cancelled === true || matchAlreadyPlayed(match)) return 0;
+  const owed = amountOwed(player, { players: app.players, matches: knownMatches(), prices: livePrices() });
+  const org = creditOrganizerOf(player);
+  const key = personKey(player, app.players);
+  if (!org?.uid || !key) return 0;
+  const take = autoCreditTake(owed, creditBalance(app.credits, key, org.uid));
+  if (!(take.pay > 0)) return 0;
+  const prev = paymentParts(player);
+  const move = { personKey: key, organizerUid: org.uid, organizerName: org.name, name: player.name, delta: -take.pay };
+  await app.store.adjustCredit(move, app.who);
+  try {
+    await app.store.setPayment(player.id, {
+      paid: true,
+      split: true,
+      freePlay: false,
+      cash: prev.cash,
+      transfer: prev.transfer,
+      pendingTransfer: prev.pending,
+      fromCredit: roundMoney(prev.credit + take.pay),
+      cashTo: prev.cash > 0 ? player.cashTo : null,
+      transferTo: prev.transfer > 0 ? player.transferTo : null,
+      pendingTo: prev.pending > 0 ? player.pendingTo : null,
+      creditTo: org.name,
+      autoCredit: true,
+      transferParts: player.transferParts || null,
+    }, app.who);
+  } catch (error) {
+    await app.store.adjustCredit({ ...move, delta: take.pay }, app.who);
+    throw error;
+  }
+  return take.pay;
+}
+/** Devuelve al saldo solo lo que se había descontado solo. */
+async function refundAutoCredit(player) {
+  if (!player || player.autoCredit !== true) return 0;
+  const amount = paymentParts(player).credit;
+  if (!(amount > 0)) return 0;
+  const org = creditOrganizerOf(player);
+  const key = personKey(player, app.players);
+  if (!org?.uid || !key) return 0;
+  const prev = paymentParts(player);
+  const kept = roundMoney(prev.cash + prev.transfer + prev.pending);
+  await app.store.adjustCredit({
+    personKey: key, organizerUid: org.uid, organizerName: org.name, name: player.name, delta: amount,
+  }, app.who);
+  await app.store.setPayment(player.id, kept > 0 ? {
+    paid: true,
+    split: true,
+    freePlay: false,
+    cash: prev.cash,
+    transfer: prev.transfer,
+    pendingTransfer: prev.pending,
+    fromCredit: 0,
+    cashTo: prev.cash > 0 ? player.cashTo : null,
+    transferTo: prev.transfer > 0 ? player.transferTo : null,
+    pendingTo: prev.pending > 0 ? player.pendingTo : null,
+    creditTo: null,
+    autoCredit: false,
+    transferParts: player.transferParts || null,
+  } : { paid: false, split: true, autoCredit: false }, app.who);
+  return amount;
+}
 function creditMoveFor(player, delta) {
   const me = actor();
   return {
@@ -1689,7 +1765,8 @@ function promoteToMatch(m, player, disabled) {
   if (playersOf(m.id).length >= cap) return;
   const job = (async () => {
     await app.store.promoteFromWaiting(player.id);
-    toast(`${player.name} pasó al partido`);
+    const taken = await applyAutoCredit(player.id);
+    toast(taken > 0 ? `${player.name} pasó al partido. Se usó ${formatARS(taken)} del saldo.` : `${player.name} pasó al partido`);
     await offerPromotionWhatsApp(player, m);
   })();
   run(job);
@@ -1728,6 +1805,7 @@ function openCancel(m) {
     closeSheet();
     const next = { ...m, notes, cancelled: true };
     const job = (async () => {
+      for (const player of app.players.filter((item) => item.matchId === m.id)) await refundAutoCredit(player);
       await app.store.updateMatch(m.id, {
         cancelled: true,
         cancelledAt: Date.now(),
@@ -2595,7 +2673,8 @@ function openHistoryImportPreview(text, found) {
         }, app.who);
         const match = matchById(id) || { id, date: item.date, time: item.time, capacity: 14, venueId: DEFAULT_VENUE_ID };
         for (const raw of item.players) {
-          await app.store.addPlayer(match, importedPlayerFields(raw), app.who, { forceMain: true });
+          const pid = await app.store.addPlayer(match, importedPlayerFields(raw), app.who, { forceMain: true });
+          await applyAutoCredit(pid);
         }
         n += 1;
       }
@@ -3444,10 +3523,11 @@ function bindPartidos(person) {
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
         try {
-          await app.store.addPlayer(row.match, { name: person.name, shortName: person.shortName || '', phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true, phoneShared: person.phoneShared === true }, app.who, {
+          const pid = await app.store.addPlayer(row.match, { name: person.name, shortName: person.shortName || '', phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey || '', hasPhone: person.hasPhone === true, phoneShared: person.phoneShared === true }, app.who, {
             waiting: again.willWait,
             tentative: tentative && !again.willWait,
           });
+          if (!again.willWait) await applyAutoCredit(pid);
         } catch (error) {
           if (error?.code === 'already-in-match') { toast(ALREADY_IN_MATCH); continue; }
           throw error;
@@ -3632,12 +3712,13 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { re
         phoneShared: visible,
         ...signup,
       }, app.who, { waiting, tentative: tentative === true && !waiting });
+      if (!waiting) await applyAutoCredit(hostId);
       hostName = host.name;
       offset = 1;
     }
     for (const friend of friends) {
       const waiting = offset >= place.main;
-      await app.store.addPlayer(m, {
+      const friendId = await app.store.addPlayer(m, {
         name: friend.name,
         phone: '',
         invitedBy: hostId,
@@ -3645,6 +3726,7 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { re
         guestAuto: friend.guestAuto === true,
         ...signup,
       }, app.who, { waiting });
+      if (!waiting) await applyAutoCredit(friendId);
       offset += 1;
     }
     if (also.length) {
@@ -3703,7 +3785,7 @@ async function addGuestsToSameDay(targets, friends, signup) {
     const place = placeGroup({ mainCount: playersOf(match.id).length, capacity: capOf(match), count: todo.length, forceWait: host.waiting === true });
     let offset = 0;
     for (const friend of todo) {
-      await app.store.addPlayer(match, {
+      const friendId = await app.store.addPlayer(match, {
         name: friend.name,
         phone: '',
         invitedBy: host.id,
@@ -3711,6 +3793,7 @@ async function addGuestsToSameDay(targets, friends, signup) {
         guestAuto: friend.guestAuto === true,
         ...signup,
       }, app.who, { waiting: offset >= place.main });
+      if (offset < place.main) await applyAutoCredit(friendId);
       offset += 1;
     }
     notes.push(place.wait ? `${label}: también anotados · ${place.wait} en espera` : `${label}: también anotados`);
@@ -5231,11 +5314,15 @@ async function removeMatchPlayer(m, p, { asked = false } = {}) {
     const job = (async () => {
       for (const id of dropping) {
         const person = app.players.find((item) => item.id === id);
-        if (person) await unwindPromoPayment(person);
+        if (person) {
+          await refundAutoCredit(person);
+          await unwindPromoPayment(app.players.find((item) => item.id === id) || person);
+        }
       }
       for (const id of dropping) await app.store.deletePlayer(id);
       if (!promote) return;
       await app.store.promoteFromWaiting(top.id);
+      await applyAutoCredit(top.id);
       await offerPromotionWhatsApp(top, m);
     })();
     run(job, promote ? `${top.name} pasó al partido` : `${p.name} quitado`);

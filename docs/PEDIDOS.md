@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v88** (rama `cursor/credito-auto-nojugo-c20d`, 01/11/2026): si al anotarse a jugar (no en la espera) hay saldo a favor con quien figura en «Se anotó con», se usa solo para ese partido, con el precio de la promo si corresponde. Si no alcanza, queda el resto como deuda. En la espera no se descuenta; sí al subir. Esos pagos quedan marcados y en Registro se leen «Crédito automático». Al quitar al jugador o cancelar el partido, solo ese monto vuelve al saldo («Crédito devuelto»). Un pago cargado a mano no se devuelve. `firestore.rules` acepta `autoCredit` en el jugador.
 **Actualizada para f7c-v87** (rama `cursor/tabs-swipe-c20d`, 01/11/2026): en las cinco pestañas se puede pasar a la de al lado deslizando el contenido. A la izquierda, la siguiente; a la derecha, la anterior. En la primera y en la última no da la vuelta. No actúa en un partido, en Equipos, en la ficha de un jugador ni en un detalle de Estadísticas. Tampoco si el gesto empieza en un campo, en una zona que se mueve de costado, en una hoja abierta o a menos de 20px del borde. `firestore.rules` no cambió.
 **Actualizada para f7c-v86** (rama `cursor/compensacion-fecha-c20d`, 01/11/2026): «Compensación del día» y «Hacer cálculo de compensación del día» agregan el día en mayúsculas y la fecha, por ejemplo «JUEVES 29/10/2026». Si decía «· El cálculo cambió», eso queda después de la fecha. `firestore.rules` no cambió.
 **Actualizada para f7c-v85** (rama `cursor/historial-vuelve-pago-c20d`, 01/11/2026): en Historial, tocar un jugador de «Faltan pagar (que anoté yo)» abre la hoja Pago. Guardar y Cancelar vuelven a esa lista abierta, en el mismo lugar de la página, con el total al día. Quien ya pagó sale de la lista. Si no queda nadie, la tarjeta sigue sin el cuadro. La deuda roja del menú y de la ficha no cambia. El borde verde de un campo con foco queda dentro del campo, así el scroll de la hoja no lo corta. `firestore.rules` no cambió.
@@ -31,7 +32,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **e2e 719/719 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 100/100 OK** (`node --test tests/unit.test.mjs`). El e2e de v87 revisa el desliz entre pestañas, el borde, el desliz corto o vertical, y que un partido o una ficha no cambian de pestaña.
+Pruebas sobre esta copia: **e2e 728/728 OK** (`node tests/e2e.mjs`, modo demo, 390×844) y **unit 100/100 OK** (`node --test tests/unit.test.mjs`). El e2e de v88 revisa que el saldo paga al anotarse y al subir de la espera, que la promo usa la parte del día, y que al quitar o cancelar vuelve solo el crédito automático.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
