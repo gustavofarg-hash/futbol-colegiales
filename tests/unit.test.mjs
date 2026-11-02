@@ -2917,7 +2917,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v95');
+  assert.equal(version, 'f7c-v96');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -2982,6 +2982,32 @@ test('la carga muestra el avance y deja el aviso de éxito hasta cerrarlo', asyn
   assert.deepEqual(live.filter((step) => step.endsWith('/4')), ['0/4', '1/4', '2/4', '3/4', '4/4']);
   assert.deepEqual(commits, ['delete matches/viejo', 'set matches/a', 'set matches/b', 'set users/por-mail']);
   assert.equal(commits.some((line) => line.includes('users/admin-uid')), false);
+});
+
+test('al conectar Firebase escucha las notas sin leer uid antes de crearlo', () => {
+  const store = new FirebaseStore();
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  store.db = {};
+  const queries = [];
+  store.fs = {
+    collection(_db, name) { return { kind: 'col', name }; },
+    doc(_db, ...segments) { return { path: segments.join('/') }; },
+    query(ref, ...parts) {
+      const item = { ref, parts };
+      queries.push(item);
+      return item;
+    },
+    where(field, op, value) { return { field, op, value }; },
+    orderBy(field, dir) { return { orderBy: field, dir }; },
+    limit(n) { return { limit: n }; },
+    onSnapshot() { return () => {}; },
+  };
+  assert.doesNotThrow(() => store._listen());
+  const notes = queries.find((item) => item.ref?.name === 'rosterNotes');
+  assert.ok(notes, 'falta la consulta de rosterNotes');
+  assert.deepEqual(notes.parts[0], { field: 'ownerUid', op: '==', value: 'gustavo' });
+  const readers = queries.find((item) => item.parts.some((part) => part.field === 'readers'));
+  assert.equal(readers.parts.find((part) => part.field === 'readers').value, 'gustavo');
 });
 
 test('sin uid no se carga el backup y un organizador tampoco', async () => {
