@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v91');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v92');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4890,6 +4890,64 @@ async function assertGuestPromo(fix, visibleName, count) {
     return row?.noPlay === true && row.autoCredit !== true && credit === 5000;
   });
   check('Cancelar el partido devuelve el crédito automático también de esa lista', true);
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  const addId = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    for (let i = 1; i <= 8; i += 1) {
+      await app.store.addRoster({ name: `Lista Larga ${i}`, phone: `11 6666-89${String(i).padStart(2, '0')}` }, me.name);
+    }
+    return app.store.addMatch({ date: '2026-11-18', time: '19:00', price: 5000, note: 'Agregar fijo', capacity: 14 }, me.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, addId);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#player-form');
+  await page.fill('#roster-find', 'Larga');
+  await page.waitForFunction(() => document.querySelectorAll('#roster-hits .roster-hit').length === 8);
+  const pinned = await page.evaluate(() => {
+    const scroll = document.querySelector('#player-scroll');
+    const dock = document.querySelector('#player-form > .sheet-actions');
+    const title = document.querySelector('#player-form > h3');
+    const sheetBox = dock.closest('.sheet-body').getBoundingClientRect();
+    const titleBefore = title.getBoundingClientRect().top;
+    scroll.scrollTop = Math.max(40, scroll.scrollHeight / 2);
+    const dockBox = dock.getBoundingClientRect();
+    const scrollBox = scroll.getBoundingClientRect();
+    const titleBox = title.getBoundingClientRect();
+    return {
+      scrolled: scroll.scrollTop > 0,
+      title: title.textContent,
+      titleFixed: Math.abs(titleBox.top - titleBefore) < 1 && titleBox.bottom <= scrollBox.top + 8,
+      dockInView: dockBox.top >= 0 && dockBox.bottom <= window.innerHeight + 1 && dockBox.height >= 44,
+      dockAtSheet: Math.abs(dockBox.bottom - sheetBox.bottom) <= 2,
+      labels: [...dock.querySelectorAll('button')].map((btn) => btn.textContent),
+      scrollEndsAbove: scrollBox.bottom <= dockBox.top + 1,
+    };
+  });
+  check('Cancelar y Agregar quedan fijos al pie mientras se baja la lista', pinned.scrolled && pinned.title === 'Agregar jugador' && pinned.titleFixed && pinned.dockInView && pinned.dockAtSheet && pinned.labels.join('|') === 'Cancelar|Agregar' && pinned.scrollEndsAbove, JSON.stringify(pinned));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v92-agregar-botones.png' });
+  await page.locator('#roster-find').focus();
+  const lifted = await page.evaluate(() => window.__app.syncPayDock({ viewHeight: 480, offsetTop: 0, innerHeight: window.innerHeight }));
+  const keyboard = await page.evaluate(() => {
+    const dock = document.querySelector('#player-form > .sheet-actions').getBoundingClientRect();
+    const field = document.querySelector('#roster-find').getBoundingClientRect();
+    const scroll = document.querySelector('#player-scroll').getBoundingClientRect();
+    return {
+      dockBottom: Math.round(dock.bottom),
+      dockTop: Math.round(dock.top),
+      fieldTop: Math.round(field.top),
+      fieldBottom: Math.round(field.bottom),
+      scrollTop: Math.round(scroll.top),
+      scrollBottom: Math.round(scroll.bottom),
+    };
+  });
+  check('Con el teclado abierto, Cancelar y Agregar siguen a la vista', lifted.inset > 200 && keyboard.dockBottom <= 500 && keyboard.dockTop < keyboard.dockBottom && keyboard.fieldBottom <= keyboard.dockTop + 1, JSON.stringify({ lifted, keyboard }));
+  await page.evaluate(() => window.__app.syncPayDock());
+  await page.click('#player-form [data-close]');
 }
 
 const fresh = await ctx.newPage();
