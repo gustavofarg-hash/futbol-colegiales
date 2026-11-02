@@ -9,7 +9,7 @@ import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting }
 import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
+import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
@@ -1254,6 +1254,43 @@ test('las notas de un jugador compartido las ve solo quien las escribió', async
   assert.equal(merged.rosterNotes[`${other}_martin`], undefined);
 });
 
+test('no se borra de Jugadores si tiene deuda, crédito, partidos jugados o está anotado', () => {
+  const now = new Date('2026-10-19T16:00:00Z').getTime();
+  const person = { id: 'r1', name: 'Luis' };
+  const organizer = { uid: 'gustavo', name: 'Gustavo' };
+  const past = { id: 'pas', date: '2026-10-15', time: '21:00' };
+  const next = { id: 'fut', date: '2026-10-20', time: '21:00' };
+  const empty = { person, players: [], matches: [], credits: [], organizer, now };
+  assert.deepEqual(rosterDeleteReasons(empty), []);
+  assert.deepEqual(rosterDeleteReasons({
+    ...empty, matches: [next], players: [{ id: 'a', matchId: 'fut', rosterId: 'r1', name: 'Luis', waiting: true }],
+  }), ['Está anotado en un partido']);
+  assert.deepEqual(rosterDeleteReasons({
+    ...empty, matches: [next], players: [{ id: 'a', matchId: 'fut', rosterId: 'r1', name: 'Luis', noPlay: true }],
+  }), ['Está anotado en un partido']);
+  assert.deepEqual(rosterDeleteReasons({
+    ...empty, matches: [next], players: [{ id: 'a', matchId: 'fut', rosterId: 'r1', name: 'Luis', tentative: true }],
+  }), ['Está anotado en un partido']);
+  assert.deepEqual(rosterDeleteReasons({
+    ...empty, matches: [past], players: [{ id: 'a', matchId: 'pas', rosterId: 'r1', name: 'Luis', signedUpWith: 'gustavo', signedUpWithName: 'Gustavo' }],
+  }), ['Tiene deuda', 'Jugó partidos']);
+  assert.deepEqual(rosterDeleteReasons({
+    ...empty, matches: [past], players: [{ id: 'a', matchId: 'pas', rosterId: 'r1', name: 'Luis', noPlay: true, signedUpWith: 'gustavo', signedUpWithName: 'Gustavo' }],
+  }), ['Tiene deuda']);
+  assert.deepEqual(rosterDeleteReasons({
+    ...empty, matches: [past], players: [{ id: 'a', matchId: 'pas', rosterId: 'r1', name: 'Luis', waiting: true }],
+  }), []);
+  assert.deepEqual(rosterDeleteReasons({
+    ...empty,
+    matches: [past],
+    players: [{ id: 'a', matchId: 'pas', rosterId: 'r1', name: 'Luis', signedUpWith: 'martin', signedUpWithName: 'Martín', paid: true, amount: 5000, receivedBy: 'Martín' }],
+    credits: [{ personKey: 'r:r1', organizerUid: 'martin', amount: 1000 }],
+  }), ['Jugó partidos']);
+  assert.deepEqual(rosterDeleteReasons({
+    ...empty, credits: [{ personKey: 'r:r1', organizerUid: 'gustavo', amount: 2500 }],
+  }), ['Tiene crédito']);
+});
+
 test('el mismo WhatsApp de otro organizador es el mismo jugador', async () => {
   const mem = new Map();
   globalThis.localStorage = {
@@ -1290,6 +1327,9 @@ test('el mismo WhatsApp de otro organizador es el mismo jugador', async () => {
   assert.equal(gustavoCredit.amount, 4000);
   assert.equal(martinCredit.personKey, gustavoCredit.personKey);
   store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  await assert.rejects(() => store.deleteRoster(shared), (error) => error.code === 'roster-delete-blocked' && error.reasons.includes('Tiene crédito') && (error.reasons.includes('Está anotado en un partido') || error.reasons.includes('Jugó partidos')) && !error.reasons.includes('Tiene deuda'));
+  await store.deletePlayer(playerId);
+  await store.adjustCredit({ personKey: `p:${phoneIdentity({ phone: '5491155550101' })}`, organizerUid: 'gustavo', organizerName: 'Gustavo', name: 'Juan de Martín', delta: -4000 }, 'Gustavo');
   await store.deleteRoster(shared);
   assert.equal(JSON.parse(mem.get('f7c-test-share')).roster[shared].holders.includes('gustavo'), false);
   assert.equal(JSON.parse(mem.get('f7c-test-share')).roster[shared].holders.includes('martin'), true);
@@ -1335,7 +1375,7 @@ test('plantel demo: no duplica por teléfono', async () => {
   await store.setPlayerShortName(playerId, '');
   assert.equal(JSON.parse(mem.get('f7c-test-roster')).players[playerId].shortName, undefined);
   store.setActor({ uid: 'gustavo', name: 'Gustavo' });
-  await assert.rejects(() => store.deleteRoster(id), (error) => error.code === 'roster-in-match');
+  await assert.rejects(() => store.deleteRoster(id), (error) => error.code === 'roster-delete-blocked' && error.reasons.includes('Jugó partidos'));
   await store.deletePlayer(playerId);
   await store.deleteRoster(id);
   assert.equal(Object.keys(JSON.parse(mem.get('f7c-test-roster')).roster).length, 0);
@@ -2917,7 +2957,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v97');
+  assert.equal(version, 'f7c-v98');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

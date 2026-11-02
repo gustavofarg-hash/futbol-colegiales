@@ -4,7 +4,8 @@
 import { DIAS, addDays, capitalize, labelDate, todayISO, toEpoch, weekdayOf } from './dates.js';
 import { formatARS, paymentShares } from './payments.js';
 import { sameOrganizer } from './organizers.js';
-import { playerMatchesPerson } from './roster.js';
+import { foldText, personKey, phoneIdentity, playerMatchesPerson } from './roster.js';
+import { playerDebt } from './ledger.js';
 import { alreadyInMatch } from './guests.js';
 
 export const POSITIONS = ['Arquero', 'Defensa', 'Mediocampo', 'Ataque'];
@@ -108,6 +109,66 @@ export function playedMatches({ phone, phoneKey, rosterId, name, players, matche
   return mainAppearances({ phone, phoneKey, rosterId, name }, players, matches)
     .filter((row) => startsAtOf(row.match) < now)
     .sort((a, b) => startsAtOf(b.match) - startsAtOf(a.match) || String(b.match.id).localeCompare(String(a.match.id)));
+}
+
+const DELETE_DEBT = 'Tiene deuda';
+const DELETE_CREDIT = 'Tiene crédito';
+const DELETE_PLAYED = 'Jugó partidos';
+const DELETE_SIGNED = 'Está anotado en un partido';
+
+function creditKeysFor(person, players) {
+  const keys = [];
+  const add = (key) => {
+    const clean = String(key || '').trim();
+    if (clean && !keys.includes(clean)) keys.push(clean);
+  };
+  for (const row of players || []) {
+    if (playerMatchesPerson(row, person)) add(personKey(row, players));
+  }
+  const phone = phoneIdentity(person);
+  if (phone) add(`p:${phone}`);
+  else if (person?.id) add(`r:${person.id}`);
+  else {
+    const name = foldText(person?.name);
+    if (name) add(`n:${name}`);
+  }
+  return keys;
+}
+
+function hasCreditWith(credits, keys, uid) {
+  if (!uid) return false;
+  const wanted = new Set(keys);
+  return (credits || []).some((row) => wanted.has(String(row?.personKey || '').trim()) && String(row?.organizerUid || '') === uid && Number(row?.amount) > 0);
+}
+
+/** Anotado en un partido de hoy o después: titular, espera, pendiente o no jugó pero pagó. */
+function signedUpUpcoming(person, players, matches, now) {
+  const today = todayISO(new Date(now));
+  const byId = new Map((matches || []).map((match) => [match.id, match]));
+  return (players || []).some((player) => {
+    if (!playerMatchesPerson(player, person)) return false;
+    const match = matchOfPlayer(player, byId);
+    if (!match?.date || match.date < today) return false;
+    return player.waiting === true || player.noPlay === true || player.tentative === true || player.waiting !== true;
+  });
+}
+
+/**
+ * Por qué no se puede borrar de Jugadores, para el organizador logueado.
+ * Deuda y saldo son solo con él. Jugó: lista principal de un partido ya empezado,
+ * sin «No jugó pero pagó». Anotado: hoy o después, en cualquiera de esas listas.
+ */
+export function rosterDeleteReasons({ person, players, matches, credits, organizer, prices, now = Date.now() }) {
+  if (!person) return [];
+  const reasons = [];
+  const me = organizer && (organizer.uid || organizer.name) ? organizer : null;
+  if (playerDebt({ person, players, matches, prices, organizer: me }).total > 0) reasons.push(DELETE_DEBT);
+  if (hasCreditWith(credits, creditKeysFor(person, players), String(organizer?.uid || '').trim())) reasons.push(DELETE_CREDIT);
+  const who = { phone: person.phone || '', phoneKey: person.phoneKey || '', rosterId: person.id || '', name: person.name || '' };
+  const played = playedMatches({ ...who, players, matches, now }).filter((row) => row.player?.noPlay !== true);
+  if (played.length) reasons.push(DELETE_PLAYED);
+  if (signedUpUpcoming(person, players, matches, now)) reasons.push(DELETE_SIGNED);
+  return reasons;
 }
 
 function topValues(values) {
