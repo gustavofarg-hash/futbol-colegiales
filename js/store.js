@@ -97,7 +97,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, personKey, phoneIdentity, rosterHolderIds, rosterInMatchMessage, rosterMatchCount, rosterPhoneAction, withHolder } from './roster.js';
+import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHolderIds, rosterInMatchMessage, rosterMatchCount, rosterNoteDocId, rosterPhoneAction, withHolder } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -434,6 +434,43 @@ function phoneDup(db, kind, id, phone) {
   return null;
 }
 
+function cleanRosterNotes(notes, uid) {
+  return (Array.isArray(notes) ? notes : []).slice(0, 20).map((note) => ({
+    id: String(note?.id || ''),
+    matchId: String(note?.matchId || ''),
+    matchDate: String(note?.matchDate || '').slice(0, 10),
+    matchTime: String(note?.matchTime || '').slice(0, 5),
+    text: String(note?.text || '').slice(0, 400),
+    createdAt: Number(note?.createdAt) || Date.now(),
+    updatedAt: Number(note?.updatedAt) || Date.now(),
+    authorUid: String(uid || note?.authorUid || ''),
+  })).filter((note) => note.id && note.text && note.matchId);
+}
+
+/** Saca las notas del documento compartido y las deja solo para quien creó la ficha. */
+function migrateRosterNotes(db) {
+  db.rosterNotes ||= {};
+  for (const [id, person] of Object.entries(db.roster || {})) {
+    if (!Array.isArray(person?.notes) || !person.notes.length) {
+      if (person && 'notes' in person) delete person.notes;
+      continue;
+    }
+    const owner = legacyNoteOwnerUid(person);
+    if (!owner) continue;
+    const key = rosterNoteDocId(id, owner);
+    const prev = db.rosterNotes[key]?.notes || [];
+    const seen = new Set(prev.map((note) => note.id));
+    const notes = [...prev];
+    for (const note of cleanRosterNotes(person.notes, owner)) {
+      if (seen.has(note.id)) continue;
+      notes.push(note);
+      seen.add(note.id);
+    }
+    db.rosterNotes[key] = { ownerUid: owner, rosterId: id, notes: notes.slice(0, 20) };
+    delete person.notes;
+  }
+}
+
 function duplicatePhoneError(existing) {
   return Object.assign(new Error(`${existing?.name || 'Alguien'} ya tiene ese WhatsApp`), {
     code: 'roster-duplicate',
@@ -590,9 +627,10 @@ class LocalStore {
   _load() {
     try {
       const db = JSON.parse(localStorage.getItem(this.key)) || { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {}, contacts: { players: {}, roster: {} } };
-      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {}; db.credits ||= {}; db.compensations ||= {}; db.log ||= {};
+      db.matches ||= {}; db.players ||= {}; db.roster ||= {}; db.organizers ||= {}; db.venues ||= {}; db.confirmations ||= {}; db.settings ||= {}; db.credits ||= {}; db.compensations ||= {}; db.log ||= {}; db.rosterNotes ||= {};
       ensureContacts(db);
       migratePhones(db);
+      migrateRosterNotes(db);
       return db;
     } catch { return { matches: {}, players: {}, roster: {}, organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {}, contacts: { players: {}, roster: {} } }; }
   }
@@ -718,7 +756,11 @@ class LocalStore {
     const matches = visible.matches;
     const cards = visible.cards;
     const players = overlayConfirmations(presentRows(visible.players.map((p) => [p.id, p]), db.contacts.players, uid).map(({ id, ...rest }) => ({ id, ...rest })), cards);
-    const roster = presentRows(Object.entries(db.roster), db.contacts.roster, uid);
+    const roster = presentRows(Object.entries(db.roster), db.contacts.roster, uid).map(({ notes: _notes, ...person }) => person);
+    const rosterNotes = {};
+    for (const row of Object.values(db.rosterNotes || {})) {
+      if (row?.ownerUid === uid && row.rosterId) rosterNotes[row.rosterId] = row.notes || [];
+    }
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
     const venues = Object.entries(db.venues || {}).map(([id, venue]) => ({ id, ...venue }));
     const prices = db.settings?.prices || null;
@@ -734,7 +776,7 @@ class LocalStore {
     const { matches: _rows, ...historyMeta } = windowed;
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
-      players, roster, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
+      players, roster, rosterNotes, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
       credits, creditsError: null, creditsReady: true, playersReady: true, compensations, log, logError: '',
     }));
   }
@@ -1148,6 +1190,20 @@ class LocalStore {
     delete db.roster[fromId];
     ensureContacts(db);
     delete db.contacts.roster[fromId];
+    db.rosterNotes ||= {};
+    for (const [key, row] of Object.entries(db.rosterNotes)) {
+      if (row?.rosterId !== fromId) continue;
+      const nextKey = rosterNoteDocId(intoId, row.ownerUid);
+      const prev = db.rosterNotes[nextKey]?.notes || [];
+      const seen = new Set(prev.map((note) => note.id));
+      const notes = [...prev];
+      for (const note of row.notes || []) {
+        if (seen.has(note.id)) continue;
+        notes.push(note);
+      }
+      db.rosterNotes[nextKey] = { ownerUid: row.ownerUid, rosterId: intoId, notes: notes.slice(0, 20) };
+      if (nextKey !== key) delete db.rosterNotes[key];
+    }
     return intoId;
   }
   async addRoster(data, who) {
@@ -1225,9 +1281,22 @@ class LocalStore {
     }
     this._save(db);
   }
+  _writeOwnNotes(db, rosterId, notes) {
+    const uid = this.actor?.uid || '';
+    if (!uid) throw Object.assign(new Error('No hay sesión'), { code: 'permission-denied' });
+    db.rosterNotes ||= {};
+    const key = rosterNoteDocId(rosterId, uid);
+    db.rosterNotes[key] = { ownerUid: uid, rosterId, notes: cleanRosterNotes(notes, uid) };
+    if (db.roster[rosterId]?.notes) delete db.roster[rosterId].notes;
+  }
   async patchRoster(id, patch) {
     const db = this._load(); const cur = db.roster[id]; if (!cur) return;
     if (!canEditRoster(cur, this.actor)) throw editLockedError();
+    if ('notes' in (patch || {}) && Object.keys(patch).every((key) => key === 'notes')) {
+      this._writeOwnNotes(db, id, patch.notes);
+      this._save(db);
+      return;
+    }
     const next = {};
     let namePatches = [];
     if ('name' in patch) {
@@ -1240,7 +1309,7 @@ class LocalStore {
       next.level = level;
     }
     if ('positions' in patch) next.positions = patch.positions || [];
-    if ('notes' in patch) next.notes = patch.notes || [];
+    if ('notes' in patch) this._writeOwnNotes(db, id, patch.notes);
     if ('shortName' in patch) {
       namePatches = mergePlayerPatches(namePatches, rosterShortPatches(rosterPlayers(db), id, patch.shortName, this.actor));
     }
@@ -1435,7 +1504,9 @@ export class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this._noteMoves = new Set();
+    this._rosterReady = false;
     this._logRange = weekRange();
   }
   setHistoryFilter(filter) {
@@ -1855,12 +1926,30 @@ export class FirebaseStore {
     watch(collection(this.db, 'roster'), null, (snap) => {
       this.state.roster = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.rosterError = null;
+      this._rosterReady = true;
       this._emit();
       this._migrateContacts();
+      this._claimLegacyNotes();
+      this._rehomeNotes();
     }, (e) => {
       this.state.rosterError = isRosterDenied(e) ? ROSTER_DENIED_READ : ('No se pudo leer Jugadores: ' + (e?.message || e?.code || e));
       this._emit();
     });
+    if (uid) {
+      watch(query(collection(this.db, 'rosterNotes'), where('ownerUid', '==', uid)), null, (snap) => {
+        const map = {};
+        snap.docs.forEach((item) => {
+          const data = item.data() || {};
+          if (data.rosterId) map[data.rosterId] = data.notes || [];
+        });
+        this.state.rosterNotes = map;
+        this._emit();
+        this._rehomeNotes();
+      }, () => {
+        this.state.rosterNotes = {};
+        this._emit();
+      });
+    }
     watch(collection(this.db, 'confirmations'), null, (snap) => {
       this._buckets.confirmations.broad = take(snap);
       this._rebuild('confirmations');
@@ -2031,7 +2120,10 @@ export class FirebaseStore {
     }
     const uidView = uid || '';
     const shown = players.map((player) => attachPhone(player, this.state.playerContacts?.[player.id], uidView));
-    const roster = (this.state.roster || []).map((person) => attachPhone(person, this.state.rosterContacts?.[person.id], uidView));
+    const roster = (this.state.roster || []).map((person) => {
+      const { notes: _notes, ...rest } = person;
+      return attachPhone(rest, this.state.rosterContacts?.[person.id], uidView);
+    });
     const { playerContacts: _playerContacts, rosterContacts: _rosterContacts, ...rest } = this.state;
     const bounds = this._historyBounds || historyBounds(this._historyFilter);
     const history = (this._buckets.matches?.history || [])
@@ -2044,6 +2136,7 @@ export class FirebaseStore {
       historyMeta: { ...bounds, caption: historyCaption(bounds, history.length) },
       confirmations,
       roster,
+      rosterNotes: this.state.rosterNotes || {},
       players: overlayConfirmations(shown, confirmations),
     };
   }
@@ -2170,6 +2263,44 @@ export class FirebaseStore {
     if (entity?.phoneOwnerUid) return entity.phoneOwnerUid;
     if (sameOrganizer(entity?.createdBy, this.actor?.name)) return uid;
     return '';
+  }
+  async _writeRosterNotes(rosterId, notes) {
+    const uid = this.actor?.uid || '';
+    if (!uid) throw Object.assign(new Error('No hay sesión'), { code: 'permission-denied' });
+    const { doc, setDoc } = this.fs;
+    const clean = cleanRosterNotes(notes, uid);
+    await setDoc(doc(this.db, 'rosterNotes', rosterNoteDocId(rosterId, uid)), {
+      ownerUid: uid,
+      rosterId,
+      notes: clean,
+    });
+    this.state.rosterNotes = { ...(this.state.rosterNotes || {}), [rosterId]: clean };
+  }
+  async _claimLegacyNotes() {
+    const uid = this.actor?.uid || '';
+    if (!uid || !this.fs) return;
+    const { doc, setDoc, updateDoc, deleteField } = this.fs;
+    for (const person of this.state.roster || []) {
+      if (!Array.isArray(person.notes) || !person.notes.length) continue;
+      if (legacyNoteOwnerUid(person) !== uid) continue;
+      const key = rosterNoteDocId(person.id, uid);
+      if (this._noteMoves.has(key)) continue;
+      this._noteMoves.add(key);
+      try {
+        const prev = this.state.rosterNotes?.[person.id] || [];
+        const seen = new Set(prev.map((note) => note.id));
+        const notes = [...prev];
+        for (const note of cleanRosterNotes(person.notes, uid)) {
+          if (seen.has(note.id)) continue;
+          notes.push(note);
+        }
+        await setDoc(doc(this.db, 'rosterNotes', key), { ownerUid: uid, rosterId: person.id, notes: notes.slice(0, 20) });
+        await updateDoc(doc(this.db, 'roster', person.id), { notes: deleteField(), updatedAt: Date.now() });
+      } catch (e) {
+        this._noteMoves.delete(key);
+        if (e?.code !== 'permission-denied') console.error(e);
+      }
+    }
   }
   async _writeContactDoc(kind, id, phone, entity, opts = {}) {
     const { doc, setDoc, deleteDoc } = this.fs;
@@ -2726,6 +2857,13 @@ export class FirebaseStore {
       try { await this.moveCredit(`r:${fromId}`, key, clean || into?.name || ''); }
       catch (e) { if (e?.code !== 'permission-denied') throw e; }
     }
+    await this._moveOwnNotes(fromId, intoId);
+    try {
+      const { setDoc } = this.fs;
+      await setDoc(doc(this.db, 'rosterRedirects', fromId), { intoId });
+    } catch (e) {
+      if (e?.code !== 'permission-denied') throw e;
+    }
     try {
       const batch = writeBatch(this.db);
       batch.delete(doc(this.db, 'roster', fromId));
@@ -2733,6 +2871,53 @@ export class FirebaseStore {
       await batch.commit();
     } catch (e) {
       if (e?.code !== 'permission-denied') throw e;
+    }
+  }
+  async _moveOwnNotes(fromId, intoId) {
+    const mine = this.state.rosterNotes?.[fromId];
+    if (!Array.isArray(mine) || !mine.length || !intoId || fromId === intoId) return;
+    const kept = this.state.rosterNotes?.[intoId] || [];
+    const seen = new Set(kept.map((note) => note.id));
+    const notes = [...kept];
+    for (const note of mine) {
+      if (seen.has(note.id)) continue;
+      notes.push(note);
+    }
+    await this._writeRosterNotes(intoId, notes.slice(0, 20));
+    const uid = this.actor?.uid || '';
+    const { doc, deleteDoc } = this.fs;
+    try { await deleteDoc(doc(this.db, 'rosterNotes', rosterNoteDocId(fromId, uid))); }
+    catch (e) { if (e?.code !== 'permission-denied') throw e; }
+    const next = { ...(this.state.rosterNotes || {}) };
+    delete next[fromId];
+    this.state.rosterNotes = next;
+  }
+  async _rehomeNotes() {
+    if (!this._rosterReady || !this.actor?.uid || !this.fs) return;
+    const rosterIds = new Set((this.state.roster || []).map((person) => person.id));
+    const { doc, getDoc } = this.fs;
+    for (const fromId of Object.keys(this.state.rosterNotes || {})) {
+      if (!fromId || rosterIds.has(fromId)) continue;
+      const mark = `rehome:${fromId}`;
+      if (this._noteMoves.has(mark)) continue;
+      this._noteMoves.add(mark);
+      try {
+        let intoId = fromId;
+        const seen = new Set();
+        while (intoId && !rosterIds.has(intoId) && !seen.has(intoId)) {
+          seen.add(intoId);
+          const redirect = await getDoc(doc(this.db, 'rosterRedirects', intoId));
+          intoId = redirect.exists() ? String(redirect.data()?.intoId || '') : '';
+        }
+        if (!intoId || !rosterIds.has(intoId)) {
+          this._noteMoves.delete(mark);
+          continue;
+        }
+        await this._moveOwnNotes(fromId, intoId);
+      } catch (e) {
+        this._noteMoves.delete(mark);
+        if (e?.code !== 'permission-denied') console.error(e);
+      }
     }
   }
   async addRoster(data, who) {
@@ -2878,7 +3063,7 @@ export class FirebaseStore {
       next.level = level;
     }
     if ('positions' in patch) next.positions = patch.positions || [];
-    if ('notes' in patch) next.notes = patch.notes || [];
+    if ('notes' in patch) await this._writeRosterNotes(id, patch.notes);
     if ('shortName' in patch) namePatches = mergePlayerPatches(namePatches, rosterShortPatches(this.state.players || [], id, patch.shortName, this.actor));
     if ('phone' in patch && canonicalWa(patch.phone)) {
       const dup = this._rosterDup(patch.phone, id);

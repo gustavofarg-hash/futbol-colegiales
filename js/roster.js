@@ -101,6 +101,21 @@ export function rosterPhoneAction(existing, actor) {
   return rosterHeldBy(existing, actor) ? 'duplicate' : 'link';
 }
 
+/** Notas viejas sin autor: solo el creador de la ficha. Si no hay uid, el único titular. */
+export function legacyNoteOwnerUid(person) {
+  const created = String(person?.createdByUid || '').trim();
+  if (created) return created;
+  const holders = rosterHolderIds(person);
+  return holders.length === 1 ? holders[0] : '';
+}
+
+export function rosterNoteDocId(rosterId, uid) {
+  const id = String(rosterId || '').trim();
+  const owner = String(uid || '').trim();
+  if (!id || !owner) return '';
+  return `${id}_${owner}`;
+}
+
 export function withHolder(person, uid) {
   const id = String(uid || '').trim();
   const holders = rosterHolderIds(person);
