@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v91';
+const APP_VERSION = 'f7c-v92';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2119,7 +2119,8 @@ function openSheet(html, { locked = false } = {}) {
 }
 /** Sube la hoja de pago cuando el teclado achica la zona visible. */
 function syncPayDock(metrics) {
-  const body = document.querySelector('#pay-form')?.closest('.sheet-body');
+  const form = document.querySelector('#pay-form') || document.querySelector('#player-form');
+  const body = form?.closest('.sheet-body');
   if (!body) return null;
   const vv = window.visualViewport;
   const innerHeight = metrics?.innerHeight ?? window.innerHeight;
@@ -2137,7 +2138,7 @@ function syncPayDock(metrics) {
     body.style.marginBottom = '';
     body.style.maxHeight = '';
   }
-  const scroller = document.querySelector('#pay-scroll');
+  const scroller = form.querySelector('#pay-scroll, #player-scroll');
   const active = document.activeElement;
   if (scroller && active && scroller.contains(active) && active !== scroller) {
     const box = active.getBoundingClientRect();
@@ -2150,7 +2151,7 @@ function syncPayDock(metrics) {
 function bindPayDock() {
   app.syncPayDock = syncPayDock;
   syncPayDock();
-  const scroller = document.querySelector('#pay-scroll');
+  const scroller = document.querySelector('#pay-scroll, #player-scroll');
   if (scroller && !scroller.dataset.dock) {
     scroller.dataset.dock = '1';
     scroller.addEventListener('focusin', () => syncPayDock());
@@ -4077,6 +4078,7 @@ function openPlayerForm(m, p, opts = {}) {
   openSheet(`
     <form id="player-form" novalidate>
       <h3>${editingFriend ? 'Editar invitado' : p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
+      <div id="player-scroll">
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
       ${signupFields(p)}
@@ -4095,8 +4097,11 @@ function openPlayerForm(m, p, opts = {}) {
         <p class="hint" id="friend-hint">Si dejás el nombre vacío, queda como Invitado 1, Invitado 2…</p>
       </div>`}
       <div class="field"><div class="err" id="pf-err"></div></div>
+      </div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit"${locked ? ' disabled' : ''}>${p ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
+  sheet.querySelector('.sheet-body')?.classList.add('player-sheet');
+  bindPayDock();
   const form = $('#player-form');
   if (locked) {
     const canChangeSignup = canAdd(m, actor().uid);
