@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v93');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v94');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -3458,9 +3458,9 @@ const saldoPaga = await page.evaluate(() => {
   return Object.values(credits).find((row) => row.name === 'Paga Con Credito');
 });
 check('Lo que sobra del crédito queda como saldo con Gustavo', saldoPaga?.amount === 2000 && saldoPaga?.organizerName === 'Gustavo', JSON.stringify(saldoPaga));
-await page.waitForSelector('#debt-total');
+await page.waitForSelector('#profile-credit');
 const debtLeft = (await page.locator('#debt').innerText()).replace(/\s+/g, ' ');
-check('Debe en total ya no cuenta lo pagado con el crédito', !debtLeft.includes('01/09/2026') && !debtLeft.includes('15/09/2026') && debtLeft.includes('20/09/2026') && debtLeft.includes('Saldo a favor con Gustavo: $2.000'), debtLeft);
+check('Debe en total ya no cuenta lo pagado con el crédito', !debtLeft.includes('01/09/2026') && !debtLeft.includes('15/09/2026') && !debtLeft.includes('20/09/2026') && !debtLeft.includes('Debe en total') && debtLeft.includes('Saldo a favor con Gustavo: $2.000'), debtLeft);
 await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, viejas.older);
 await page.waitForSelector('.slot .pay-line');
 check('El partido viejo figura pagado con crédito', (await page.locator('.slot .pay-line').innerText()).includes('Crédito') && (await page.locator('.slot .pay-line').innerText()).includes('Gustavo'));
@@ -3581,14 +3581,14 @@ await page.waitForSelector('.slot:has-text("Debe Varios") .more-btn');
 await page.click('.slot:has-text("Debe Varios") .more-btn');
 await page.waitForSelector('#debt-list');
 check('La deuda que puede cobrar se puede tocar', await page.locator('#debt-list button.debt-jump', { hasText: '01/10/2026' }).count() === 1 && await page.locator('#debt-list button.debt-jump', { hasText: '20/10/2026' }).count() === 1);
-check('La deuda de un partido que no puede cobrar queda como texto', await page.locator('#debt-list li', { hasText: '12/10/2026' }).locator('button').count() === 0 && (await page.locator('#debt-list li', { hasText: '12/10/2026' }).innerText()).includes('$5.000'));
+check('La deuda con otro organizador no aparece', await page.locator('#debt-list li', { hasText: '12/10/2026' }).count() === 0 && !(await page.locator('#menu-debt').innerText()).includes('$15.000'));
 await page.click('#debt-list button.debt-jump:has-text("01/10/2026")');
 await page.waitForSelector('#pay-form');
 const pagoDeuda = (await page.locator('#pay-form').innerText()).replace(/\s+/g, ' ');
 check('Tocar la deuda abre el pago de ese partido, sin pasar por el menú', (await page.locator('#pay-form h3').innerText()) === 'Pago' && pagoDeuda.includes('Debe Varios') && pagoDeuda.includes('Jueves 01/10') && pagoDeuda.includes('20:00 hs') && pagoDeuda.includes('Juega gratis') && pagoDeuda.includes('Efectivo') && pagoDeuda.includes('Transferencia') && pagoDeuda.includes('Descontar del crédito') && pagoDeuda.includes('Transfiere después') && pagoDeuda.includes('Cancelar') && pagoDeuda.includes('Guardar') && await page.locator('#pm-pay').count() === 0 && await page.locator('#pay-form [name=cashTo]').count() === 1 && await page.locator('#pay-form [name=transferTo]').count() === 1 && await page.locator('#pay-form [name=fromCredit]').count() === 1 && await page.locator('#pay-form [name=pendingTo]').count() === 1, pagoDeuda.slice(0, 280));
 await page.click('#pay-back');
 await page.waitForSelector('#menu-panel #debt-list');
-check('Cancelar el pago vuelve al menú y la deuda sigue', (await page.locator('#menu-debt').innerText()).includes('$15.000') && (await page.locator('#debt-list').innerText()).includes('01/10/2026') && await page.locator('#pay-form').count() === 0);
+check('Cancelar el pago vuelve al menú y la deuda sigue', (await page.locator('#menu-debt').innerText()).includes('$10.000') && (await page.locator('#debt-list').innerText()).includes('01/10/2026') && await page.locator('#pay-form').count() === 0);
 await page.click('#debt-list button.debt-jump:has-text("01/10/2026")');
 await page.waitForSelector('#pay-form [name=cash]');
 await page.fill('#pay-form [name=cash]', '5000');
@@ -3596,9 +3596,9 @@ await page.click('#pay-form button[type=submit]');
 await page.waitForFunction(() => {
   const debt = document.querySelector('#menu-debt')?.innerText || '';
   const list = document.querySelector('#debt-list')?.innerText || '';
-  return debt.includes('$10.000') && !list.includes('01/10/2026') && list.includes('20/10/2026') && !document.querySelector('#pay-form');
+  return debt.includes('$5.000') && !list.includes('01/10/2026') && list.includes('20/10/2026') && !document.querySelector('#pay-form');
 });
-check('Guardar el pago vuelve al menú y actualiza la deuda', (await page.locator('#menu-debt').innerText()).includes('$10.000') && !(await page.locator('#debt-list').innerText()).includes('01/10/2026'));
+check('Guardar el pago vuelve al menú y actualiza la deuda', (await page.locator('#menu-debt').innerText()).includes('$5.000') && !(await page.locator('#debt-list').innerText()).includes('01/10/2026'));
 await page.click('#sheet [data-close]');
 await page.waitForSelector('.slot:has-text("Debe Varios") .who');
 await page.click('.slot:has-text("Debe Varios") .who');
@@ -3608,7 +3608,7 @@ await page.waitForSelector('#pay-form');
 check('Desde la ficha, la deuda abre el pago de ese partido', (await page.locator('#pay-form h3').innerText()) === 'Pago' && (await page.locator('#pay-form .hint').first().innerText()).includes('20/10') && await page.locator('#pm-pay').count() === 0);
 await page.click('#pay-back');
 await page.waitForSelector('#profile #debt-total');
-check('Cancelar desde la ficha vuelve a la ficha', await page.locator('dialog.sheet[open]').count() === 0 && (await page.locator('#debt-total').innerText()).includes('$10.000'));
+check('Cancelar desde la ficha vuelve a la ficha', await page.locator('dialog.sheet[open]').count() === 0 && (await page.locator('#debt-total').innerText()).includes('$5.000'));
 
 const exige = await page.evaluate(async () => {
   const app = window.__app;
@@ -5014,6 +5014,73 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForSelector('.match-day');
   const historyDate = (await page.locator('.match-day').first().innerText()).trim();
   check('El historial sigue con la fecha numérica', /^\d{2}\/\d{2}\/\d{4}$/.test(historyDate), historyDate);
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (await page.locator('#login-form').count() === 0) {
+    await page.click('#btn-settings');
+    await page.click('#set-logout');
+    await page.waitForSelector('#login-form');
+  }
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  const sharedId = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const { phoneIdentity } = await import('./js/roster.js');
+    const rosterId = await app.store.addRoster({ name: 'Compartido Díaz', phone: '5491166661010', shortName: 'Compa' }, me.name);
+    const matchId = await app.store.addMatch({ date: '2026-11-20', time: '21:00', price: 5000, note: 'Compartido', capacity: 14 }, me.name);
+    const match = app.matches.find((item) => item.id === matchId) || { id: matchId, date: '2026-11-20', time: '21:00', capacity: 14, price: 5000 };
+    await app.store.addPlayer(match, { name: 'Compartido Díaz', phone: '5491166661010', rosterId, signedUpWith: me.uid, signedUpWithName: me.name }, me.name);
+    await app.store.adjustCredit({
+      personKey: `p:${phoneIdentity({ phone: '5491166661010' })}`,
+      organizerUid: me.uid, organizerName: me.name, name: 'Compartido Díaz', delta: 2500,
+    }, me.name);
+    return rosterId;
+  });
+  await page.evaluate((id) => { location.hash = `#/jugador/${id}`; }, sharedId);
+  await page.waitForSelector('#profile-credit');
+  const gustavoMoney = (await page.locator('#profile').innerText()).replace(/\s+/g, ' ');
+  check('La ficha de Gustavo muestra solo su saldo y su deuda', gustavoMoney.includes('Saldo a favor con Gustavo: $2.500') && gustavoMoney.includes('Debe en total: $5.000') && !gustavoMoney.includes('Saldo a favor con Martín') && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar crédito', gustavoMoney.slice(0, 400));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v94-ficha-gustavo.png' });
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.click('#btn-roster');
+  await page.waitForSelector('#btn-add-roster');
+  await page.click('#btn-add-roster');
+  await page.fill('#roster-form [name=name]', 'Díaz de Martín');
+  await page.fill('#roster-form [name=shortName]', 'Díaz');
+  await page.fill('#roster-form [name=phone]', '11 6666-1010');
+  await page.click('#roster-form button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('#roster-form'));
+  const names = await page.locator('#roster-list .name').allInnerTexts();
+  check('Martín ve al jugador compartido y no uno nuevo', names.filter((name) => name.includes('Díaz')).length === 1 && names.includes('Díaz de Martín'), names.join('|'));
+  await page.locator('#roster-list .slot', { hasText: 'Díaz de Martín' }).locator('.who').click();
+  await page.waitForSelector('#profile-phone');
+  const martinProfile = (await page.locator('#profile').innerText()).replace(/\s+/g, ' ');
+  check('Martín ve el teléfono y no el saldo ni la deuda de Gustavo', martinProfile.includes('6666') && martinProfile.includes('Saldo a favor con Martín: $0') && !martinProfile.includes('$2.500') && !martinProfile.includes('Debe en total') && !martinProfile.includes('Saldo a favor con Gustavo'), martinProfile.slice(0, 500));
+  check('El detalle sigue mostrando los partidos jugados', await page.locator('#stat-times').count() === 1);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v94-ficha-martin.png' });
+  await page.click('#btn-roster');
+  await page.waitForSelector('#roster-list .name:text-is("Díaz de Martín")');
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v94-lista-compartida.png' });
+  await page.click('#btn-add-roster');
+  await page.fill('#roster-form [name=name]', 'Otro Díaz');
+  await page.fill('#roster-form [name=phone]', '11 6666-1010');
+  await page.click('#roster-form button[type=submit]');
+  await page.waitForSelector('#roster-dup-open');
+  check('Si ya lo tiene, no lo duplica y ofrece abrirlo', (await page.locator('#rf-err').innerText()).includes('ya tiene ese WhatsApp') && (await page.locator('#roster-dup-open').innerText()) === 'Abrir');
+  await page.click('#roster-dup-open');
+  await page.waitForSelector('#profile h2.section');
+  check('Abrir lleva a la ficha compartida', (await page.locator('#profile h2.section').textContent()).includes('Díaz de Martín'));
 }
 
 const fresh = await ctx.newPage();

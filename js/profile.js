@@ -2,7 +2,8 @@
 // El perfil es un documento de roster. Con WhatsApp se agrupa por teléfono;
 // sin número, por el id del plantel o por el nombre.
 import { DIAS, addDays, capitalize, labelDate, todayISO, toEpoch, weekdayOf } from './dates.js';
-import { formatARS } from './payments.js';
+import { formatARS, paymentShares } from './payments.js';
+import { sameOrganizer } from './organizers.js';
 import { playerMatchesPerson } from './roster.js';
 import { alreadyInMatch } from './guests.js';
 
@@ -151,11 +152,25 @@ export function playerStats({ phone, phoneKey, rosterId, name, players, matches,
   return { played: played.length, dates, weekdays, times, summary };
 }
 
+function paidShare(player, organizer) {
+  if (!organizer) return player?.paid === true ? (Number(player.amount) || 0) : 0;
+  const name = String(organizer.name || '').trim();
+  if (!name) return 0;
+  return paymentShares(player).reduce((sum, share) => {
+    if (share.kind === 'pending' || !(share.amount > 0)) return sum;
+    return sameOrganizer(share.name, name) ? sum + share.amount : sum;
+  }, 0);
+}
+
 /** Pagos y confirmaciones de la lista principal, pasados y futuros. */
-export function playerRecord({ phone, phoneKey, rosterId, name, players, matches }) {
+export function playerRecord({ phone, phoneKey, rosterId, name, players, matches, organizer = null }) {
   const rows = mainAppearances({ phone, phoneKey, rosterId, name }, players, matches).map((row) => row.player);
-  const paid = rows.filter((p) => p.paid === true);
-  const paidTotal = paid.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const paid = organizer
+    ? rows.filter((player) => paidShare(player, organizer) > 0)
+    : rows.filter((player) => player.paid === true);
+  const paidTotal = organizer
+    ? paid.reduce((sum, player) => sum + paidShare(player, organizer), 0)
+    : paid.reduce((sum, player) => sum + (Number(player.amount) || 0), 0);
   const confirmed = rows.filter((p) => p.confirmed === 'si').length;
   const declined = rows.filter((p) => p.confirmed === 'no').length;
   const answered = confirmed + declined;

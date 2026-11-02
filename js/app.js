@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v93';
+const APP_VERSION = 'f7c-v94';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2966,7 +2966,22 @@ function rosterFormError(error, formId) {
     return;
   }
   if (error?.code === 'roster-duplicate') {
-    if (el) el.textContent = error.message;
+    if (el) {
+      el.textContent = '';
+      el.append(document.createTextNode(`${error.message} `));
+      if (error.rosterId) {
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'btn';
+        open.id = 'roster-dup-open';
+        open.textContent = 'Abrir';
+        open.onclick = () => {
+          closeSheet();
+          location.hash = `#/jugador/${encodeURIComponent(error.rosterId)}`;
+        };
+        el.append(open);
+      }
+    }
     return;
   }
   toast('No se pudo guardar: ' + (error?.code || error?.message || error));
@@ -2979,7 +2994,7 @@ function openRosterForm(person) {
     <form id="roster-form" novalidate>
       <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
-      <p class="hint">Nombre completo. El WhatsApp es opcional. Si el número ya está, no se duplica.</p>
+      <p class="hint">Nombre completo. El WhatsApp es opcional. Si otro organizador ya tiene ese número, es el mismo jugador. Si lo tenés vos, no se duplica.</p>
       <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
       <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${person ? `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(displayFromWa(person.phone))}">` : `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="">${waShareControl('wa-share', { named: true })}</div>`}
@@ -3223,10 +3238,12 @@ function statsPlayerBody(id) {
   const main = appearances.filter((player) => player.waiting !== true).length;
   const waiting = appearances.length - main;
   const noShows = appearances.filter((player) => player.confirmed === 'no').length;
-  const debt = playerDebt({ person, players: app.players, matches, prices: livePrices() });
+  const debt = playerDebt({ person, players: app.players, matches, prices: livePrices(), organizer: staffActor() });
   let creditHtml = '';
   try {
-    const rows = creditPanelRows(app.credits, creditKeysOf(null, person), staffActor());
+    const mine = staffActor();
+    const rows = creditPanelRows(app.credits, creditKeysOf(null, person), mine)
+      .filter((row) => !mine.uid || row.organizerUid === mine.uid);
     creditHtml = rows.filter((row) => row.amount > 0).map((row) => `<p class="credit-total">${esc(creditLine(row))}</p>`).join('');
   } catch (error) { console.error(error); }
   const inMine = mine.some((row) => row.id === person.id);
@@ -3517,7 +3534,7 @@ function renderProfile(id) {
   }
   const who = rosterIdentity(person);
   const stats = playerStats({ ...who, players: app.players, matches: app.matches });
-  const record = playerRecord({ ...who, players: app.players, matches: app.matches });
+  const record = playerRecord({ ...who, players: app.players, matches: app.matches, organizer: staffActor() });
   const positions = new Set(person.positions || []);
   const level = storedLevel(person.level);
   const own = canEditRoster(person, actor());
@@ -3627,7 +3644,11 @@ function signupDraft(person) {
 
 function signupRows(person) {
   const draft = signupDraft(person);
-  const upcoming = upcomingMatches(app.matches);
+  const uid = actor().uid;
+  const upcoming = upcomingMatches(app.matches).filter((match) => {
+    const state = matchSignupState({ ...rosterIdentity(person), match, players: app.players });
+    return state.existing || canAdd(match, uid);
+  });
   const rows = upcoming.map((match) => {
     const state = matchSignupState({ ...rosterIdentity(person), match, players: app.players });
     return { id: match.id, match, state, existing: state.existing };
@@ -4047,16 +4068,17 @@ function openPhoneForm(person) {
     if (!raw) { $('#phone-err').textContent = 'Poné el WhatsApp, o cancelá.'; return; }
     const parsed = normalizePhone(raw);
     if (!parsed.ok) { $('#phone-err').textContent = parsed.error; return; }
-    const dup = app.roster.find((item) => item.id !== person.id && phoneIdentity(item) === phoneIdentity({ phone: parsed.wa }));
-    if (dup) { $('#phone-err').textContent = `${dup.name} ya tiene ese WhatsApp`; return; }
     const linked = app.players.filter((player) => playerMatchesPerson(player, person));
     closeSheet();
     run((async () => {
-      await app.store.updateRoster(person.id, { name, phone: parsed.wa });
+      const kept = await app.store.updateRoster(person.id, { name, phone: parsed.wa }) || person.id;
       for (const player of linked) {
         if (!canEditPlayer(player, actor())) continue;
-        if (phoneIdentity(player) === phoneIdentity({ phone: parsed.wa }) && player.rosterId === person.id) continue;
-        await app.store.updatePlayer(player.id, { phone: parsed.wa, rosterId: person.id });
+        if (phoneIdentity(player) === phoneIdentity({ phone: parsed.wa }) && player.rosterId === kept) continue;
+        await app.store.updatePlayer(player.id, { phone: parsed.wa, rosterId: kept });
+      }
+      if (kept !== person.id && location.hash.includes(encodeURIComponent(person.id))) {
+        location.hash = `#/jugador/${encodeURIComponent(kept)}`;
       }
     })(), 'WhatsApp guardado');
   };
@@ -5117,8 +5139,9 @@ function playerPanelPieces(player, person, ids, debtKey) {
   const me = staffActor();
   let credits = [];
   if (!app.creditsError) {
-    try { credits = creditPanelRows(app.credits, keys, me); }
-    catch (error) { console.error(error); }
+    try {
+      credits = creditPanelRows(app.credits, keys, me).filter((row) => !me.uid || row.organizerUid === me.uid);
+    } catch (error) { console.error(error); }
   }
   let debt = { total: 0, rows: [], text: '' };
   try {
@@ -5128,6 +5151,7 @@ function playerPanelPieces(player, person, ids, debtKey) {
       matches: knownMatches(),
       prices: livePrices(),
       key: debtKey || '',
+      organizer: me.uid ? me : null,
     });
   } catch (error) { console.error(error); }
   const nick = panelNickState(player, person);

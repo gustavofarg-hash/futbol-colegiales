@@ -309,6 +309,9 @@ service cloud.firestore {
             && creatorNameIs(resource.data.get('createdBy', ''))
           );
     }
+    function isRosterHolder() {
+      return resource.data.get('holders', []).hasAny([request.auth.uid]);
+    }
     function playerStampSame() {
       return request.resource.data.get('addedBy', null) == resource.data.get('addedBy', null)
           && request.resource.data.get('addedByUid', null) == resource.data.get('addedByUid', null);
@@ -445,6 +448,20 @@ service cloud.firestore {
           && (n.size() < 17 || noteOk(n[16])) && (n.size() < 18 || noteOk(n[17]))
           && (n.size() < 19 || noteOk(n[18])) && (n.size() < 20 || noteOk(n[19]));
     }
+    function uidItem(v) {
+      return v is string && v.size() > 0 && v.size() <= 128;
+    }
+    function holdersOk(h) {
+      return h is list && h.size() >= 1 && h.size() <= 8
+          && uidItem(h[0])
+          && (h.size() < 2 || uidItem(h[1]))
+          && (h.size() < 3 || uidItem(h[2]))
+          && (h.size() < 4 || uidItem(h[3]))
+          && (h.size() < 5 || uidItem(h[4]))
+          && (h.size() < 6 || uidItem(h[5]))
+          && (h.size() < 7 || uidItem(h[6]))
+          && (h.size() < 8 || uidItem(h[7]));
+    }
     function validRoster(d) {
       return d.name is string && d.name.size() > 0 && d.name.size() <= 60
           && phoneGone(d)
@@ -456,7 +473,8 @@ service cloud.firestore {
           && (!('level' in d) || (d.level is number && d.level >= 1 && d.level <= 10))
           && (!('positions' in d) || positionsOk(d.positions))
           && (!('notes' in d) || notesOk(d.notes))
-          && (!('shortName' in d) || (d.shortName is string && d.shortName.size() <= 40));
+          && (!('shortName' in d) || (d.shortName is string && d.shortName.size() <= 40))
+          && (!('holders' in d) || holdersOk(d.holders));
     }
     function validOrganizer(d) {
       return d.name is string && d.name.size() > 0 && d.name.size() <= 40
@@ -616,7 +634,7 @@ service cloud.firestore {
       allow create: if isActiveStaff() && validRoster(request.resource.data);
       allow update: if isActiveStaff() && validRoster(request.resource.data)
           && rosterStampSame()
-          && (rosterIdentitySame() || isRosterCreator());
+          && (rosterIdentitySame() || isRosterCreator() || isRosterHolder());
     }
 
     function validVenue(d) {
@@ -668,8 +686,23 @@ service cloud.firestore {
       return contactPhoneOk(d)
           && d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30;
     }
+    function readersOk(h) {
+      return h is list && h.size() <= 8
+          && (h.size() < 1 || uidItem(h[0]))
+          && (h.size() < 2 || uidItem(h[1]))
+          && (h.size() < 3 || uidItem(h[2]))
+          && (h.size() < 4 || uidItem(h[3]))
+          && (h.size() < 5 || uidItem(h[4]))
+          && (h.size() < 6 || uidItem(h[5]))
+          && (h.size() < 7 || uidItem(h[6]))
+          && (h.size() < 8 || uidItem(h[7]));
+    }
     function validRosterContact(d) {
-      return contactPhoneOk(d);
+      return contactPhoneOk(d)
+          && (!('readers' in d) || readersOk(d.readers));
+    }
+    function claimPath(id) {
+      return /databases/$(database)/documents/rosterClaims/$(id + '_' + request.auth.uid);
     }
     function playerPath(playerId) {
       return /databases/$(database)/documents/players/$(playerId);
@@ -734,9 +767,11 @@ service cloud.firestore {
       allow get: if isActiveStaff() && (
         resource.data.ownerUid == request.auth.uid
         || resource.data.visibleToAll == true
+        || (resource.data.readers is list && resource.data.readers.hasAny([request.auth.uid]))
       );
       allow list: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
       allow list: if isActiveStaff() && resource.data.visibleToAll == true;
+      allow list: if isActiveStaff() && resource.data.readers.hasAny([request.auth.uid]);
       allow create: if isActiveStaff() && validRosterContact(request.resource.data)
           && exists(rosterPath(rosterId))
           && request.resource.data.ownerUid == request.auth.uid
@@ -762,7 +797,68 @@ service cloud.firestore {
       allow update: if isActiveStaff() && validRosterContact(request.resource.data)
           && resource.data.ownerUid == request.auth.uid
           && request.resource.data.ownerUid == resource.data.ownerUid;
+      // Quien escribió el número puede sumarse como lector. No cambia el teléfono.
+      allow update: if isActiveStaff() && validRosterContact(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readers'])
+          && exists(claimPath(rosterId))
+          && get(claimPath(rosterId)).data.phone == resource.data.phone
+          && request.resource.data.phone == resource.data.phone
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && request.resource.data.phoneKey == resource.data.phoneKey
+          && request.resource.data.visibleToAll == resource.data.visibleToAll
+          && request.resource.data.readers.hasAny([request.auth.uid])
+          && request.resource.data.readers.size() == resource.data.get('readers', []).size() + 1;
+      // Un lector se saca solo. El teléfono no cambia.
+      allow update: if isActiveStaff() && validRosterContact(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readers'])
+          && resource.data.readers.hasAny([request.auth.uid])
+          && !request.resource.data.readers.hasAny([request.auth.uid])
+          && request.resource.data.readers.size() == resource.data.readers.size() - 1
+          && resource.data.readers.hasAll(request.resource.data.readers);
       allow delete: if isActiveStaff();
+    }
+
+    match /roster/{rosterId} {
+      // Entra a una ficha ajena solo si acaba de escribir el mismo teléfono.
+      allow update: if isActiveStaff() && validRoster(request.resource.data)
+          && rosterStampSame()
+          && exists(claimPath(rosterId))
+          && get(claimPath(rosterId)).data.phone == get(/databases/$(database)/documents/rosterContacts/$(rosterId)).data.phone
+          && request.resource.data.phoneKey == resource.data.phoneKey
+          && request.resource.data.get('hasPhone', null) == resource.data.get('hasPhone', null)
+          && request.resource.data.get('phoneOwnerUid', null) == resource.data.get('phoneOwnerUid', null)
+          && request.resource.data.get('phoneShared', null) == resource.data.get('phoneShared', null)
+          && request.resource.data.holders.hasAny([request.auth.uid])
+          && !resource.data.get('holders', []).hasAny([request.auth.uid])
+          && request.resource.data.holders.hasAll(resource.data.get('holders', []))
+          && (resource.data.get('createdByUid', '') == '' || request.resource.data.holders.hasAny([resource.data.createdByUid]))
+          && request.resource.data.holders.size() == resource.data.get('holders', []).size() + (resource.data.keys().hasAny(['holders']) ? 1 : (resource.data.get('createdByUid', '') == '' ? 1 : 2))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['holders', 'name', 'shortName', 'updatedAt']);
+      // Sale de la ficha compartida sin borrarla para el resto.
+      allow update: if isActiveStaff() && validRoster(request.resource.data)
+          && rosterStampSame()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['holders', 'updatedAt'])
+          && resource.data.holders.hasAny([request.auth.uid])
+          && !request.resource.data.holders.hasAny([request.auth.uid])
+          && request.resource.data.holders.size() == resource.data.holders.size() - 1
+          && resource.data.holders.hasAll(request.resource.data.holders);
+    }
+
+    match /rosterClaims/{claimId} {
+      allow create: if isActiveStaff()
+          && request.resource.data.keys().hasOnly(['phone', 'rosterId'])
+          && request.resource.data.phone is string
+          && request.resource.data.phone.size() > 0
+          && request.resource.data.phone.size() <= 20
+          && request.resource.data.rosterId is string
+          && request.resource.data.rosterId.size() > 0
+          && request.resource.data.rosterId.size() <= 200
+          && claimId == request.resource.data.rosterId + '_' + request.auth.uid
+          && exists(rosterPath(request.resource.data.rosterId))
+          && exists(/databases/$(database)/documents/rosterContacts/$(request.resource.data.rosterId))
+          && get(/databases/$(database)/documents/rosterContacts/$(request.resource.data.rosterId)).data.phone == request.resource.data.phone;
+      allow get, delete: if isActiveStaff()
+          && claimId.matches('^.+_' + request.auth.uid + '$');
     }
 
     // El id es el código corto (8, base62). Apunta al mismo m, p y t del link largo.
