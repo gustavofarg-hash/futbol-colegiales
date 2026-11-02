@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v92');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v93');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -256,7 +256,7 @@ await page.fill('#match-form [name=note]', 'Cancha 2');
 await page.click('#match-form button[type=submit]');
 await page.waitForSelector('.match-card');
 let cardText = (await page.textContent('.match-card')).replace(/\s+/g, ' ');
-check('Partido agregado aparece en la lista', /JUE/.test(cardText) && /22/.test(cardText) && /OCT/.test(cardText) && !/Jueves/.test(cardText) && /21hs \(\$5\.000\)/.test(cardText) && !/Con pechera/.test(cardText) && /0\/14/.test(cardText) && !cardText.includes('Fútbol 7 contra 7'), cardText.trim());
+check('Partido agregado aparece en la lista', /JUE/.test(cardText) && /Jueves 22\/10\/2026/.test(cardText) && /21hs \(\$5\.000\)/.test(cardText) && !/Con pechera/.test(cardText) && /0\/14/.test(cardText) && !cardText.includes('Fútbol 7 contra 7'), cardText.trim());
 check('La lista con partidos tampoco muestra el pie de sede y formato', await page.locator('#view .footer-note').count() === 0);
 await page.click('.match-card');
 await page.waitForSelector('#btn-add-player');
@@ -2292,7 +2292,7 @@ await page.waitForSelector('.match-card[data-date="2026-11-08"]');
 const norteCard = (await page.locator('.match-card[data-date="2026-11-08"]').innerText()).replace(/\s+/g, ' ');
 check('La tarjeta muestra la sede y el cupo de 6 por equipo', norteCard.includes('Club Norte Sur') && /0\/12/.test(norteCard), norteCard);
 await page.click('.match-card[data-date="2026-11-08"]');
-await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.trim() === '08/11/2026');
+await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.trim() === 'Domingo 08/11/2026');
 const norteDetail = {
   date: (await page.textContent('#match-date'))?.trim(),
   when: await page.textContent('#match-when'),
@@ -2302,7 +2302,7 @@ const norteDetail = {
   court: (await page.textContent('#match-court'))?.trim(),
   price: await page.textContent('#match-price'),
 };
-check('El detalle usa la sede y Faltan 12', norteDetail.date === '08/11/2026' && (norteDetail.when || '').includes('19:30hs ($8.000)') && (norteDetail.place || '').includes('Club Norte Sur (F6)') && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'));
+check('El detalle usa la sede y Faltan 12', norteDetail.date === 'Domingo 08/11/2026' && (norteDetail.when || '').includes('19:30hs ($8.000)') && (norteDetail.place || '').includes('Club Norte Sur (F6)') && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'));
 await page.click('#btn-copy');
 const norteCopy = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada nombra la sede', norteCopy.includes('Club Norte Sur') && norteCopy.includes('Faltan 12') && norteCopy.includes('⚽ Fútbol 6') && norteCopy.includes('Cancha 3'), norteCopy.split('\n').slice(0, 4).join(' | '));
@@ -4903,6 +4903,17 @@ async function assertGuestPromo(fix, visibleName, count) {
     return app.store.addMatch({ date: '2026-11-18', time: '19:00', price: 5000, note: 'Agregar fijo', capacity: 14 }, me.name);
   });
   await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, addId);
+  await page.waitForSelector('#match-date');
+  const weekdayDetail = await page.evaluate(() => {
+    const el = document.querySelector('#match-date');
+    const box = el.getBoundingClientRect();
+    return { text: el.textContent.trim(), sw: el.scrollWidth, cw: el.clientWidth, w: Math.round(box.width) };
+  });
+  check('El detalle antepone el día y queda en una línea', weekdayDetail.text === 'Miércoles 18/11/2026' && weekdayDetail.sw <= weekdayDetail.cw + 1, JSON.stringify(weekdayDetail));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.evaluate(() => { document.scrollingElement.scrollTop = 0; });
+  await page.locator('#match-date').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v93-fecha-detalle.png' });
   await page.waitForSelector('#btn-add-player');
   await page.click('#btn-add-player');
   await page.waitForSelector('#player-form');
@@ -4931,23 +4942,78 @@ async function assertGuestPromo(fix, visibleName, count) {
   check('Cancelar y Agregar quedan fijos al pie mientras se baja la lista', pinned.scrolled && pinned.title === 'Agregar jugador' && pinned.titleFixed && pinned.dockInView && pinned.dockAtSheet && pinned.labels.join('|') === 'Cancelar|Agregar' && pinned.scrollEndsAbove, JSON.stringify(pinned));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v92-agregar-botones.png' });
   await page.locator('#roster-find').focus();
-  const lifted = await page.evaluate(() => window.__app.syncPayDock({ viewHeight: 480, offsetTop: 0, innerHeight: window.innerHeight }));
+  const lifted = await page.evaluate(() => window.__app.syncPayDock({ viewHeight: 450, offsetTop: 0, innerHeight: window.innerHeight }));
   const keyboard = await page.evaluate(() => {
-    const dock = document.querySelector('#player-form > .sheet-actions').getBoundingClientRect();
+    const dock = document.querySelector('#player-form > .sheet-actions');
+    const dockBox = dock.getBoundingClientRect();
     const field = document.querySelector('#roster-find').getBoundingClientRect();
-    const scroll = document.querySelector('#player-scroll').getBoundingClientRect();
+    const body = dock.closest('.sheet-body').getBoundingClientRect();
+    const tabs = document.querySelector('dialog.sheet .tabbar')?.getBoundingClientRect();
+    const hits = [...document.querySelectorAll('#roster-hits .roster-hit')].map((el) => {
+      const box = el.getBoundingClientRect();
+      return { top: Math.round(box.top), bottom: Math.round(box.bottom), h: Math.round(box.height) };
+    });
+    const visibleHits = hits.filter((hit) => hit.h >= 36 && hit.top >= Math.round(field.bottom) - 4 && hit.bottom <= Math.round(body.bottom) + 1).length;
     return {
-      dockBottom: Math.round(dock.bottom),
-      dockTop: Math.round(dock.top),
+      dockDisplay: getComputedStyle(dock).display,
+      dockH: Math.round(dockBox.height),
       fieldTop: Math.round(field.top),
       fieldBottom: Math.round(field.bottom),
-      scrollTop: Math.round(scroll.top),
-      scrollBottom: Math.round(scroll.bottom),
+      tabBottom: Math.round(tabs?.bottom || 0),
+      bodyBottom: Math.round(body.bottom),
+      bodyH: Math.round(body.height),
+      maxHeight: dock.closest('.sheet-body').style.maxHeight,
+      visibleHits,
+      firstTop: hits[0]?.top ?? -1,
+      firstBottom: hits[0]?.bottom ?? -1,
+      hitCount: hits.length,
     };
   });
-  check('Con el teclado abierto, Cancelar y Agregar siguen a la vista', lifted.inset > 200 && keyboard.dockBottom <= 500 && keyboard.dockTop < keyboard.dockBottom && keyboard.fieldBottom <= keyboard.dockTop + 1, JSON.stringify({ lifted, keyboard }));
-  await page.evaluate(() => window.__app.syncPayDock());
+  const keyboardOpen = lifted.search === true && keyboard.dockDisplay === 'none' && keyboard.visibleHits >= 2 && keyboard.fieldTop >= keyboard.tabBottom - 2 && keyboard.firstTop >= keyboard.fieldBottom - 4 && keyboard.firstBottom <= keyboard.bodyBottom + 1 && keyboard.bodyBottom <= 460 && Number.parseFloat(keyboard.maxHeight) <= 460;
+  check('Con el teclado abierto, Buscar guardados muestra resultados y esconde Cancelar y Agregar', lifted.inset > 200 && keyboardOpen, JSON.stringify({ lifted, keyboard }));
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v93-buscar-teclado.png', clip: { x: 0, y: 0, width: 390, height: 450 } });
+  const blurred = await page.evaluate(() => {
+    document.querySelector('#roster-find').blur();
+    const back = window.__app.syncPayDock({ viewHeight: 450, offsetTop: 0, innerHeight: window.innerHeight });
+    const dock = document.querySelector('#player-form > .sheet-actions');
+    const box = dock.getBoundingClientRect();
+    return { search: back.search, display: getComputedStyle(dock).display, h: Math.round(box.height) };
+  });
+  check('Al salir del buscador vuelven Cancelar y Agregar', blurred.search !== true && blurred.display !== 'none' && blurred.h >= 44, JSON.stringify(blurred));
+  await page.locator('#roster-find').focus();
+  const closed = await page.evaluate(() => {
+    const back = window.__app.syncPayDock();
+    const dock = document.querySelector('#player-form > .sheet-actions');
+    const box = dock.getBoundingClientRect();
+    return { search: back.search, display: getComputedStyle(dock).display, h: Math.round(box.height), bottom: Math.round(box.bottom), inner: window.innerHeight };
+  });
+  check('Al cerrar el teclado vuelven Cancelar y Agregar', closed.search !== true && closed.display !== 'none' && closed.h >= 44 && closed.bottom <= closed.inner + 1, JSON.stringify(closed));
   await page.click('#player-form [data-close]');
+  await page.evaluate(() => { location.hash = '#/'; });
+  await page.waitForSelector('#list-next .match-weekday');
+  const weekdayCard = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#list-next .match-weekday, #list-later .match-weekday')].map((el) => ({
+      text: el.textContent.trim(),
+      sw: el.scrollWidth,
+      cw: el.clientWidth,
+      line: el.getClientRects().length,
+    }));
+    return { rows, overflow: rows.filter((row) => row.sw > row.cw + 1 || row.line !== 1).map((row) => row.text) };
+  });
+  const weekdayOk = weekdayCard.rows.length > 0 && weekdayCard.overflow.length === 0 && weekdayCard.rows.every((row) => /^\p{Lu}\p{Ll}+ \d{2}\/\d{2}\/\d{4}$/u.test(row.text));
+  check('La tarjeta de Próximos antepone el día en una línea', weekdayOk, JSON.stringify(weekdayCard.overflow.length ? weekdayCard : { n: weekdayCard.rows.length, sample: weekdayCard.rows[0] }));
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => {
+    const el = [...document.querySelectorAll('#list-next .match-weekday')].find((node) => node.textContent.includes('Miércoles'))
+      || document.querySelector('#list-next .match-weekday');
+    el?.scrollIntoView({ block: 'center' });
+    resolve();
+  }))));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v93-fecha-lista.png' });
+  await page.evaluate(() => { location.hash = '#/historial'; });
+  await page.waitForSelector('.match-day');
+  const historyDate = (await page.locator('.match-day').first().innerText()).trim();
+  check('El historial sigue con la fecha numérica', /^\d{2}\/\d{2}\/\d{4}$/.test(historyDate), historyDate);
 }
 
 const fresh = await ctx.newPage();
