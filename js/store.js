@@ -2829,10 +2829,14 @@ export class FirebaseStore {
       next.shortName = short || deleteField();
     }
     await updateDoc(doc(this.db, 'roster', existing.id), next);
-    const prev = this.state.rosterContacts?.[existing.id]?.readers || [];
-    const readers = prev.includes(uid) ? prev : [...prev, uid];
     try {
-      await updateDoc(doc(this.db, 'rosterContacts', existing.id), { readers });
+      const { getDoc } = this.fs;
+      const ref = doc(this.db, 'rosterContacts', existing.id);
+      const snap = await getDoc(ref);
+      const prev = snap.exists() ? (snap.data()?.readers || []) : (this.state.rosterContacts?.[existing.id]?.readers || []);
+      if (snap.exists() && !prev.includes(uid)) {
+        await updateDoc(ref, { readers: [...prev, uid] });
+      }
     } catch (e) {
       if (e?.code !== 'permission-denied') throw e;
     }

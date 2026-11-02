@@ -637,6 +637,30 @@ service cloud.firestore {
       // El borrado no puede mirar players: las reglas no consultan otra
       // colección. La app rechaza el borrado si esa ficha está anotada.
       allow read, delete: if isActiveStaff();
+      // Sumarse a una ficha ajena. Va primero y no llama a validRoster:
+      // validar la ficha entera (notas incluidas) más las otras reglas de
+      // update pasa el tope de 1000 expresiones y Firebase niega el vínculo.
+      allow update: if isActiveStaff()
+          && exists(claimPath(rosterId))
+          && get(claimPath(rosterId)).data.phone == get(/databases/$(database)/documents/rosterContacts/$(rosterId)).data.phone
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['holders', 'name', 'shortName', 'updatedAt'])
+          && rosterStampSame()
+          && request.resource.data.phoneKey == resource.data.phoneKey
+          && request.resource.data.get('hasPhone', null) == resource.data.get('hasPhone', null)
+          && request.resource.data.get('phoneOwnerUid', null) == resource.data.get('phoneOwnerUid', null)
+          && request.resource.data.get('phoneShared', null) == resource.data.get('phoneShared', null)
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 60
+          && (!('shortName' in request.resource.data) || (request.resource.data.shortName is string && request.resource.data.shortName.size() <= 40))
+          && request.resource.data.holders is list
+          && request.resource.data.holders.size() >= 1
+          && request.resource.data.holders.size() <= 8
+          && request.resource.data.holders.hasAny([request.auth.uid])
+          && !resource.data.get('holders', []).hasAny([request.auth.uid])
+          && request.resource.data.holders.hasAll(resource.data.get('holders', []))
+          && (resource.data.get('createdByUid', '') == '' || request.resource.data.holders.hasAny([resource.data.createdByUid]))
+          && request.resource.data.holders.size() == resource.data.get('holders', []).size() + (resource.data.keys().hasAny(['holders']) ? 1 : (resource.data.get('createdByUid', '') == '' ? 1 : 2));
       allow create: if isActiveStaff() && validRoster(request.resource.data);
       allow update: if isActiveStaff() && validRoster(request.resource.data)
           && rosterStampSame()
@@ -789,6 +813,10 @@ service cloud.firestore {
         resource.data.ownerUid == request.auth.uid
         || resource.data.visibleToAll == true
         || (resource.data.readers is list && resource.data.readers.hasAny([request.auth.uid]))
+        || (
+          exists(claimPath(rosterId))
+          && get(claimPath(rosterId)).data.phone == resource.data.phone
+        )
       );
       allow list: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
       allow list: if isActiveStaff() && resource.data.visibleToAll == true;
@@ -828,6 +856,7 @@ service cloud.firestore {
           && request.resource.data.phoneKey == resource.data.phoneKey
           && request.resource.data.visibleToAll == resource.data.visibleToAll
           && request.resource.data.readers.hasAny([request.auth.uid])
+          && request.resource.data.readers.hasAll(resource.data.get('readers', []))
           && request.resource.data.readers.size() == resource.data.get('readers', []).size() + 1;
       // Un lector se saca solo. El teléfono no cambia.
       allow update: if isActiveStaff() && validRosterContact(request.resource.data)
@@ -840,21 +869,8 @@ service cloud.firestore {
     }
 
     match /roster/{rosterId} {
-      // Entra a una ficha ajena solo si acaba de escribir el mismo teléfono.
-      allow update: if isActiveStaff() && validRoster(request.resource.data)
-          && rosterStampSame()
-          && exists(claimPath(rosterId))
-          && get(claimPath(rosterId)).data.phone == get(/databases/$(database)/documents/rosterContacts/$(rosterId)).data.phone
-          && request.resource.data.phoneKey == resource.data.phoneKey
-          && request.resource.data.get('hasPhone', null) == resource.data.get('hasPhone', null)
-          && request.resource.data.get('phoneOwnerUid', null) == resource.data.get('phoneOwnerUid', null)
-          && request.resource.data.get('phoneShared', null) == resource.data.get('phoneShared', null)
-          && request.resource.data.holders.hasAny([request.auth.uid])
-          && !resource.data.get('holders', []).hasAny([request.auth.uid])
-          && request.resource.data.holders.hasAll(resource.data.get('holders', []))
-          && (resource.data.get('createdByUid', '') == '' || request.resource.data.holders.hasAny([resource.data.createdByUid]))
-          && request.resource.data.holders.size() == resource.data.get('holders', []).size() + (resource.data.keys().hasAny(['holders']) ? 1 : (resource.data.get('createdByUid', '') == '' ? 1 : 2))
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['holders', 'name', 'shortName', 'updatedAt']);
+      // El alta a una ficha ajena está arriba, sin validRoster: si no, el tope
+      // de 1000 expresiones niega el vínculo.
       // Sale de la ficha compartida sin borrarla para el resto.
       allow update: if isActiveStaff() && validRoster(request.resource.data)
           && rosterStampSame()
