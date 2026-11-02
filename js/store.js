@@ -1878,6 +1878,7 @@ export class FirebaseStore {
     // se borra: si no está en la página, se lee por id al abrirlo.
     this._queryDay = todayISO();
     const { collection, doc, query, where, onSnapshot } = this.fs;
+    const uid = this.actor?.uid || '';
     const watch = (ref, opts, onNext, onErr) => {
       const next = (snap) => { onNext(snap); };
       const un = opts
@@ -1886,7 +1887,7 @@ export class FirebaseStore {
       this._unsubs.push(un);
     };
     const accessIds = [EVERYONE];
-    if (this.actor?.uid) accessIds.unshift(this.actor.uid);
+    if (uid) accessIds.unshift(uid);
     const take = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     const legacyDenied = (kind) => (e) => {
       if (e?.code === 'permission-denied') {
@@ -2017,7 +2018,6 @@ export class FirebaseStore {
       if (e?.code === 'permission-denied') { this._contactsLive = false; return; }
       console.error(e);
     };
-    const uid = this.actor?.uid;
     if (uid) {
       const ownerPlayers = onSnapshot(query(collection(this.db, 'playerContacts'), where('ownerUid', '==', uid)), (snap) => {
         this._contactBuckets.playerOwner = takeMap(snap);
