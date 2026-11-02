@@ -5,7 +5,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, numericDate, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v92';
+const APP_VERSION = 'f7c-v93';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -958,7 +958,7 @@ function matchCard(m, opts = {}) {
   <li class="match-item"><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}" data-note="${esc(m.note || '')}">
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
-      ${history ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : ''}
+      ${history ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : `<div class="match-weekday">${esc(weekdayDate(m.date))}</div>`}
       <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(hour)} (${esc(price)})</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${note}
@@ -1584,7 +1584,7 @@ function renderMatch(id) {
   const priceText = formatARS(priceOfMatch(m, livePrices()));
   if (!replaceView(`
     <section class="detail-head">
-      <h1 id="match-date">${esc(numericDate(m.date))}</h1>
+      <h1 id="match-date">${esc(weekdayDate(m.date))}</h1>
       <div class="when" id="match-when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</div>
       <p class="hint" id="match-place">${esc(placeOf(m))} (F${perTeamOf(m)})${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
@@ -2117,6 +2117,15 @@ function openSheet(html, { locked = false } = {}) {
   if (first) setTimeout(() => first.focus(), 50);
   return sheet;
 }
+/** Buscar guardados con el teclado abierto: esconder el pie para dejar ver los resultados. */
+function rosterSearchKeyboard(form, inset, viewHeight) {
+  if (!form || form.id !== 'player-form') return false;
+  if (document.activeElement?.id !== 'roster-find') return false;
+  if (inset > 60) return true;
+  if (!window.visualViewport) return true;
+  const base = Number(form.dataset.fullHeight || 0);
+  return base > 0 && viewHeight < base - 80;
+}
 /** Sube la hoja de pago cuando el teclado achica la zona visible. */
 function syncPayDock(metrics) {
   const form = document.querySelector('#pay-form') || document.querySelector('#player-form');
@@ -2126,11 +2135,16 @@ function syncPayDock(metrics) {
   const innerHeight = metrics?.innerHeight ?? window.innerHeight;
   const viewHeight = metrics?.viewHeight ?? vv?.height ?? innerHeight;
   const offsetTop = metrics?.offsetTop ?? vv?.offsetTop ?? 0;
+  if (form?.id === 'player-form' && !form.dataset.fullHeight) {
+    form.dataset.fullHeight = String(Math.round(vv?.height || window.innerHeight));
+  }
   const root = getComputedStyle(document.documentElement);
   const header = parseFloat(root.getPropertyValue('--header-h')) || document.querySelector('.topbar')?.offsetHeight || 64;
   const tabs = parseFloat(root.getPropertyValue('--tabbar-h')) || tabbar?.offsetHeight || 56;
   const inset = Math.max(0, Math.round(innerHeight - (offsetTop + viewHeight)));
-  const maxHeight = Math.max(220, Math.round(viewHeight - header - tabs - 12));
+  const search = rosterSearchKeyboard(form, inset, viewHeight);
+  form.classList.toggle('search-keyboard', search);
+  const maxHeight = Math.max(220, Math.round(viewHeight - header - tabs - (search ? 0 : 12)));
   if (inset > 0) {
     body.style.marginBottom = `${inset}px`;
     body.style.maxHeight = `${maxHeight}px`;
@@ -2140,13 +2154,16 @@ function syncPayDock(metrics) {
   }
   const scroller = form.querySelector('#pay-scroll, #player-scroll');
   const active = document.activeElement;
-  if (scroller && active && scroller.contains(active) && active !== scroller) {
+  if (search && scroller) {
+    const label = form.querySelector('#roster-find')?.closest('label');
+    if (label) scroller.scrollTop += label.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 2;
+  } else if (scroller && active && scroller.contains(active) && active !== scroller) {
     const box = active.getBoundingClientRect();
     const view = scroller.getBoundingClientRect();
     if (box.bottom > view.bottom - 8) scroller.scrollTop += box.bottom - view.bottom + 16;
     else if (box.top < view.top + 8) scroller.scrollTop -= view.top - box.top + 16;
   }
-  return { inset, maxHeight };
+  return { inset, maxHeight, search };
 }
 function bindPayDock() {
   app.syncPayDock = syncPayDock;
@@ -2155,6 +2172,7 @@ function bindPayDock() {
   if (scroller && !scroller.dataset.dock) {
     scroller.dataset.dock = '1';
     scroller.addEventListener('focusin', () => syncPayDock());
+    scroller.addEventListener('focusout', () => setTimeout(() => syncPayDock(), 0));
   }
 }
 if (window.visualViewport) {

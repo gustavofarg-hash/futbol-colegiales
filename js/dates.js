@@ -59,6 +59,15 @@ export function numericDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
+/** "Martes 03/11/2026". El ISO ya es el día de Buenos Aires, no un instante UTC. */
+export function weekdayDate(iso) {
+  const num = numericDate(iso);
+  if (!num) return '';
+  const name = DIAS[weekdayOf(iso)];
+  if (!name) return '';
+  return `${capitalize(name)} ${num}`;
+}
+
 /** "20hs" si es en punto, "19:30hs" si no. Vacío sin hora válida. */
 export function shortHour(time) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(String(time || '').trim());
