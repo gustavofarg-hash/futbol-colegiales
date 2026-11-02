@@ -85,7 +85,7 @@
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { toEpoch, todayISO } from './dates.js';
-import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, storedLevel } from './profile.js';
+import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { creditDocId, nextCredit } from './credit.js';
 import { MAX_PRICE } from './prices.js';
@@ -97,7 +97,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHolderIds, rosterInMatchMessage, rosterMatchCount, rosterNoteDocId, rosterPhoneAction, withHolder } from './roster.js';
+import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHolderIds, rosterNoteDocId, rosterPhoneAction, withHolder } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -1335,6 +1335,10 @@ class LocalStore {
     const cur = db.roster[id];
     const uid = this.actor?.uid || '';
     const holders = cur ? rosterHolderIds(cur) : [];
+    if (cur) {
+      const person = { ...cur, id, phone: this._rosterPhone(db, id) };
+      assertRosterDeletable(this, person, dbPlayers(db), dbMatches(db), Object.values(db.credits || {}), db.settings?.prices || null);
+    }
     if (cur && uid && holders.length > 1 && holders.includes(uid)) {
       cur.holders = holders.filter((item) => item !== uid);
       cur.updatedAt = Date.now();
@@ -1342,10 +1346,6 @@ class LocalStore {
       if (contact?.readers) contact.readers = contact.readers.filter((item) => item !== uid);
       this._save(db);
       return;
-    }
-    if (cur) {
-      const n = rosterMatchCount(rosterPlayers(db), { ...cur, id, phone: this._rosterPhone(db, id) });
-      if (n) throw Object.assign(new Error(rosterInMatchMessage(cur.name, n)), { code: 'roster-in-match' });
     }
     delete db.roster[id];
     ensureContacts(db);
@@ -1480,6 +1480,19 @@ class LocalStore {
     localStorage.setItem(this.key, JSON.stringify(db));
     this._emit();
   }
+}
+
+function assertRosterDeletable(store, person, players, matches, credits, prices) {
+  const reasons = rosterDeleteReasons({
+    person,
+    players,
+    matches,
+    credits,
+    prices,
+    organizer: { uid: store.actor?.uid || '', name: store.actor?.name || '' },
+  });
+  if (!reasons.length) return;
+  throw Object.assign(new Error(reasons.join('\n')), { code: 'roster-delete-blocked', reasons });
 }
 
 function isOwnUserDoc(segments, uid) {
@@ -3120,6 +3133,10 @@ export class FirebaseStore {
     const cur = (this.state.roster || []).find((row) => row.id === id);
     const uid = this.actor?.uid || '';
     const holders = cur ? rosterHolderIds(cur) : [];
+    if (cur) {
+      const phone = cur.phone || this.state.rosterContacts?.[id]?.phone || '';
+      assertRosterDeletable(this, { ...cur, phone }, this.state.players || [], this.state.matches || [], this.state.credits || [], this.state.prices || null);
+    }
     if (cur && uid && holders.length > 1 && holders.includes(uid)) {
       const { doc, updateDoc } = this.fs;
       await updateDoc(doc(this.db, 'roster', id), { holders: holders.filter((item) => item !== uid), updatedAt: Date.now() });
@@ -3129,11 +3146,6 @@ export class FirebaseStore {
         catch (e) { if (e?.code !== 'permission-denied') throw e; }
       }
       return;
-    }
-    if (cur) {
-      const phone = cur.phone || this.state.rosterContacts?.[id]?.phone || '';
-      const n = rosterMatchCount(this.state.players || [], { ...cur, phone });
-      if (n) throw Object.assign(new Error(rosterInMatchMessage(cur.name, n)), { code: 'roster-in-match' });
     }
     const { doc, writeBatch } = this.fs;
     const batch = writeBatch(this.db);
