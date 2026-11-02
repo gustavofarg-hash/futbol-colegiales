@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v94';
+const APP_VERSION = 'f7c-v95';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3247,7 +3247,7 @@ function statsPlayerBody(id) {
     creditHtml = rows.filter((row) => row.amount > 0).map((row) => `<p class="credit-total">${esc(creditLine(row))}</p>`).join('');
   } catch (error) { console.error(error); }
   const inMine = mine.some((row) => row.id === person.id);
-  const notes = sortedNotes(person.notes);
+  const notes = sortedNotes((app.rosterNotes && app.rosterNotes[person.id]) || []);
   const notesHtml = notes.length
     ? notes.map((note) => `<article class="pnote"><div class="when">${esc(noteWhen(note, matches) || 'Partido')}</div><p>${esc(note.text)}</p></article>`).join('')
     : '<p class="empty-wait">Sin notas.</p>';
@@ -3796,7 +3796,7 @@ function openNoteForm(person, note, player) {
     const text = form.text.value.trim();
     if (!match) { $('#note-err').textContent = 'Elegí un partido.'; return; }
     if (!text) { $('#note-err').textContent = 'Escribí la nota.'; return; }
-    const notes = [...(person.notes || [])];
+    const notes = [...((app.rosterNotes && app.rosterNotes[person.id]) || [])];
     if (note) {
       const i = notes.findIndex((n) => n.id === note.id);
       if (i >= 0) notes[i] = { ...notes[i], matchId: match.id, matchDate: match.date, matchTime: match.time || '', text, updatedAt: Date.now() };
@@ -4208,7 +4208,12 @@ function openPlayerForm(m, p, opts = {}) {
       const result = await addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
       if (result === ALREADY_IN_MATCH) $('#pf-err').textContent = result;
     });
-    setTimeout(() => find.focus(), 50);
+    setTimeout(() => {
+      if (!form.isConnected) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && form.contains(active) && active !== find) return;
+      find.focus();
+    }, 50);
   }
   if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [] });
   form.onsubmit = async (e) => {
@@ -5106,7 +5111,7 @@ function notesMarkup(person) {
     return `<section class="profile-block panel-notes"><h2>Notas de partido</h2><p class="empty-wait">Sin ficha en Jugadores.</p></section>`;
   }
   const own = canEditRoster(person, actor());
-  const notes = sortedNotes(person.notes);
+  const notes = sortedNotes((app.rosterNotes && app.rosterNotes[person.id]) || []);
   const list = notes.length ? notes.map((note) => `
     <article class="pnote" data-note="${esc(note.id)}">
       <div class="when">${esc(noteWhen(note, knownMatches()) || 'Partido')}</div>
@@ -5235,12 +5240,13 @@ function bindPlayerNotes(scope, player, person) {
   if (!notes) return;
   notes.onclick = async (e) => {
     const edit = e.target.closest('[data-note-edit]');
-    if (edit) return openNoteForm(person, (person.notes || []).find((n) => n.id === edit.dataset.noteEdit), player);
+    const mine = (app.rosterNotes && app.rosterNotes[person.id]) || [];
+    if (edit) return openNoteForm(person, mine.find((n) => n.id === edit.dataset.noteEdit), player);
     const del = e.target.closest('[data-note-del]');
     if (!del) return;
-    const note = (person.notes || []).find((n) => n.id === del.dataset.noteDel);
+    const note = mine.find((n) => n.id === del.dataset.noteDel);
     if (!note || !(await askConfirm('¿Borrar esta nota?', { danger: true }))) return;
-    saveProfile(person.id, { notes: (person.notes || []).filter((n) => n.id !== note.id) }, () => {
+    saveProfile(person.id, { notes: mine.filter((n) => n.id !== note.id) }, () => {
       if (player && sheet.open) reopenPlayerMenu(player);
     });
   };
@@ -5892,6 +5898,7 @@ async function boot() {
     app.historyMeta = historyMeta || null;
     app.historyError = historyError || '';
     app.roster = roster || [];
+    app.rosterNotes = view.rosterNotes || {};
     app.organizers = organizers || [];
     app.venues = venues || [];
     app.prices = prices || null;

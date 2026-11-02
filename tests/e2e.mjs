@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v94');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v95');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5014,6 +5014,60 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForSelector('.match-day');
   const historyDate = (await page.locator('.match-day').first().innerText()).trim();
   check('El historial sigue con la fecha numérica', /^\d{2}\/\d{2}\/\d{4}$/.test(historyDate), historyDate);
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (await page.locator('#login-form').count() === 0) {
+    await page.click('#btn-settings');
+    await page.click('#set-logout');
+    await page.waitForSelector('#login-form');
+  }
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  const notePlayer = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const rosterId = await app.store.addRoster({ name: 'Notas Privadas', phone: '5491166662020' }, me.name);
+    const matchId = await app.store.addMatch({ date: '2026-11-21', time: '21:00', price: 5000, note: 'Notas', capacity: 14 }, me.name);
+    return { rosterId, matchId };
+  });
+  await page.evaluate((id) => { location.hash = `#/jugador/${id}`; }, notePlayer.rosterId);
+  await page.waitForSelector('#btn-add-note');
+  await page.click('#btn-add-note');
+  await page.waitForSelector('#note-form');
+  await page.selectOption('#note-form [name=match]', notePlayer.matchId);
+  await page.fill('#note-form [name=text]', 'Nota solo de Gustavo');
+  await page.click('#note-form button[type=submit]');
+  await page.waitForSelector('#notes .pnote');
+  check('Gustavo ve la nota que escribió', (await page.locator('#notes').innerText()).includes('Nota solo de Gustavo'));
+  await page.locator('#notes').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v95-nota-gustavo.png' });
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.evaluate(async (id) => {
+    const app = window.__app;
+    await app.store.addRoster({ name: 'Notas Privadas', phone: '5491166662020' }, app.session.user.name);
+    location.hash = `#/jugador/${id}`;
+  }, notePlayer.rosterId);
+  await page.waitForSelector('#btn-add-note');
+  check('Martín no ve la nota de Gustavo', !(await page.locator('#notes').innerText()).includes('Nota solo de Gustavo') && (await page.locator('#notes .pnote').count()) === 0);
+  await page.click('#btn-add-note');
+  await page.waitForSelector('#note-form');
+  await page.selectOption('#note-form [name=match]', notePlayer.matchId);
+  await page.fill('#note-form [name=text]', 'Nota solo de Martín');
+  await page.click('#note-form button[type=submit]');
+  await page.waitForSelector('#notes .pnote');
+  check('Martín ve solo su nota', (await page.locator('#notes').innerText()).includes('Nota solo de Martín') && !(await page.locator('#notes').innerText()).includes('Gustavo'));
+  await page.locator('#notes').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v95-nota-martin.png' });
 }
 
 {

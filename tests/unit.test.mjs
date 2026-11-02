@@ -1210,6 +1210,50 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
   assert.deepEqual(notes.map((n) => n.text), ['nueva', 'vieja']);
 });
 
+test('las notas de un jugador compartido las ve solo quien las escribió', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-notes';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addRoster({ name: 'Nota Privada', phone: '5491100007777' }, 'Gustavo');
+  const raw = JSON.parse(mem.get('f7c-test-notes'));
+  raw.roster[id].notes = [{ id: 'vieja', matchId: 'm1', matchDate: '2026-10-20', matchTime: '21:00', text: 'La anotó Gustavo', createdAt: 1, updatedAt: 1 }];
+  mem.set('f7c-test-notes', JSON.stringify(raw));
+  const listen = () => new Promise((resolve) => {
+    const off = store.subscribe((view) => { off(); resolve(view); });
+  });
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await store.addRoster({ name: 'Nota Privada', phone: '5491100007777' }, 'Martín');
+  const martin = await listen();
+  assert.equal(martin.rosterNotes[id], undefined);
+  const saved = JSON.parse(mem.get('f7c-test-notes'));
+  assert.equal(saved.roster[id].notes, undefined);
+  assert.equal(saved.rosterNotes[`${id}_gustavo`].notes[0].text, 'La anotó Gustavo');
+  await store.patchRoster(id, { notes: [{ id: 'martin', matchId: 'm1', matchDate: '2026-10-20', matchTime: '21:00', text: 'La anotó Martín', createdAt: 2, updatedAt: 2 }] });
+  const martinAgain = await listen();
+  assert.equal(martinAgain.rosterNotes[id].length, 1);
+  assert.equal(martinAgain.rosterNotes[id][0].text, 'La anotó Martín');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const gustavo = await listen();
+  assert.equal(gustavo.rosterNotes[id].length, 1);
+  assert.equal(gustavo.rosterNotes[id][0].text, 'La anotó Gustavo');
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  const other = await store.addRoster({ name: 'Otra ficha', phone: '5491100008888' }, 'Martín');
+  await store.patchRoster(other, { notes: [{ id: 'extra', matchId: 'm1', matchDate: '2026-10-21', matchTime: '21:00', text: 'Nota de la otra ficha', createdAt: 3, updatedAt: 3 }] });
+  const kept = await store.updateRoster(other, { name: 'Nota Privada', phone: '5491100007777' });
+  assert.equal(kept, id);
+  const merged = JSON.parse(mem.get('f7c-test-notes'));
+  assert.equal(merged.roster[other], undefined);
+  assert.deepEqual(merged.rosterNotes[`${id}_martin`].notes.map((note) => note.text).sort(), ['La anotó Martín', 'Nota de la otra ficha']);
+  assert.equal(merged.rosterNotes[`${id}_gustavo`].notes[0].text, 'La anotó Gustavo');
+  assert.equal(merged.rosterNotes[`${other}_martin`], undefined);
+});
+
 test('el mismo WhatsApp de otro organizador es el mismo jugador', async () => {
   const mem = new Map();
   globalThis.localStorage = {
@@ -2873,7 +2917,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v94');
+  assert.equal(version, 'f7c-v95');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

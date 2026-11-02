@@ -11,7 +11,9 @@ rules_version = '2';
 // La única diferencia de rol en la app: el admin crea, desactiva y borra
 // organizadores. Nadie cambia el rol desde la pantalla de un partido.
 // Para backup, carga y reset, el admin activo sí puede leer y escribir
-// cualquier documento, incluidas subcolecciones. Un organizador no.
+// el resto de los documentos, incluidas subcolecciones. Un organizador no.
+// Las notas de un jugador (rosterNotes) las lee y escribe solo su dueño,
+// también si el dueño es admin. El admin no las ve.
 // Sin viewers, o con `*`, lo ven todos los activos. Con una lista de uids,
 // solo esas cuentas (y el creador) lo leen. Quien no está en adders lo ve
 // y no anota. Sin sesión no hay escrituras, salvo confirmed/confirmedAt
@@ -312,6 +314,9 @@ service cloud.firestore {
     function isRosterHolder() {
       return resource.data.get('holders', []).hasAny([request.auth.uid]);
     }
+    function rosterNotesSame() {
+      return request.resource.data.get('notes', null) == resource.data.get('notes', null);
+    }
     function playerStampSame() {
       return request.resource.data.get('addedBy', null) == resource.data.get('addedBy', null)
           && request.resource.data.get('addedByUid', null) == resource.data.get('addedByUid', null);
@@ -433,7 +438,8 @@ service cloud.firestore {
           && n.createdAt is number
           && (!('matchDate' in n) || (n.matchDate is string && n.matchDate.size() <= 10))
           && (!('matchTime' in n) || (n.matchTime is string && n.matchTime.size() <= 5))
-          && (!('updatedAt' in n) || n.updatedAt is number);
+          && (!('updatedAt' in n) || n.updatedAt is number)
+          && (!('authorUid' in n) || (n.authorUid is string && n.authorUid.size() > 0 && n.authorUid.size() <= 128));
     }
     function notesOk(n) {
       return n is list && n.size() <= 20
@@ -634,7 +640,22 @@ service cloud.firestore {
       allow create: if isActiveStaff() && validRoster(request.resource.data);
       allow update: if isActiveStaff() && validRoster(request.resource.data)
           && rosterStampSame()
+          && rosterNotesSame()
           && (rosterIdentitySame() || isRosterCreator() || isRosterHolder());
+      // El creador saca las notas viejas del documento compartido. Quedan en rosterNotes.
+      allow update: if isActiveStaff() && validRoster(request.resource.data)
+          && rosterStampSame()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notes', 'updatedAt'])
+          && resource.data.keys().hasAny(['notes'])
+          && !request.resource.data.keys().hasAny(['notes'])
+          && (
+            resource.data.get('createdByUid', '') == request.auth.uid
+            || (
+              resource.data.get('createdByUid', '') == ''
+              && resource.data.get('holders', []).size() == 1
+              && resource.data.holders[0] == request.auth.uid
+            )
+          );
     }
 
     function validVenue(d) {
@@ -844,6 +865,35 @@ service cloud.firestore {
           && resource.data.holders.hasAll(request.resource.data.holders);
     }
 
+    function validPrivateNotes(d) {
+      return d.keys().hasOnly(['ownerUid', 'rosterId', 'notes'])
+          && d.ownerUid == request.auth.uid
+          && d.rosterId is string && d.rosterId.size() > 0 && d.rosterId.size() <= 200
+          && notesOk(d.notes);
+    }
+    match /rosterNotes/{noteId} {
+      allow get: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+      allow list: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+      allow create, update: if isActiveStaff() && validPrivateNotes(request.resource.data)
+          && noteId == request.resource.data.rosterId + '_' + request.auth.uid;
+      allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /rosterRedirects/{fromId} {
+      allow get, list: if isActiveStaff();
+      allow create: if isActiveStaff()
+          && request.resource.data.keys().hasOnly(['intoId'])
+          && request.resource.data.intoId is string
+          && request.resource.data.intoId.size() > 0
+          && request.resource.data.intoId.size() <= 200
+          && request.resource.data.intoId != fromId
+          && exists(rosterPath(fromId))
+          && get(rosterPath(fromId)).data.get('holders', []).hasAny([request.auth.uid])
+          && exists(rosterPath(request.resource.data.intoId))
+          && get(rosterPath(request.resource.data.intoId)).data.get('holders', []).hasAny([request.auth.uid]);
+      allow update, delete: if false;
+    }
+
     match /rosterClaims/{claimId} {
       allow create: if isActiveStaff()
           && request.resource.data.keys().hasOnly(['phone', 'rosterId'])
@@ -1001,9 +1051,14 @@ service cloud.firestore {
     // Backup, carga y reset. isAdmin() exige cuenta activa con role == admin.
     // Un organizador no entra: sigue sin ver un Solo yo ajeno ni un teléfono privado.
     // El registro no se reescribe ni por el admin: solo se borra en el reset.
+    // rosterNotes no entra: cada organizador lee solo las suyas.
     match /{document=**} {
-      allow read: if isAdmin();
-      allow write: if isAdmin() && !request.path.matches('/databases/[^/]+/documents/log/[^/]+');
+      allow read: if isAdmin()
+          && !request.path.matches('/databases/[^/]+/documents/rosterNotes/[^/]+');
+      allow write: if isAdmin()
+          && !request.path.matches('/databases/[^/]+/documents/log/[^/]+')
+          && !request.path.matches('/databases/[^/]+/documents/rosterNotes/[^/]+')
+          && !request.path.matches('/databases/[^/]+/documents/rosterRedirects/[^/]+');
     }
 
     match /{document=**} {
