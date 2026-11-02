@@ -2,6 +2,7 @@
 // posiciones, notas). No es el acceso al partido: pagar, confirmar, la espera
 // y los equipos siguen en quien ya podía anotar.
 import { sameOrganizer } from './organizers.js';
+import { rosterHeldBy, rosterHolderIds } from './roster.js';
 
 export const EDIT_LOCK_TEXT = 'Solo lo puede editar el organizador que lo agregó';
 
@@ -29,6 +30,8 @@ export function canEditPlayer(player, actor) {
 }
 
 export function canEditRoster(person, actor) {
+  const uid = String(actor?.uid || '').trim();
+  if (uid && rosterHolderIds(person).includes(uid) && rosterHeldBy(person, actor)) return true;
   return canEditCreated(person, actor, 'createdByUid', 'createdBy');
 }
 

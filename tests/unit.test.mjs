@@ -1210,6 +1210,47 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
   assert.deepEqual(notes.map((n) => n.text), ['nueva', 'vieja']);
 });
 
+test('el mismo WhatsApp de otro organizador es el mismo jugador', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-share';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const shared = await store.addRoster({ name: 'Juan Compartido', phone: '5491155550101', shortName: 'Juan' }, 'Gustavo');
+  await store.adjustCredit({ personKey: `p:${phoneIdentity({ phone: '5491155550101' })}`, organizerUid: 'gustavo', organizerName: 'Gustavo', name: 'Juan Compartido', delta: 4000 }, 'Gustavo');
+  const matchId = await store.addMatch({ date: '2026-11-03', time: '21:00', capacity: 14, price: 5000 }, 'Gustavo');
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  const own = await store.addRoster({ name: 'Pedro Propio', phone: '' }, 'Martín');
+  const match = JSON.parse(mem.get('f7c-test-share')).matches[matchId];
+  const playerId = await store.addPlayer({ ...match, id: matchId }, { name: 'Pedro Propio', phone: '', rosterId: own }, 'Martín');
+  await store.adjustCredit({ personKey: `r:${own}`, organizerUid: 'martin', organizerName: 'Martín', name: 'Pedro Propio', delta: 1500 }, 'Martín');
+  const linked = await store.addRoster({ name: 'Juan de Martín', phone: '11 5555-0101', shortName: 'Compa' }, 'Martín');
+  assert.equal(linked, shared);
+  await assert.rejects(() => store.addRoster({ name: 'Otra vez', phone: '5491155550101' }, 'Martín'), (error) => error.code === 'roster-duplicate' && error.rosterId === shared);
+  const kept = await store.updateRoster(own, { name: 'Juan de Martín', phone: '5491155550101', shortName: 'Compa' });
+  assert.equal(kept, shared);
+  const saved = JSON.parse(mem.get('f7c-test-share'));
+  assert.equal(saved.roster[own], undefined);
+  assert.equal(saved.roster[shared].name, 'Juan de Martín');
+  assert.deepEqual(saved.roster[shared].holders, ['gustavo', 'martin']);
+  assert.equal(saved.players[playerId].rosterId, shared);
+  assert.equal(saved.contacts.roster[shared].phone, '5491155550101');
+  assert.ok(saved.contacts.roster[shared].readers.includes('martin'));
+  const martinCredit = Object.values(saved.credits).find((row) => row.organizerUid === 'martin');
+  const gustavoCredit = Object.values(saved.credits).find((row) => row.organizerUid === 'gustavo');
+  assert.equal(martinCredit.amount, 1500);
+  assert.equal(gustavoCredit.amount, 4000);
+  assert.equal(martinCredit.personKey, gustavoCredit.personKey);
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  await store.deleteRoster(shared);
+  assert.equal(JSON.parse(mem.get('f7c-test-share')).roster[shared].holders.includes('gustavo'), false);
+  assert.equal(JSON.parse(mem.get('f7c-test-share')).roster[shared].holders.includes('martin'), true);
+});
+
 test('plantel demo: no duplica por teléfono', async () => {
   const mem = new Map();
   globalThis.localStorage = {
@@ -2494,6 +2535,7 @@ test('solo edita el jugador quien lo agregó', async () => {
   const raw = JSON.parse(mem.get('f7c-test-edit-lock'));
   delete raw.roster[orphan].createdByUid;
   delete raw.roster[orphan].createdBy;
+  delete raw.roster[orphan].holders;
   mem.set('f7c-test-edit-lock', JSON.stringify(raw));
   await assert.rejects(() => store.updateRoster(orphan, { name: 'Con sello' }), /Solo lo puede editar/);
 });
@@ -2831,7 +2873,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v93');
+  assert.equal(version, 'f7c-v94');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

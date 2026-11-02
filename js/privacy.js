@@ -72,10 +72,12 @@ export function phoneKey(phone) {
   return canon ? sha256Hex(canon) : '';
 }
 
-/** El uid ve el número si es el dueño o si el dueño lo compartió. El admin no es excepción. */
-export function canSeePhone(contact, uid) {
+/** El uid ve el número si es el dueño, si lo comparte la ficha, o si el dueño lo marcó visible. El admin no es excepción. */
+export function canSeePhone(contact, uid, entity) {
   if (!uid || !contact?.phone) return false;
   if (contact.ownerUid === uid) return true;
+  if (Array.isArray(contact.readers) && contact.readers.includes(uid)) return true;
+  if (Array.isArray(entity?.holders) && entity.holders.includes(uid)) return true;
   return contact.visibleToAll === true;
 }
 
@@ -91,8 +93,8 @@ export function attachPhone(entity, contact, uid) {
   const key = String(entity?.phoneKey || '').trim() || contact?.phoneKey || (raw ? phoneKey(raw) : '');
   const has = !!(contact?.phone || raw || entity?.hasPhone);
   let phone = '';
-  if (canSeePhone(contact, uid)) phone = String(contact.phone);
-  else if (uid && raw && !contact?.phone && owner === uid) phone = raw;
+  if (canSeePhone(contact, uid, rest)) phone = String(contact.phone);
+  else if (uid && raw && !contact?.phone && (owner === uid || (Array.isArray(rest.holders) && rest.holders.includes(uid)))) phone = raw;
   return {
     ...rest,
     phone,

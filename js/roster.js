@@ -70,17 +70,46 @@ export function rosterHit(person, query) {
  * La agenda de cada organizador. Sin createdBy ni createdByUid es un jugador
  * de antes: sigue visible para todos, porque no se sabe de quién era.
  */
-export function rosterForOrganizer(roster, actor) {
+/** Uids que tienen esta ficha. Sin lista, el creador. Sin creador, nadie (la ficha vieja sigue por el nombre). */
+export function rosterHolderIds(person) {
+  const listed = Array.isArray(person?.holders)
+    ? [...new Set(person.holders.map((id) => String(id || '').trim()).filter(Boolean))]
+    : [];
+  if (listed.length) return listed;
+  const uid = String(person?.createdByUid || '').trim();
+  return uid ? [uid] : [];
+}
+
+export function rosterHeldBy(person, actor) {
+  if (!person) return false;
   const uid = String(actor?.uid || '').trim();
-  const name = String(actor?.name || '').trim();
-  return (roster || []).filter((person) => {
-    const ownerUid = String(person?.createdByUid || '').trim();
-    const ownerName = String(person?.createdBy || '').trim();
-    if (!ownerUid && !ownerName) return true;
-    if (uid && ownerUid === uid) return true;
-    const owner = foldText(ownerName);
-    return owner !== '' && owner === foldText(name);
-  });
+  const holders = rosterHolderIds(person);
+  if (uid && holders.includes(uid)) return true;
+  if (holders.length) return false;
+  const ownerUid = String(person?.createdByUid || '').trim();
+  const ownerName = String(person?.createdBy || '').trim();
+  if (!ownerUid && !ownerName) return true;
+  if (uid && ownerUid === uid) return true;
+  const owner = foldText(ownerName);
+  return owner !== '' && owner === foldText(actor?.name);
+}
+
+/** create, duplicate (el mismo organizador) o link (otro organizador, la misma ficha). */
+export function rosterPhoneAction(existing, actor) {
+  if (!existing) return 'create';
+  if (!String(actor?.uid || '').trim()) return 'duplicate';
+  return rosterHeldBy(existing, actor) ? 'duplicate' : 'link';
+}
+
+export function withHolder(person, uid) {
+  const id = String(uid || '').trim();
+  const holders = rosterHolderIds(person);
+  if (!id || holders.includes(id)) return holders;
+  return [...holders, id];
+}
+
+export function rosterForOrganizer(roster, actor) {
+  return (roster || []).filter((person) => rosterHeldBy(person, actor));
 }
 
 export function searchRoster(roster, query) {
