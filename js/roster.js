@@ -162,6 +162,24 @@ export function rosterByIdentity(roster, key) {
   return (roster || []).find((person) => phoneIdentity(person) === id) || null;
 }
 
+/**
+ * Teléfono visible de la ficha que este organizador ya tiene.
+ * Primero la ficha del partido, si está en su agenda. Si no, el mismo teléfono.
+ * Vacío si no está en su agenda o esa ficha no muestra número.
+ */
+export function visibleRosterPhone(player, roster, actor) {
+  const mine = rosterForOrganizer(roster, actor);
+  const id = String(player?.rosterId || '').trim();
+  if (id) {
+    const byId = mine.find((person) => person.id === id);
+    if (byId) return String(byId.phone || '').trim();
+  }
+  const key = phoneIdentity(player);
+  if (!key) return '';
+  const byPhone = mine.find((person) => phoneIdentity(person) === key);
+  return String(byPhone?.phone || '').trim();
+}
+
 /** Partidos distintos en los que esta ficha está anotada, titular o en espera. */
 export function rosterMatchCount(players, person) {
   const id = String(person?.id || '');

@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v101');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v102');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5199,6 +5199,53 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.click('#roster-dup-open');
   await page.waitForSelector('#profile h2.section');
   check('Abrir lleva a la ficha compartida', (await page.locator('#profile h2.section').textContent()).includes('Díaz de Martín'));
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (await page.locator('#login-form').count() === 0) {
+    await page.click('#btn-settings');
+    await page.click('#set-logout');
+    await page.waitForSelector('#login-form');
+  }
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  const sharedMatch = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const rosterId = await app.store.addRoster({ name: 'Lista Díaz', phone: '5491166663030' }, me.name);
+    const matchId = await app.store.addMatch({ date: '2026-11-22', time: '21:00', note: 'Lista WA', capacity: 14 }, me.name);
+    const match = app.matches.find((item) => item.id === matchId);
+    await app.store.addPlayer(match, { name: 'Lista Díaz', phone: '5491166663030', rosterId }, me.name);
+    return matchId;
+  });
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.evaluate(async () => {
+    await window.__app.store.addRoster({ name: 'Díaz en agenda', phone: '11 6666-3030' }, window.__app.session.user.name);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, sharedMatch);
+  await page.waitForSelector('#slots .slot');
+  const sharedRow = (await page.locator('#slots .slot').first().innerText()).replace(/\s+/g, ' ');
+  const sharedWa = await page.locator('#slots .wa-btn').first().evaluate((el) => ({ tag: el.tagName, href: el.getAttribute('href') || '', disabled: el.disabled === true }));
+  check('La lista del partido muestra el WhatsApp del jugador de la agenda', !sharedRow.includes('El WhatsApp de este jugador es privado') && sharedRow.includes('6666') && sharedWa.tag === 'A' && sharedWa.href.includes('wa.me/5491166663030'), `${sharedRow} ${JSON.stringify(sharedWa)}`);
+await page.locator('.actionbar').evaluate((el) => { el.style.display = 'none'; });
+await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artifacts/screenshots/v102-whatsapp-lista.png' });
+  await page.locator('#slots [data-menu]').click();
+  await page.waitForSelector('#pm-wa');
+  const menuWa = await page.locator('#pm-wa').evaluate((el) => ({ text: el.textContent.trim(), href: el.getAttribute('href') || '' }));
+  const menuText = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
+  check('El menú del partido manda WhatsApp al jugador de la agenda', menuWa.text === 'Mandar WhatsApp' && menuWa.href.includes('wa.me/5491166663030') && !menuText.includes('El WhatsApp de este jugador es privado'), `${menuWa.text} ${menuText.slice(0, 240)}`);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v102-whatsapp-menu.png' });
+  await page.click('#sheet [data-close]');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
 }
 
 const fresh = await ctx.newPage();
