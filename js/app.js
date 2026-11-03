@@ -18,7 +18,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, searchRoster } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, searchRoster, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -41,15 +41,23 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v101';
+const APP_VERSION = 'f7c-v102';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
   return !!(p && !String(p.phone || '').trim() && (p.phonePrivate || p.hasPhone));
 }
+/** Si el partido no muestra el número pero la ficha de este organizador sí, usa esa. */
+function withAgendaPhone(player) {
+  if (String(player?.phone || '').trim()) return player;
+  const phone = visibleRosterPhone(player, app.roster, actor());
+  if (!phone) return player;
+  return { ...player, phone, phonePrivate: false, hasPhone: true };
+}
 function phoneSub(p) {
-  if (p?.phone) return `<span class="phone-line">${esc(displayFromWa(p.phone))}</span>`;
-  if (phoneHidden(p)) return `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>`;
+  const view = withAgendaPhone(p);
+  if (view?.phone) return `<span class="phone-line">${esc(displayFromWa(view.phone))}</span>`;
+  if (phoneHidden(view)) return `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>`;
   return '<span>Sin número</span>';
 }
 const WA_SHARE_LABEL = 'Permitir que otros organizadores vean su WhatsApp';
@@ -66,12 +74,13 @@ function slotSide(p, m, readOnly, payText) {
   return `<div class="slot-side">${stack}${more}</div>`;
 }
 function waButton(p, text) {
-  if (p?.phone) {
-    const code = isShortCode(p?.shortCode) ? p.shortCode : '';
-    const shorten = code ? ` data-short-code="${esc(code)}" data-wa-phone="${esc(p.phone)}" data-wa-text="${esc(text || '')}"` : '';
-    return `<a class="wa-btn" href="${esc(waHref(p.phone, text || ''))}"${shorten} target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(p.name)}">${ICON.wa}</a>`;
+  const view = withAgendaPhone(p);
+  if (view?.phone) {
+    const code = isShortCode(view?.shortCode) ? view.shortCode : '';
+    const shorten = code ? ` data-short-code="${esc(code)}" data-wa-phone="${esc(view.phone)}" data-wa-text="${esc(text || '')}"` : '';
+    return `<a class="wa-btn" href="${esc(waHref(view.phone, text || ''))}"${shorten} target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(view.name)}">${ICON.wa}</a>`;
   }
-  if (phoneHidden(p)) return `<button type="button" class="wa-btn" disabled aria-label="${esc(PRIVATE_WA_TEXT)}">${ICON.wa}</button>`;
+  if (phoneHidden(view)) return `<button type="button" class="wa-btn" disabled aria-label="${esc(PRIVATE_WA_TEXT)}">${ICON.wa}</button>`;
   return '';
 }
 function rosterIdentity(person) {
@@ -5392,6 +5401,7 @@ function openPlayerMenu(m, p) {
   if (!p) return;
   const match = m || knownMatches().find((item) => item.id === p.matchId) || null;
   const own = canEditPlayer(p, actor());
+  const phoneView = withAgendaPhone(p);
   const panel = playerPanelPieces(p, null, MENU_PANEL, personKey(p, app.players));
   const payLine = payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>';
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
@@ -5399,12 +5409,12 @@ function openPlayerMenu(m, p) {
   openSheet(`
     <h3>${esc(shownName(p))}</h3>
     <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.notesHtml}${panel.statsButton}</div>
-    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${p.phone ? esc(displayFromWa(p.phone)) + ' · ' : phoneHidden(p) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
     ${canAnnotate ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
       ${canAnnotate ? `<button class="btn" id="pm-pay">${paidAlready ? 'Editar pago' : 'Cargar pago'}</button>` : ''}
-      ${p.phone && match ? `<a class="btn" href="${esc(waHref(p.phone, waMessage(match, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(p) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
+      ${phoneView.phone && match ? `<a class="btn" id="pm-wa" href="${esc(waHref(phoneView.phone, waMessage(match, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(phoneView) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}

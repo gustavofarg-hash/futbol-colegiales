@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster } from '../js/roster.js';
+import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1157,6 +1157,26 @@ test('búsqueda del plantel: nombre, apellido y teléfono', () => {
   assert.deepEqual(names('+54 9 11 4444'), ['José Pérez']);
   assert.deepEqual(names('11 9999 0000'), ['Ana Gómez']);
   assert.deepEqual(names(''), ['Ana Gómez', 'Ernesto Pereira', 'José Pérez']);
+});
+
+test('la lista usa el WhatsApp de la ficha que el organizador ya tiene', () => {
+  const phone = '5491166661010';
+  const key = phoneIdentity({ phone });
+  const roster = [{
+    id: 'shared',
+    name: 'Díaz de Martín',
+    phone,
+    phoneKey: key,
+    holders: ['gustavo', 'martin'],
+    createdByUid: 'gustavo',
+  }];
+  const player = { id: 'p1', name: 'Compartido Díaz', rosterId: 'shared', phone: '', phoneKey: key, hasPhone: true, phonePrivate: true };
+  assert.equal(visibleRosterPhone(player, roster, { uid: 'martin', name: 'Martín' }), phone);
+  assert.equal(visibleRosterPhone({ ...player, rosterId: '' }, roster, { uid: 'martin', name: 'Martín' }), phone);
+  assert.equal(visibleRosterPhone(player, roster, { uid: 'otro', name: 'Otro' }), '');
+  assert.equal(visibleRosterPhone({ name: 'Díaz de Martín' }, roster, { uid: 'martin', name: 'Martín' }), '');
+  const empty = [{ id: 'shared', name: 'Sin número', phone: '', holders: ['martin'], createdByUid: 'martin' }];
+  assert.equal(visibleRosterPhone({ rosterId: 'shared', phoneKey: key, hasPhone: true }, empty, { uid: 'martin', name: 'Martín' }), '');
 });
 
 test('perfil: partidos pasados, día y horario más frecuentes', () => {
@@ -3065,7 +3085,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v101');
+  assert.equal(version, 'f7c-v102');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
