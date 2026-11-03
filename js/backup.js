@@ -56,7 +56,7 @@ export const COLLECTION_LABELS = Object.freeze({
   log: 'Registro',
   compensations: 'Compensaciones',
   rosterNotes: 'Notas de jugadores',
-  rosterClaims: 'Reclamos de WhatsApp',
+  rosterClaims: 'Acceso al WhatsApp',
   rosterRedirects: 'Fichas unidas',
 });
 
