@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v100';
+const APP_VERSION = 'f7c-v101';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1096,7 +1096,7 @@ function renderTeams(id) {
         ${free.length ? `<ul class="team-list">${freeRows}</ul>` : '<p class="empty-wait">Nadie</p>'}
       </section>
       <div class="team-actions">
-        ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Mezclar al azar</button><button type="button" class="btn" id="btn-teams-clear">Reset</button>'}
+        ${readOnly ? '' : '<button type="button" class="btn" id="btn-teams-shuffle">Armar equipos automáticamente</button><button type="button" class="btn" id="btn-teams-clear">Reset</button>'}
         <a class="btn nav-wide" id="btn-teams-wa" href="${esc(waHref('', share))}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
       </div>
     </div>`)) return;
@@ -1151,7 +1151,7 @@ function renderTeams(id) {
     let pointer = null;
     const rated = () => main.map((player) => {
       const person = player.rosterId ? (app.roster || []).find((item) => item.id === player.rosterId) : null;
-      return { id: player.id, level: person?.level ?? player.level };
+      return { id: player.id, level: person?.level ?? player.level, positions: Array.isArray(person?.positions) ? person.positions : [] };
     });
     const release = (playerId, hit) => {
       if (!playerId || !hit?.closest) return;
@@ -1208,8 +1208,8 @@ function renderTeams(id) {
       release(playerId, document.elementFromPoint(e.clientX, e.clientY));
     });
     $('#btn-teams-shuffle').onclick = async () => {
-      if (!(await askConfirm('¿Seguro que querés rearmar los equipos al azar?'))) return;
-      save(balanceTeams(rated(), { cap: slots }), 'Equipos mezclados');
+      if (!(await askConfirm('¿Seguro que querés rearmar los equipos automáticamente?'))) return;
+      save(balanceTeams(rated(), { cap: slots }), 'Equipos armados');
     };
     $('#btn-teams-clear').onclick = async () => {
       if (!(await askConfirm('¿Seguro que querés resetear los equipos?', { danger: true }))) return;
