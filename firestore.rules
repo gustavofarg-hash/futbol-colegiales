@@ -12,8 +12,8 @@ rules_version = '2';
 // organizadores. Nadie cambia el rol desde la pantalla de un partido.
 // Para backup, carga y reset, el admin activo sí puede leer y escribir
 // el resto de los documentos, incluidas subcolecciones. Un organizador no.
-// Las notas de un jugador (rosterNotes) las lee y escribe solo su dueño,
-// también si el dueño es admin. El admin no las ve.
+// En la app, las notas las ve solo su dueño (también el admin).
+// El backup, la carga y el reset sí leen y escriben las notas de todos.
 // Sin viewers, o con `*`, lo ven todos los activos. Con una lista de uids,
 // solo esas cuentas (y el creador) lo leen. Quien no está en adders lo ve
 // y no anota. Sin sesión no hay escrituras, salvo confirmed/confirmedAt
@@ -888,6 +888,8 @@ service cloud.firestore {
           && notesOk(d.notes);
     }
     match /rosterNotes/{noteId} {
+      // Backup, carga y reset. Va primero: si es admin, no se evalúa notesOk.
+      allow read, write: if isAdmin();
       allow get: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
       allow list: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
       allow create, update: if isActiveStaff() && validPrivateNotes(request.resource.data)
@@ -896,6 +898,7 @@ service cloud.firestore {
     }
 
     match /rosterRedirects/{fromId} {
+      allow read, write: if isAdmin();
       allow get, list: if isActiveStaff();
       allow create: if isActiveStaff()
           && request.resource.data.keys().hasOnly(['intoId'])
@@ -911,6 +914,7 @@ service cloud.firestore {
     }
 
     match /rosterClaims/{claimId} {
+      allow read, write: if isAdmin();
       allow create: if isActiveStaff()
           && request.resource.data.keys().hasOnly(['phone', 'rosterId'])
           && request.resource.data.phone is string
@@ -1067,14 +1071,12 @@ service cloud.firestore {
     // Backup, carga y reset. isAdmin() exige cuenta activa con role == admin.
     // Un organizador no entra: sigue sin ver un Solo yo ajeno ni un teléfono privado.
     // El registro no se reescribe ni por el admin: solo se borra en el reset.
-    // rosterNotes no entra: cada organizador lee solo las suyas.
+    // isAdmin() es una sola lectura de la cuenta: alcanza para backup, carga
+    // y reset de notas, reclamos y fichas unidas sin repetir validRoster.
     match /{document=**} {
-      allow read: if isAdmin()
-          && !request.path.matches('/databases/[^/]+/documents/rosterNotes/[^/]+');
+      allow read: if isAdmin();
       allow write: if isAdmin()
-          && !request.path.matches('/databases/[^/]+/documents/log/[^/]+')
-          && !request.path.matches('/databases/[^/]+/documents/rosterNotes/[^/]+')
-          && !request.path.matches('/databases/[^/]+/documents/rosterRedirects/[^/]+');
+          && !request.path.matches('/databases/[^/]+/documents/log/[^/]+');
     }
 
     match /{document=**} {

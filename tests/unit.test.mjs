@@ -2957,7 +2957,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v98');
+  assert.equal(version, 'f7c-v99');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3120,6 +3120,61 @@ test('cargar un backup reemplaza los datos y un organizador no puede', async () 
   assert.equal(db.contacts.players[pid].phone, '5491155550101');
   assert.equal(Object.values(db.matches).some((match) => match.note === 'Extra'), false);
   assert.equal(db.settings.prices.matchPrice, 5000);
+});
+
+test('el backup incluye notas de todos, readers y un archivo viejo sigue cargando', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-backup-notes';
+  const when = new Date('2026-10-27T18:05:30Z');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addRoster({ name: 'Con notas', phone: '5491166667777' }, 'Gustavo');
+  await store.patchRoster(id, { notes: [{ id: 'g', matchId: 'm', matchDate: '2026-10-20', matchTime: '21:00', text: 'de Gustavo', createdAt: 1, updatedAt: 1 }] });
+  const raw = JSON.parse(mem.get(store.key));
+  raw.roster[id].holders = ['gustavo', 'martin'];
+  raw.contacts.roster[id].readers = ['gustavo', 'martin'];
+  raw.rosterNotes[`${id}_martin`] = {
+    ownerUid: 'martin', rosterId: id,
+    notes: [{ id: 'm1', matchId: 'm', matchDate: '2026-10-20', matchTime: '21:00', text: 'de Martín', createdAt: 2, updatedAt: 2, authorUid: 'martin' }],
+  };
+  raw.rosterClaims = { [`${id}_martin`]: { phone: '5491166667777', rosterId: id } };
+  raw.rosterRedirects = { vieja: { intoId: id } };
+  mem.set(store.key, JSON.stringify(raw));
+  const backup = await store.exportDatabase({ when });
+  assert.equal(backup.collections.rosterNotes[`${id}_gustavo`].notes[0].text, 'de Gustavo');
+  assert.equal(backup.collections.rosterNotes[`${id}_martin`].notes[0].text, 'de Martín');
+  assert.deepEqual(backup.collections.roster[id].holders, ['gustavo', 'martin']);
+  assert.deepEqual(backup.collections.rosterContacts[id].readers, ['gustavo', 'martin']);
+  assert.equal(backup.collections.rosterClaims[`${id}_martin`].rosterId, id);
+  assert.equal(backup.collections.rosterRedirects.vieja.intoId, id);
+  const seen = await new Promise((resolve) => {
+    const off = store.subscribe((view) => { off(); resolve(view); });
+  });
+  assert.deepEqual(seen.rosterNotes[id].map((note) => note.text), ['de Gustavo']);
+  await store.resetDatabase();
+  assert.deepEqual(JSON.parse(mem.get(store.key)).rosterNotes, {});
+  await store.importDatabase(backup);
+  const restored = JSON.parse(mem.get(store.key));
+  assert.equal(restored.rosterNotes[`${id}_martin`].notes[0].text, 'de Martín');
+  assert.deepEqual(restored.roster[id].holders, ['gustavo', 'martin']);
+  assert.deepEqual(restored.contacts.roster[id].readers, ['gustavo', 'martin']);
+  assert.equal(restored.rosterRedirects.vieja.intoId, id);
+  const old = buildBackup({ matches: { a: { date: '2026-11-02', time: '21:00' } } }, when);
+  delete old.collections.rosterNotes;
+  delete old.collections.rosterClaims;
+  delete old.collections.rosterRedirects;
+  const parsed = parseBackup(JSON.stringify(old));
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.backup.collections.rosterNotes, {});
+  assert.equal(parsed.summary.counts.rosterNotes, 0);
+  await store.importDatabase(parsed.backup);
+  assert.deepEqual(JSON.parse(mem.get(store.key)).rosterNotes, {});
+  assert.equal(JSON.parse(mem.get(store.key)).roster.a, undefined);
 });
 
 test('resetear la base la deja vacía y un organizador no puede', async () => {

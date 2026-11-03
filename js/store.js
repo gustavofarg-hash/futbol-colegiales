@@ -567,6 +567,9 @@ function localCollections(db) {
     credits: db.credits || {},
     log: db.log || {},
     compensations: db.compensations || {},
+    rosterNotes: db.rosterNotes || {},
+    rosterClaims: db.rosterClaims || {},
+    rosterRedirects: db.rosterRedirects || {},
   };
 }
 
@@ -1455,6 +1458,9 @@ class LocalStore {
     db.credits = structuredClone(docs.credits || {});
     db.log = structuredClone(docs.log || {});
     db.compensations = structuredClone(docs.compensations || {});
+    db.rosterNotes = structuredClone(docs.rosterNotes || {});
+    db.rosterClaims = structuredClone(docs.rosterClaims || {});
+    db.rosterRedirects = structuredClone(docs.rosterRedirects || {});
     ensureContacts(db);
     db.contacts.players = structuredClone(docs.playerContacts);
     db.contacts.roster = structuredClone(docs.rosterContacts);
@@ -1467,6 +1473,7 @@ class LocalStore {
     const db = {
       matches: {}, players: {}, roster: {}, organizers: {}, venues: {},
       confirmations: {}, settings: {}, links: {}, credits: {}, log: {},
+      rosterNotes: {}, rosterClaims: {}, rosterRedirects: {},
       contacts: { players: {}, roster: {} },
     };
     localStorage.setItem(this.key, JSON.stringify(db));
@@ -1604,6 +1611,7 @@ export class FirebaseStore {
     // partido). El partido al final: borrarlo con jugadores hacía fallar el permiso.
     const order = [
       'links', 'log', 'compensations', 'credits', 'confirmations',
+      'rosterNotes', 'rosterClaims', 'rosterRedirects',
       'playerContacts', 'rosterContacts', 'players', 'roster', 'organizers',
       'settings', 'venues', 'matches',
     ];
