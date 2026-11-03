@@ -2319,6 +2319,81 @@ test('equipos equilibrados por nivel y cambio de lugar', () => {
   assert.equal(dropPlayerOn({ bib: ['a'], plain: [] }, 'x', { side: 'bib', allowedIds: ['a', 'x'], cap: 1 }).ok, false);
 });
 
+test('armar equipos reparte posiciones sin empeorar los niveles', () => {
+  const same = (teams, a, b) => (teams.bib.includes(a) && teams.bib.includes(b)) || (teams.plain.includes(a) && teams.plain.includes(b));
+  const sum = (teams, levels) => teams.bib.reduce((total, id) => total + levels[id], 0);
+  const keepers = [
+    { id: 'g1', level: 9, positions: ['Arquero'] },
+    { id: 'g2', level: 9, positions: ['Arquero'] },
+    { id: 'a', level: 10, positions: ['Ataque'] },
+    { id: 'b', level: 1 },
+    { id: 'c', level: 1 },
+    { id: 'd', level: 1 },
+  ];
+  const keeperLevels = { g1: 9, g2: 9, a: 10, b: 1, c: 1, d: 1 };
+  for (const rng of [() => 0, () => 0.99]) {
+    const out = balanceTeams(keepers, { cap: 3, rng });
+    assert.equal(same(out, 'g1', 'g2'), false);
+    assert.equal(out.bib.length, 3);
+    assert.equal(out.plain.length, 3);
+    assert.equal(Math.abs(sum(out, keeperLevels) - (31 - sum(out, keeperLevels))), 9);
+  }
+  const unknown = balanceTeams([
+    { id: 'g1', level: 9, positions: ['Arquero'] },
+    { id: 'g2', level: 9, positions: ['Golero'] },
+    { id: 'a', level: 10, positions: ['Ataque'] },
+    { id: 'b', level: 1 },
+    { id: 'c', level: 1 },
+    { id: 'd', level: 1 },
+  ], { cap: 3, rng: () => 0 });
+  assert.equal(same(unknown, 'g1', 'g2'), true);
+  assert.equal(Math.abs(sum(unknown, keeperLevels) - (31 - sum(unknown, keeperLevels))), 7);
+  const lines = balanceTeams([
+    { id: 'd1', level: 5, positions: ['Defensa'] },
+    { id: 'a1', level: 5, positions: ['Ataque'] },
+    { id: 'a2', level: 5, positions: ['Ataque'] },
+    { id: 'd2', level: 5, positions: ['Defensa'] },
+  ], { cap: 2, rng: () => 0 });
+  assert.equal(same(lines, 'd1', 'd2'), false);
+  assert.equal(same(lines, 'a1', 'a2'), false);
+  const flex = balanceTeams([
+    { id: 'k', level: 5, positions: ['Arquero'] },
+    { id: 'd1', level: 5, positions: ['Defensa'] },
+    { id: 'd2', level: 5, positions: ['Defensa'] },
+    { id: 'm', level: 5, positions: ['Arquero', 'Defensa'] },
+  ], { cap: 2, rng: () => 0 });
+  assert.equal(same(flex, 'k', 'm'), false);
+  assert.equal(same(flex, 'd1', 'd2'), false);
+  const wild = balanceTeams([
+    { id: 'd1', level: 5, positions: ['Defensa'] },
+    { id: 'w1', level: 5, positions: [] },
+    { id: 'w2', level: 5 },
+    { id: 'd2', level: 5, positions: ['Defensa'] },
+  ], { cap: 2, rng: () => 0 });
+  assert.equal(same(wild, 'd1', 'd2'), true);
+  assert.equal(wild.bib.length, 2);
+  assert.equal(wild.plain.length, 2);
+  const levelsFirst = balanceTeams([
+    { id: 'a1', level: 9, positions: ['Ataque'] },
+    { id: 'd1', level: 5, positions: ['Defensa'] },
+    { id: 'd2', level: 5, positions: ['Defensa'] },
+    { id: 'a2', level: 1, positions: ['Ataque'] },
+  ], { cap: 2, rng: () => 0 });
+  const byLevel = { a1: 9, d1: 5, d2: 5, a2: 1 };
+  assert.equal(same(levelsFirst, 'd1', 'd2'), true);
+  assert.equal(same(levelsFirst, 'a1', 'a2'), true);
+  assert.equal(sum(levelsFirst, byLevel), 10);
+  const notOnlyKeeper = balanceTeams([
+    { id: 'k', level: 9, positions: ['Arquero'] },
+    { id: 'm', level: 9, positions: ['Arquero', 'Defensa'] },
+    { id: 'a', level: 10, positions: ['Ataque'] },
+    { id: 'b', level: 1 },
+    { id: 'c', level: 1 },
+    { id: 'd', level: 1 },
+  ], { cap: 3, rng: () => 0 });
+  assert.equal(same(notOnlyKeeper, 'k', 'm'), true);
+});
+
 test('fue al arco sube arriba en el orden en que se marcó y el cambio de lugar sigue', async () => {
   assert.deepEqual(orderByGoal(['a', 'b', 'c', 'd'], [
     { id: 'a' },
@@ -2957,7 +3032,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v100');
+  assert.equal(version, 'f7c-v101');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

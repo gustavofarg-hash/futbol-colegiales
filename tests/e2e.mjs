@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v100');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v101');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -1845,6 +1845,24 @@ await page.waitForSelector('#btn-teams');
 await page.click('#btn-teams');
 await page.waitForSelector('#team-unassigned');
 check('La lista de espera no entra en los equipos', !(await page.locator('#team-board').innerText()).includes('Equipo Espera') && (await page.locator('#team-unassigned').innerText()).includes('Equipo Ana'));
+await page.locator('#btn-teams-shuffle').scrollIntoViewIfNeeded();
+const shuffleLabel = (await page.locator('#btn-teams-shuffle').innerText()).replace(/\s+/g, ' ').trim();
+const shuffleFit = await page.locator('#btn-teams-shuffle').evaluate((el) => {
+  const box = el.getBoundingClientRect();
+  const node = el.firstChild;
+  const range = document.createRange();
+  if (node) range.selectNodeContents(node);
+  const lines = node ? range.getClientRects().length : 0;
+  return {
+    right: Math.round(box.right),
+    width: Math.round(box.width),
+    height: Math.round(box.height),
+    lines,
+    overflow: el.scrollWidth - el.clientWidth,
+  };
+});
+check('El botón dice Armar equipos automáticamente', shuffleLabel === 'Armar equipos automáticamente' && shuffleFit.right <= 391, `${shuffleLabel} ${JSON.stringify(shuffleFit)}`);
+await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v101-armar-equipos.png' });
 const teamsIntro = await page.locator('#view').innerText();
 check('Equipos no repite la ayuda ni el cupo', !teamsIntro.includes('Con los anotados') && !teamsIntro.includes('Tocá la pechera') && (await page.locator('#tanteador').innerText()) === 'TANTEADOR' && (await page.locator('#scoreboard svg').count()) === 2 && (await page.locator('#scoreboard [data-delta="1"]').first().innerText()) === '+' && (await page.locator('#scoreboard [data-delta="-1"]').first().innerText()) === '−' && (await page.locator('#btn-teams-clear').innerText()) === 'Reset');
 const bibFill = await page.locator('#scoreboard .vest-bib path').evaluate((el) => getComputedStyle(el).fill);
@@ -1974,10 +1992,12 @@ check('Otro toque lo pasa a sin pechera', (await page.textContent('#team-plain-c
 await page.click('#btn-teams-shuffle');
 await page.waitForSelector('#app-ask-text');
 const shuffleAsk = (await page.locator('#app-ask-text').innerText()).trim();
-check('Mezclar pide confirmación', shuffleAsk === '¿Seguro que querés rearmar los equipos al azar?', shuffleAsk);
+check('Armar equipos pide confirmación', shuffleAsk === '¿Seguro que querés rearmar los equipos automáticamente?', shuffleAsk);
 await page.click('#ask-ok');
+await page.waitForFunction(() => document.querySelector('#toast')?.textContent === 'Equipos armados');
+check('Armar equipos avisa Equipos armados', (await page.locator('#toast').innerText()) === 'Equipos armados');
 await page.waitForFunction(() => Number(document.querySelector('#team-bib-count')?.textContent) + Number(document.querySelector('#team-plain-count')?.textContent) === 3);
-check('Mezclar reparte a los tres anotados', !(await page.locator('#team-board').innerText()).includes('Equipo Espera'));
+check('Armar equipos reparte a los tres anotados', !(await page.locator('#team-board').innerText()).includes('Equipo Espera'));
 const pageTeams = await ctx.newPage();
 pageTeams.on('dialog', (d) => d.accept());
 await pageTeams.goto(`${BASE}#/partido/${encodeURIComponent(equipos.id)}/equipos`);
@@ -2054,6 +2074,45 @@ await page.click('#login-form button[type=submit]');
 await page.waitForFunction(() => window.__app?.who);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card:has-text("Hoy temprano")');
+
+const posiciones = await page.evaluate(async () => {
+  const who = window.__app.who;
+  const id = await window.__app.store.addMatch({ date: '2026-11-02', time: '21:00', note: 'Posiciones', capacity: 10 }, who);
+  const match = { id, date: '2026-11-02', capacity: 10 };
+  const specs = [
+    ['Arquero Uno', 9, ['Arquero']],
+    ['Arquero Dos', 9, ['Arquero']],
+    ['Delantero Diez', 10, ['Ataque']],
+    ['Relleno Uno', 1, []],
+    ['Relleno Dos', 1, []],
+    ['Relleno Tres', 1, []],
+  ];
+  const ids = {};
+  for (const [name, level, positions] of specs) {
+    const rid = await window.__app.store.addRoster({ name }, who);
+    await window.__app.store.patchRoster(rid, { level, positions });
+    ids[name] = await window.__app.store.addPlayer(match, { name, rosterId: rid }, who);
+  }
+  return { id, ids };
+});
+await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}/equipos`; }, posiciones.id);
+await page.waitForSelector('#btn-teams-shuffle');
+await page.click('#btn-teams-shuffle');
+await page.waitForSelector('#app-ask-text');
+await page.click('#ask-ok');
+await page.waitForFunction(() => Number(document.querySelector('#team-bib-count')?.textContent) + Number(document.querySelector('#team-plain-count')?.textContent) === 6);
+const keeperSides = await page.evaluate((ids) => {
+  const teams = JSON.parse(localStorage.getItem('f7c-demo-db')).matches[ids.id].teams;
+  const side = (pid) => (teams.bib.includes(pid) ? 'bib' : teams.plain.includes(pid) ? 'plain' : 'out');
+  return {
+    uno: side(ids.ids['Arquero Uno']),
+    dos: side(ids.ids['Arquero Dos']),
+    bib: [...document.querySelectorAll('#team-bib .team-name')].map((el) => el.textContent),
+    plain: [...document.querySelectorAll('#team-plain .team-name')].map((el) => el.textContent),
+  };
+}, posiciones);
+check('Los dos que solo son Arquero quedan en equipos distintos', keeperSides.uno !== 'out' && keeperSides.dos !== 'out' && keeperSides.uno !== keeperSides.dos, JSON.stringify(keeperSides));
+await page.locator('.team-columns').screenshot({ path: '/opt/cursor/artifacts/screenshots/v101-equipos-posiciones.png' });
 
 async function routeShorten(spoo, dagd) {
   await page.route(/https:\/\/spoo\.me\//, spoo);

@@ -1,6 +1,6 @@
 // Equipos de un partido. Puro: la app y las pruebas lo usan sin Firestore.
 // bib = con pechera, plain = sin pechera. La lista de espera no entra.
-import { storedLevel } from './profile.js';
+import { POSITIONS, storedLevel } from './profile.js';
 
 const DEFAULT_LEVEL = 5;
 
@@ -202,10 +202,183 @@ export function cyclePlayer(teams, playerId, allowedIds) {
   return { bib: [...base.bib, id], plain: base.plain };
 }
 
+const POS_AT = { Arquero: 0, Defensa: 1, Mediocampo: 2, Ataque: 3 };
+
 function levelOf(player) {
   if (!player || typeof player !== 'object') return DEFAULT_LEVEL;
   const level = storedLevel(player.level);
   return level == null ? DEFAULT_LEVEL : level;
+}
+
+/** Solo las cuatro posiciones de la ficha. Una cadena que no está ahí no cuenta. */
+function positionsOf(player) {
+  const raw = player && typeof player === 'object' && Array.isArray(player.positions) ? player.positions : [];
+  const out = [];
+  for (const item of raw) {
+    if (POSITIONS.includes(item) && !out.includes(item)) out.push(item);
+  }
+  return out;
+}
+
+function packDiff(diff, offset, base) {
+  return (((diff[0] + offset) * base + (diff[1] + offset)) * base + (diff[2] + offset)) * base + (diff[3] + offset);
+}
+
+function unpackDiff(key, diff, offset, base) {
+  for (let i = 3; i >= 0; i--) {
+    const shifted = Math.floor(key / base);
+    diff[i] = (key - shifted * base) - offset;
+    key = shifted;
+  }
+}
+
+/**
+ * Qué tan desparejas quedan las posiciones si cada jugador cuenta
+ * como la que más empareja. Sin posiciones, o con las cuatro, entra en cualquiera.
+ * Si varios puestos empatan, el número no cambia.
+ */
+function positionImbalance(teams) {
+  const diff = [0, 0, 0, 0];
+  const flex = [];
+  let restricted = false;
+  for (const side of ['bib', 'plain']) {
+    const sign = side === 'bib' ? 1 : -1;
+    for (const row of teams[side]) {
+      const options = row.positions.length ? row.positions : POSITIONS;
+      if (options.length === 1) {
+        diff[POS_AT[options[0]]] += sign;
+        restricted = true;
+      } else {
+        let mask = 0;
+        for (const name of options) mask |= 1 << POS_AT[name];
+        if (options.length < POSITIONS.length) restricted = true;
+        flex.push({ sign, mask });
+      }
+    }
+  }
+  if (!restricted) return Math.abs(teams.bib.length - teams.plain.length);
+  if (!flex.length) return Math.abs(diff[0]) + Math.abs(diff[1]) + Math.abs(diff[2]) + Math.abs(diff[3]);
+  const n = teams.bib.length + teams.plain.length;
+  const offset = n;
+  const base = n * 2 + 1;
+  let states = new Map([[packDiff(diff, offset, base), 0]]);
+  const scratch = [0, 0, 0, 0];
+  for (const player of flex) {
+    const next = new Map();
+    for (const key of states.keys()) {
+      unpackDiff(key, scratch, offset, base);
+      for (let bit = 0; bit < 4; bit++) {
+        if ((player.mask & (1 << bit)) === 0) continue;
+        scratch[bit] += player.sign;
+        next.set(packDiff(scratch, offset, base), 0);
+        scratch[bit] -= player.sign;
+      }
+    }
+    states = next;
+  }
+  let best = n * 4;
+  for (const key of states.keys()) {
+    unpackDiff(key, scratch, offset, base);
+    const score = Math.abs(scratch[0]) + Math.abs(scratch[1]) + Math.abs(scratch[2]) + Math.abs(scratch[3]);
+    if (score < best) best = score;
+  }
+  return best;
+}
+
+function keepersApart(teams, keeperRows) {
+  const side = (row) => (teams.bib.includes(row) ? 'bib' : teams.plain.includes(row) ? 'plain' : null);
+  const left = side(keeperRows[0]);
+  const right = side(keeperRows[1]);
+  return !!(left && right && left !== right);
+}
+
+function takeBetter(best, next) {
+  const score = teamScore(next);
+  if (!best || score < best.score - 1e-9) return { teams: next, score };
+  return best;
+}
+
+/**
+ * Dos jugadores que solo son Arquero pasan a lados distintos.
+ * Si el otro lado tiene lugar, se mueve uno. Si está lleno, se cambia
+ * por alguien que no es arquero exclusivo. Si empatan, queda el primero.
+ */
+function separateKeepers(teams, cap, keeperRows) {
+  if (keeperRows.length !== 2) return teams;
+  if (keepersApart(teams, keeperRows)) return teams;
+  const [k1, k2] = keeperRows;
+  const sideOf = (row) => (teams.bib.includes(row) ? 'bib' : teams.plain.includes(row) ? 'plain' : null);
+  const other = (side) => (side === 'bib' ? 'plain' : 'bib');
+  const moveTo = (row, dest) => {
+    const next = {
+      bib: teams.bib.filter((item) => item !== row),
+      plain: teams.plain.filter((item) => item !== row),
+    };
+    next[dest] = [...next[dest], row];
+    return next;
+  };
+  const swapWith = (row, partner) => {
+    const swap = (list) => list.map((item) => (item === row ? partner : item === partner ? row : item));
+    return { bib: swap(teams.bib), plain: swap(teams.plain) };
+  };
+  const replaceWith = (row, partner) => {
+    const put = (list) => list.map((item) => (item === partner ? row : item));
+    return { bib: put(teams.bib), plain: put(teams.plain) };
+  };
+  let best = null;
+  const s1 = sideOf(k1);
+  const s2 = sideOf(k2);
+  if (s1 && s2) {
+    const dest = other(s1);
+    for (const moving of [k1, k2]) {
+      if (teams[dest].length < cap) best = takeBetter(best, moveTo(moving, dest));
+      else {
+        for (const partner of teams[dest]) {
+          if (partner.keeper) continue;
+          best = takeBetter(best, swapWith(moving, partner));
+        }
+      }
+    }
+    return best ? best.teams : teams;
+  }
+  const placed = s1 ? k1 : s2 ? k2 : null;
+  if (placed) {
+    const missing = placed === k1 ? k2 : k1;
+    const dest = other(sideOf(placed));
+    if (teams[dest].length < cap) best = takeBetter(best, moveTo(missing, dest));
+    else {
+      for (const partner of teams[dest]) {
+        if (partner.keeper) continue;
+        best = takeBetter(best, replaceWith(missing, partner));
+      }
+    }
+    return best ? best.teams : teams;
+  }
+  for (const [sideA, sideB] of [['bib', 'plain'], ['plain', 'bib']]) {
+    const first = teams[sideA].length < cap
+      ? [moveTo(k1, sideA)]
+      : teams[sideA].filter((row) => !row.keeper).map((partner) => replaceWith(k1, partner));
+    for (const after of first) {
+      const secondTeams = after;
+      const putSecond = (row) => {
+        const next = {
+          bib: secondTeams.bib.filter((item) => item !== row),
+          plain: secondTeams.plain.filter((item) => item !== row),
+        };
+        next[sideB] = [...next[sideB], row];
+        return next;
+      };
+      if (secondTeams[sideB].length < cap) best = takeBetter(best, putSecond(k2));
+      else {
+        for (const partner of secondTeams[sideB]) {
+          if (partner.keeper) continue;
+          const put = (list) => list.map((item) => (item === partner ? k2 : item));
+          best = takeBetter(best, { bib: put(secondTeams.bib), plain: put(secondTeams.plain) });
+        }
+      }
+    }
+  }
+  return best ? best.teams : teams;
 }
 
 function shuffleRows(list, rng) {
@@ -246,25 +419,56 @@ function teamScore(teams) {
 /**
  * Arma dos equipos con la suma de niveles lo más pareja posible.
  * Quien no tiene nivel vale 5. Ningún lado pasa de cap.
+ * Las posiciones se reparten solo si el puntaje de niveles (el de hoy) empata.
+ * Excepción: si hay justo dos jugadores que solo son Arquero, van a equipos distintos.
  */
 export function balanceTeams(players, opts = {}) {
   const rng = typeof opts.rng === 'function' ? opts.rng : Math.random;
-  const rows = (players || []).map((player, index) => ({
-    id: String(player?.id ?? player ?? '').trim(),
-    level: levelOf(player),
-    index,
-  })).filter((row) => row.id);
+  const rows = (players || []).map((player, index) => {
+    const positions = positionsOf(player);
+    return {
+      id: String(player?.id ?? player ?? '').trim(),
+      level: levelOf(player),
+      positions,
+      keeper: positions.length === 1 && positions[0] === 'Arquero',
+      index,
+    };
+  }).filter((row) => row.id);
   const asked = Number(opts.cap);
   const cap = Number.isInteger(asked) && asked > 0 ? asked : Math.max(1, Math.ceil(rows.length / 2));
   if (!rows.length) return { bib: [], plain: [] };
+  const keeperRows = rows.filter((row) => row.keeper);
+  const forceKeepers = keeperRows.length === 2;
+  const spreadCache = new Map();
+  const spreadOf = (teams) => {
+    const key = `${teams.bib.map((row) => row.id).slice().sort().join(',')}|${teams.plain.map((row) => row.id).slice().sort().join(',')}`;
+    if (spreadCache.has(key)) return spreadCache.get(key);
+    const value = positionImbalance(teams);
+    spreadCache.set(key, value);
+    return value;
+  };
+  const finish = (teams) => (forceKeepers ? separateKeepers(teams, cap, keeperRows) : teams);
+  const consider = (current, candidate) => {
+    const next = finish(candidate);
+    const score = teamScore(next);
+    if (!current) return { teams: next, score, spread: null };
+    if (forceKeepers && keepersApart(next, keeperRows) !== keepersApart(current.teams, keeperRows)) {
+      return keepersApart(next, keeperRows) ? { teams: next, score, spread: null } : current;
+    }
+    if (score < current.score - 1e-9) return { teams: next, score, spread: null };
+    if (score > current.score + 1e-9) return current;
+    const spread = current.spread == null ? spreadOf(current.teams) : current.spread;
+    const nextSpread = spreadOf(next);
+    if (nextSpread < spread - 1e-9) return { teams: next, score, spread: nextSpread };
+    return { teams: current.teams, score: current.score, spread };
+  };
   const ranked = rows.slice().sort((a, b) => b.level - a.level || a.index - b.index);
-  let best = placeRows(ranked, cap, ({ index, room }) => {
+  let best = consider(null, placeRows(ranked, cap, ({ index, room }) => {
     const block = Math.floor(index / 2);
     const first = index % 2 === 0;
     const side = (block % 2 === 0 ? first : !first) ? 'bib' : 'plain';
     return room(side) ? side : (side === 'bib' ? 'plain' : 'bib');
-  });
-  let bestScore = teamScore(best);
+  }));
   const trials = Math.min(200, Math.max(24, rows.length * 12));
   for (let trial = 0; trial < trials; trial++) {
     const next = placeRows(shuffleRows(rows, rng), cap, ({ row, bib, plain, sumBib, sumPlain, room }) => {
@@ -277,13 +481,9 @@ export function balanceTeams(players, opts = {}) {
       if (bib.length !== plain.length) return bib.length < plain.length ? 'bib' : 'plain';
       return rng() < 0.5 ? 'bib' : 'plain';
     });
-    const score = teamScore(next);
-    if (score < bestScore - 1e-9) {
-      best = next;
-      bestScore = score;
-    }
+    best = consider(best, next);
   }
-  return { bib: best.bib.map((row) => row.id), plain: best.plain.map((row) => row.id) };
+  return { bib: best.teams.bib.map((row) => row.id), plain: best.teams.plain.map((row) => row.id) };
 }
 
 /**
