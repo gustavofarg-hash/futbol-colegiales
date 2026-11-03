@@ -1993,6 +1993,62 @@ test('precios: defaults, enteros y promos del mismo día', () => {
   assert.equal(fromCustom.credits[0].amount, 3000);
 });
 
+test('un partido cancelado no cuenta para la promo del día', () => {
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const phone = '5491100004242';
+  const threeMatches = [
+    { id: 'a', date: '2026-11-06', time: '18:00' },
+    { id: 'b', date: '2026-11-06', time: '19:30' },
+    { id: 'c', date: '2026-11-06', time: '21:00', cancelled: true },
+  ];
+  const three = ['a', 'b', 'c'].map((id, i) => ({ id: `p${i}`, matchId: id, phone, name: 'Promo', waiting: false }));
+  const promoTwo = promoForPlayer({ player: three[0], players: three, matches: threeMatches, prices });
+  assert.equal(promoTwo.label, 'Promo 2 partidos por $9.000');
+  assert.equal(promoTwo.total, 9000);
+  assert.equal(promoTwo.share, 4500);
+  assert.equal(promoForPlayer({ player: three[2], players: three, matches: threeMatches, prices }), null);
+  assert.equal(amountOwed(three[0], { players: three, matches: threeMatches, prices }), 4500);
+  assert.equal(amountOwed(three[2], { players: three, matches: threeMatches, prices }), 0);
+  const pair = [
+    { id: 'a', date: '2026-11-05', time: '18:00' },
+    { id: 'b', date: '2026-11-05', time: '21:00', cancelled: true },
+  ];
+  const two = [
+    { id: 's1', matchId: 'a', phone, name: 'Queda', waiting: false },
+    { id: 's2', matchId: 'b', phone, name: 'Queda', waiting: false },
+  ];
+  assert.equal(promoForPlayer({ player: two[0], players: two, matches: pair, prices }), null);
+  assert.equal(amountOwed(two[0], { players: two, matches: pair, prices }), 5000);
+  assert.equal(amountOwed(two[1], { players: two, matches: pair, prices }), 0);
+  const priced = [
+    { id: 'a', date: '2026-11-04', time: '18:00', price: 8000 },
+    { id: 'b', date: '2026-11-04', time: '21:00', price: 8000, cancelled: true },
+  ];
+  assert.equal(amountOwed(two[0], { players: two, matches: priced, prices }), 8000);
+  const paid = { ...two[0], paid: true, split: true, cash: 4500, transfer: 0, fromCredit: 0, cashTo: 'Gustavo' };
+  assert.equal(amountOwed(paid, { players: [paid, two[1]], matches: pair, prices }), 500);
+  assert.equal(paid.cash, 4500);
+  const debt = playerDebt({ person: { name: 'Queda', phone }, players: [paid, two[1]], matches: pair, prices });
+  assert.equal(debt.total, 500);
+  assert.deepEqual(debt.rows.map((row) => row.matchId), ['a']);
+  const kept = promoRefundAfterFree({
+    player: { id: 'i2', matchId: 'b', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
+    players: [
+      { id: 'i1', matchId: 'a', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
+      { id: 'i2', matchId: 'b', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
+      { id: 'i3', matchId: 'c', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
+    ],
+    matches: [
+      { id: 'a', date: '2026-11-07', time: '18:00' },
+      { id: 'b', date: '2026-11-07', time: '19:00' },
+      { id: 'c', date: '2026-11-07', time: '21:00', cancelled: true },
+    ],
+    prices,
+  });
+  assert.equal(kept.newDue, 9000);
+  assert.equal(kept.received, 13500);
+});
+
 test('dividir el pago usa la promo del día y no el partido suelto', () => {
   const matches = [
     { id: 'a', date: '2026-10-30', time: '18:00', startsAt: 1, price: 8000 },
@@ -3085,7 +3141,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v102');
+  assert.equal(version, 'f7c-v103');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

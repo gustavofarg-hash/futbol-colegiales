@@ -73,12 +73,15 @@ function whenOf(match) {
 
 /**
  * Titulares (no espera) de la misma persona en partidos con la misma fecha.
- * Ordenados por hora. Vacío si no hay con quién agrupar.
+ * Ordenados por hora. Un partido cancelado no entra en la promo.
+ * includeCancelled queda para el acomodo del dinero ya cobrado.
+ * Vacío si no hay con quién agrupar.
  */
-export function sameDayTitulars({ player, players, matches }) {
+export function sameDayTitulars({ player, players, matches, includeCancelled = false }) {
   const key = playerPromoKey(player, players);
   if (!key || player?.waiting === true || isFreePlay(player)) return [];
   const own = (matches || []).find((match) => match.id === player.matchId);
+  if (!includeCancelled && own?.cancelled === true) return [];
   const date = own?.date || player.matchDate;
   if (!date) return [];
   const byMatch = new Map();
@@ -86,6 +89,7 @@ export function sameDayTitulars({ player, players, matches }) {
     if (other?.waiting === true || isFreePlay(other)) continue;
     if (playerPromoKey(other, players) !== key) continue;
     const match = (matches || []).find((item) => item.id === other.matchId);
+    if (!includeCancelled && match?.cancelled === true) continue;
     const day = match?.date || other.matchDate;
     if (day !== date) continue;
     if (!other.matchId || byMatch.has(other.matchId)) continue;
@@ -217,7 +221,7 @@ function addNamed(parts, name, amount) {
  * todavía no se cobró.
  */
 export function promoRefundAfterFree({ player, players, matches, prices }) {
-  const rows = sameDayTitulars({ player, players, matches });
+  const rows = sameDayTitulars({ player, players, matches, includeCancelled: true });
   if (!player || rows.length < 2) return null;
   const others = rows.filter((row) => row.player.id !== player.id);
   const norm = normalizePrices(prices);

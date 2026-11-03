@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v102');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v103');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5246,6 +5246,54 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v102-whatsapp-menu.png' });
   await page.click('#sheet [data-close]');
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (await page.locator('#login-form').count() === 0) {
+    await page.click('#btn-settings');
+    await page.click('#set-logout');
+    await page.waitForSelector('#login-form');
+  }
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  const promoDay = await page.evaluate(async () => {
+    const who = window.__app.who;
+    const store = window.__app.store;
+    const a = await store.addMatch({ date: '2026-11-08', time: '19:00', note: 'Promo queda' }, who);
+    const b = await store.addMatch({ date: '2026-11-08', time: '21:00', note: 'Promo se cancela' }, who);
+    const match = { capacity: 14 };
+    await store.addPlayer({ ...match, id: a, date: '2026-11-08' }, { name: 'Promo Queda', phone: '5491199994242' }, who);
+    await store.addPlayer({ ...match, id: b, date: '2026-11-08' }, { name: 'Promo Queda', phone: '5491199994242' }, who);
+    return { a, b };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.a);
+  await page.waitForSelector('.promo-badge');
+  check('Antes de cancelar se ve la promo 2', (await page.locator('.promo-badge').innerText()).includes('Promo 2 partidos por $9.000'));
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.b);
+  await page.waitForSelector('#btn-cancel-match');
+  await page.click('#btn-cancel-match');
+  await page.waitForSelector('#app-ask-text');
+  await page.click('#ask-ok');
+  await page.waitForSelector('#cancel-form');
+  await page.click('#cancel-form button[type=submit]');
+  await page.waitForSelector('#app-ask-text');
+  await page.click('#ask-cancel');
+  await page.waitForSelector('#match-cancelled');
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.a);
+  await page.waitForSelector('.slot:has-text("Promo Queda")');
+  const afterCancel = (await page.locator('.slot', { hasText: 'Promo Queda' }).innerText()).replace(/\s+/g, ' ');
+  check('Al cancelar el otro, la promo 2 desaparece', (await page.locator('.promo-badge').count()) === 0 && !afterCancel.includes('Promo 2'), afterCancel);
+  await page.locator('.slot', { hasText: 'Promo Queda' }).locator('[data-menu]').click();
+  await page.waitForSelector('#menu-debt');
+  const debtText = (await page.locator('#menu-debt').innerText()).replace(/\s+/g, ' ');
+  check('La deuda del que queda es el precio sin promo', debtText.includes('Debe en total: $5.000'), debtText);
+  await page.click('#sheet [data-close]');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  await page.locator('.actionbar').evaluate((el) => { el.style.display = 'none'; });
+  await page.locator('.slot', { hasText: 'Promo Queda' }).screenshot({ path: '/opt/cursor/artifacts/screenshots/v103-promo-cancelada.png' });
 }
 
 const fresh = await ctx.newPage();
