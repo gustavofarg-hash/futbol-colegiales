@@ -2392,6 +2392,39 @@ test('armar equipos reparte posiciones sin empeorar los niveles', () => {
     { id: 'd', level: 1 },
   ], { cap: 3, rng: () => 0 });
   assert.equal(same(notOnlyKeeper, 'k', 'm'), true);
+  const wideCap = balanceTeams(keepers, { cap: 5, rng: () => 0 });
+  assert.equal(wideCap.bib.length, 3);
+  assert.equal(wideCap.plain.length, 3);
+  assert.equal(same(wideCap, 'g1', 'g2'), false);
+  assert.equal(Math.abs(sum(wideCap, keeperLevels) - (31 - sum(wideCap, keeperLevels))), 9);
+  const odd = balanceTeams([
+    { id: 'a', level: 10 },
+    { id: 'b', level: 1 },
+    { id: 'c', level: 9 },
+    { id: 'd', level: 2 },
+    { id: 'e', level: 3 },
+  ], { cap: 5, rng: () => 0 });
+  assert.equal(odd.bib.length + odd.plain.length, 5);
+  assert.equal(Math.abs(odd.bib.length - odd.plain.length), 1);
+  const withinOne = balanceTeams([
+    { id: 'd1', level: 5, positions: ['Defensa'] },
+    { id: 'd2', level: 5, positions: ['Defensa'] },
+    { id: 'a1', level: 5.5, positions: ['Ataque'] },
+    { id: 'a2', level: 4.5, positions: ['Ataque'] },
+  ], { cap: 2, rng: () => 0 });
+  const near = { d1: 5, d2: 5, a1: 5.5, a2: 4.5 };
+  assert.equal(same(withinOne, 'd1', 'd2'), false);
+  assert.equal(same(withinOne, 'a1', 'a2'), false);
+  assert.equal(Math.abs(sum(withinOne, near) - (20 - sum(withinOne, near))), 1);
+  const tooFar = balanceTeams([
+    { id: 'd1', level: 5, positions: ['Defensa'] },
+    { id: 'd2', level: 5, positions: ['Defensa'] },
+    { id: 'a1', level: 6, positions: ['Ataque'] },
+    { id: 'a2', level: 4, positions: ['Ataque'] },
+  ], { cap: 2, rng: () => 0 });
+  assert.equal(same(tooFar, 'd1', 'd2'), true);
+  assert.equal(same(tooFar, 'a1', 'a2'), true);
+  assert.equal(sum(tooFar, { d1: 5, d2: 5, a1: 6, a2: 4 }), 10);
 });
 
 test('fue al arco sube arriba en el orden en que se marcó y el cambio de lugar sigue', async () => {

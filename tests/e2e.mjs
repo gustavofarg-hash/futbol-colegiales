@@ -2111,7 +2111,7 @@ const keeperSides = await page.evaluate((ids) => {
     plain: [...document.querySelectorAll('#team-plain .team-name')].map((el) => el.textContent),
   };
 }, posiciones);
-check('Los dos que solo son Arquero quedan en equipos distintos', keeperSides.uno !== 'out' && keeperSides.dos !== 'out' && keeperSides.uno !== keeperSides.dos, JSON.stringify(keeperSides));
+check('Los dos que solo son Arquero quedan en equipos distintos', keeperSides.uno !== 'out' && keeperSides.dos !== 'out' && keeperSides.uno !== keeperSides.dos && keeperSides.bib.length === 3 && keeperSides.plain.length === 3, JSON.stringify(keeperSides));
 await page.locator('.team-columns').screenshot({ path: '/opt/cursor/artifacts/screenshots/v101-equipos-posiciones.png' });
 
 async function routeShorten(spoo, dagd) {
