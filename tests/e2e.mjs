@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v99');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v100');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -2981,7 +2981,7 @@ await page.click('#set-backup');
 await page.waitForSelector('#backup-download');
 check('Hacer backup ofrece el celular y Drive', (await page.locator('#backup-download').innerText()) === 'Guardar en el celular' && (await page.locator('#backup-drive').innerText()) === 'Guardar en Google Drive');
 const backupHint = (await page.locator('#sheet .hint').first().innerText()).replace(/\s+/g, ' ');
-check('El backup dice que incluye notas, reclamos y fichas unidas', backupHint.includes('notas de jugadores') && backupHint.includes('reclamos de WhatsApp') && backupHint.includes('fichas unidas'), backupHint);
+check('El backup dice que incluye notas, acceso al WhatsApp y fichas unidas', backupHint.includes('notas de jugadores') && backupHint.includes('acceso al WhatsApp') && backupHint.includes('fichas unidas'), backupHint);
 const [backupDownload] = await Promise.all([
   page.waitForEvent('download'),
   page.click('#backup-download'),

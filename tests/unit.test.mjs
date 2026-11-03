@@ -36,7 +36,7 @@ import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
-import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
+import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, COLLECTION_LABELS, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
 import { DRIVE_FOLDER, DRIVE_SCOPE, driveClientId, ensureBackupFolder, forgetDriveToken, multipartBody, requestDriveToken, shareableBackupName, uploadBackupToDrive } from '../js/drive.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
@@ -2957,7 +2957,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v99');
+  assert.equal(version, 'f7c-v100');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3123,6 +3123,9 @@ test('cargar un backup reemplaza los datos y un organizador no puede', async () 
 });
 
 test('el backup incluye notas de todos, readers y un archivo viejo sigue cargando', async () => {
+  assert.equal(COLLECTION_LABELS.rosterClaims, 'Acceso al WhatsApp');
+  assert.equal(COLLECTION_LABELS.rosterNotes, 'Notas de jugadores');
+  assert.equal(COLLECTION_LABELS.rosterRedirects, 'Fichas unidas');
   const mem = new Map();
   globalThis.localStorage = {
     getItem: (k) => (mem.has(k) ? mem.get(k) : null),

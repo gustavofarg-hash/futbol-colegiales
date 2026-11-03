@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v99';
+const APP_VERSION = 'f7c-v100';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2479,7 +2479,7 @@ function openBackup() {
   const driveId = driveClientId(appConfig);
   openSheet(`
     <h3>Hacer backup</h3>
-    <p class="hint">Un archivo JSON con partidos, jugadores, plantel, notas de jugadores, pagos, sedes, precios, confirmaciones, teléfonos, saldos, compensaciones, el registro, reclamos de WhatsApp y fichas unidas.</p>
+    <p class="hint">Un archivo JSON con partidos, jugadores, plantel, notas de jugadores, pagos, sedes, precios, confirmaciones, teléfonos, saldos, compensaciones, el registro, acceso al WhatsApp y fichas unidas.</p>
     <div class="menu">
       <button type="button" class="btn primary" id="backup-download">Guardar en el celular</button>
       <button type="button" class="btn" id="backup-drive">Guardar en Google Drive</button>
