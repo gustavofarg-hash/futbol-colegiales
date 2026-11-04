@@ -51,7 +51,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **unit 112/112 OK** (`node --test tests/unit.test.mjs`). El e2e tiene 784 checks (`node tests/e2e.mjs`, modo demo, 390×844). Los de v106 pasan: «Crédito disponible con Gustavo», $0 no deja confirmar, y lo cobrado suma el saldo que queda. Los dos del scroll del historial («Guardar vuelve a la lista…») son el fallo intermitente de antes: a veces 730 y a veces 485 o 1468.
+Pruebas sobre esta copia: **unit 112/112 OK** (`node --test tests/unit.test.mjs`). El e2e tiene 788 checks (`node tests/e2e.mjs`, modo demo, 390×844). Los de v107 pasan: el selector del detalle, la sede en cada opción y «Crédito con Gustavo». Los dos del scroll del historial («Guardar vuelve a la lista…») siguen con el fallo intermitente de antes (esta corrida: 436 contra 730).
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
