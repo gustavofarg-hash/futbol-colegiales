@@ -34,6 +34,15 @@
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
+  <script>
+    (function () {
+      var h = (location.hash || '').replace(/^#\/?/, '').split('/');
+      if (h[0] !== 'jugador' || !h[1]) return;
+      var logged = false;
+      try { logged = !!(JSON.parse(localStorage.getItem('f7c-demo-auth') || 'null') || {}).session; } catch (e) {}
+      if (!logged) document.documentElement.classList.add('anon-lock');
+    })();
+  </script>
   <div class="topstack" id="topstack">
   <header class="topbar">
     <button class="icon-btn back" id="btn-back" aria-label="Volver" hidden>
