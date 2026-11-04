@@ -5631,15 +5631,13 @@ function openCreditReturnForm({ player, person, panel }) {
   };
 }
 
-function openSuspensionNote(card, { suspend = false } = {}) {
-  const current = String(card?.suspensionNote || '');
-  const day = suspend ? todayISO() : (card?.suspensionDate || todayISO());
+function openSuspensionNote(card) {
   openSheet(`
     <form id="suspend-note-form" novalidate>
       <h3>Suspendido</h3>
       <p class="hint" id="suspend-summary"></p>
-      <label class="field"><span>Fecha</span><input type="date" id="suspend-date" value="${esc(day)}"></label>
-      <label class="field"><span>Motivo</span><textarea id="suspend-reason" maxlength="300">${esc(current)}</textarea></label>
+      <label class="field"><span>Fecha</span><input type="date" id="suspend-date" value="${esc(todayISO())}"></label>
+      <label class="field"><span>Motivo</span><textarea id="suspend-reason" maxlength="300"></textarea></label>
       <div class="field"><div class="err" id="suspend-reason-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
     </form>`);
@@ -5662,12 +5660,24 @@ function openSuspensionNote(card, { suspend = false } = {}) {
     if (!text) { if (err) err.textContent = 'Poné el motivo.'; return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { if (err) err.textContent = 'Poné la fecha.'; return; }
     try {
-      await app.store.setSuspension(card.id, { note: text, date, ...(suspend ? { suspended: true } : {}) });
+      await app.store.setSuspension(card.id, { note: text, date, suspended: true });
       closeSheet();
     } catch (error) {
       if (err) err.textContent = error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.');
     }
   };
+}
+
+function openSuspensionView(card) {
+  const reason = String(card?.suspensionNote || '').trim();
+  const date = numericDate(card?.suspensionDate || '');
+  if (!reason && !date) return;
+  openSheet(`
+    <div id="suspend-view">
+      <h3>Suspendido</h3>
+      <p id="suspend-summary">${esc([date, reason].filter(Boolean).join(' · '))}</p>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>
+    </div>`);
 }
 
 function openPlayerMenu(m, p) {
@@ -5711,7 +5721,7 @@ function openPlayerMenu(m, p) {
   bindPlayerPanel(sheet, p, null, MENU_PANEL, panel);
   const suspendFlag = $('#suspend-flag');
   const suspendNote = $('#suspend-note');
-  if (suspendNote && card) suspendNote.onclick = () => openSuspensionNote(card);
+  if (suspendNote && card) suspendNote.onclick = () => openSuspensionView(card);
   if (suspendFlag && card) {
     let ignoreSuspend = false;
     suspendFlag.onchange = async () => {
@@ -5720,7 +5730,7 @@ function openPlayerMenu(m, p) {
       ignoreSuspend = true;
       suspendFlag.checked = false;
       ignoreSuspend = false;
-      openSuspensionNote(card, { suspend: true });
+      openSuspensionNote(card);
       return;
     }
     try {
