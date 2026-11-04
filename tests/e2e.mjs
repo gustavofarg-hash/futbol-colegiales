@@ -99,6 +99,7 @@ await page.goto(BASE);
 await page.waitForSelector('#login-form');
 check('El texto arranca en Normal', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize) === '18px');
 check('Pide entrar al abrir por primera vez', await page.isVisible('text=Entrar') && await page.isVisible('#login-forgot'));
+check('Sin el enlace, sin sesión, se ve el login', await page.locator('.topbar').isVisible() && await page.locator('#tabbar').isVisible() && await page.locator('#login-form').isVisible());
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.click('#login-forgot');
 check('Olvidé mi contraseña', (await page.textContent('#login-err')).includes('no se envían mails'));
@@ -5540,11 +5541,22 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#login-form button[type=submit]');
   await page.waitForFunction(() => window.__app?.who === 'Martín');
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, shared.id);
-  await page.waitForSelector('#player-denied');
-  const denied = (await page.locator('#player-denied').innerText()).replace(/\s+/g, ' ').trim();
-  check('Sin acceso solo dice NO TENÉS ACCESO', denied === 'NO TENÉS ACCESO', denied);
-  check('Sin acceso no muestra el nombre', !(await page.locator('main').innerText()).includes('Enlace'));
-  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v109-acceso.png' });
+  await page.waitForSelector('#player-locked');
+  const denied = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+  check('Sin acceso solo dice NO TENÉS ACCESO', denied === '⚠️ NO TENÉS ACCESO', denied);
+  check('Sin acceso no muestra el nombre', !denied.includes('Enlace'));
+  const lockedChrome = await page.evaluate(() => {
+    const hidden = (sel) => document.querySelector(sel).getClientRects().length === 0;
+    return hidden('.topbar') && hidden('#tabbar') && !document.querySelector('#login-form');
+  });
+  check('Con sesión y sin acceso no hay barra, pestañas ni login', lockedChrome);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v110-sin-acceso.png' });
+  await page.evaluate(() => { location.hash = '#/jugador/no-existe'; });
+  await page.waitForSelector('#player-locked');
+  const missing = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
+  check('Un id que no existe dice lo mismo y no dice que fue borrado', missing === '⚠️ NO TENÉS ACCESO' && !/borrad|encontr/i.test(missing), missing);
+  await page.evaluate(() => { location.hash = '#/'; });
+  await page.waitForSelector('#btn-settings');
   await page.click('#btn-settings');
   await page.click('#set-logout');
   await page.waitForSelector('#login-form');
@@ -5673,6 +5685,43 @@ await fresh.goto(`${BASE}#/historial`);
 await fresh.waitForFunction(() => document.querySelector('#tab-proximos')?.getAttribute('aria-current') === 'page' && location.hash !== '#/historial');
 check('Al abrir la app arranca en Próximos partidos', await fresh.evaluate(() => location.hash === '#/' || location.hash === '' || location.hash === '#'));
 await fresh.close();
+
+{
+  const anon = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
+  await anon.route('**/config.js', async (route) => {
+    const res = await route.fetch();
+    const body = (await res.text()).replace(
+      /export const firebaseConfig = \{[\s\S]*?\n\};/,
+      'export const firebaseConfig = { apiKey: "TU_API_KEY", authDomain: "x", projectId: "TU_PROYECTO", storageBucket: "x", messagingSenderId: "x", appId: "x" };',
+    );
+    await route.fulfill({ status: 200, contentType: 'text/javascript', body });
+  });
+  await anon.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => route.abort());
+  const locked = await anon.newPage();
+  locked.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  await locked.clock.install({ time: NOW });
+  await locked.goto(`${BASE}#/jugador/nadie`);
+  await locked.waitForSelector('#player-locked');
+  const lockedText = (await locked.locator('#player-locked').innerText()).replace(/\s+/g, ' ').trim();
+  check('Sin sesión el enlace solo muestra el aviso', lockedText === '⚠️ NO TENÉS ACCESO', lockedText);
+  const bare = await locked.evaluate(() => {
+    const gone = (sel) => document.querySelector(sel).getClientRects().length === 0;
+    return {
+      header: gone('.topbar'),
+      tabs: gone('#tabbar'),
+      login: !document.querySelector('#login-form'),
+      store: !window.__app?.store,
+      roster: (window.__app?.roster || []).length === 0,
+      text: document.body.innerText.replace(/\s+/g, ' ').trim(),
+    };
+  });
+  check('Sin sesión no hay menú, login ni datos', bare.header && bare.tabs && bare.login && bare.store && bare.roster && bare.text === '⚠️ NO TENÉS ACCESO', JSON.stringify(bare));
+  await locked.screenshot({ path: '/opt/cursor/artifacts/screenshots/v110-sin-sesion.png' });
+  await locked.goto(BASE);
+  await locked.waitForSelector('#login-form');
+  check('Al salir del enlace, sin sesión, vuelve el login', await locked.locator('.topbar').isVisible() && await locked.locator('#tabbar').isVisible() && await locked.locator('#login-form').isVisible());
+  await anon.close();
+}
 
 {
   // Con GOOGLE_DRIVE_CLIENT_ID: pide permiso con Google y sube el archivo con la API de Drive.
