@@ -4555,9 +4555,9 @@ async function assertGuestPromo(fix, visibleName, count) {
     const row = Object.values(db.players).find((player) => player.name === 'Credito Auto' && String(player.matchId || '').includes('1900'));
     const credit = Object.values(db.credits || {}).find((item) => item.name === 'Credito Auto');
     const late = Object.values(db.players).find((player) => player.name === 'Credito Auto' && String(player.matchId || '').includes('2100'));
-    return row && row.autoCredit !== true && late?.fromCredit === 3500 && credit && credit.amount === 4500;
+    return row && row.autoCredit !== true && late?.fromCredit === 5000 && credit && credit.amount === 3000;
   });
-  check('Al cancelar el partido vuelve solo el crédito automático de ese partido', true);
+  check('Al cancelar, la promo baja a un partido y lo que sobra del crédito vuelve al saldo', true);
   await page.evaluate(() => { location.hash = '#/registro/pagos'; });
   await page.waitForSelector('#log-list');
   check('Registro anota la devolución del crédito', (await page.locator('#log-list').innerText()).includes('Crédito devuelto'));
@@ -5262,11 +5262,14 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const promoDay = await page.evaluate(async () => {
     const who = window.__app.who;
     const store = window.__app.store;
-    const a = await store.addMatch({ date: '2026-11-08', time: '19:00', note: 'Promo queda' }, who);
-    const b = await store.addMatch({ date: '2026-11-08', time: '21:00', note: 'Promo se cancela' }, who);
+    const a = await store.addMatch({ date: '2026-12-02', time: '19:00', note: 'Promo queda' }, who);
+    const b = await store.addMatch({ date: '2026-12-02', time: '21:00', note: 'Promo se cancela' }, who);
     const match = { capacity: 14 };
-    await store.addPlayer({ ...match, id: a, date: '2026-11-08' }, { name: 'Promo Queda', phone: '5491199994242' }, who);
-    await store.addPlayer({ ...match, id: b, date: '2026-11-08' }, { name: 'Promo Queda', phone: '5491199994242' }, who);
+    const playerA = await store.addPlayer({ ...match, id: a, date: '2026-12-02' }, { name: 'Promo Queda', phone: '5491199994242' }, who);
+    const playerB = await store.addPlayer({ ...match, id: b, date: '2026-12-02' }, { name: 'Promo Queda', phone: '5491199994242' }, who);
+    const paid = { paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, pendingTransfer: 0, fromCredit: 0 };
+    await store.setPayment(playerA, paid, who);
+    await store.setPayment(playerB, paid, who);
     return { a, b };
   });
   await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.a);
@@ -5287,13 +5290,26 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const afterCancel = (await page.locator('.slot', { hasText: 'Promo Queda' }).innerText()).replace(/\s+/g, ' ');
   check('Al cancelar el otro, la promo 2 desaparece', (await page.locator('.promo-badge').count()) === 0 && !afterCancel.includes('Promo 2'), afterCancel);
   await page.locator('.slot', { hasText: 'Promo Queda' }).locator('[data-menu]').click();
-  await page.waitForSelector('#menu-debt');
-  const debtText = (await page.locator('#menu-debt').innerText()).replace(/\s+/g, ' ');
-  check('La deuda del que queda es el precio sin promo', debtText.includes('Debe en total: $5.000'), debtText);
+  await page.waitForSelector('#menu-credit');
+  const menuText = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
+  check('Lo pagado de más queda como saldo y no sigue la promo', menuText.includes('Saldo a favor con Gustavo: $4.000') && !menuText.includes('Promo 2') && !menuText.includes('Debe en total'), menuText.slice(0, 320));
+  await page.locator('#sheet').screenshot({ path: '/opt/cursor/artifacts/screenshots/v103-promo-saldo.png' });
   await page.click('#sheet [data-close]');
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
-  await page.locator('.actionbar').evaluate((el) => { el.style.display = 'none'; });
-  await page.locator('.slot', { hasText: 'Promo Queda' }).screenshot({ path: '/opt/cursor/artifacts/screenshots/v103-promo-cancelada.png' });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.b);
+  await page.waitForSelector('#btn-reactivate-match');
+  await page.click('#btn-reactivate-match');
+  await page.waitForSelector('#app-ask-text');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => !document.querySelector('#match-cancelled'));
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.a);
+  await page.waitForSelector('.promo-badge');
+  check('Al reactivar vuelve la promo 2', (await page.locator('.promo-badge').innerText()).includes('Promo 2 partidos por $9.000'));
+  await page.locator('.slot', { hasText: 'Promo Queda' }).locator('[data-menu]').click();
+  await page.waitForSelector('#sheet h3');
+  const afterBack = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
+  check('Al reactivar el saldo de la cancelación se vuelve a usar', !afterBack.includes('Saldo a favor con Gustavo: $4.000'), afterBack.slice(0, 240));
+  await page.click('#sheet [data-close]');
 }
 
 const fresh = await ctx.newPage();

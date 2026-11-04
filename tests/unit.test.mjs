@@ -18,7 +18,7 @@ import { dayCompensation, reconcileTransfers } from '../js/compensate.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit, retroactiveCreditIds } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
-import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, splitEven, splitPaymentAcross } from '../js/prices.js';
+import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, compensationWhen, numericDate, shortHour, toEpoch, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
@@ -2031,22 +2031,55 @@ test('un partido cancelado no cuenta para la promo del día', () => {
   const debt = playerDebt({ person: { name: 'Queda', phone }, players: [paid, two[1]], matches: pair, prices });
   assert.equal(debt.total, 500);
   assert.deepEqual(debt.rows.map((row) => row.matchId), ['a']);
-  const kept = promoRefundAfterFree({
-    player: { id: 'i2', matchId: 'b', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
+  const paidDay = [
+    { id: 'a', date: '2026-11-07', time: '18:00' },
+    { id: 'b', date: '2026-11-07', time: '21:00' },
+  ];
+  const paidPlayers = [
+    { id: 'i1', matchId: 'a', phone, name: 'Pago', paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
+    { id: 'i2', matchId: 'b', phone, name: 'Pago', paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
+  ];
+  const left = promoSettleLeaving({ player: paidPlayers[1], players: paidPlayers, matches: paidDay, prices, matchId: 'b' });
+  assert.equal(left.newDue, 5000);
+  assert.equal(left.received, 9000);
+  assert.equal(left.credits[0].amount, 4000);
+  assert.equal(left.credits[0].name, 'Gustavo');
+  assert.equal(left.payments.length, 1);
+  assert.equal(left.payments[0].playerId, 'i1');
+  assert.equal(left.payments[0].cash, 5000);
+  assert.ok(left.clearIds.includes('i2'));
+  const afterLeave = [
+    { ...paidPlayers[0], cash: 5000 },
+    { ...paidPlayers[1], cash: 0, paid: false },
+  ];
+  const back = promoSettleJoining({
+    player: afterLeave[1],
+    players: afterLeave,
+    matches: paidDay.map((match) => (match.id === 'b' ? { ...match, cancelled: true } : match)),
+    prices,
+    matchId: 'b',
+    balances: [{ organizerName: 'Gustavo', amount: 4000 }],
+  });
+  assert.equal(back.newDue, 9000);
+  assert.equal(back.spends[0].amount, 4000);
+  assert.equal(back.payments.reduce((sum, row) => sum + row.cash + row.fromCredit, 0), 9000);
+  const freed = promoRefundAfterFree({
+    player: { id: 'i1', matchId: 'a', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
     players: [
       { id: 'i1', matchId: 'a', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
-      { id: 'i2', matchId: 'b', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
       { id: 'i3', matchId: 'c', phone, paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, fromCredit: 0 },
     ],
     matches: [
       { id: 'a', date: '2026-11-07', time: '18:00' },
-      { id: 'b', date: '2026-11-07', time: '19:00' },
       { id: 'c', date: '2026-11-07', time: '21:00', cancelled: true },
     ],
     prices,
   });
-  assert.equal(kept.newDue, 9000);
-  assert.equal(kept.received, 13500);
+  assert.equal(freed.newDue, 0);
+  assert.equal(freed.received, 9000);
+  assert.equal(freed.credits[0].amount, 9000);
+  assert.equal(freed.payments.length, 0);
+  assert.ok(freed.clearIds.includes('i3'));
 });
 
 test('dividir el pago usa la promo del día y no el partido suelto', () => {
