@@ -1355,14 +1355,18 @@ class LocalStore {
     cur.updatedAt = Date.now();
     this._save(db);
   }
-  async setSuspensionNote(id, value) {
+  async setSuspension(id, { suspended, note, date } = {}) {
     const db = this._load();
     const cur = db.roster[id];
     if (!cur) return;
     if (!rosterHeldBy({ ...cur, id }, this.actor)) throw editLockedError();
-    const text = cleanSuspensionNote(value);
-    if (text) cur.suspensionNote = text;
-    else delete cur.suspensionNote;
+    const text = cleanSuspensionNote(note);
+    const day = String(date || '').trim();
+    if (!text) throw Object.assign(new Error('Poné el motivo.'), { code: 'invalid-note' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw Object.assign(new Error('Poné la fecha.'), { code: 'invalid-date' });
+    cur.suspensionNote = text;
+    cur.suspensionDate = day;
+    if (suspended === true || suspended === false) cur.suspended = suspended === true;
     cur.updatedAt = Date.now();
     this._save(db);
   }
@@ -3185,12 +3189,18 @@ export class FirebaseStore {
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'roster', id), { suspended: value === true, updatedAt: Date.now() });
   }
-  async setSuspensionNote(id, value) {
+  async setSuspension(id, { suspended, note, date } = {}) {
     const cur = (this.state.roster || []).find((row) => row.id === id);
     if (!cur) throw new Error('Jugador inexistente');
     if (!rosterHeldBy(cur, this.actor)) throw editLockedError();
+    const text = cleanSuspensionNote(note);
+    const day = String(date || '').trim();
+    if (!text) throw Object.assign(new Error('Poné el motivo.'), { code: 'invalid-note' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw Object.assign(new Error('Poné la fecha.'), { code: 'invalid-date' });
     const { doc, updateDoc } = this.fs;
-    await updateDoc(doc(this.db, 'roster', id), { suspensionNote: cleanSuspensionNote(value), updatedAt: Date.now() });
+    const patch = { suspensionNote: text, suspensionDate: day, updatedAt: Date.now() };
+    if (suspended === true || suspended === false) patch.suspended = suspended === true;
+    await updateDoc(doc(this.db, 'roster', id), patch);
   }
   async deleteRoster(id) {
     const cur = (this.state.roster || []).find((row) => row.id === id);

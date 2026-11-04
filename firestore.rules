@@ -361,7 +361,8 @@ service cloud.firestore {
           && request.resource.data.get('notes', null) == resource.data.get('notes', null)
           && request.resource.data.get('shortName', null) == resource.data.get('shortName', null)
           && request.resource.data.get('suspended', null) == resource.data.get('suspended', null)
-          && request.resource.data.get('suspensionNote', null) == resource.data.get('suspensionNote', null);
+          && request.resource.data.get('suspensionNote', null) == resource.data.get('suspensionNote', null)
+          && request.resource.data.get('suspensionDate', null) == resource.data.get('suspensionDate', null);
     }
     function canMarkSuspended() {
       return isRosterHolder()
@@ -673,9 +674,10 @@ service cloud.firestore {
       // Solo quien tiene la ficha cambia Suspendido. Va antes de validRoster
       // para no sumar expresiones al tope de 1000.
       allow update: if isActiveStaff()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['suspended', 'suspensionNote', 'updatedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['suspended', 'suspensionNote', 'suspensionDate', 'updatedAt'])
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['suspended']) || request.resource.data.suspended is bool)
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['suspensionNote']) || (request.resource.data.suspensionNote is string && request.resource.data.suspensionNote.size() <= 300))
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['suspensionDate']) || (request.resource.data.suspensionDate is string && request.resource.data.suspensionDate.matches('^\\d{4}-\\d{2}-\\d{2}$')))
           && canMarkSuspended()
           && rosterStampSame();
       allow create: if isActiveStaff() && validRoster(request.resource.data);

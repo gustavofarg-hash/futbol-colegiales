@@ -5631,25 +5631,40 @@ function openCreditReturnForm({ player, person, panel }) {
   };
 }
 
-function openSuspensionNote(card) {
+function openSuspensionNote(card, { suspend = false } = {}) {
   const current = String(card?.suspensionNote || '');
+  const day = suspend ? todayISO() : (card?.suspensionDate || todayISO());
   openSheet(`
     <form id="suspend-note-form" novalidate>
       <h3>Suspendido</h3>
+      <p class="hint" id="suspend-summary"></p>
+      <label class="field"><span>Fecha</span><input type="date" id="suspend-date" value="${esc(day)}"></label>
       <label class="field"><span>Motivo</span><textarea id="suspend-reason" maxlength="300">${esc(current)}</textarea></label>
       <div class="field"><div class="err" id="suspend-reason-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
     </form>`);
   const form = $('#suspend-note-form');
   if (!form) return;
+  const paint = () => {
+    const summary = $('#suspend-summary');
+    if (!summary) return;
+    const date = numericDate($('#suspend-date')?.value || '');
+    const reason = String($('#suspend-reason')?.value || '').replace(/\r\n/g, '\n').trim();
+    summary.textContent = [date, reason].filter(Boolean).join(' · ');
+  };
+  form.addEventListener('input', paint);
+  paint();
   form.onsubmit = async (e) => {
     e.preventDefault();
     const text = String($('#suspend-reason')?.value || '').replace(/\r\n/g, '\n').trim();
+    const date = String($('#suspend-date')?.value || '').trim();
+    const err = $('#suspend-reason-err');
+    if (!text) { if (err) err.textContent = 'Poné el motivo.'; return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { if (err) err.textContent = 'Poné la fecha.'; return; }
     try {
-      await app.store.setSuspensionNote(card.id, text);
+      await app.store.setSuspension(card.id, { note: text, date, ...(suspend ? { suspended: true } : {}) });
       closeSheet();
     } catch (error) {
-      const err = $('#suspend-reason-err');
       if (err) err.textContent = error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.');
     }
   };
@@ -5697,18 +5712,28 @@ function openPlayerMenu(m, p) {
   const suspendFlag = $('#suspend-flag');
   const suspendNote = $('#suspend-note');
   if (suspendNote && card) suspendNote.onclick = () => openSuspensionNote(card);
-  if (suspendFlag && card) suspendFlag.onchange = async () => {
-    const next = suspendFlag.checked === true;
+  if (suspendFlag && card) {
+    let ignoreSuspend = false;
+    suspendFlag.onchange = async () => {
+    if (ignoreSuspend) return;
+    if (suspendFlag.checked === true) {
+      ignoreSuspend = true;
+      suspendFlag.checked = false;
+      ignoreSuspend = false;
+      openSuspensionNote(card, { suspend: true });
+      return;
+    }
     try {
-      await app.store.setSuspended(card.id, next);
-      sheet.querySelector('h3')?.classList.toggle('suspended', next);
+      await app.store.setSuspended(card.id, false);
+      sheet.querySelector('h3')?.classList.remove('suspended');
       const full = $('#menu-full-name');
-      if (full) full.classList.toggle('suspended', next);
+      if (full) full.classList.remove('suspended');
     } catch (error) {
-      suspendFlag.checked = !next;
+      suspendFlag.checked = true;
       askNotice(error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.'));
     }
-  };
+    };
+  }
   const menuShare = $('#pm-share');
   if (menuShare) menuShare.onclick = () => copyPlayerLink(shareRosterId(p));
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, match?.id); };
