@@ -19,7 +19,7 @@ import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableL
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { addDays, compensationWhen, numericDate, shortHour, toEpoch, weekdayDate } from '../js/dates.js';
+import { addDays, compensationWhen, dayMonth, matchSwitchLabel, numericDate, shortHour, shortWeekday, toEpoch, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -58,6 +58,16 @@ test('el día con mayúscula precede a la fecha del partido', () => {
   assert.equal(weekdayDate('2026-10-24'), 'Sábado 24/10/2026');
   assert.equal(weekdayDate('2026-11-08'), 'Domingo 08/11/2026');
   assert.equal(weekdayDate(''), '');
+  assert.equal(shortWeekday('2026-11-04'), 'Mié');
+  assert.equal(shortWeekday('2026-10-19'), 'Lun');
+  assert.equal(shortWeekday('2026-10-24'), 'Sáb');
+  assert.equal(shortWeekday(''), '');
+  assert.equal(dayMonth('2026-11-04'), '04/11');
+  assert.equal(dayMonth(''), '');
+  assert.equal(matchSwitchLabel('2026-11-04', '20:00', 'C2'), 'Mié 04/11 20hs C2');
+  assert.equal(matchSwitchLabel('2026-11-04', '20:00', ''), 'Mié 04/11 20hs');
+  assert.equal(matchSwitchLabel('2026-11-08', '19:30', 'C3'), 'Dom 08/11 19:30hs C3');
+  assert.equal(matchSwitchLabel('2026-10-22', '21:00', ''), 'Jue 22/10 21hs');
   assert.equal(compensationWhen('2026-11-03'), 'MARTES 03/11/2026');
 });
 
@@ -1782,11 +1792,11 @@ test('cargar crédito cancela primero la deuda más vieja y el sobrante queda de
   const extra = creditAgainstDebts(12000, debts);
   assert.deepEqual(extra.rows.map((row) => row.credit), [5000, 5000]);
   assert.equal(extra.leftover, 2000);
-  assert.match(creditLoadSummary(extra), /Queda como saldo a favor \$2\.000\./);
+  assert.match(creditLoadSummary(extra, 'Gustavo'), /Queda como crédito con Gustavo: \$2\.000\./);
   const none = creditAgainstDebts(4000, []);
   assert.equal(none.rows.length, 0);
   assert.equal(none.leftover, 4000);
-  assert.equal(creditLoadSummary(none), 'Quedó como saldo a favor $4.000.');
+  assert.equal(creditLoadSummary(none, 'Gustavo'), 'Quedó como crédito con Gustavo: $4.000.');
   assert.equal(creditAgainstDebts(0, debts).ok, false);
   // Una deuda de otro organizador no entra en la lista: el llamador la filtra.
   const onlyMine = creditAgainstDebts(5000, [debts[1]]);
@@ -3133,8 +3143,9 @@ test('el registro copia quién podía editar y separa los pagos', () => {
 });
 
 test('devolver crédito acepta hasta el saldo y no el cero', () => {
-  assert.equal(creditAvailableLine({ organizerName: 'Gus', amount: 3000 }), 'Crédito disponible con Gus: $3.000');
-  assert.equal(creditAvailableLine({ organizerName: 'Gustavo', amount: 0 }), 'Crédito disponible con Gustavo: $0');
+  assert.equal(creditAvailableLine({ organizerName: 'Gus', amount: 3000 }), 'Crédito con Gus: $3.000');
+  assert.equal(creditAvailableLine({ organizerName: 'Gustavo', amount: 0 }), 'Crédito con Gustavo: $0');
+  assert.equal(creditAvailableLine({ amount: 500 }), 'Crédito: $500');
   assert.equal(creditReturnPlan(0, 0).ok, false);
   assert.equal(creditReturnPlan(0, 3000).error, 'Poné el monto.');
   assert.deepEqual(creditReturnPlan(1000, 3000), { ok: true, amount: 1000 });
@@ -3229,7 +3240,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v106');
+  assert.equal(version, 'f7c-v107');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

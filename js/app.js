@@ -5,7 +5,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
@@ -26,7 +26,7 @@ import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWri
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
-import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
+import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v106';
+const APP_VERSION = 'f7c-v107';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1530,6 +1530,48 @@ function renderHistory() {
   };
 }
 
+function detailPlaceLine(m) {
+  const venue = placeOf(m);
+  const format = `F${perTeamOf(m)}`;
+  const court = courtLabel(m);
+  const bits = [];
+  if (venue) bits.push(esc(venue));
+  if (format) bits.push(esc(format));
+  if (court) bits.push(`<span id="match-court">${esc(court)}</span>`);
+  return bits.join(' - ');
+}
+
+/** Hay otro partido de Próximos al que se puede pasar, y este está en esa lista. */
+function canSwitchMatch(match) {
+  const rows = currentMatches(app.matches);
+  if (!match?.id || !rows.some((item) => item.id === match.id)) return false;
+  return rows.length > 1;
+}
+
+function matchSwitchOption(item) {
+  const label = matchSwitchLabel(item.date, item.time, courtMark(item));
+  const venue = String(placeOf(item) || '').trim();
+  return venue ? `${label} · ${venue}` : label;
+}
+
+function openMatchSwitch(current) {
+  const rows = currentMatches(app.matches);
+  const items = rows.map((item) => {
+    const on = item.id === current.id;
+    return `<button type="button" class="btn${on ? ' primary' : ''}" data-match-switch="${esc(item.id)}"${on ? ' aria-current="true"' : ''}>${esc(matchSwitchOption(item))}</button>`;
+  }).join('');
+  openSheet(`<div class="menu" id="match-switch-list">${items}<button type="button" class="btn ghost" data-close>Cancelar</button></div>`);
+  const list = $('#match-switch-list');
+  if (!list) return;
+  list.onclick = (event) => {
+    const btn = event.target.closest('[data-match-switch]');
+    if (!btn) return;
+    const id = btn.dataset.matchSwitch;
+    closeSheet();
+    if (id && id !== current.id) location.hash = `#/partido/${encodeURIComponent(id)}`;
+  };
+}
+
 function renderMatch(id) {
   const m = matchById(id);
   if (!m) {
@@ -1593,17 +1635,25 @@ function renderMatch(id) {
   const notesText = String(m.notes || '').trim();
   const hour = shortHour(m.time) || '--:--';
   const priceText = formatARS(priceOfMatch(m, livePrices()));
+  const switchLabel = matchSwitchLabel(m.date, m.time, courtMark(m));
+  const switchable = canSwitchMatch(m);
+  const title = switchable
+    ? `<button type="button" class="match-switch" id="match-date" aria-haspopup="dialog">${esc(switchLabel)}<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`
+    : `<h1 id="match-date">${esc(switchLabel)}</h1>`;
+  const rel = relativeLabel(m.date);
+  const notesBtn = canEdit ? '<button type="button" class="btn" id="btn-notes">Notas</button>' : '';
+  const notesBody = notesText ? `<p class="match-notes-text">${esc(m.notes)}</p>` : '';
+  const notesBlock = (notesBtn || notesBody)
+    ? `<div class="match-notes" id="match-notes">${notesBtn ? `<div class="match-notes-head">${notesBtn}</div>` : ''}${notesBody}</div>`
+    : '';
   if (!replaceView(`
     <section class="detail-head">
-      <h1 id="match-date">${esc(weekdayDate(m.date))}</h1>
-      <div class="when" id="match-when">${relativeLabel(m.date) ? `<span class="badge">${relativeLabel(m.date)}</span> ` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span> ' : ''}${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</div>
-      <p class="hint" id="match-place">${esc(placeOf(m))} (F${perTeamOf(m)})${courtLabel(m) ? ` · <span id="match-court">${esc(courtLabel(m))}</span>` : ''}</p>
+      ${title}
+      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</span></div>
+      <p class="hint" id="match-place">${detailPlaceLine(m)}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
-      <div class="match-notes" id="match-notes">
-        <div class="match-notes-head"><strong>Notas</strong>${canEdit ? '<button type="button" class="btn" id="btn-notes">Editar</button>' : ''}</div>
-        ${notesText ? `<p class="match-notes-text">${esc(m.notes)}</p>` : '<p class="hint">Sin notas.</p>'}
-      </div>
+      ${notesBlock}
       <div class="meta"><strong id="slot-count">${everyone.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (everyone.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - everyone.length}`}</span></div>
       ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
       <div class="mine-line" id="mine-stats">${esc(mineLine)}</div>
@@ -1682,6 +1732,8 @@ function renderMatch(id) {
   $('#btn-teams').onclick = () => { location.hash = `#/partido/${encodeURIComponent(m.id)}/equipos`; };
   if ($('#btn-edit-match')) $('#btn-edit-match').onclick = () => openMatchForm(m);
   if ($('#btn-notes')) $('#btn-notes').onclick = () => openNotes(m);
+  const switchBtn = $('#match-date');
+  if (switchBtn && switchBtn.tagName === 'BUTTON') switchBtn.onclick = () => openMatchSwitch(m);
   if ($('#btn-cancel-match')) $('#btn-cancel-match').onclick = async () => {
     if (!(await askConfirm('¿Seguro que querés cancelar el partido?', { danger: true }))) return;
     openCancel(m);
@@ -3265,7 +3317,7 @@ function statsPlayerBody(id) {
     const mine = staffActor();
     const rows = creditPanelRows(app.credits, creditKeysOf(null, person), mine)
       .filter((row) => !mine.uid || row.organizerUid === mine.uid);
-    creditHtml = rows.filter((row) => row.amount > 0).map((row) => `<p class="credit-total">${esc(creditLine(row))}</p>`).join('');
+    creditHtml = rows.filter((row) => row.amount > 0).map((row) => `<p class="credit-total">${esc(creditAvailableLine(row))}</p>`).join('');
   } catch (error) { console.error(error); }
   const inMine = mine.some((row) => row.id === person.id);
   const notes = sortedNotes((app.rosterNotes && app.rosterNotes[person.id]) || []);
@@ -3285,8 +3337,8 @@ function statsPlayerBody(id) {
       ${record.confirmText ? `<p class="hint">${esc(record.confirmText)}</p>` : ''}
     </section>
     <section class="profile-block" id="stats-balance">
-      <h2>Deuda y saldo</h2>
-      ${creditHtml || '<p class="hint">Sin saldo a favor.</p>'}
+      <h2>Deuda y crédito</h2>
+      ${creditHtml || `<p class="hint">${esc(staffActor().name ? `Sin crédito con ${staffActor().name}.` : 'Sin crédito.')}</p>`}
       ${debt.total > 0 ? `<p class="debt-total">${esc(debt.text)}</p><ul class="ledger-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>` : '<p class="hint">Sin deuda.</p>'}
     </section>
     <section class="profile-block" id="stats-notes">
@@ -5337,15 +5389,20 @@ function creditPaymentInput(player, addCredit, creditTo) {
   };
 }
 
-function creditPreviewHtml(plan) {
+function creditPreviewHtml(plan, who) {
   if (!plan?.ok) return '';
+  const name = String(who || '').trim();
+  const leftLine = (amount) => name
+    ? `Queda como crédito con ${name}: ${formatARS(amount)}.`
+    : `Queda como crédito: ${formatARS(amount)}.`;
+  const noneLine = name ? `No queda crédito con ${name}.` : 'No queda crédito.';
   if (!plan.rows.length) {
-    return `<p class="hint" id="credit-preview">No tiene deudas con vos. Queda como saldo a favor ${esc(formatARS(plan.leftover))}.</p>`;
+    return `<p class="hint" id="credit-preview">No tiene deudas con vos. ${esc(leftLine(plan.leftover))}</p>`;
   }
   const lines = plan.rows.map((row) => `<li><span>${esc(row.label)}</span><b>${esc(formatARS(row.credit))}</b></li>`).join('');
   const left = plan.leftover > 0
-    ? `<p class="hint" id="credit-leftover">Queda como saldo a favor ${esc(formatARS(plan.leftover))}.</p>`
-    : '<p class="hint" id="credit-leftover">No queda saldo a favor.</p>';
+    ? `<p class="hint" id="credit-leftover">${esc(leftLine(plan.leftover))}</p>`
+    : `<p class="hint" id="credit-leftover">${esc(noneLine)}</p>`;
   return `<div id="credit-preview"><p class="hint">Primero las deudas más viejas con vos.</p><ul class="pay-split-preview">${lines}</ul>${left}</div>`;
 }
 
@@ -5362,10 +5419,10 @@ function openCreditForm({ player, person, panel }) {
     <form id="credit-form" novalidate>
       <h3>Cargar crédito</h3>
       <p class="hint">${esc(label)} · con ${esc(who)}</p>
-      <p class="credit-total" id="credit-now">${esc(creditLine({ organizerName: me.name, amount: current }))}</p>
+      <p class="credit-total" id="credit-now">${esc(creditAvailableLine({ organizerName: who, amount: current }))}</p>
       <label class="field"><span>Monto</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" autofocus aria-label="Monto del crédito"></label>
       <div id="credit-plan"></div>
-      <p class="hint">Primero cancela las deudas más viejas con ${esc(who)}. Lo que sobra queda como saldo a favor.</p>
+      <p class="hint">Primero cancela las deudas más viejas con ${esc(who)}. Lo que sobra queda como crédito con ${esc(who)}.</p>
       <div class="field"><div class="err" id="credit-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
     </form>`);
@@ -5376,7 +5433,7 @@ function openCreditForm({ player, person, panel }) {
     const money = readMoney(form.amount.value);
     if (!money.ok || !(money.amount > 0)) { box.innerHTML = ''; return; }
     const plan = creditAgainstDebts(money.amount, creditDebtsFor(player, person));
-    box.innerHTML = plan.ok ? creditPreviewHtml(plan) : '';
+    box.innerHTML = plan.ok ? creditPreviewHtml(plan, who) : '';
   };
   form.amount.addEventListener('input', paintPlan);
   form.onsubmit = (e) => {
@@ -5391,7 +5448,7 @@ function openCreditForm({ player, person, panel }) {
       id: row.id,
       input: creditPaymentInput(row.player, row.credit, creditTo),
     }));
-    const summary = creditLoadSummary(plan);
+    const summary = creditLoadSummary(plan, who);
     closeSheet();
     const job = (async () => {
       if (entries.length) await writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who));
