@@ -359,17 +359,7 @@ service cloud.firestore {
           && request.resource.data.get('level', null) == resource.data.get('level', null)
           && request.resource.data.get('positions', null) == resource.data.get('positions', null)
           && request.resource.data.get('notes', null) == resource.data.get('notes', null)
-          && request.resource.data.get('shortName', null) == resource.data.get('shortName', null)
-          && request.resource.data.get('suspended', null) == resource.data.get('suspended', null)
-          && request.resource.data.get('suspensionNote', null) == resource.data.get('suspensionNote', null)
-          && request.resource.data.get('suspensionDate', null) == resource.data.get('suspensionDate', null);
-    }
-    function canMarkSuspended() {
-      return isRosterHolder()
-          || isRosterCreator()
-          || (resource.data.get('holders', []).size() == 0
-              && resource.data.get('createdByUid', '') == ''
-              && resource.data.get('createdBy', '') == '');
+          && request.resource.data.get('shortName', null) == resource.data.get('shortName', null);
     }
 
     // Un organizador puede actualizar al jugador. El nombre y el teléfono
@@ -671,15 +661,6 @@ service cloud.firestore {
           && request.resource.data.holders.hasAll(resource.data.get('holders', []))
           && (resource.data.get('createdByUid', '') == '' || request.resource.data.holders.hasAny([resource.data.createdByUid]))
           && request.resource.data.holders.size() == resource.data.get('holders', []).size() + (resource.data.keys().hasAny(['holders']) ? 1 : (resource.data.get('createdByUid', '') == '' ? 1 : 2));
-      // Solo quien tiene la ficha cambia Suspendido. Va antes de validRoster
-      // para no sumar expresiones al tope de 1000.
-      allow update: if isActiveStaff()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['suspended', 'suspensionNote', 'suspensionDate', 'updatedAt'])
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['suspended']) || request.resource.data.suspended is bool)
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['suspensionNote']) || (request.resource.data.suspensionNote is string && request.resource.data.suspensionNote.size() <= 300))
-          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['suspensionDate']) || (request.resource.data.suspensionDate is string && request.resource.data.suspensionDate.matches('^\\d{4}-\\d{2}-\\d{2}$')))
-          && canMarkSuspended()
-          && rosterStampSame();
       allow create: if isActiveStaff() && validRoster(request.resource.data);
       allow update: if isActiveStaff() && validRoster(request.resource.data)
           && rosterStampSame()
@@ -913,6 +894,22 @@ service cloud.firestore {
       allow list: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
       allow create, update: if isActiveStaff() && validPrivateNotes(request.resource.data)
           && noteId == request.resource.data.rosterId + '_' + request.auth.uid;
+      allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    function validSuspension(d) {
+      return d.keys().hasOnly(['ownerUid', 'rosterId', 'suspended', 'suspensionNote', 'suspensionDate'])
+          && d.ownerUid == request.auth.uid
+          && d.rosterId is string && d.rosterId.size() > 0 && d.rosterId.size() <= 200
+          && d.suspended is bool
+          && d.suspensionNote is string && d.suspensionNote.size() > 0 && d.suspensionNote.size() <= 300
+          && d.suspensionDate is string && d.suspensionDate.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+    match /rosterSuspensions/{suspensionId} {
+      allow read, write: if isAdmin();
+      allow get, list: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validSuspension(request.resource.data)
+          && suspensionId == request.resource.data.rosterId + '_' + request.auth.uid;
       allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
     }
 

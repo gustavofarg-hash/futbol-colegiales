@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { SUSPENDED_TEXT, cleanShortName, displayName, findSuspended, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
+import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1258,16 +1258,17 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   const first = await store.addMatch({ date: '2026-11-21', time: '21:00', capacity: 14 }, 'Gustavo');
   await store.addPlayer({ id: first }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Gustavo');
   await assert.rejects(
-    () => store.setSuspension(id, { suspended: true, note: '   ', date: '2026-10-19' }),
+    () => store.setSuspension(id, { note: '   ', date: '2026-10-19' }),
     (error) => error?.code === 'invalid-note',
   );
-  await store.setSuspension(id, { suspended: true, note: 'Llegó tarde tres veces', date: '2026-10-19' });
+  await store.setSuspension(id, { note: 'Llegó tarde tres veces', date: '2026-10-19' });
   const saved = JSON.parse(mem.get('f7c-test-susp'));
-  assert.equal(saved.roster[id].suspended, true);
-  assert.equal(saved.roster[id].suspensionNote, 'Llegó tarde tres veces');
-  assert.equal(saved.roster[id].suspensionDate, '2026-10-19');
+  const mine = saved.rosterSuspensions[`${id}_gustavo`];
+  assert.equal(mine.suspended, true);
+  assert.equal(mine.suspensionNote, 'Llegó tarde tres veces');
+  assert.equal(mine.suspensionDate, '2026-10-19');
+  assert.equal(saved.roster[id].suspended, undefined);
   assert.equal(Object.values(saved.players).length, 1);
-  assert.equal(findSuspended(Object.entries(saved.roster).map(([rid, row]) => ({ id: rid, ...row })), { phone: '5491166668080' })?.id, id);
   const second = await store.addMatch({ date: '2026-11-22', time: '21:00', capacity: 14 }, 'Gustavo');
   await assert.rejects(
     () => store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Gustavo'),
@@ -1281,12 +1282,17 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
     (error) => error?.code === 'suspended',
   );
   await store.addRoster({ name: 'Suspendido Pérez', phone: '5491166668080' }, 'Martín');
-  assert.equal(JSON.parse(mem.get('f7c-test-susp')).roster[id].suspensionNote, 'Llegó tarde tres veces');
-  await store.setSuspension(id, { note: 'La cambió Martín', date: '2026-10-20' });
-  assert.equal(JSON.parse(mem.get('f7c-test-susp')).roster[id].suspensionNote, 'La cambió Martín');
-  assert.equal(JSON.parse(mem.get('f7c-test-susp')).roster[id].suspensionDate, '2026-10-20');
   await store.setSuspended(id, false);
-  await store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Martín');
+  assert.equal(JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`].suspended, true);
+  await assert.rejects(
+    () => store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Martín'),
+    (error) => error?.code === 'suspended',
+  );
+  const solo = await store.addMatch({
+    date: '2026-11-23', time: '21:00', capacity: 14,
+    access: { solo: true, viewers: ['martin'], viewerNames: [], adders: ['martin'], adderNames: [], limits: [], createdByUid: 'martin' },
+  }, 'Martín');
+  await store.addPlayer({ id: solo }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Martín');
   assert.equal(Object.values(JSON.parse(mem.get('f7c-test-susp')).players).length, 2);
 });
 

@@ -38,6 +38,7 @@ export const BACKUP_COLLECTIONS = Object.freeze([
   'rosterNotes',
   'rosterClaims',
   'rosterRedirects',
+  'rosterSuspensions',
 ]);
 
 export const COLLECTION_LABELS = Object.freeze({
@@ -58,6 +59,7 @@ export const COLLECTION_LABELS = Object.freeze({
   rosterNotes: 'Notas de jugadores',
   rosterClaims: 'Acceso al WhatsApp',
   rosterRedirects: 'Fichas unidas',
+  rosterSuspensions: 'Suspensiones',
 });
 
 const ID_MAX = 700;

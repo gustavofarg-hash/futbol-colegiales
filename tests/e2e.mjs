@@ -5576,9 +5576,9 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.locator('#sheet .sheet-body').screenshot({ path: '/opt/cursor/artifacts/screenshots/v111-menu.png' });
   await page.click('#suspend-flag');
   await page.waitForSelector('#suspend-reason');
-  check('Pedir el motivo todavía no suspende', await page.evaluate(() => window.__app.roster.find((row) => row.name === 'Suspendido Pérez')?.suspended !== true));
+  check('Pedir el motivo todavía no suspende', await page.evaluate(() => !window.__app.suspensions.some((row) => row.suspended === true)));
   await page.click('#suspend-note-form [data-close]');
-  check('Cancelar el motivo no suspende', await page.evaluate(() => window.__app.roster.find((row) => row.name === 'Suspendido Pérez')?.suspended !== true));
+  check('Cancelar el motivo no suspende', await page.evaluate(() => !window.__app.suspensions.some((row) => row.suspended === true)));
   await page.click('.slot:has-text("Suspendido Pérez") .more-btn');
   await page.waitForSelector('#suspend-flag');
   check('Cancelar deja el casillero sin marcar', !(await page.locator('#suspend-flag').isChecked()));
@@ -5586,16 +5586,13 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('#suspend-reason');
   await page.click('#suspend-note-form button[type=submit]');
   check('Sin motivo no se puede guardar', (await page.locator('#suspend-reason-err').innerText()) === 'Poné el motivo.');
-  check('Sin motivo no queda suspendido', await page.evaluate(() => window.__app.roster.find((row) => row.name === 'Suspendido Pérez')?.suspended !== true));
+  check('Sin motivo no queda suspendido', await page.evaluate(() => !window.__app.suspensions.some((row) => row.suspended === true)));
   await page.fill('#suspend-reason', 'Llegó tarde tres veces');
   await page.locator('#sheet .sheet-body').screenshot({ path: '/opt/cursor/artifacts/screenshots/v111-motivo.png' });
   const summary = (await page.locator('#suspend-summary').innerText()).replace(/\s+/g, ' ').trim();
   check('La hoja muestra la fecha y el motivo', summary === '19/10/2026 · Llegó tarde tres veces', summary);
   await page.click('#suspend-note-form button[type=submit]');
-  await page.waitForFunction(() => {
-    const row = window.__app.roster.find((item) => item.name === 'Suspendido Pérez');
-    return row?.suspended === true && row.suspensionNote === 'Llegó tarde tres veces' && row.suspensionDate === '2026-10-19';
-  });
+  await page.waitForFunction(() => window.__app.suspensions.some((row) => row.suspended === true && row.suspensionNote === 'Llegó tarde tres veces' && row.suspensionDate === '2026-10-19'));
   await page.click('.slot:has-text("Suspendido Pérez") .more-btn');
   await page.waitForSelector('#suspend-note');
   await page.click('#suspend-note');
@@ -5632,7 +5629,8 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('.slot:has-text("Suspendido Pérez") .name.suspended');
   await page.click('.slot:has-text("Suspendido Pérez") .more-btn');
   await page.waitForSelector('#sheet h3');
-  check('Quien no lo tiene no ve el casillero', await page.locator('#pm-suspended').count() === 0);
+  const byGustavo = page.locator('.checkline', { hasText: 'Suspendido por Gustavo' });
+  check('Otro organizador ve Suspendido por Gustavo, sin poder sacarlo', await byGustavo.locator('input').isDisabled() && await byGustavo.locator('input').isChecked() && await page.locator('#suspend-flag').count() === 0);
   await page.click('#sheet [data-close]');
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, made.second);
   await page.waitForSelector('#btn-add-player');
@@ -5643,6 +5641,22 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForFunction(() => (document.querySelector('#pf-err')?.textContent || '') === 'Está suspendido.');
   check('Otro organizador tampoco lo anota', (await page.locator('#pf-err').innerText()) === 'Está suspendido.');
   await page.click('#player-form [data-close]');
+  const solo = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    return app.store.addMatch({
+      date: '2026-11-23', time: '21:00', note: 'Solo', capacity: 14,
+      access: { solo: true, viewers: [me.uid], viewerNames: [{ uid: me.uid, name: me.name }], adders: [me.uid], adderNames: [{ uid: me.uid, name: me.name }], limits: [], createdByUid: me.uid },
+    }, app.who);
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, solo);
+  await page.waitForSelector('#btn-add-player');
+  await page.click('#btn-add-player');
+  await page.fill('#player-form [name=name]', 'Suspendido Pérez');
+  await page.fill('#player-form [name=phone]', '11 6666-8080');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('.slot:has-text("Suspendido Pérez")');
+  check('En un partido sin Gustavo se puede anotar', await page.locator('.slot:has-text("Suspendido Pérez") .name.suspended').count() === 0);
   await page.click('#btn-settings');
   await page.click('#set-logout');
   await page.waitForSelector('#login-form');

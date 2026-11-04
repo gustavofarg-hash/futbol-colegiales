@@ -18,7 +18,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, canonicalPhone, cleanShortName, displayName, findSuspended, foldText, fullNameBehind, isSuspended, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, searchRoster, visibleRosterPhone } from './roster.js';
+import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -489,10 +489,26 @@ function creditDelta(people, entries) {
 /* ───────── datos derivados ───────── */
 const actor = () => ({ uid: app.session?.user?.uid || '', name: app.who || '' });
 const shownName = (player) => displayName(player, app.roster);
-function suspendedClass(source) {
+function suspensionRosterId(source) {
   if (!source) return '';
-  const rosterId = source.rosterId || (app.roster?.some((row) => row.id === source.id) ? source.id : '');
-  return findSuspended(app.roster, { ...source, rosterId }) ? ' suspended' : '';
+  if (source.matchId || source.rosterId) return rosterIdForSuspension(app.roster, source);
+  if (source.id && app.roster?.some((row) => row.id === source.id)) return source.id;
+  return rosterIdForSuspension(app.roster, source);
+}
+function playerBlockedOn(match, source) {
+  return blockingSuspensions(app.suspensions, match, suspensionRosterId(source)).length > 0;
+}
+function suspendedClass(source) {
+  const rosterId = suspensionRosterId(source);
+  if (!rosterId) return '';
+  const uid = actor().uid;
+  if (activeSuspensions(app.suspensions, rosterId).some((row) => row.ownerUid === uid)) return ' suspended';
+  const match = source?.matchId ? (knownMatches().find((item) => item.id === source.matchId) || null) : null;
+  return match && blockingSuspensions(app.suspensions, match, rosterId).length ? ' suspended' : '';
+}
+function organizerLabel(uid) {
+  const user = (app.users || []).find((item) => item.uid === uid);
+  return user?.name || 'otro organizador';
 }
 function heldCard(source) {
   const mine = rosterForOrganizer(app.roster, actor());
@@ -3821,7 +3837,7 @@ function partidosSection(person) {
   const rows = signupRows(person).map(({ match, state }) => {
     const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
     const picked = !state.existing && draft.ids.has(match.id);
-    const locked = state.existing ? 'checked disabled' : (isSuspended(person) ? 'disabled' : (picked ? 'checked' : ''));
+    const locked = state.existing ? 'checked disabled' : (playerBlockedOn(match, person) ? 'disabled' : (picked ? 'checked' : ''));
     const remove = state.existing && state.playerId
       ? `<button type="button" class="btn" data-signup-remove="${esc(state.playerId)}">Quitar</button>`
       : '';
@@ -3838,11 +3854,11 @@ function partidosSection(person) {
   return `<section class="profile-block" id="partidos">
     <h2>Partidos</h2>
     <p class="hint">Elegí los próximos y anotalo de una. Si el partido está completo, va a la lista de espera.</p>
-    ${isSuspended(person) ? `<p class="hint" id="signup-suspended">${esc(SUSPENDED_TEXT)}</p>` : ''}
+    ${activeSuspensions(app.suspensions, person.id).some((row) => row.ownerUid === actor().uid) ? `<p class="hint" id="signup-suspended">${esc(SUSPENDED_TEXT)}</p>` : ''}
     <ul class="slots" id="signup-list">${rows.join('')}</ul>
     ${empty}
     <label class="checkline"><input type="checkbox" id="signup-tentative" ${draft.tentative ? 'checked' : ''}> Anotar como pendiente de confirmación</label>
-    <button type="button" class="btn primary block" id="btn-signup"${draft.ids.size && !isSuspended(person) ? '' : ' disabled'}>${esc(signupButtonLabel(draft.ids.size))}</button>
+    <button type="button" class="btn primary block" id="btn-signup"${draft.ids.size ? '' : ' disabled'}>${esc(signupButtonLabel(draft.ids.size))}</button>
   </section>`;
 }
 
@@ -3858,7 +3874,7 @@ function bindPartidos(person) {
   if (!list || !button) return;
   const paint = () => {
     const n = draft.ids.size;
-    button.disabled = n === 0 || isSuspended(person);
+    button.disabled = n === 0;
     button.textContent = signupButtonLabel(n);
   };
   list.addEventListener('change', (event) => {
@@ -3898,7 +3914,6 @@ function bindPartidos(person) {
       chosen.push({ match, state });
     }
     paint();
-    if (isSuspended(person)) { askNotice(SUSPENDED_TEXT); return; }
     if (!chosen.length) return;
     const waits = chosen.filter((row) => row.state.willWait);
     if (waits.length) {
@@ -3917,6 +3932,7 @@ function bindPartidos(person) {
       for (const row of chosen) {
         const again = matchSignupState({ ...rosterIdentity(person), match: row.match, players: app.players });
         if (again.existing) { toast(ALREADY_IN_MATCH); continue; }
+        if (playerBlockedOn(row.match, person)) { askNotice(SUSPENDED_TEXT); continue; }
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
         try {
@@ -4048,7 +4064,7 @@ function focusField(el) {
 
 /** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
 async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
-  if (!host?.id && findSuspended(app.roster, host)) return SUSPENDED_TEXT;
+  if (!host?.id && playerBlockedOn(m, host)) return SUSPENDED_TEXT;
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
   const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
@@ -5668,9 +5684,9 @@ function openSuspensionNote(card) {
   };
 }
 
-function openSuspensionView(card) {
-  const reason = String(card?.suspensionNote || '').trim();
-  const date = numericDate(card?.suspensionDate || '');
+function openSuspensionView(record) {
+  const reason = String(record?.suspensionNote || '').trim();
+  const date = numericDate(record?.suspensionDate || '');
   if (!reason && !date) return;
   openSheet(`
     <div id="suspend-view">
@@ -5690,9 +5706,14 @@ function openPlayerMenu(m, p) {
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   const canAnnotate = !!(match && canAdd(match, actor().uid));
   const card = heldCard(p);
-  const suspendBox = card
-    ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${isSuspended(card) ? ' checked' : ''} aria-label="Suspendido"><button type="button" class="suspend-label" id="suspend-note">Suspendido</button></div>`
+  const rosterId = suspensionRosterId(card || p);
+  const mine = (app.suspensions || []).find((row) => row.rosterId === rosterId && row.ownerUid === actor().uid) || null;
+  const others = activeSuspensions(app.suspensions, rosterId).filter((row) => row.ownerUid !== actor().uid);
+  const ownBox = card
+    ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${mine?.suspended === true ? ' checked' : ''} aria-label="Suspendido"><button type="button" class="suspend-label" id="suspend-note">Suspendido</button></div>`
     : '';
+  const otherBoxes = others.map((row) => `<div class="checkline"><input type="checkbox" checked disabled aria-label="Suspendido por ${esc(organizerLabel(row.ownerUid))}"><button type="button" class="suspend-label" data-suspend-view="${esc(row.ownerUid)}">Suspendido por ${esc(organizerLabel(row.ownerUid))}</button></div>`).join('');
+  const suspendBox = `${ownBox}${otherBoxes}`;
   openSheet(`
     ${suspendBox}
     <div class="name-share">
@@ -5721,7 +5742,16 @@ function openPlayerMenu(m, p) {
   bindPlayerPanel(sheet, p, null, MENU_PANEL, panel);
   const suspendFlag = $('#suspend-flag');
   const suspendNote = $('#suspend-note');
-  if (suspendNote && card) suspendNote.onclick = () => openSuspensionView(card);
+  if (suspendNote && rosterId) suspendNote.onclick = () => {
+    const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
+    openSuspensionView(row);
+  };
+  sheet.querySelectorAll('[data-suspend-view]').forEach((btn) => {
+    btn.onclick = () => {
+      const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === btn.dataset.suspendView);
+      openSuspensionView(row);
+    };
+  });
   if (suspendFlag && card) {
     let ignoreSuspend = false;
     suspendFlag.onchange = async () => {
@@ -6357,6 +6387,7 @@ async function boot() {
     app.historyError = historyError || '';
     app.roster = roster || [];
     app.rosterNotes = view.rosterNotes || {};
+    app.suspensions = view.suspensions || [];
     app.organizers = organizers || [];
     app.venues = venues || [];
     app.prices = prices || null;
@@ -6376,7 +6407,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

@@ -156,21 +156,46 @@ export function phoneIdentity(entity) {
   return phone ? phoneKey(phone) : '';
 }
 
-export function isSuspended(person) {
-  return person?.suspended === true;
+export function suspensionDocId(rosterId, uid) {
+  const id = String(rosterId || '').trim();
+  const owner = String(uid || '').trim();
+  if (!id || !owner) return '';
+  return `${id}_${owner}`;
 }
 
-/** La ficha suspendida de esta persona, por id o por el mismo teléfono. */
-export function findSuspended(roster, source) {
-  const list = roster || [];
-  const rosterId = String(source?.rosterId || '').trim();
-  if (rosterId) {
-    const row = list.find((item) => item?.id === rosterId);
-    if (isSuspended(row)) return row;
-  }
+/** Id de la ficha: el que viene, o el de la misma persona por teléfono. */
+export function rosterIdForSuspension(roster, source) {
+  const listed = String(source?.rosterId || '').trim();
+  if (listed && (roster || []).some((item) => item?.id === listed)) return listed;
+  if (!source?.matchId && source?.id && (roster || []).some((item) => item?.id === source.id)) return source.id;
   const key = phoneIdentity(source);
-  if (!key) return null;
-  return list.find((item) => isSuspended(item) && phoneIdentity(item) === key) || null;
+  if (!key) return listed;
+  return (roster || []).find((item) => phoneIdentity(item) === key)?.id || listed;
+}
+
+export function activeSuspensions(suspensions, rosterId) {
+  const id = String(rosterId || '').trim();
+  if (!id) return [];
+  return (suspensions || []).filter((row) => row?.suspended === true && row.rosterId === id);
+}
+
+/** `*` = el partido es de todos los organizadores. Si no, solo esos uid. */
+export function matchOrganizerUids(match) {
+  const adders = Array.isArray(match?.adders) ? match.adders.map((uid) => String(uid || '').trim()).filter(Boolean) : [];
+  if (!adders.length || adders.includes('*')) return ['*'];
+  const ids = [...adders];
+  const creator = String(match?.createdByUid || '').trim();
+  if (creator && !ids.includes(creator)) ids.push(creator);
+  return ids;
+}
+
+/** Suspensiones activas de organizadores de este partido. */
+export function blockingSuspensions(suspensions, match, rosterId) {
+  const rows = activeSuspensions(suspensions, rosterId);
+  const orgs = matchOrganizerUids(match);
+  if (orgs.includes('*')) return rows;
+  const allowed = new Set(orgs);
+  return rows.filter((row) => allowed.has(row.ownerUid));
 }
 
 export function rosterByPhone(roster, phone) {
