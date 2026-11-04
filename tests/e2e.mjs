@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v108');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v109');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5486,6 +5486,72 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   });
   check('Sin número de cancha la lista no escribe la C', plain !== '' && !/\bC\d/.test(plain), plain);
   await page.locator('.match-card[data-note="Cancha lista"]').screenshot({ path: '/opt/cursor/artifacts/screenshots/v104-cancha-lista.png' });
+}
+
+{
+  const shared = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addRoster({ name: 'Enlace Díaz', phone: '5491166669090', phoneShared: true }, app.who);
+    const matchId = await app.store.addMatch({ date: '2026-11-20', time: '21:00', note: 'Enlace', capacity: 14 }, app.who);
+    await app.store.addPlayer({ id: matchId }, { name: 'Enlace Díaz', phone: '5491166669090', rosterId: id }, app.who);
+    return { id, matchId };
+  });
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, shared.id);
+  await page.waitForSelector('#profile-share');
+  const beside = await page.evaluate(() => {
+    const name = document.querySelector('#profile h2.section').getBoundingClientRect();
+    const btn = document.querySelector('#profile-share').getBoundingClientRect();
+    return btn.left >= name.right - 2 && btn.top < name.bottom && btn.bottom > name.top;
+  });
+  check('En la ficha el ícono queda a la derecha del nombre', beside);
+  check('El ícono de compartir son tres círculos', await page.locator('#profile-share circle').count() === 3);
+  const filled = await page.locator('#profile-share circle').first().evaluate((el) => getComputedStyle(el).fill);
+  check('Los círculos del ícono están rellenos', filled !== 'none' && filled !== 'rgba(0, 0, 0, 0)', filled);
+  await page.click('#profile-share');
+  await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Enlace copiado'));
+  const link = await page.evaluate(() => navigator.clipboard.readText());
+  const expected = `https://gustavofarg-hash.github.io/futbol-colegiales/#/jugador/${encodeURIComponent(shared.id)}`;
+  check('El enlace es el de la ficha en GitHub Pages', link === expected, link);
+  check('Esa ficha abre la pestaña Jugadores', await page.locator('#btn-roster').getAttribute('aria-current') === 'page');
+  await page.evaluate((matchId) => { location.hash = `#/partido/${encodeURIComponent(matchId)}`; }, shared.matchId);
+  await page.waitForSelector('.slot:has-text("Enlace Díaz") .more-btn');
+  await page.click('.slot:has-text("Enlace Díaz") .more-btn');
+  await page.waitForSelector('#pm-share');
+  const menuBeside = await page.evaluate(() => {
+    const name = document.querySelector('#sheet h3').getBoundingClientRect();
+    const btn = document.querySelector('#pm-share').getBoundingClientRect();
+    return btn.left >= name.right - 2 && btn.top < name.bottom && btn.bottom > name.top;
+  });
+  check('En el menú el ícono queda a la derecha del nombre', menuBeside);
+  await page.locator('#sheet .sheet-body').screenshot({ path: '/opt/cursor/artifacts/screenshots/v109-enlace.png' });
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = () => Promise.reject(new Error('no'));
+    document.execCommand = () => false;
+  });
+  await page.click('#pm-share');
+  await page.waitForSelector('#player-link');
+  check('Si no se puede copiar, el enlace se puede seleccionar', (await page.inputValue('#player-link')) === expected);
+  await page.click('#sheet [data-close]');
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, shared.id);
+  await page.waitForSelector('#player-denied');
+  const denied = (await page.locator('#player-denied').innerText()).replace(/\s+/g, ' ').trim();
+  check('Sin acceso solo dice NO TENÉS ACCESO', denied === 'NO TENÉS ACCESO', denied);
+  check('Sin acceso no muestra el nombre', !(await page.locator('main').innerText()).includes('Enlace'));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v109-acceso.png' });
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
 }
 
 const fresh = await ctx.newPage();
