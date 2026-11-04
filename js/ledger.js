@@ -74,7 +74,21 @@ function matchOf(player, matches) {
  * Plata cobrada a esta persona, titulares y lista de espera, pasados y futuros.
  * organizer filtra por quien cobró (o "Sin especificar").
  */
-export function paymentLedger({ phone, phoneKey, rosterId, name, players, matches, organizer = null }) {
+function heldCreditByOrganizer(credits, personKeys) {
+  const keys = new Set((personKeys || []).map((key) => String(key || '').trim()).filter(Boolean));
+  const by = new Map();
+  for (const row of credits || []) {
+    const key = String(row?.personKey || '').trim();
+    if (!keys.has(key)) continue;
+    const amount = roundARS(row?.amount);
+    if (!(amount > 0)) continue;
+    const who = String(row?.organizerName || '').trim() || UNSPECIFIED;
+    by.set(who, roundARS((by.get(who) || 0) + amount));
+  }
+  return [...by.entries()].map(([name, amount]) => ({ name, amount }));
+}
+
+export function paymentLedger({ phone, phoneKey, rosterId, name, players, matches, organizer = null, credits = null, creditKeys = null }) {
   const months = new Map();
   const by = new Map();
   let total = 0;
@@ -99,6 +113,15 @@ export function paymentLedger({ phone, phoneKey, rosterId, name, players, matche
       by.set(who, bucket);
     }
   }
+  if (Array.isArray(credits) && Array.isArray(creditKeys)) {
+    for (const row of heldCreditByOrganizer(credits, creditKeys)) {
+      if (!wants(row.name, organizer)) continue;
+      total += row.amount;
+      const bucket = by.get(row.name) || { name: row.name, amount: 0, count: 0 };
+      bucket.amount += row.amount;
+      by.set(row.name, bucket);
+    }
+  }
   const monthList = [...months.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([key, amount]) => ({ key, label: monthLabel(key), amount, text: `${monthLabel(key)}: ${formatARS(amount)}` }));
@@ -106,7 +129,7 @@ export function paymentLedger({ phone, phoneKey, rosterId, name, players, matche
   return {
     total,
     count,
-    totalText: count ? `Pagó ${formatARS(total)}` : 'Sin pagos cargados',
+    totalText: (count || total > 0) ? `Pagó ${formatARS(total)}` : 'Sin pagos cargados',
     months: monthList,
     byOrganizer,
   };
@@ -203,8 +226,10 @@ export function paymentsSummary({ players, roster, organizer = null }) {
   return list;
 }
 
-/** Totales de cada organizador: plata cobrada y veces que anotó a alguien. */
-export function organizerTotals(players) {
+/** Totales de cada organizador: plata cobrada y veces que anotó a alguien.
+ * credits, si viene, suma el saldo que ese organizador todavía tiene.
+ * Una devolución baja ese saldo, así que baja lo cobrado. El de otro organizador no entra. */
+export function organizerTotals(players, credits = null) {
   const map = new Map();
   const bump = (name) => {
     const key = name || UNSPECIFIED;
@@ -217,6 +242,14 @@ export function organizerTotals(players) {
       for (const share of receivedShares(player)) bump(shareLabel(share.name)).collected += share.amount;
     }
     for (const share of pendingShareList(player)) bump(shareLabel(share.name)).pending += share.amount;
+  }
+  if (Array.isArray(credits)) {
+    for (const row of credits) {
+      const amount = roundARS(row?.amount);
+      if (!(amount > 0)) continue;
+      const who = String(row?.organizerName || '').trim() || UNSPECIFIED;
+      bump(who).collected += amount;
+    }
   }
   return [...map.values()].sort((a, b) => b.collected - a.collected || b.added - a.added || foldText(a.name).localeCompare(foldText(b.name), 'es'));
 }

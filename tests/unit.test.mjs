@@ -15,7 +15,7 @@ import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { planRows } from '../js/settle.js';
 import { dayCompensation, reconcileTransfers } from '../js/compensate.js';
-import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, nextCredit, retroactiveCreditIds } from '../js/credit.js';
+import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, nextCredit, retroactiveCreditIds } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -3132,9 +3132,11 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.equal(canSeeLog(solo, 'gus'), true);
 });
 
-test('devolver crédito acepta desde 0 hasta el saldo', () => {
-  assert.deepEqual(creditReturnPlan(0, 0), { ok: true, amount: 0 });
-  assert.deepEqual(creditReturnPlan(0, 3000), { ok: true, amount: 0 });
+test('devolver crédito acepta hasta el saldo y no el cero', () => {
+  assert.equal(creditAvailableLine({ organizerName: 'Gus', amount: 3000 }), 'Crédito disponible con Gus: $3.000');
+  assert.equal(creditAvailableLine({ organizerName: 'Gustavo', amount: 0 }), 'Crédito disponible con Gustavo: $0');
+  assert.equal(creditReturnPlan(0, 0).ok, false);
+  assert.equal(creditReturnPlan(0, 3000).error, 'Poné el monto.');
   assert.deepEqual(creditReturnPlan(1000, 3000), { ok: true, amount: 1000 });
   assert.deepEqual(creditReturnPlan(3000, 3000), { ok: true, amount: 3000 });
   assert.equal(creditReturnPlan(3000.004, 3000).ok, true);
@@ -3143,6 +3145,34 @@ test('devolver crédito acepta desde 0 hasta el saldo', () => {
   assert.match(over.error, /Supera el crédito disponible \(\$3\.000\)/);
   assert.equal(creditReturnPlan(-1, 3000).ok, false);
   assert.equal(creditReturnPlan(Number.NaN, 3000).ok, false);
+});
+
+test('el saldo que queda suma a lo cobrado y la devolución lo baja', () => {
+  const players = [{
+    id: 'ana', name: 'Ana', paid: true, cash: 5000, transfer: 0, pendingTransfer: 0, fromCredit: 0, cashTo: 'Gustavo',
+  }];
+  const held = [{ personKey: 'p:ana', organizerUid: 'gus', organizerName: 'Gustavo', amount: 5000, name: 'Ana' }];
+  const before = organizerTotals(players, held).find((row) => row.name === 'Gustavo');
+  assert.equal(before.collected, 10000);
+  const after = organizerTotals(players, [{ ...held[0], amount: 0 }]).find((row) => row.name === 'Gustavo');
+  assert.equal(after.collected, 5000);
+  const other = organizerTotals(players, [{ personKey: 'p:ana', organizerUid: 'mar', organizerName: 'Martín', amount: 5000 }]);
+  assert.equal(other.find((row) => row.name === 'Gustavo').collected, 5000);
+  assert.equal(other.find((row) => row.name === 'Martín').collected, 5000);
+  const ledger = paymentLedger({
+    name: 'Ana', players, matches: [], credits: held, creditKeys: ['p:ana'],
+  });
+  assert.equal(ledger.total, 10000);
+  assert.equal(ledger.byOrganizer.find((row) => row.name === 'Gustavo').amount, 10000);
+  const returned = paymentLedger({
+    name: 'Ana', players, matches: [], credits: [{ ...held[0], amount: 0 }], creditKeys: ['p:ana'],
+  });
+  assert.equal(returned.total, 5000);
+  const martin = paymentLedger({
+    name: 'Ana', players, matches: [], organizer: 'Martín',
+    credits: held, creditKeys: ['p:ana'],
+  });
+  assert.equal(martin.total, 0);
 });
 
 test('el pase retroactivo recorre primero el partido más viejo', () => {
@@ -3199,7 +3229,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v105');
+  assert.equal(version, 'f7c-v106');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

@@ -56,6 +56,13 @@ export function creditLine(row) {
   return who ? `Saldo a favor con ${who}: ${amount}` : `Saldo a favor: ${amount}`;
 }
 
+/** Misma fuente de nombre que creditLine: organizerName del saldo. */
+export function creditAvailableLine(row) {
+  const who = String(row?.organizerName || '').trim();
+  const amount = formatARS(row?.amount || 0);
+  return who ? `Crédito disponible con ${who}: ${amount}` : `Crédito disponible: ${amount}`;
+}
+
 /**
  * Cargar crédito no es anotar en el partido. canAdd mira adders y
  * createdByUid: en Firebase el uid de Auth a veces no está en esa lista
@@ -145,7 +152,7 @@ export function retroactiveCreditIds({ players, matches, prices, organizerUid, o
 
 /**
  * Monto a devolver del saldo con el organizador logueado.
- * 0 entra: no cambia el saldo. Más que el disponible, o un número negativo, no.
+ * Tiene que ser mayor a 0 y no pasar el disponible.
  */
 export function creditReturnPlan(amount, available) {
   const money = roundARS(Number(amount));
@@ -153,6 +160,7 @@ export function creditReturnPlan(amount, available) {
   if (!Number.isFinite(Number(amount)) || !Number.isFinite(money) || money < 0) {
     return { ok: false, error: 'El monto no es válido.' };
   }
+  if (money === 0) return { ok: false, error: 'Poné el monto.' };
   if (money > have) return { ok: false, error: `Supera el crédito disponible (${formatARS(have)}).` };
   return { ok: true, amount: money };
 }

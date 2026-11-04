@@ -26,7 +26,7 @@ import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWri
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
-import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
+import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v105';
+const APP_VERSION = 'f7c-v106';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3147,7 +3147,7 @@ function profileMoney(person) {
 function ledgerSection(person) {
   const organizer = app.payFilter || null;
   const who = rosterIdentity(person);
-  const money = paymentLedger({ ...who, players: app.players, matches: app.matches, organizer });
+  const money = paymentLedger({ ...who, players: app.players, matches: app.matches, organizer, credits: app.credits, creditKeys: creditKeysOf(null, person) });
   const signups = signupLedger({ ...who, players: app.players, organizer });
   const parts = { cash: 0, transfer: 0, pending: 0 };
   const shareOk = (name) => {
@@ -5192,12 +5192,14 @@ function playerPanelPieces(player, person, ids, debtKey) {
   } catch (error) { console.error(error); }
   const nick = panelNickState(player, person);
   const nickHtml = `<label class="field nick-field"><span>Nombre corto (o apodo)</span><input id="${ids.nick}" maxlength="40" autocomplete="off" placeholder="Ej: Vini" value="${esc(nick.value)}"${nick.editable ? '' : ' disabled'}><div class="small muted">${NICK_HINT}</div></label>`;
-  const creditHtml = credits.map((row, i) => `<p class="credit-total"${i === 0 ? ` id="${ids.credit}"` : ''}>${esc(creditLine(row))}</p>`).join('');
   const debtHtml = debt.total > 0 ? `<p class="debt-total" id="${ids.debt}">${esc(debt.text)}</p>` : '';
   const err = app.creditsError ? `<p class="hint" id="${ids.err}">${esc(app.creditsError)}</p>` : '';
   const mine = credits.find((row) => row.organizerUid === me.uid);
   const shownAmount = mine ? mine.amount : 0;
-  const button = canOfferCredit(me) ? `<div class="credit-actions"><span class="credit-available" id="${ids.available}">Crédito disponible: ${esc(formatARS(shownAmount))}</span><button type="button" class="btn primary" id="${ids.button}">Cargar</button><button type="button" class="btn" id="${ids.returnButton}"${shownAmount > 0 ? '' : ' disabled'}>Devolver</button></div>` : '';
+  const organizerName = mine?.organizerName || me.name || '';
+  const line = app.creditsError ? '' : `<span class="credit-total credit-available" id="${ids.credit}">${esc(creditAvailableLine({ organizerName, amount: shownAmount }))}</span>`;
+  const buttons = canOfferCredit(me) ? `<button type="button" class="btn primary" id="${ids.button}">Cargar</button><button type="button" class="btn" id="${ids.returnButton}"${shownAmount > 0 ? '' : ' disabled'}>Devolver</button>` : '';
+  const button = (line || buttons) ? `<div class="credit-actions">${line}${buttons}</div>` : '';
   const rows = debt.rows.length
     ? `<ul class="ledger-list" id="debt-list">${debt.rows.map((row) => {
       const match = knownMatches().find((item) => item.id === row.matchId);
@@ -5207,13 +5209,13 @@ function playerPanelPieces(player, person, ids, debtKey) {
       return `<li><button type="button" class="debt-jump" data-debt-player="${esc(row.playerId)}" data-debt-match="${esc(row.matchId)}">${esc(row.text)}</button></li>`;
     }).join('')}</ul>`
     : '';
-  const creditStack = (creditHtml || button) ? `<div class="credit-stack">${creditHtml}${button}</div>` : '';
+  const creditStack = button ? `<div class="credit-stack">${button}</div>` : '';
   const debtStack = (debtHtml || rows) ? `<div class="debt-stack">${debtHtml}${rows}</div>` : '';
   const balance = `<div class="player-balance" id="${ids.balance}">${creditStack}${debtStack}</div>`;
   const rosterPerson = panelRosterPerson(player, person);
   const notesHtml = notesMarkup(rosterPerson);
   const statsButton = `<button type="button" class="btn block" id="${ids.stats}">Ver estadísticas</button>`;
-  return { keys, writeKey: creditWriteKey(keys, me.uid), nick, nickHtml, balance, err, button, rows, notesHtml, statsButton, person: rosterPerson, shownAmount };
+  return { keys, writeKey: creditWriteKey(keys, me.uid), nick, nickHtml, balance, err, button, rows, notesHtml, statsButton, person: rosterPerson, shownAmount, organizerName };
 }
 
 function bindPlayerPanel(scope, player, person, ids, panel) {
@@ -5424,12 +5426,12 @@ function openCreditReturnForm({ player, person, panel }) {
   const label = player ? shownName(player) : (cleanShortName(person?.shortName) || person?.name || '');
   const fullName = player?.name || person?.name || '';
   const current = panel?.shownAmount ?? creditBalance(app.credits, key, me.uid);
-  const who = me.name || 'vos';
+  const who = panel?.organizerName || me.name || 'vos';
   openSheet(`
     <form id="return-form" novalidate>
       <h3>Devolver crédito</h3>
       <p class="hint">${esc(label)} · con ${esc(who)}</p>
-      <p class="credit-total" id="return-now">Crédito disponible: ${esc(formatARS(current))}</p>
+      <p class="credit-total" id="return-now">${esc(creditAvailableLine({ organizerName: who, amount: current }))}</p>
       <label class="field"><span>Monto a devolver</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" autofocus aria-label="Monto a devolver"></label>
       <div class="field"><div class="err" id="return-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit" id="return-ok">Confirmar</button></div>
@@ -5457,10 +5459,6 @@ function openCreditReturnForm({ player, person, panel }) {
     const plan = money.ok ? creditReturnPlan(money.amount, current) : money;
     if (!plan.ok) { $('#return-err').textContent = plan.error; return; }
     closeSheet();
-    if (!(plan.amount > 0)) {
-      toast(`Se devolvió ${formatARS(0)}.`);
-      return;
-    }
     const moves = keys
       .map((personKey) => ({ personKey, have: creditBalance(app.credits, personKey, me.uid) }))
       .filter((row) => row.have > 0);
