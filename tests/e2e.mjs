@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v107');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v108');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -261,7 +261,7 @@ check('La lista con partidos tampoco muestra el pie de sede y formato', await pa
 await page.click('.match-card');
 await page.waitForSelector('#btn-add-player');
 check('El detalle sigue mostrando la sede y el formato', (await page.textContent('#match-place'))?.replace(/\s+/g, ' ').trim() === 'Polideportivo Colegiales - F7');
-check('Con un solo próximo la fecha es texto y no abre la lista', (await page.textContent('#match-date'))?.trim() === 'Jue 22/10 21hs' && await page.locator('#match-date').evaluate((el) => el.tagName) === 'H1' && (await page.locator('#btn-notes').innerText()) === 'Notas' && await page.locator('#match-notes .hint').count() === 0 && !(await page.locator('#match-notes').innerText()).includes('Sin notas') && (await page.locator('#match-when').innerText()).replace(/\s+/g, ' ').includes('21hs ($5.000)'));
+check('Con un solo próximo la fecha es texto y no abre la lista', (await page.textContent('#match-date'))?.trim() === 'Jueves 22/10' && await page.locator('#match-date').evaluate((el) => el.tagName) === 'H1' && (await page.locator('#btn-notes').innerText()) === 'Notas' && await page.locator('#match-notes .hint').count() === 0 && !(await page.locator('#match-notes').innerText()).includes('Sin notas') && (await page.locator('#match-when').innerText()).replace(/\s+/g, ' ').includes('21hs ($5.000)'));
 await page.click('#btn-notes');
 await page.waitForSelector('#notes-form');
 await page.fill('#notes-form [name=notes]', 'Traer pelotas');
@@ -269,16 +269,22 @@ await page.click('#notes-form button[type=submit]');
 await page.waitForSelector('#match-notes .match-notes-text');
 const notesLay = await page.evaluate(() => {
   const btn = document.querySelector('#btn-notes').getBoundingClientRect();
-  const text = document.querySelector('.match-notes-text').getBoundingClientRect();
+  const textEl = document.querySelector('.match-notes-text');
+  const text = textEl.getBoundingClientRect();
   const box = document.querySelector('.detail-head').getBoundingClientRect();
+  const style = getComputedStyle(textEl);
   return {
-    text: document.querySelector('.match-notes-text').textContent,
-    below: text.top >= btn.bottom - 1,
+    text: textEl.textContent,
+    sameRow: text.top < btn.bottom - 4 && btn.top < text.bottom - 4,
+    left: text.right <= btn.left + 2,
     right: btn.right >= box.right - 20,
-    heading: document.querySelector('.match-notes strong') == null,
+    wrap: style.whiteSpace === 'pre-wrap',
+    radius: parseFloat(style.borderRadius),
+    smaller: parseFloat(style.fontSize) < 16,
   };
 });
-check('Con notas, el botón queda arriba a la derecha y el texto abajo', notesLay.text === 'Traer pelotas' && notesLay.below && notesLay.right && notesLay.heading, JSON.stringify(notesLay));
+check('Con notas, el texto queda en un recuadro a la izquierda del botón', notesLay.text === 'Traer pelotas' && notesLay.sameRow && notesLay.left && notesLay.right && notesLay.wrap && notesLay.radius >= 8 && notesLay.smaller, JSON.stringify(notesLay));
+await page.locator('#match-notes').screenshot({ path: '/opt/cursor/artifacts/screenshots/v108-notas.png' });
 await page.click('#btn-notes');
 await page.fill('#notes-form [name=notes]', '');
 await page.click('#notes-form button[type=submit]');
@@ -2376,7 +2382,7 @@ await page.waitForSelector('.match-card[data-date="2026-11-08"]');
 const norteCard = (await page.locator('.match-card[data-date="2026-11-08"]').innerText()).replace(/\s+/g, ' ');
 check('La tarjeta muestra la sede y el cupo de 6 por equipo', norteCard.includes('Club Norte Sur') && /0\/12/.test(norteCard), norteCard);
 await page.click('.match-card[data-date="2026-11-08"]');
-await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.trim().startsWith('Dom 08/11 19:30hs'));
+await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.trim().startsWith('Domingo 08/11'));
 const norteDetail = {
   date: (await page.textContent('#match-date'))?.trim(),
   when: await page.textContent('#match-when'),
@@ -2387,7 +2393,7 @@ const norteDetail = {
   price: await page.textContent('#match-price'),
   tag: await page.locator('#match-date').evaluate((el) => el.tagName),
 };
-check('El detalle usa la sede y Faltan 12', (norteDetail.date || '').startsWith('Dom 08/11 19:30hs C3') && norteDetail.tag === 'BUTTON' && (norteDetail.when || '').includes('19:30hs ($8.000)') && norteDetail.place === 'Club Norte Sur - F6 - Cancha 3' && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'), JSON.stringify(norteDetail));
+check('El detalle usa la sede y Faltan 12', (norteDetail.date || '').startsWith('Domingo 08/11') && !(norteDetail.date || '').includes('hs') && norteDetail.tag === 'BUTTON' && (norteDetail.when || '').includes('19:30hs ($8.000)') && norteDetail.place === 'Club Norte Sur - F6 - Cancha 3' && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'), JSON.stringify(norteDetail));
 await page.click('#btn-copy');
 const norteCopy = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada nombra la sede', norteCopy.includes('Club Norte Sur') && norteCopy.includes('Faltan 12') && norteCopy.includes('⚽ Fútbol 6') && norteCopy.includes('Cancha 3'), norteCopy.split('\n').slice(0, 4).join(' | '));
@@ -2416,21 +2422,57 @@ await page.click('#match-form [data-close]');
 await page.click('.match-card[data-date="2026-11-08"]');
 await page.waitForSelector('.when');
 check('El partido que ya la usa sigue mostrando el nombre nuevo', (await page.textContent('#match-place')).includes('Club Norte Sur'));
-await page.locator('.detail-head').screenshot({ path: '/opt/cursor/artifacts/screenshots/v107-detalle.png' });
+await page.locator('.detail-head').screenshot({ path: '/opt/cursor/artifacts/screenshots/v108-detalle.png' });
 await page.click('#match-date');
 await page.waitForSelector('#match-switch-list');
 const switchLabels = (await page.locator('#match-switch-list [data-match-switch]').allInnerTexts()).map((text) => text.replace(/\s+/g, ' ').trim());
 check('El desplegable lista los próximos con la sede y sin precio', switchLabels.length > 1 && switchLabels.some((text) => text.startsWith('Dom 08/11 19:30hs C3 · ')) && switchLabels.every((text) => !text.includes('$') && text.includes(' · ')), switchLabels.slice(0, 4).join(' | '));
-await page.locator('#match-switch-list').screenshot({ path: '/opt/cursor/artifacts/screenshots/v107-selector.png' });
+await page.locator('#match-switch-list').screenshot({ path: '/opt/cursor/artifacts/screenshots/v108-selector.png' });
 const otherLabel = switchLabels.find((text) => !text.startsWith('Dom 08/11 19:30hs C3'));
-const otherClosed = otherLabel.split(' · ')[0];
-await page.evaluate((label) => {
+const pickedId = await page.evaluate((label) => {
   const btn = [...document.querySelectorAll('[data-match-switch]')].find((el) => el.textContent.trim() === label);
-  btn.click();
+  const id = btn?.dataset.matchSwitch || '';
+  btn?.click();
+  return id;
 }, otherLabel);
-await page.waitForFunction((label) => document.querySelector('#match-date')?.textContent?.trim().startsWith(label), otherClosed);
-check('Elegir otro partido abre ese detalle', (await page.textContent('#match-date'))?.trim().startsWith(otherClosed) && !(await page.textContent('#match-date')).includes(' · '));
+const expectedTitle = await page.evaluate(async (id) => {
+  const { matchTitleLabel } = await import('./js/dates.js');
+  const rows = [...(window.__app.matches || []), ...(window.__app.history || [])];
+  const match = rows.find((item) => item.id === id);
+  return match ? matchTitleLabel(match.date) : '';
+}, pickedId);
+await page.waitForFunction((title) => document.querySelector('#match-date')?.textContent?.trim().startsWith(title), expectedTitle);
+check('Elegir otro partido abre ese detalle', (await page.textContent('#match-date'))?.trim().startsWith(expectedTitle) && !(await page.textContent('#match-date')).includes('hs'));
 await page.goBack();
+await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.includes('08/11'));
+const pastIds = await page.evaluate(async () => {
+  const { pastMatches } = await import('./js/profile.js');
+  const { addDays, todayISO } = await import('./js/dates.js');
+  const map = new Map();
+  for (const match of [...(window.__app.matches || []), ...(window.__app.history || [])]) {
+    if (match?.id) map.set(match.id, match);
+  }
+  const from = addDays(todayISO(), -7);
+  return pastMatches([...map.values()]).filter((match) => match.date >= from).map((match) => match.id);
+});
+check('Hay más de un partido en los últimos 7 días', pastIds.length > 1, String(pastIds.length));
+const backToUpcoming = await page.evaluate(() => location.hash);
+await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, pastIds[0]);
+await page.waitForFunction(() => document.querySelector('#match-date')?.tagName === 'BUTTON');
+const pastTitle = (await page.textContent('#match-date')).replace(/\s+/g, ' ').trim();
+check('El historial muestra el día completo sin hora', !pastTitle.includes('hs') && !pastTitle.includes('·') && /^\p{L}+ \d{2}\/\d{2}$/u.test(pastTitle), pastTitle);
+await page.click('#match-date');
+await page.waitForSelector('#match-switch-list');
+const pastLabels = (await page.locator('#match-switch-list [data-match-switch]').allInnerTexts()).map((text) => text.replace(/\s+/g, ' ').trim());
+const pastFirst = await page.locator('#match-switch-list [data-match-switch]').first().getAttribute('data-match-switch');
+check('El historial lista los últimos 7 días, el más reciente primero, con sede y sin precio', pastLabels.length === pastIds.length && pastFirst === pastIds[0] && pastLabels.every((text) => !text.includes('$') && text.includes(' · ') && /\dhs/.test(text)), pastLabels.slice(0, 3).join(' | '));
+await page.locator('#match-switch-list').screenshot({ path: '/opt/cursor/artifacts/screenshots/v108-historial.png' });
+await page.evaluate((id) => {
+  const btn = [...document.querySelectorAll('[data-match-switch]')].find((el) => el.dataset.matchSwitch === id);
+  btn.click();
+}, pastIds[1]);
+await page.waitForFunction((id) => location.hash.includes(id), pastIds[1]);
+await page.evaluate((hash) => { location.hash = hash; }, backToUpcoming);
 await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.includes('08/11'));
 await page.click('#btn-back');
 await page.waitForSelector('#list-next');
@@ -5090,7 +5132,7 @@ async function assertGuestPromo(fix, visibleName, count) {
     const box = el.getBoundingClientRect();
     return { text: el.textContent.trim(), sw: el.scrollWidth, cw: el.clientWidth, w: Math.round(box.width) };
   });
-  check('El detalle antepone el día y queda en una línea', weekdayDetail.text.startsWith('Mié 18/11 19hs') && weekdayDetail.sw <= weekdayDetail.cw + 1, JSON.stringify(weekdayDetail));
+  check('El detalle antepone el día y queda en una línea', weekdayDetail.text.startsWith('Miércoles 18/11') && !weekdayDetail.text.includes('hs') && weekdayDetail.sw <= weekdayDetail.cw + 1, JSON.stringify(weekdayDetail));
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.evaluate(() => { document.scrollingElement.scrollTop = 0; });
   await page.locator('#match-date').scrollIntoViewIfNeeded();
