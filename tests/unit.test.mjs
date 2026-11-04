@@ -31,7 +31,7 @@ import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, indexFromStored, readTextSize, stepTextSize, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, isRestricted, limitFor, limitMessage, publicAccess } from '../js/access.js';
 import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, nextInGoalAt, normalizeScore, normalizeTeams, orderByGoal, orderTeamsByGoal, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
-import { APP_INSTALL_URL, appShareMessage } from '../js/share.js';
+import { APP_INSTALL_URL, appShareMessage, playerLink } from '../js/share.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -2674,6 +2674,11 @@ test('compartir la app nombra el link de instalación', () => {
   assert.equal(APP_INSTALL_URL, 'https://gustavofarg-hash.github.io/futbol-colegiales/');
 });
 
+test('el enlace del jugador abre esa ficha', () => {
+  assert.equal(playerLink('abc/1'), `${APP_INSTALL_URL}#/jugador/abc%2F1`);
+  assert.equal(playerLink('  '), '');
+});
+
 test('cancelar no arma recordatorio y el mensaje no lleva link', () => {
   const match = { id: 'm', date: '2026-10-26', time: '21:00', cancelled: true, notes: 'Lluvia' };
   const start = toEpoch(match.date, match.time);
@@ -3244,7 +3249,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v108');
+  assert.equal(version, 'f7c-v109');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

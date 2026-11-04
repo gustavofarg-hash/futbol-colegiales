@@ -18,7 +18,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, searchRoster, visibleRosterPhone } from './roster.js';
+import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, searchRoster, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -34,14 +34,14 @@ import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInp
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
-import { APP_INSTALL_URL, appShareMessage } from './share.js';
+import { APP_INSTALL_URL, appShareMessage, playerLink } from './share.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v108';
+const APP_VERSION = 'f7c-v109';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -92,6 +92,7 @@ const ICON = {
   plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   paste: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/></svg>',
   share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 6l-4-4-4 4M12 2v14"/></svg>',
+  shareNodes: '<svg class="share-nodes" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.1 11.1 15.1 7.2M8.1 12.9 15.1 16.8"/><circle cx="5.6" cy="12" r="2.5"/><circle cx="18.2" cy="5.8" r="2.5"/><circle cx="18.2" cy="18.2" r="2.5"/></svg>',
   copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
@@ -133,6 +134,8 @@ const app = {
   oweOpen: new Set(),
   matchMiss: {},
   showLater: false,
+  profileMatchId: null,
+  profileViaMatchId: null,
 };
 window.__app = app; // útil para depurar / tests
 
@@ -784,7 +787,16 @@ function route() {
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
 }
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => {
+  const next = route();
+  if (next.name === 'profile') {
+    if (app.profileViaMatchId !== next.id) {
+      app.profileMatchId = null;
+      app.profileViaMatchId = null;
+    }
+  } else app.profileViaMatchId = null;
+  render();
+});
 
 /* Al abrir la app (sesión nueva) siempre entra Próximos partidos, con “más adelante” cerrado.
    Recargar o volver atrás, en la misma sesión, deja la pestaña y el desplegable como estaban. */
@@ -2140,6 +2152,36 @@ async function copyText(text) {
     let ok = false; try { ok = document.execCommand('copy'); } catch {} ta.remove(); return ok;
   }
 }
+function shareRosterId(player) {
+  const listed = String(player?.rosterId || '').trim();
+  if (listed) return listed;
+  const mine = rosterForOrganizer(app.roster, actor());
+  const phone = canonicalPhone(player?.phone || '');
+  if (phone) {
+    const found = rosterByPhone(mine, phone);
+    if (found?.id) return found.id;
+  }
+  const key = String(player?.phoneKey || '').trim();
+  if (key) {
+    const found = rosterByIdentity(mine, key);
+    if (found?.id) return found.id;
+  }
+  return '';
+}
+function playerShareButton(id) {
+  return `<button type="button" class="icon-btn player-share" id="${id}" aria-label="Copiar enlace">${ICON.shareNodes}</button>`;
+}
+async function copyPlayerLink(rosterId) {
+  const url = playerLink(rosterId);
+  if (!url) {
+    openSheet(`<h3>Enlace</h3><p>Este jugador todavía no está en Jugadores.</p><div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
+    return;
+  }
+  if (await copyText(url)) { toast('Enlace copiado'); return; }
+  openSheet(`<h3>Enlace</h3><p class="hint">No se pudo copiar. Seleccioná el enlace.</p><label class="field"><input id="player-link" readonly value="${esc(url)}"></label><div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
+  const input = $('#player-link');
+  if (input) input.focus();
+}
 async function shareText(text) {
   if (navigator.share) {
     try { await navigator.share({ text }); return; } catch (e) { if (e.name === 'AbortError') return; }
@@ -3024,6 +3066,7 @@ function renderRoster() {
     const open = e.target.closest('[data-roster-open]');
     if (open) {
       app.profileMatchId = null;
+      app.profileViaMatchId = null;
       location.hash = `#/jugador/${encodeURIComponent(open.dataset.rosterOpen)}`;
     }
   };
@@ -3176,11 +3219,16 @@ async function openPlayerProfile(player, matchId) {
     if (!id) id = await ensureRoster({ name: player.name, phone: player.phone, rosterId: player.rosterId, phoneKey: player.phoneKey });
     if (!id) { toast('No se pudo abrir el perfil'); return; }
     if (player.id && player.rosterId !== id) await app.store.updatePlayer(player.id, { rosterId: id });
+    app.profileViaMatchId = id;
     location.hash = `#/jugador/${encodeURIComponent(id)}`;
   } catch (error) {
     if (error?.code === 'roster-duplicate') {
       const person = rosterByPhone(app.roster, player.phone) || rosterByIdentity(app.roster, player.phoneKey);
-      if (person) { location.hash = `#/jugador/${encodeURIComponent(person.id)}`; return; }
+      if (person) {
+        app.profileViaMatchId = person.id;
+        location.hash = `#/jugador/${encodeURIComponent(person.id)}`;
+        return;
+      }
     }
     if (isRosterDenied(error)) { showError(`${ROSTER_DENIED_WRITE} El perfil no se pudo abrir.`); return; }
     toast('No se pudo abrir el perfil');
@@ -3610,9 +3658,14 @@ function renderUsers() {
 
 function renderProfile(id) {
   const person = app.roster.find((r) => r.id === id);
-  if (!person) {
+  const fromMatch = app.profileViaMatchId === id;
+  if (!person || (!fromMatch && !rosterHeldBy(person, actor()))) {
     app.signupDraft = null;
-    replaceView(`<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
+    if (fromMatch && !person) {
+      replaceView(`<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
+      return;
+    }
+    replaceView(`<div class="empty" id="player-denied"><p><b>NO TENÉS ACCESO</b></p></div>`);
     return;
   }
   const who = rosterIdentity(person);
@@ -3625,7 +3678,10 @@ function renderProfile(id) {
   const money = profileMoney(person);
   const painted = replaceView(`
     <article id="profile">
-      <h2 class="section">${esc(person.name)}</h2>
+      <div class="name-share">
+        <h2 class="section">${esc(person.name)}</h2>
+        ${playerShareButton('profile-share')}
+      </div>
       ${money.panel.nickHtml}
       ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" value="${esc(person.name)}"></label>` : ''}
       <div class="phone-row">
@@ -3667,6 +3723,8 @@ function renderProfile(id) {
   }
   if (!painted) return;
   bindPlayerPanel($('#profile'), null, person, PROFILE_PANEL, money.panel);
+  const profileShare = $('#profile-share');
+  if (profileShare) profileShare.onclick = () => copyPlayerLink(person.id);
   const addPhone = $('#profile-add-phone');
   if (addPhone && own) addPhone.onclick = () => openPhoneForm(person);
   const profileName = $('#profile-name');
@@ -5563,7 +5621,10 @@ function openPlayerMenu(m, p) {
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   const canAnnotate = !!(match && canAdd(match, actor().uid));
   openSheet(`
-    <h3>${esc(shownName(p))}</h3>
+    <div class="name-share">
+      <h3>${esc(shownName(p))}</h3>
+      ${playerShareButton('pm-share')}
+    </div>
     <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.notesHtml}${panel.statsButton}</div>
     <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
@@ -5584,6 +5645,8 @@ function openPlayerMenu(m, p) {
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   bindPlayerPanel(sheet, p, null, MENU_PANEL, panel);
+  const menuShare = $('#pm-share');
+  if (menuShare) menuShare.onclick = () => copyPlayerLink(shareRosterId(p));
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, match?.id); };
   const payBtn = $('#pm-pay');
   if (payBtn) payBtn.onclick = () => openPaymentForm(match, p);

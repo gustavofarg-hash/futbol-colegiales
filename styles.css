@@ -706,6 +706,14 @@ dialog.ask::backdrop { background: rgba(0,0,0,.62); }
 }
 .sheet-body::before { content: ""; display: block; width: 40px; height: 5px; border-radius: 9px; background: var(--line); margin: 0 auto 12px; }
 .sheet h3 { margin: 0 0 4px; font-size: 1.25rem; }
+.name-share { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.name-share > .section { flex: 1 1 auto; min-width: 0; margin: 4px 0 10px; }
+.sheet .name-share > h3 { flex: 1 1 auto; min-width: 0; margin: 0; }
+.player-share { color: var(--text); }
+.share-nodes circle { fill: currentColor; stroke: none; }
+.share-nodes path { fill: none; stroke: currentColor; }
+#player-denied { padding: 48px 16px; }
+#player-denied b { font-size: 1.125rem; letter-spacing: .04em; }
 .sheet .hint { color: var(--muted); font-size: 0.875rem; margin: 0 0 14px; }
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; font-size: 0.875rem; font-weight: 700; margin-bottom: 6px; }
