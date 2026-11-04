@@ -26,7 +26,7 @@ import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWri
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
-import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditLine, creditLoadSummary, creditPanelRows, retroactiveCreditIds } from './credit.js';
+import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v104';
+const APP_VERSION = 'f7c-v105';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -5079,8 +5079,8 @@ function debtSubject(player) {
 }
 
 const NICK_HINT = 'Es lo que se ve en la lista del partido y en Equipos.';
-const MENU_PANEL = { nick: 'menu-nick', credit: 'menu-credit', debt: 'menu-debt', balance: 'menu-balance', button: 'pm-credit', err: 'menu-credit-err', stats: 'pm-stats' };
-const PROFILE_PANEL = { nick: 'profile-nick', credit: 'profile-credit', debt: 'debt-total', balance: 'profile-balance', button: 'profile-credit-btn', err: 'profile-credit-err', stats: 'profile-stats' };
+const MENU_PANEL = { nick: 'menu-nick', credit: 'menu-credit', debt: 'menu-debt', balance: 'menu-balance', button: 'pm-credit', returnButton: 'pm-credit-return', available: 'pm-credit-available', err: 'menu-credit-err', stats: 'pm-stats' };
+const PROFILE_PANEL = { nick: 'profile-nick', credit: 'profile-credit', debt: 'debt-total', balance: 'profile-balance', button: 'profile-credit-btn', returnButton: 'profile-credit-return', available: 'profile-credit-available', err: 'profile-credit-err', stats: 'profile-stats' };
 
 function staffActor() {
   return { ...actor(), role: app.role || app.session?.user?.role || '' };
@@ -5167,7 +5167,7 @@ function statsPlayerHash(id) {
 }
 
 /**
- * Apodo, saldo a favor, deuda, Cargar crédito, notas y Ver estadísticas.
+ * Apodo, saldo a favor, deuda, crédito disponible, notas y Ver estadísticas.
  * El mismo bloque en el menú del partido y en el perfil.
  */
 function playerPanelPieces(player, person, ids, debtKey) {
@@ -5195,7 +5195,9 @@ function playerPanelPieces(player, person, ids, debtKey) {
   const creditHtml = credits.map((row, i) => `<p class="credit-total"${i === 0 ? ` id="${ids.credit}"` : ''}>${esc(creditLine(row))}</p>`).join('');
   const debtHtml = debt.total > 0 ? `<p class="debt-total" id="${ids.debt}">${esc(debt.text)}</p>` : '';
   const err = app.creditsError ? `<p class="hint" id="${ids.err}">${esc(app.creditsError)}</p>` : '';
-  const button = canOfferCredit(me) ? `<button type="button" class="btn primary block" id="${ids.button}">Cargar crédito</button>` : '';
+  const mine = credits.find((row) => row.organizerUid === me.uid);
+  const shownAmount = mine ? mine.amount : 0;
+  const button = canOfferCredit(me) ? `<div class="credit-actions"><span class="credit-available" id="${ids.available}">Crédito disponible: ${esc(formatARS(shownAmount))}</span><button type="button" class="btn primary" id="${ids.button}">Cargar</button><button type="button" class="btn" id="${ids.returnButton}"${shownAmount > 0 ? '' : ' disabled'}>Devolver</button></div>` : '';
   const rows = debt.rows.length
     ? `<ul class="ledger-list" id="debt-list">${debt.rows.map((row) => {
       const match = knownMatches().find((item) => item.id === row.matchId);
@@ -5208,11 +5210,10 @@ function playerPanelPieces(player, person, ids, debtKey) {
   const creditStack = (creditHtml || button) ? `<div class="credit-stack">${creditHtml}${button}</div>` : '';
   const debtStack = (debtHtml || rows) ? `<div class="debt-stack">${debtHtml}${rows}</div>` : '';
   const balance = `<div class="player-balance" id="${ids.balance}">${creditStack}${debtStack}</div>`;
-  const mine = credits.find((row) => row.organizerUid === me.uid);
   const rosterPerson = panelRosterPerson(player, person);
   const notesHtml = notesMarkup(rosterPerson);
   const statsButton = `<button type="button" class="btn block" id="${ids.stats}">Ver estadísticas</button>`;
-  return { keys, writeKey: creditWriteKey(keys, me.uid), nick, nickHtml, balance, err, button, rows, notesHtml, statsButton, person: rosterPerson, shownAmount: mine ? mine.amount : 0 };
+  return { keys, writeKey: creditWriteKey(keys, me.uid), nick, nickHtml, balance, err, button, rows, notesHtml, statsButton, person: rosterPerson, shownAmount };
 }
 
 function bindPlayerPanel(scope, player, person, ids, panel) {
@@ -5255,6 +5256,8 @@ function bindPlayerPanel(scope, player, person, ids, panel) {
   };
   const btn = scope?.querySelector(`#${ids.button}`);
   if (btn) btn.onclick = () => openCreditForm({ player, person, panel });
+  const back = scope?.querySelector(`#${ids.returnButton}`);
+  if (back && !back.disabled) back.onclick = () => openCreditReturnForm({ player, person, panel });
   const statsBtn = scope?.querySelector(`#${ids.stats}`);
   if (statsBtn) statsBtn.onclick = () => {
     closeSheet();
@@ -5409,6 +5412,79 @@ function openCreditForm({ player, person, panel }) {
       });
     })();
     run(job, summary);
+  };
+}
+
+function openCreditReturnForm({ player, person, panel }) {
+  const me = actor();
+  const keys = panel?.keys?.length ? panel.keys : creditKeysOf(player, person);
+  const key = panel?.writeKey || creditWriteKey(keys, me.uid);
+  if (!key) { toast('No se puede devolver crédito sin identificar al jugador.'); return; }
+  if (!me.uid) { toast('No se pudo identificar la sesión.'); return; }
+  const label = player ? shownName(player) : (cleanShortName(person?.shortName) || person?.name || '');
+  const fullName = player?.name || person?.name || '';
+  const current = panel?.shownAmount ?? creditBalance(app.credits, key, me.uid);
+  const who = me.name || 'vos';
+  openSheet(`
+    <form id="return-form" novalidate>
+      <h3>Devolver crédito</h3>
+      <p class="hint">${esc(label)} · con ${esc(who)}</p>
+      <p class="credit-total" id="return-now">Crédito disponible: ${esc(formatARS(current))}</p>
+      <label class="field"><span>Monto a devolver</span><input name="amount" inputmode="decimal" autocomplete="off" placeholder="0" autofocus aria-label="Monto a devolver"></label>
+      <div class="field"><div class="err" id="return-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit" id="return-ok">Confirmar</button></div>
+    </form>`);
+  const form = $('#return-form');
+  const paint = () => {
+    const err = $('#return-err');
+    const submit = $('#return-ok');
+    if (!err || !submit) return;
+    if (app.creditsError) { err.textContent = app.creditsError; submit.disabled = true; return; }
+    const money = readMoney(form.amount.value);
+    if (!money.ok) { err.textContent = money.error; submit.disabled = true; return; }
+    const plan = creditReturnPlan(money.amount, current);
+    if (!plan.ok) { err.textContent = plan.error; submit.disabled = true; return; }
+    err.textContent = '';
+    submit.disabled = false;
+  };
+  form.amount.addEventListener('input', paint);
+  paint();
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    paint();
+    if ($('#return-ok')?.disabled) return;
+    const money = readMoney(form.amount.value);
+    const plan = money.ok ? creditReturnPlan(money.amount, current) : money;
+    if (!plan.ok) { $('#return-err').textContent = plan.error; return; }
+    closeSheet();
+    if (!(plan.amount > 0)) {
+      toast(`Se devolvió ${formatARS(0)}.`);
+      return;
+    }
+    const moves = keys
+      .map((personKey) => ({ personKey, have: creditBalance(app.credits, personKey, me.uid) }))
+      .filter((row) => row.have > 0);
+    const job = (async () => {
+      let left = plan.amount;
+      for (const row of moves) {
+        if (!(left > 0)) break;
+        const take = Math.min(row.have, left);
+        await app.store.adjustCredit({
+          personKey: row.personKey,
+          organizerUid: me.uid,
+          organizerName: me.name,
+          name: fullName,
+          delta: -take,
+        }, app.who);
+        left = roundMoney(left - take);
+      }
+      if (left > 0) throw Object.assign(new Error('No alcanza el saldo a favor.'), { code: 'invalid-credit' });
+      await app.store.recordCreditReturn({
+        player: { ...(player || {}), name: fullName, creditTo: me.name },
+        amount: plan.amount,
+      });
+    })();
+    run(job, `Se devolvió ${formatARS(plan.amount)}.`);
   };
 }
 

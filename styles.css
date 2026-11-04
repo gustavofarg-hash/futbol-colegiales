@@ -579,6 +579,15 @@ button.team-name {
 .player-balance { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0 0 8px; }
 .credit-stack { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
 .credit-stack .credit-total { margin: 0; }
+.credit-actions { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.credit-actions .credit-available {
+  flex: 1 1 auto; min-width: max-content; font-weight: 800; font-size: 0.75rem; line-height: 1.15;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.credit-actions .btn {
+  flex: 0 0 auto; width: auto; min-height: 34px; padding: 0 8px;
+  font-size: 0.75rem; border-radius: 12px; white-space: nowrap;
+}
 .debt-stack { display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
 .debt-stack .debt-total { margin: 0; }
 .debt-stack .ledger-list { margin: 0; gap: 2px; }
