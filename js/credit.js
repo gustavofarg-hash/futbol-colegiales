@@ -60,7 +60,7 @@ export function creditLine(row) {
 export function creditAvailableLine(row) {
   const who = String(row?.organizerName || '').trim();
   const amount = formatARS(row?.amount || 0);
-  return who ? `Crédito disponible con ${who}: ${amount}` : `Crédito disponible: ${amount}`;
+  return who ? `Crédito con ${who}: ${amount}` : `Crédito: ${amount}`;
 }
 
 /**
@@ -165,13 +165,19 @@ export function creditReturnPlan(amount, available) {
   return { ok: true, amount: money };
 }
 
-/** "Se aplicó $5.000 a 01/10 21hs. Queda como saldo a favor $3.000." */
-export function creditLoadSummary(plan) {
+function creditLeftText(amount, organizerName) {
+  const money = formatARS(amount);
+  const who = String(organizerName || '').trim();
+  return who ? `crédito con ${who}: ${money}` : `crédito: ${money}`;
+}
+
+/** "Se aplicó $5.000 a 01/10 21hs. Queda como crédito con Gustavo: $3.000." */
+export function creditLoadSummary(plan, organizerName = '') {
   if (!plan?.ok) return '';
   const summary = settlementSummary(plan.rows);
   const left = roundARS(plan.leftover || 0);
-  if (summary && left > 0) return `${summary}. Queda como saldo a favor ${formatARS(left)}.`;
+  if (summary && left > 0) return `${summary}. Queda como ${creditLeftText(left, organizerName)}.`;
   if (summary) return `${summary}.`;
-  if (left > 0) return `Quedó como saldo a favor ${formatARS(left)}.`;
+  if (left > 0) return `Quedó como ${creditLeftText(left, organizerName)}.`;
   return 'Crédito cargado.';
 }

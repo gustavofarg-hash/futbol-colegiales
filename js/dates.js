@@ -68,6 +68,26 @@ export function weekdayDate(iso) {
   return `${capitalize(name)} ${num}`;
 }
 
+/** "Mié" a partir del día corto. Vacío si la fecha no sirve. */
+export function shortWeekday(iso) {
+  if (!numericDate(iso)) return '';
+  const raw = DIAS_CORTOS[weekdayOf(iso)];
+  if (!raw) return '';
+  const lower = raw.toLocaleLowerCase('es-AR');
+  return lower.charAt(0).toLocaleUpperCase('es-AR') + lower.slice(1);
+}
+
+/** "04/11" sin año. */
+export function dayMonth(iso) {
+  const num = numericDate(iso);
+  return num.length >= 5 ? num.slice(0, 5) : '';
+}
+
+/** "Mié 04/11 20hs C2". court es la marca ("C2") o vacío. */
+export function matchSwitchLabel(date, time, court = '') {
+  return [shortWeekday(date), dayMonth(date), shortHour(time), String(court || '').trim()].filter(Boolean).join(' ');
+}
+
 /** "20hs" si es en punto, "19:30hs" si no. Vacío sin hora válida. */
 export function shortHour(time) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(String(time || '').trim());
