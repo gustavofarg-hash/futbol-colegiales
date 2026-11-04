@@ -34,14 +34,14 @@ import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInp
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
-import { APP_INSTALL_URL, appShareMessage, playerLink } from './share.js';
+import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v109';
+const APP_VERSION = 'f7c-v110';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -787,7 +787,20 @@ function route() {
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
 }
+let releaseAnonymousLock = null;
 window.addEventListener('hashchange', () => {
+  if (releaseAnonymousLock) {
+    if (isPlayerDeepLink(location.hash)) {
+      showAnonymousDenial();
+      return;
+    }
+    const go = releaseAnonymousLock;
+    releaseAnonymousLock = null;
+    document.documentElement.classList.remove('anon-lock');
+    requestAnimationFrame(placeBars);
+    go();
+    return;
+  }
   const next = route();
   if (next.name === 'profile') {
     if (app.profileViaMatchId !== next.id) {
@@ -895,8 +908,22 @@ function replaceView(html) {
   $('#view').innerHTML = html;
   return true;
 }
+function playerLinkDenied(id) {
+  if (app.profileViaMatchId === id) return false;
+  const person = (app.roster || []).find((row) => row.id === id);
+  return !person || !rosterHeldBy(person, actor());
+}
 function render() {
   const r = route();
+  if (document.documentElement.classList.contains('anon-lock')) {
+    if (releaseAnonymousLock) return;
+    if (r.name === 'profile' && playerLinkDenied(r.id)) {
+      showAnonymousDenial();
+      return;
+    }
+    document.documentElement.classList.remove('anon-lock');
+    requestAnimationFrame(placeBars);
+  }
   const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
   const brand = $('#venue-name');
   if (brand) brand.textContent = shownVenue;
@@ -2443,7 +2470,11 @@ function openSettings() {
   if (clr) clr.onclick = async () => { if (await askConfirm('¿Borrar todos los partidos y jugadores de demo?', { danger: true })) { app.store.clearAll(); closeSheet(); toast('Datos de demo borrados'); } };
   const forget = $('#set-forget');
   if (forget) forget.onclick = () => { localStorage.removeItem(CODE_KEY); location.reload(); };
-  $('#set-logout').onclick = () => { closeSheet(); app.session.logout(); };
+  $('#set-logout').onclick = () => {
+    closeSheet();
+    if (isPlayerDeepLink(location.hash)) history.replaceState(null, '', `${location.pathname}${location.search}`);
+    app.session.logout();
+  };
 }
 
 function saveBackupFile(filename, text) {
@@ -3659,13 +3690,14 @@ function renderUsers() {
 function renderProfile(id) {
   const person = app.roster.find((r) => r.id === id);
   const fromMatch = app.profileViaMatchId === id;
-  if (!person || (!fromMatch && !rosterHeldBy(person, actor()))) {
+  if (!fromMatch && (!person || !rosterHeldBy(person, actor()))) {
     app.signupDraft = null;
-    if (fromMatch && !person) {
-      replaceView(`<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
-      return;
-    }
-    replaceView(`<div class="empty" id="player-denied"><p><b>NO TENÉS ACCESO</b></p></div>`);
+    showAnonymousDenial();
+    return;
+  }
+  if (!person) {
+    app.signupDraft = null;
+    replaceView(`<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
     return;
   }
   const who = rosterIdentity(person);
@@ -6153,6 +6185,14 @@ function syncTextSize() {
   requestAnimationFrame(placeBars);
 }
 
+function showAnonymousDenial() {
+  document.documentElement.classList.add('anon-lock');
+  try { if (sheet?.open) sheet.close(); } catch { /* sigue cerrado */ }
+  const ask = document.getElementById('ask');
+  try { if (ask?.open) ask.close(); } catch { /* sigue cerrado */ }
+  replaceView(`<div class="anon-lock" id="player-locked"><p class="anon-warn" aria-hidden="true">⚠️</p><p><b>NO TENÉS ACCESO</b></p></div>`);
+}
+
 async function boot() {
   clearWaChoice();
   clearMineFilter();
@@ -6214,9 +6254,22 @@ async function boot() {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
   }
 
+  if (isPlayerDeepLink(location.hash)) {
+    app.session = openSession();
+    await app.session.init();
+    if (!app.session.user) {
+      showAnonymousDenial();
+      await new Promise((resolve) => { releaseAnonymousLock = resolve; });
+    }
+    document.documentElement.classList.remove('anon-lock');
+    requestAnimationFrame(placeBars);
+  }
+
   await gate();
-  app.session = openSession();
-  await app.session.init();
+  if (!app.session) {
+    app.session = openSession();
+    await app.session.init();
+  }
   app.users = app.session.users || [];
   app.session.subscribe(() => {
     const users = app.session.users || [];
