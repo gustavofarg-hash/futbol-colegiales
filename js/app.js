@@ -18,7 +18,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, searchRoster, visibleRosterPhone } from './roster.js';
+import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v110';
+const APP_VERSION = 'f7c-v111';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -184,6 +184,7 @@ function run(p, okMsg, deniedMsg) {
   return Promise.resolve(p).catch((e) => {
     console.error(e);
     if (e?.code === 'already-in-match') toast(e.message || ALREADY_IN_MATCH);
+    else if (e?.code === 'suspended') askNotice(e.message || SUSPENDED_TEXT);
     else if (e?.paymentWrite) toast(paymentFailureText(e, e.playerId), 4500);
     else if (deniedMsg && isPermissionDenied(e)) toast(deniedMsg);
     else toast('No se pudo guardar: ' + (e.code || e.message || e));
@@ -488,9 +489,41 @@ function creditDelta(people, entries) {
 /* ───────── datos derivados ───────── */
 const actor = () => ({ uid: app.session?.user?.uid || '', name: app.who || '' });
 const shownName = (player) => displayName(player, app.roster);
+function suspensionRosterId(source) {
+  if (!source) return '';
+  if (source.matchId || source.rosterId) return rosterIdForSuspension(app.roster, source);
+  if (source.id && app.roster?.some((row) => row.id === source.id)) return source.id;
+  return rosterIdForSuspension(app.roster, source);
+}
+function playerBlockedOn(match, source) {
+  return blockingSuspensions(app.suspensions, match, suspensionRosterId(source)).length > 0;
+}
+function suspendedClass(source) {
+  const rosterId = suspensionRosterId(source);
+  if (!rosterId) return '';
+  const uid = actor().uid;
+  if (activeSuspensions(app.suspensions, rosterId).some((row) => row.ownerUid === uid)) return ' suspended';
+  const match = source?.matchId ? (knownMatches().find((item) => item.id === source.matchId) || null) : null;
+  return match && blockingSuspensions(app.suspensions, match, rosterId).length ? ' suspended' : '';
+}
+function organizerLabel(uid) {
+  const user = (app.users || []).find((item) => item.uid === uid);
+  return user?.name || 'otro organizador';
+}
+function heldCard(source) {
+  const mine = rosterForOrganizer(app.roster, actor());
+  const listed = String(source?.rosterId || '').trim();
+  if (listed) {
+    const row = mine.find((item) => item.id === listed);
+    if (row) return row;
+  }
+  const key = phoneIdentity(source);
+  if (!key) return null;
+  return mine.find((item) => phoneIdentity(item) === key) || null;
+}
 /** Nombre en la fila del partido: solo el apodo; sin apodo, el nombre completo. El nombre completo va en el menú. */
 function nameRow(p) {
-  return `<div class="name-row"><div class="name">${esc(shownName(p))}</div>${levelBadge(p)}</div>`;
+  return `<div class="name-row"><div class="name${suspendedClass(p)}">${esc(shownName(p))}</div>${levelBadge(p)}</div>`;
 }
 /** actor() con el rol, para lo que el admin puede aunque no sea el creador. */
 const actorWithRole = () => ({ ...actor(), role: app.role || '' });
@@ -980,7 +1013,7 @@ function oweBox(m) {
   const rows = debt.rows.map((row) => {
     const player = app.players.find((item) => item.id === row.id);
     const name = player ? shownName(player) : row.name;
-    return `<li><button type="button" class="owe-player" data-owe-player="${esc(row.id)}"><span>${esc(name)}</span><b>${esc(formatARS(row.owed))}</b></button></li>`;
+    return `<li><button type="button" class="owe-player${player ? suspendedClass(player) : ''}" data-owe-player="${esc(row.id)}"><span>${esc(name)}</span><b>${esc(formatARS(row.owed))}</b></button></li>`;
   }).join('');
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
@@ -1090,7 +1123,7 @@ function renderTeams(id) {
         : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
       const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
       const controls = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
-      const name = `<button type="button" class="team-name" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
+      const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
       rows.push(readOnly
         ? `<li class="team-row" data-team-player="${esc(player.id)}">${name}<span class="team-side">${goalBox}${arco}</span></li>`
         : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}" data-team-player="${esc(player.id)}">${name}${controls}</li>`);
@@ -1098,7 +1131,7 @@ function renderTeams(id) {
     return rows.join('');
   };
   const freeRows = free.map((player) => {
-    const name = `<button type="button" class="team-name" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
+    const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
     return readOnly
       ? `<li class="team-row" data-team-player="${esc(player.id)}">${name}</li>`
       : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}" data-team-player="${esc(player.id)}">${name}<span class="team-tools"><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></span></li>`;
@@ -2000,14 +2033,14 @@ async function openReminders(m) {
     const rows = visible.map((p) => {
       const link = linkById.get(p.id);
       if (phoneHidden(p)) {
-        return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub private-wa">${esc(PRIVATE_WA_TEXT)}</div></div></li>`;
+        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub private-wa">${esc(PRIVATE_WA_TEXT)}</div></div></li>`;
       }
       if (!link) {
-        return `<li class="remind-row"><div class="who"><div class="name">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div><button type="button" class="btn" data-remind-phone="${esc(p.id)}">Cargar WhatsApp</button></li>`;
+        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div><button type="button" class="btn" data-remind-phone="${esc(p.id)}">Cargar WhatsApp</button></li>`;
       }
       const sent = !!p.reminderSentAt;
       return `<li class="remind-row" data-remind="${esc(p.id)}">
-        <div class="who"><div class="name">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
+        <div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
         <a class="btn primary" href="${esc(hrefFor(link))}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
       </li>`;
     }).join('');
@@ -3061,7 +3094,7 @@ function renderRoster() {
     return `
     <li class="slot" data-roster="${esc(person.id)}">
       <button type="button" class="who" data-roster-open="${esc(person.id)}">
-        <div class="name">${esc(person.name)}</div>
+        <div class="name${suspendedClass(person)}">${esc(person.name)}</div>
         <div class="sub">${cleanShortName(person.shortName) ? `<span class="nick">“${esc(cleanShortName(person.shortName))}”</span>` : ''}${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
       </button>
       ${waButton(person)}
@@ -3384,7 +3417,7 @@ function statsPlayerBody(id) {
     .slice()
     .sort((a, b) => foldText(a.name).localeCompare(foldText(b.name), 'es') || String(a.id).localeCompare(String(b.id)));
   if (!id) {
-    const rows = mine.map((person) => `<li class="slot"><a class="who" href="${statsHash('jugador', person.id)}"><div class="name">${esc(person.name)}</div></a></li>`).join('');
+    const rows = mine.map((person) => `<li class="slot"><a class="who" href="${statsHash('jugador', person.id)}"><div class="name${suspendedClass(person)}">${esc(person.name)}</div></a></li>`).join('');
     return `<h2 class="section">Por jugador</h2><p class="hint">Solo los jugadores de tu agenda.</p><ul class="slots" id="stats-players">${rows || '<li class="empty-wait">No hay jugadores en tu agenda.</li>'}</ul>`;
   }
   const person = app.roster.find((row) => row.id === id);
@@ -3416,7 +3449,7 @@ function statsPlayerBody(id) {
   const playedText = played.played ? `Jugó ${played.played} ${played.played === 1 ? 'vez' : 'veces'}` : 'Todavía no jugó';
   return `
     <p class="hint"><a href="${statsHash('jugador')}">Todos los jugadores</a></p>
-    <h2 class="section" id="stats-player">${esc(person.name)}</h2>
+    <h2 class="section${suspendedClass(person)}" id="stats-player">${esc(person.name)}</h2>
     ${inMine ? '' : '<p class="hint">No está en tu agenda. Los números salen de los partidos que podés ver.</p>'}
     <section class="profile-block">
       <h2>Partidos</h2>
@@ -3711,7 +3744,7 @@ function renderProfile(id) {
   const painted = replaceView(`
     <article id="profile">
       <div class="name-share">
-        <h2 class="section">${esc(person.name)}</h2>
+        <h2 class="section${suspendedClass(person)}">${esc(person.name)}</h2>
         ${playerShareButton('profile-share')}
       </div>
       ${money.panel.nickHtml}
@@ -3836,7 +3869,7 @@ function partidosSection(person) {
   const rows = signupRows(person).map(({ match, state }) => {
     const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
     const picked = !state.existing && draft.ids.has(match.id);
-    const locked = state.existing ? 'checked disabled' : (picked ? 'checked' : '');
+    const locked = state.existing ? 'checked disabled' : (playerBlockedOn(match, person) ? 'disabled' : (picked ? 'checked' : ''));
     const remove = state.existing && state.playerId
       ? `<button type="button" class="btn" data-signup-remove="${esc(state.playerId)}">Quitar</button>`
       : '';
@@ -3853,6 +3886,7 @@ function partidosSection(person) {
   return `<section class="profile-block" id="partidos">
     <h2>Partidos</h2>
     <p class="hint">Elegí los próximos y anotalo de una. Si el partido está completo, va a la lista de espera.</p>
+    ${activeSuspensions(app.suspensions, person.id).some((row) => row.ownerUid === actor().uid) ? `<p class="hint" id="signup-suspended">${esc(SUSPENDED_TEXT)}</p>` : ''}
     <ul class="slots" id="signup-list">${rows.join('')}</ul>
     ${empty}
     <label class="checkline"><input type="checkbox" id="signup-tentative" ${draft.tentative ? 'checked' : ''}> Anotar como pendiente de confirmación</label>
@@ -3930,6 +3964,7 @@ function bindPartidos(person) {
       for (const row of chosen) {
         const again = matchSignupState({ ...rosterIdentity(person), match: row.match, players: app.players });
         if (again.existing) { toast(ALREADY_IN_MATCH); continue; }
+        if (playerBlockedOn(row.match, person)) { askNotice(SUSPENDED_TEXT); continue; }
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
         try {
@@ -4061,6 +4096,7 @@ function focusField(el) {
 
 /** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
 async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
+  if (!host?.id && playerBlockedOn(m, host)) return SUSPENDED_TEXT;
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
   const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
@@ -4360,7 +4396,7 @@ function openPlayerForm(m, p, opts = {}) {
       hits.innerHTML = found.map((person) => {
         const taken = signupError(m.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]);
         const detail = person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número';
-        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
       }).join('');
     };
     find.addEventListener('input', paint);
@@ -4379,7 +4415,7 @@ function openPlayerForm(m, p, opts = {}) {
       const person = app.roster.find((r) => r.id === btn.dataset.pick);
       if (!person) return;
       const result = await addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
-      if (result === ALREADY_IN_MATCH) $('#pf-err').textContent = result;
+      if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#pf-err').textContent = result;
     });
     setTimeout(() => {
       if (!form.isConnected) return;
@@ -4482,7 +4518,7 @@ function openPlayerForm(m, p, opts = {}) {
       return;
     }
     const result = await addSignedPlayer(m, { name, phone, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
-    if (result === ALREADY_IN_MATCH) $('#pf-err').textContent = result;
+    if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#pf-err').textContent = result;
   };
 }
 
@@ -4837,7 +4873,7 @@ function openPaymentForm(m, p, opts = {}) {
       if (row.pending > 0) bits.push(`Transfiere después ${formatARS(row.pending)}`);
       if (row.credit > 0) bits.push(`Crédito ${formatARS(row.credit)}`);
       const money = bits.length ? bits.join(' · ') : 'sin pago';
-      return `<li><span>${esc(shownName(row.person))}</span><b>${esc(money)}</b></li>`;
+      return `<li><span class="${suspendedClass(row.person).trim()}">${esc(shownName(row.person))}</span><b>${esc(money)}</b></li>`;
     }).join('');
     const notes = splitLeftoverCredit({
       playerName: shownName(p),
@@ -5643,6 +5679,55 @@ function openCreditReturnForm({ player, person, panel }) {
   };
 }
 
+function openSuspensionNote(card) {
+  openSheet(`
+    <form id="suspend-note-form" novalidate>
+      <h3>Suspendido</h3>
+      <p class="hint" id="suspend-summary"></p>
+      <label class="field"><span>Fecha</span><input type="date" id="suspend-date" value="${esc(todayISO())}"></label>
+      <label class="field"><span>Motivo</span><textarea id="suspend-reason" maxlength="300"></textarea></label>
+      <div class="field"><div class="err" id="suspend-reason-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#suspend-note-form');
+  if (!form) return;
+  const paint = () => {
+    const summary = $('#suspend-summary');
+    if (!summary) return;
+    const date = numericDate($('#suspend-date')?.value || '');
+    const reason = String($('#suspend-reason')?.value || '').replace(/\r\n/g, '\n').trim();
+    summary.textContent = [date, reason].filter(Boolean).join(' · ');
+  };
+  form.addEventListener('input', paint);
+  paint();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = String($('#suspend-reason')?.value || '').replace(/\r\n/g, '\n').trim();
+    const date = String($('#suspend-date')?.value || '').trim();
+    const err = $('#suspend-reason-err');
+    if (!text) { if (err) err.textContent = 'Poné el motivo.'; return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { if (err) err.textContent = 'Poné la fecha.'; return; }
+    try {
+      await app.store.setSuspension(card.id, { note: text, date, suspended: true });
+      closeSheet();
+    } catch (error) {
+      if (err) err.textContent = error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.');
+    }
+  };
+}
+
+function openSuspensionView(record) {
+  const reason = String(record?.suspensionNote || '').trim();
+  const date = numericDate(record?.suspensionDate || '');
+  if (!reason && !date) return;
+  openSheet(`
+    <div id="suspend-view">
+      <h3>Suspendido</h3>
+      <p id="suspend-summary">${esc([date, reason].filter(Boolean).join(' · '))}</p>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>
+    </div>`);
+}
+
 function openPlayerMenu(m, p) {
   if (!p) return;
   const match = m || knownMatches().find((item) => item.id === p.matchId) || null;
@@ -5652,13 +5737,23 @@ function openPlayerMenu(m, p) {
   const payLine = payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>';
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   const canAnnotate = !!(match && canAdd(match, actor().uid));
+  const card = heldCard(p);
+  const rosterId = suspensionRosterId(card || p);
+  const mine = (app.suspensions || []).find((row) => row.rosterId === rosterId && row.ownerUid === actor().uid) || null;
+  const others = activeSuspensions(app.suspensions, rosterId).filter((row) => row.ownerUid !== actor().uid);
+  const ownBox = card
+    ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${mine?.suspended === true ? ' checked' : ''} aria-label="Suspendido"><button type="button" class="suspend-label" id="suspend-note">Suspendido</button></div>`
+    : '';
+  const otherBoxes = others.map((row) => `<div class="checkline"><input type="checkbox" checked disabled aria-label="Suspendido por ${esc(organizerLabel(row.ownerUid))}"><button type="button" class="suspend-label" data-suspend-view="${esc(row.ownerUid)}">Suspendido por ${esc(organizerLabel(row.ownerUid))}</button></div>`).join('');
+  const suspendBox = `${ownBox}${otherBoxes}`;
   openSheet(`
+    ${suspendBox}
     <div class="name-share">
-      <h3>${esc(shownName(p))}</h3>
+      <h3 class="${suspendedClass(p).trim()}">${esc(shownName(p))}</h3>
       ${playerShareButton('pm-share')}
     </div>
     <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.notesHtml}${panel.statsButton}</div>
-    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name">${esc(p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name" class="${suspendedClass(p).trim()}">${esc(p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
     ${canAnnotate ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
@@ -5677,6 +5772,40 @@ function openPlayerMenu(m, p) {
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   bindPlayerPanel(sheet, p, null, MENU_PANEL, panel);
+  const suspendFlag = $('#suspend-flag');
+  const suspendNote = $('#suspend-note');
+  if (suspendNote && rosterId) suspendNote.onclick = () => {
+    const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
+    openSuspensionView(row);
+  };
+  sheet.querySelectorAll('[data-suspend-view]').forEach((btn) => {
+    btn.onclick = () => {
+      const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === btn.dataset.suspendView);
+      openSuspensionView(row);
+    };
+  });
+  if (suspendFlag && card) {
+    let ignoreSuspend = false;
+    suspendFlag.onchange = async () => {
+    if (ignoreSuspend) return;
+    if (suspendFlag.checked === true) {
+      ignoreSuspend = true;
+      suspendFlag.checked = false;
+      ignoreSuspend = false;
+      openSuspensionNote(card);
+      return;
+    }
+    try {
+      await app.store.setSuspended(card.id, false);
+      sheet.querySelector('h3')?.classList.remove('suspended');
+      const full = $('#menu-full-name');
+      if (full) full.classList.remove('suspended');
+    } catch (error) {
+      suspendFlag.checked = true;
+      askNotice(error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.'));
+    }
+    };
+  }
   const menuShare = $('#pm-share');
   if (menuShare) menuShare.onclick = () => copyPlayerLink(shareRosterId(p));
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, match?.id); };
@@ -6100,7 +6229,7 @@ function openFriendForm(m, host) {
     // Los nombres salen de este partido; en los otros van los mismos (mismo anfitrión + nombre = misma persona).
     const resolved = resolveFriendNames(rows, friendNamesOf(m.id, host.id));
     const result = await addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also });
-    if (result === ALREADY_IN_MATCH) $('#friend-err').textContent = result;
+    if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#friend-err').textContent = result;
   };
 }
 
@@ -6311,6 +6440,7 @@ async function boot() {
     app.historyError = historyError || '';
     app.roster = roster || [];
     app.rosterNotes = view.rosterNotes || {};
+    app.suspensions = view.suspensions || [];
     app.organizers = organizers || [];
     app.venues = venues || [];
     app.prices = prices || null;
@@ -6330,7 +6460,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

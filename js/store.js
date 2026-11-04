@@ -97,7 +97,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHolderIds, rosterNoteDocId, rosterPhoneAction, withHolder } from './roster.js';
+import { ROSTER_DENIED_READ, SUSPENDED_TEXT, blockingSuspensions, cleanShortName, cleanSuspensionNote, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterIdForSuspension, rosterNoteDocId, rosterPhoneAction, suspensionDocId, withHolder } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -178,6 +178,12 @@ export function matchIdFor(date, time, existingIds = new Set()) {
 
 const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
+function refuseSuspended(suspensions, roster, match, data) {
+  const rosterId = rosterIdForSuspension(roster, data);
+  if (blockingSuspensions(suspensions, match, rosterId).length) {
+    throw Object.assign(new Error(SUSPENDED_TEXT), { code: 'suspended' });
+  }
+}
 function refuseDuplicate(mates, data, exceptId = '') {
   const name = String(data?.name || '').trim();
   const invitedBy = String(data?.invitedBy || '').trim();
@@ -570,6 +576,7 @@ function localCollections(db) {
     rosterNotes: db.rosterNotes || {},
     rosterClaims: db.rosterClaims || {},
     rosterRedirects: db.rosterRedirects || {},
+    rosterSuspensions: db.rosterSuspensions || {},
   };
 }
 
@@ -764,6 +771,7 @@ class LocalStore {
     for (const row of Object.values(db.rosterNotes || {})) {
       if (row?.ownerUid === uid && row.rosterId) rosterNotes[row.rosterId] = row.notes || [];
     }
+    const suspensions = Object.entries(db.rosterSuspensions || {}).map(([id, row]) => ({ id, ...row }));
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
     const venues = Object.entries(db.venues || {}).map(([id, venue]) => ({ id, ...venue }));
     const prices = db.settings?.prices || null;
@@ -779,7 +787,7 @@ class LocalStore {
     const { matches: _rows, ...historyMeta } = windowed;
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
-      players, roster, rosterNotes, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
+      players, roster, rosterNotes, suspensions, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
       credits, creditsError: null, creditsReady: true, playersReady: true, compensations, log, logError: '',
     }));
   }
@@ -861,6 +869,12 @@ class LocalStore {
       .map(([pid, row]) => ({ id: pid, ...row }));
     refuseDuplicate(mates, data);
     refuseGuestHost(mates, data);
+    refuseSuspended(
+      Object.values(db.rosterSuspensions || {}),
+      Object.entries(db.roster || {}).map(([rid, row]) => ({ id: rid, ...row })),
+      { id: match.id, ...(db.matches[match.id] || {}), ...match },
+      data,
+    );
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
     const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
@@ -1342,6 +1356,41 @@ class LocalStore {
     applyRosterNamePatches(db, namePatches, now);
     this._save(db);
   }
+  _ownSuspension(db, rosterId) {
+    const cur = db.roster[rosterId];
+    if (!cur) throw new Error('Jugador inexistente');
+    if (!rosterHeldBy({ ...cur, id: rosterId }, this.actor)) throw editLockedError();
+    const uid = String(this.actor?.uid || '').trim();
+    const docId = suspensionDocId(rosterId, uid);
+    if (!docId) throw editLockedError();
+    db.rosterSuspensions ||= {};
+    return { uid, docId, row: db.rosterSuspensions[docId] || null };
+  }
+  async setSuspended(id, value) {
+    const db = this._load();
+    const { docId, row } = this._ownSuspension(db, id);
+    if (value === true) return;
+    if (!row) return;
+    row.suspended = false;
+    db.rosterSuspensions[docId] = row;
+    this._save(db);
+  }
+  async setSuspension(id, { note, date } = {}) {
+    const db = this._load();
+    const { uid, docId } = this._ownSuspension(db, id);
+    const text = cleanSuspensionNote(note);
+    const day = String(date || '').trim();
+    if (!text) throw Object.assign(new Error('Poné el motivo.'), { code: 'invalid-note' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw Object.assign(new Error('Poné la fecha.'), { code: 'invalid-date' });
+    db.rosterSuspensions[docId] = {
+      ownerUid: uid,
+      rosterId: id,
+      suspended: true,
+      suspensionNote: text,
+      suspensionDate: day,
+    };
+    this._save(db);
+  }
   async deleteRoster(id) {
     const db = this._load();
     const cur = db.roster[id];
@@ -1470,6 +1519,7 @@ class LocalStore {
     db.rosterNotes = structuredClone(docs.rosterNotes || {});
     db.rosterClaims = structuredClone(docs.rosterClaims || {});
     db.rosterRedirects = structuredClone(docs.rosterRedirects || {});
+    db.rosterSuspensions = structuredClone(docs.rosterSuspensions || {});
     ensureContacts(db);
     db.contacts.players = structuredClone(docs.playerContacts);
     db.contacts.roster = structuredClone(docs.rosterContacts);
@@ -1482,7 +1532,7 @@ class LocalStore {
     const db = {
       matches: {}, players: {}, roster: {}, organizers: {}, venues: {},
       confirmations: {}, settings: {}, links: {}, credits: {}, log: {},
-      rosterNotes: {}, rosterClaims: {}, rosterRedirects: {},
+      rosterNotes: {}, rosterClaims: {}, rosterRedirects: {}, rosterSuspensions: {},
       contacts: { players: {}, roster: {} },
     };
     localStorage.setItem(this.key, JSON.stringify(db));
@@ -1533,7 +1583,7 @@ export class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
     this._noteMoves = new Set();
     this._rosterReady = false;
     this._logRange = weekRange();
@@ -1620,7 +1670,7 @@ export class FirebaseStore {
     // partido). El partido al final: borrarlo con jugadores hacía fallar el permiso.
     const order = [
       'links', 'log', 'compensations', 'credits', 'confirmations',
-      'rosterNotes', 'rosterClaims', 'rosterRedirects',
+      'rosterNotes', 'rosterClaims', 'rosterRedirects', 'rosterSuspensions',
       'playerContacts', 'rosterContacts', 'players', 'roster', 'organizers',
       'settings', 'venues', 'matches',
     ];
@@ -1953,6 +2003,13 @@ export class FirebaseStore {
       playersReady(snap);
       this._buckets.players.narrow = take(snap);
       this._rebuild('players');
+    });
+    watch(collection(this.db, 'rosterSuspensions'), null, (snap) => {
+      this.state.suspensions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this._emit();
+    }, () => {
+      this.state.suspensions = [];
+      this._emit();
     });
     watch(collection(this.db, 'roster'), null, (snap) => {
       this.state.roster = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -2410,6 +2467,12 @@ export class FirebaseStore {
     const mates = this.state.players.filter((p) => p.matchId === match.id);
     refuseDuplicate(mates, data);
     refuseGuestHost(mates, data);
+    refuseSuspended(
+      this.state.suspensions || [],
+      this.state.roster || [],
+      this.state.matches.find((item) => item.id === match.id) || match,
+      data,
+    );
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
     const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
@@ -3152,6 +3215,38 @@ export class FirebaseStore {
       }
     } else if (this._contactsLive) next.phone = deleteField();
     await this._commitRosterName(id, next, namePatches, { doc, updateDoc, writeBatch });
+  }
+  _ownSuspensionRef(id) {
+    const cur = (this.state.roster || []).find((row) => row.id === id);
+    if (!cur) throw new Error('Jugador inexistente');
+    if (!rosterHeldBy(cur, this.actor)) throw editLockedError();
+    const uid = String(this.actor?.uid || '').trim();
+    const docId = suspensionDocId(id, uid);
+    if (!docId) throw editLockedError();
+    return { uid, docId };
+  }
+  async setSuspended(id, value) {
+    if (value === true) return;
+    const { docId } = this._ownSuspensionRef(id);
+    const current = (this.state.suspensions || []).find((row) => row.id === docId);
+    if (!current) return;
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'rosterSuspensions', docId), { suspended: false });
+  }
+  async setSuspension(id, { note, date } = {}) {
+    const { uid, docId } = this._ownSuspensionRef(id);
+    const text = cleanSuspensionNote(note);
+    const day = String(date || '').trim();
+    if (!text) throw Object.assign(new Error('Poné el motivo.'), { code: 'invalid-note' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw Object.assign(new Error('Poné la fecha.'), { code: 'invalid-date' });
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'rosterSuspensions', docId), {
+      ownerUid: uid,
+      rosterId: id,
+      suspended: true,
+      suspensionNote: text,
+      suspensionDate: day,
+    });
   }
   async deleteRoster(id) {
     const cur = (this.state.roster || []).find((row) => row.id === id);

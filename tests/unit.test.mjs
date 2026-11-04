@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
+import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1242,6 +1242,58 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
     { id: 'b', createdAt: 5, text: 'nueva' },
   ]);
   assert.deepEqual(notes.map((n) => n.text), ['nueva', 'vieja']);
+});
+
+test('un suspendido no se anota, ni el otro organizador, y el partido donde ya está sigue', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-susp';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addRoster({ name: 'Suspendido Pérez', phone: '5491166668080' }, 'Gustavo');
+  const first = await store.addMatch({ date: '2026-11-21', time: '21:00', capacity: 14 }, 'Gustavo');
+  await store.addPlayer({ id: first }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Gustavo');
+  await assert.rejects(
+    () => store.setSuspension(id, { note: '   ', date: '2026-10-19' }),
+    (error) => error?.code === 'invalid-note',
+  );
+  await store.setSuspension(id, { note: 'Llegó tarde tres veces', date: '2026-10-19' });
+  const saved = JSON.parse(mem.get('f7c-test-susp'));
+  const mine = saved.rosterSuspensions[`${id}_gustavo`];
+  assert.equal(mine.suspended, true);
+  assert.equal(mine.suspensionNote, 'Llegó tarde tres veces');
+  assert.equal(mine.suspensionDate, '2026-10-19');
+  assert.equal(saved.roster[id].suspended, undefined);
+  assert.equal(Object.values(saved.players).length, 1);
+  const second = await store.addMatch({ date: '2026-11-22', time: '21:00', capacity: 14 }, 'Gustavo');
+  await assert.rejects(
+    () => store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Gustavo'),
+    (error) => error?.code === 'suspended' && error.message === SUSPENDED_TEXT,
+  );
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await assert.rejects(() => store.setSuspended(id, false), (error) => error?.code === 'edit-locked');
+  await assert.rejects(() => store.setSuspension(id, { note: 'Otro motivo', date: '2026-10-19' }), (error) => error?.code === 'edit-locked');
+  await assert.rejects(
+    () => store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080' }, 'Martín'),
+    (error) => error?.code === 'suspended',
+  );
+  await store.addRoster({ name: 'Suspendido Pérez', phone: '5491166668080' }, 'Martín');
+  await store.setSuspended(id, false);
+  assert.equal(JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`].suspended, true);
+  await assert.rejects(
+    () => store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Martín'),
+    (error) => error?.code === 'suspended',
+  );
+  const solo = await store.addMatch({
+    date: '2026-11-23', time: '21:00', capacity: 14,
+    access: { solo: true, viewers: ['martin'], viewerNames: [], adders: ['martin'], adderNames: [], limits: [], createdByUid: 'martin' },
+  }, 'Martín');
+  await store.addPlayer({ id: solo }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Martín');
+  assert.equal(Object.values(JSON.parse(mem.get('f7c-test-susp')).players).length, 2);
 });
 
 test('las notas de un jugador compartido las ve solo quien las escribió', async () => {
@@ -3253,7 +3305,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v110');
+  assert.equal(version, 'f7c-v111');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

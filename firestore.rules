@@ -897,6 +897,22 @@ service cloud.firestore {
       allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
     }
 
+    function validSuspension(d) {
+      return d.keys().hasOnly(['ownerUid', 'rosterId', 'suspended', 'suspensionNote', 'suspensionDate'])
+          && d.ownerUid == request.auth.uid
+          && d.rosterId is string && d.rosterId.size() > 0 && d.rosterId.size() <= 200
+          && d.suspended is bool
+          && d.suspensionNote is string && d.suspensionNote.size() > 0 && d.suspensionNote.size() <= 300
+          && d.suspensionDate is string && d.suspensionDate.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+    match /rosterSuspensions/{suspensionId} {
+      allow read, write: if isAdmin();
+      allow get, list: if isActiveStaff();
+      allow create, update: if isActiveStaff() && validSuspension(request.resource.data)
+          && suspensionId == request.resource.data.rosterId + '_' + request.auth.uid;
+      allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+    }
+
     match /rosterRedirects/{fromId} {
       allow read, write: if isAdmin();
       allow get, list: if isActiveStaff();
