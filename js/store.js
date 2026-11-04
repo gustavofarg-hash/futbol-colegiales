@@ -1077,6 +1077,15 @@ class LocalStore {
     })]);
     this._save(db);
   }
+  async recordCreditReturn({ player, amount }) {
+    const money = Math.round(Number(amount) * 100) / 100;
+    if (!(money > 0)) return;
+    const db = this._load();
+    this._pushLogs(db, [pagoEntry(this._actor(), null, this._venuesOf(db), player, [], {
+      type: 'devolución de crédito', method: 'credito', amount: money, solo: true,
+    })]);
+    this._save(db);
+  }
   async setWaitOrders(updates) {
     const db = this._load(); const now = Date.now();
     for (const u of updates || []) {
@@ -2680,6 +2689,13 @@ export class FirebaseStore {
     const mates = saved ? this.state.players.filter((item) => item.matchId === saved.id) : [];
     await this._appendLogs([pagoEntry(this._actor(), saved, this.state.venues, player, mates, {
       type: 'crédito cargado', method: 'credito', amount: money, solo: solo === true,
+    })]);
+  }
+  async recordCreditReturn({ player, amount }) {
+    const money = Math.round(Number(amount) * 100) / 100;
+    if (!(money > 0)) return;
+    await this._appendLogs([pagoEntry(this._actor(), null, this.state.venues, player, [], {
+      type: 'devolución de crédito', method: 'credito', amount: money, solo: true,
     })]);
   }
   // Solo los campos del pago (y updatedAt): así entra por la regla corta de

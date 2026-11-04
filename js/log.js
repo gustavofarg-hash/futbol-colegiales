@@ -283,6 +283,7 @@ export function pagoMatchText(entry) {
   const fromParts = datedMatch(clean(entry?.matchDate, 10), clean(entry?.matchTime, 5));
   if (fromParts) return fromParts;
   if (entry?.type === 'crédito cargado') return 'Carga de crédito';
+  if (entry?.type === 'devolución de crédito') return 'Devolución de crédito';
   if (clean(entry?.matchId, 80)) return 'Partido';
   return '';
 }
@@ -296,6 +297,7 @@ export function logText(entry) {
     const money = formatARS(entry.amount || 0);
     const match = pagoMatchText(entry);
     if (entry.type === 'crédito cargado') return [match, player, `${method} ${money}`].filter(Boolean).join(' · ');
+    if (entry.type === 'devolución de crédito') return [match, player, `${method} ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'crédito automático') return [match, player, `Crédito automático ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'crédito devuelto') return [match, player, `Crédito devuelto ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'pago borrado') return [match, player, `${method} borrado ${money}`].filter(Boolean).join(' · ');

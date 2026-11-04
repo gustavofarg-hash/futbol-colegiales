@@ -15,7 +15,7 @@ import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { planRows } from '../js/settle.js';
 import { dayCompensation, reconcileTransfers } from '../js/compensate.js';
-import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, nextCredit, retroactiveCreditIds } from '../js/credit.js';
+import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, nextCredit, retroactiveCreditIds } from '../js/credit.js';
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
@@ -3083,6 +3083,11 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   const load = pagoEntry(actor, null, [], { name: 'Ana' }, [], { type: 'crédito cargado', method: 'credito', amount: 8000 });
   assert.equal(pagoMatchText(load), 'Carga de crédito');
   assert.equal(logText(load), 'Carga de crédito · Ana · Crédito $8.000');
+  const returned = pagoEntry(actor, null, [], { name: 'Ana' }, [], { type: 'devolución de crédito', method: 'credito', amount: 1000, solo: true });
+  assert.equal(pagoMatchText(returned), 'Devolución de crédito');
+  assert.equal(logText(returned), 'Devolución de crédito · Ana · Crédito $1.000');
+  assert.equal(returned.section, 'pagos');
+  assert.deepEqual(returned.editors, ['g']);
   assert.equal(pagoMatchText({ section: 'pagos', type: 'pago', matchLabel: '', matchDate: '2026-10-18', matchTime: '18:00' }), 'Domingo 18/10 · 18:00');
   assert.equal(pagoMatchText({ section: 'pagos', type: 'pago', matchId: 'gone', matchLabel: '' }), 'Partido');
   assert.equal(pagoMatchText({ ...early, matchLabel: early.matchLabel }), early.matchLabel);
@@ -3125,6 +3130,19 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.equal(solo.paidTo, 'Gustavo');
   assert.equal(canSeeLog(solo, 'otro'), false);
   assert.equal(canSeeLog(solo, 'gus'), true);
+});
+
+test('devolver crédito acepta desde 0 hasta el saldo', () => {
+  assert.deepEqual(creditReturnPlan(0, 0), { ok: true, amount: 0 });
+  assert.deepEqual(creditReturnPlan(0, 3000), { ok: true, amount: 0 });
+  assert.deepEqual(creditReturnPlan(1000, 3000), { ok: true, amount: 1000 });
+  assert.deepEqual(creditReturnPlan(3000, 3000), { ok: true, amount: 3000 });
+  assert.equal(creditReturnPlan(3000.004, 3000).ok, true);
+  const over = creditReturnPlan(3001, 3000);
+  assert.equal(over.ok, false);
+  assert.match(over.error, /Supera el crédito disponible \(\$3\.000\)/);
+  assert.equal(creditReturnPlan(-1, 3000).ok, false);
+  assert.equal(creditReturnPlan(Number.NaN, 3000).ok, false);
 });
 
 test('el pase retroactivo recorre primero el partido más viejo', () => {
@@ -3181,7 +3199,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v104');
+  assert.equal(version, 'f7c-v105');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

@@ -143,6 +143,20 @@ export function retroactiveCreditIds({ players, matches, prices, organizerUid, o
   return rows.map((row) => row.id);
 }
 
+/**
+ * Monto a devolver del saldo con el organizador logueado.
+ * 0 entra: no cambia el saldo. Más que el disponible, o un número negativo, no.
+ */
+export function creditReturnPlan(amount, available) {
+  const money = roundARS(Number(amount));
+  const have = roundARS(Number(available) || 0);
+  if (!Number.isFinite(Number(amount)) || !Number.isFinite(money) || money < 0) {
+    return { ok: false, error: 'El monto no es válido.' };
+  }
+  if (money > have) return { ok: false, error: `Supera el crédito disponible (${formatARS(have)}).` };
+  return { ok: true, amount: money };
+}
+
 /** "Se aplicó $5.000 a 01/10 21hs. Queda como saldo a favor $3.000." */
 export function creditLoadSummary(plan) {
   if (!plan?.ok) return '';
