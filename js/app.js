@@ -37,11 +37,11 @@ import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normal
 import { APP_INSTALL_URL, appShareMessage } from './share.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
 import {
-  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
+  DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v103';
+const APP_VERSION = 'f7c-v104';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -960,6 +960,8 @@ function matchCard(m, opts = {}) {
   const hour = shortHour(m.time) || '--:--';
   const price = formatARS(priceOfMatch(m, livePrices()));
   const history = opts.fullDate === true;
+  const court = history ? '' : courtMark(m);
+  const when = court ? `${hour} ${court} (${price})` : `${hour} (${price})`;
   const note = history || !m.note ? '' : `<div class="match-note">${esc(m.note)}</div>`;
   const waiting = history || !waitingOf(m.id).length ? '' : `<div class="match-note">${waitingOf(m.id).length} en espera</div>`;
   const debt = history || rel === 'Hoy' ? oweBox(m) : '';
@@ -968,7 +970,7 @@ function matchCard(m, opts = {}) {
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
       ${history ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : `<div class="match-weekday">${esc(weekdayDate(m.date))}</div>`}
-      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(hour)} (${esc(price)})</span></div>
+      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(when)}</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${note}
       ${waiting}

@@ -20,7 +20,7 @@ import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { addDays, compensationWhen, numericDate, shortHour, toEpoch, weekdayDate } from '../js/dates.js';
-import { capacityFor, cleanCourt, courtLabel, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
+import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
@@ -2886,6 +2886,13 @@ test('sede y jugadores por equipo: 7 es 14, y lo viejo sin datos sigue en Colegi
   assert.equal(courtLabel({ court: '3' }), 'Cancha 3');
   assert.equal(courtLabel({ court: 'Cancha 2' }), 'Cancha 2');
   assert.equal(courtLabel({ court: 'cancha' }), 'Cancha');
+  assert.equal(courtMark({}), '');
+  assert.equal(courtMark({ court: '1' }), 'C1');
+  assert.equal(courtMark({ court: 'Cancha 12' }), 'C12');
+  assert.equal(courtMark({ court: 'cancha' }), '');
+  assert.equal(courtMark({ court: 'norte' }), '');
+  assert.equal(courtMark({ court: '3 bis' }), '');
+  assert.equal(courtMark({ court: '0' }), '');
   assert.equal(cleanCourt('  12   norte  extra extra extra'), '12 norte extra extra');
   assert.equal(matchCapacity({ capacity: 1 }), 1);
   assert.equal(capacityFor(11), 22);
@@ -3174,7 +3181,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v103');
+  assert.equal(version, 'f7c-v104');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

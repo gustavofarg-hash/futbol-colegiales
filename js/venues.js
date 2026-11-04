@@ -120,6 +120,20 @@ export function footballPhrase(match) {
   return label.charAt(0).toLowerCase() + label.slice(1);
 }
 
+/**
+ * "C3" para el listado. Solo si la cancha es un número (o "Cancha 3").
+ * Sin número, o con un texto, queda vacío.
+ */
+export function courtMark(match) {
+  const raw = String(match?.court || '').trim().replace(/\s+/g, ' ');
+  if (!raw) return '';
+  const rest = /^cancha\b/i.test(raw) ? raw.replace(/^cancha\b/i, '').trim() : raw;
+  if (!/^\d{1,4}$/.test(rest)) return '';
+  const n = Number(rest);
+  if (!Number.isInteger(n) || n < 1) return '';
+  return `C${n}`;
+}
+
 /** "Cancha 3". Vacío si el partido no tiene número. "Cancha 2" no se duplica. */
 export function courtLabel(match) {
   const raw = String(match?.court || '').trim().replace(/\s+/g, ' ');
