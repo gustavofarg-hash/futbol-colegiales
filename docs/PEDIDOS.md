@@ -54,7 +54,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **unit 114/114 OK** (`node --test tests/unit.test.mjs`) y **e2e 816/816 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v111 revisa que marcar «Suspendido» pide el motivo, que cancelar no suspende, que después el motivo solo se lee, y que otro organizador no lo puede anotar.
+Pruebas sobre esta copia: **unit 114/114 OK** (`node --test tests/unit.test.mjs`) y **e2e 817/817 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v111 revisa que cada organizador suspende por su cuenta, que un partido sin ese organizador no se entera, y que el otro ve «Suspendido por Gustavo» sin poder sacarlo.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
