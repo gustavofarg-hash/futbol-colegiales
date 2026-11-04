@@ -1258,8 +1258,10 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   const first = await store.addMatch({ date: '2026-11-21', time: '21:00', capacity: 14 }, 'Gustavo');
   await store.addPlayer({ id: first }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Gustavo');
   await store.setSuspended(id, true);
+  await store.setSuspensionNote(id, 'Llegó tarde tres veces');
   const saved = JSON.parse(mem.get('f7c-test-susp'));
   assert.equal(saved.roster[id].suspended, true);
+  assert.equal(saved.roster[id].suspensionNote, 'Llegó tarde tres veces');
   assert.equal(Object.values(saved.players).length, 1);
   assert.equal(findSuspended(Object.entries(saved.roster).map(([rid, row]) => ({ id: rid, ...row })), { phone: '5491166668080' })?.id, id);
   const second = await store.addMatch({ date: '2026-11-22', time: '21:00', capacity: 14 }, 'Gustavo');
@@ -1269,11 +1271,15 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   );
   store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
   await assert.rejects(() => store.setSuspended(id, false), (error) => error?.code === 'edit-locked');
+  await assert.rejects(() => store.setSuspensionNote(id, 'Otro motivo'), (error) => error?.code === 'edit-locked');
   await assert.rejects(
     () => store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080' }, 'Martín'),
     (error) => error?.code === 'suspended',
   );
   await store.addRoster({ name: 'Suspendido Pérez', phone: '5491166668080' }, 'Martín');
+  assert.equal(JSON.parse(mem.get('f7c-test-susp')).roster[id].suspensionNote, 'Llegó tarde tres veces');
+  await store.setSuspensionNote(id, 'La cambió Martín');
+  assert.equal(JSON.parse(mem.get('f7c-test-susp')).roster[id].suspensionNote, 'La cambió Martín');
   await store.setSuspended(id, false);
   await store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Martín');
   assert.equal(Object.values(JSON.parse(mem.get('f7c-test-susp')).players).length, 2);

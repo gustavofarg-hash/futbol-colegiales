@@ -5,6 +5,11 @@ import { normalizePhone } from './phone.js';
 import { phoneKey } from './privacy.js';
 
 export const SUSPENDED_TEXT = 'Está suspendido.';
+export const SUSPENSION_NOTE_MAX = 300;
+
+export function cleanSuspensionNote(value) {
+  return String(value || '').replace(/\r\n/g, '\n').trim().slice(0, SUSPENSION_NOTE_MAX);
+}
 export const ROSTER_DENIED_READ = 'No se pueden leer los jugadores guardados. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 export const ROSTER_DENIED_WRITE = 'No se pudo guardar en Jugadores. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 

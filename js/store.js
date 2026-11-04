@@ -97,7 +97,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, SUSPENDED_TEXT, cleanShortName, findSuspended, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterNoteDocId, rosterPhoneAction, withHolder } from './roster.js';
+import { ROSTER_DENIED_READ, SUSPENDED_TEXT, cleanShortName, cleanSuspensionNote, findSuspended, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterNoteDocId, rosterPhoneAction, withHolder } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -1352,6 +1352,17 @@ class LocalStore {
     if (!cur) return;
     if (!rosterHeldBy({ ...cur, id }, this.actor)) throw editLockedError();
     cur.suspended = value === true;
+    cur.updatedAt = Date.now();
+    this._save(db);
+  }
+  async setSuspensionNote(id, value) {
+    const db = this._load();
+    const cur = db.roster[id];
+    if (!cur) return;
+    if (!rosterHeldBy({ ...cur, id }, this.actor)) throw editLockedError();
+    const text = cleanSuspensionNote(value);
+    if (text) cur.suspensionNote = text;
+    else delete cur.suspensionNote;
     cur.updatedAt = Date.now();
     this._save(db);
   }
@@ -3173,6 +3184,13 @@ export class FirebaseStore {
     if (!rosterHeldBy(cur, this.actor)) throw editLockedError();
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'roster', id), { suspended: value === true, updatedAt: Date.now() });
+  }
+  async setSuspensionNote(id, value) {
+    const cur = (this.state.roster || []).find((row) => row.id === id);
+    if (!cur) throw new Error('Jugador inexistente');
+    if (!rosterHeldBy(cur, this.actor)) throw editLockedError();
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'roster', id), { suspensionNote: cleanSuspensionNote(value), updatedAt: Date.now() });
   }
   async deleteRoster(id) {
     const cur = (this.state.roster || []).find((row) => row.id === id);

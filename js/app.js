@@ -5631,6 +5631,30 @@ function openCreditReturnForm({ player, person, panel }) {
   };
 }
 
+function openSuspensionNote(card) {
+  const current = String(card?.suspensionNote || '');
+  openSheet(`
+    <form id="suspend-note-form" novalidate>
+      <h3>Suspendido</h3>
+      <label class="field"><span>Motivo</span><textarea id="suspend-reason" maxlength="300">${esc(current)}</textarea></label>
+      <div class="field"><div class="err" id="suspend-reason-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#suspend-note-form');
+  if (!form) return;
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = String($('#suspend-reason')?.value || '').replace(/\r\n/g, '\n').trim();
+    try {
+      await app.store.setSuspensionNote(card.id, text);
+      closeSheet();
+    } catch (error) {
+      const err = $('#suspend-reason-err');
+      if (err) err.textContent = error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.');
+    }
+  };
+}
+
 function openPlayerMenu(m, p) {
   if (!p) return;
   const match = m || knownMatches().find((item) => item.id === p.matchId) || null;
@@ -5642,7 +5666,7 @@ function openPlayerMenu(m, p) {
   const canAnnotate = !!(match && canAdd(match, actor().uid));
   const card = heldCard(p);
   const suspendBox = card
-    ? `<label class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${isSuspended(card) ? ' checked' : ''}> Suspendido</label>`
+    ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${isSuspended(card) ? ' checked' : ''} aria-label="Suspendido"><button type="button" class="suspend-label" id="suspend-note">Suspendido</button></div>`
     : '';
   openSheet(`
     ${suspendBox}
@@ -5671,6 +5695,8 @@ function openPlayerMenu(m, p) {
     </div>`);
   bindPlayerPanel(sheet, p, null, MENU_PANEL, panel);
   const suspendFlag = $('#suspend-flag');
+  const suspendNote = $('#suspend-note');
+  if (suspendNote && card) suspendNote.onclick = () => openSuspensionNote(card);
   if (suspendFlag && card) suspendFlag.onchange = async () => {
     const next = suspendFlag.checked === true;
     try {
