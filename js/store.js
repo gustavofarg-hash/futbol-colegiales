@@ -97,7 +97,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, cleanShortName, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHolderIds, rosterNoteDocId, rosterPhoneAction, withHolder } from './roster.js';
+import { ROSTER_DENIED_READ, SUSPENDED_TEXT, cleanShortName, findSuspended, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterNoteDocId, rosterPhoneAction, withHolder } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -178,6 +178,9 @@ export function matchIdFor(date, time, existingIds = new Set()) {
 
 const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
+function refuseSuspended(roster, data) {
+  if (findSuspended(roster, data)) throw Object.assign(new Error(SUSPENDED_TEXT), { code: 'suspended' });
+}
 function refuseDuplicate(mates, data, exceptId = '') {
   const name = String(data?.name || '').trim();
   const invitedBy = String(data?.invitedBy || '').trim();
@@ -861,6 +864,7 @@ class LocalStore {
       .map(([pid, row]) => ({ id: pid, ...row }));
     refuseDuplicate(mates, data);
     refuseGuestHost(mates, data);
+    refuseSuspended(Object.entries(db.roster || {}).map(([rid, row]) => ({ id: rid, ...row })), data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
     const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
@@ -1340,6 +1344,15 @@ class LocalStore {
     delete cur.phone;
     if ('phone' in patch) writeContact(db, 'roster', id, phone, cur, cur.createdByUid || this.actor?.uid || '');
     applyRosterNamePatches(db, namePatches, now);
+    this._save(db);
+  }
+  async setSuspended(id, value) {
+    const db = this._load();
+    const cur = db.roster[id];
+    if (!cur) return;
+    if (!rosterHeldBy({ ...cur, id }, this.actor)) throw editLockedError();
+    cur.suspended = value === true;
+    cur.updatedAt = Date.now();
     this._save(db);
   }
   async deleteRoster(id) {
@@ -2410,6 +2423,7 @@ export class FirebaseStore {
     const mates = this.state.players.filter((p) => p.matchId === match.id);
     refuseDuplicate(mates, data);
     refuseGuestHost(mates, data);
+    refuseSuspended(this.state.roster, data);
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
     const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
@@ -3152,6 +3166,13 @@ export class FirebaseStore {
       }
     } else if (this._contactsLive) next.phone = deleteField();
     await this._commitRosterName(id, next, namePatches, { doc, updateDoc, writeBatch });
+  }
+  async setSuspended(id, value) {
+    const cur = (this.state.roster || []).find((row) => row.id === id);
+    if (!cur) throw new Error('Jugador inexistente');
+    if (!rosterHeldBy(cur, this.actor)) throw editLockedError();
+    const { doc, updateDoc } = this.fs;
+    await updateDoc(doc(this.db, 'roster', id), { suspended: value === true, updatedAt: Date.now() });
   }
   async deleteRoster(id) {
     const cur = (this.state.roster || []).find((row) => row.id === id);

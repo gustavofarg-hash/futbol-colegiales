@@ -706,6 +706,14 @@ dialog.ask::backdrop { background: rgba(0,0,0,.62); }
 }
 .sheet-body::before { content: ""; display: block; width: 40px; height: 5px; border-radius: 9px; background: var(--line); margin: 0 auto 12px; }
 .sheet h3 { margin: 0 0 4px; font-size: 1.25rem; }
+.name.suspended,
+.team-name.suspended,
+.sheet h3.suspended,
+h2.section.suspended,
+.owe-player.suspended,
+.roster-hit.suspended b,
+#menu-full-name.suspended,
+.suspended { color: var(--danger); }
 .name-share { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .name-share > .section { flex: 1 1 auto; min-width: 0; margin: 4px 0 10px; }
 .sheet .name-share > h3 { flex: 1 1 auto; min-width: 0; margin: 0; }

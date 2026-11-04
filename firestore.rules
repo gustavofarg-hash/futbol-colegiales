@@ -359,7 +359,15 @@ service cloud.firestore {
           && request.resource.data.get('level', null) == resource.data.get('level', null)
           && request.resource.data.get('positions', null) == resource.data.get('positions', null)
           && request.resource.data.get('notes', null) == resource.data.get('notes', null)
-          && request.resource.data.get('shortName', null) == resource.data.get('shortName', null);
+          && request.resource.data.get('shortName', null) == resource.data.get('shortName', null)
+          && request.resource.data.get('suspended', null) == resource.data.get('suspended', null);
+    }
+    function canMarkSuspended() {
+      return isRosterHolder()
+          || isRosterCreator()
+          || (resource.data.get('holders', []).size() == 0
+              && resource.data.get('createdByUid', '') == ''
+              && resource.data.get('createdBy', '') == '');
     }
 
     // Un organizador puede actualizar al jugador. El nombre y el teléfono
@@ -661,6 +669,13 @@ service cloud.firestore {
           && request.resource.data.holders.hasAll(resource.data.get('holders', []))
           && (resource.data.get('createdByUid', '') == '' || request.resource.data.holders.hasAny([resource.data.createdByUid]))
           && request.resource.data.holders.size() == resource.data.get('holders', []).size() + (resource.data.keys().hasAny(['holders']) ? 1 : (resource.data.get('createdByUid', '') == '' ? 1 : 2));
+      // Solo quien tiene la ficha cambia Suspendido. Va antes de validRoster
+      // para no sumar expresiones al tope de 1000.
+      allow update: if isActiveStaff()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['suspended', 'updatedAt'])
+          && request.resource.data.suspended is bool
+          && canMarkSuspended()
+          && rosterStampSame();
       allow create: if isActiveStaff() && validRoster(request.resource.data);
       allow update: if isActiveStaff() && validRoster(request.resource.data)
           && rosterStampSame()

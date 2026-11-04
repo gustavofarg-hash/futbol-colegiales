@@ -4,6 +4,7 @@
 import { normalizePhone } from './phone.js';
 import { phoneKey } from './privacy.js';
 
+export const SUSPENDED_TEXT = 'Está suspendido.';
 export const ROSTER_DENIED_READ = 'No se pueden leer los jugadores guardados. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 export const ROSTER_DENIED_WRITE = 'No se pudo guardar en Jugadores. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 
@@ -148,6 +149,23 @@ export function phoneIdentity(entity) {
   if (/^[0-9a-f]{64}$/.test(explicit)) return explicit;
   const phone = canonicalPhone(entity?.phone);
   return phone ? phoneKey(phone) : '';
+}
+
+export function isSuspended(person) {
+  return person?.suspended === true;
+}
+
+/** La ficha suspendida de esta persona, por id o por el mismo teléfono. */
+export function findSuspended(roster, source) {
+  const list = roster || [];
+  const rosterId = String(source?.rosterId || '').trim();
+  if (rosterId) {
+    const row = list.find((item) => item?.id === rosterId);
+    if (isSuspended(row)) return row;
+  }
+  const key = phoneIdentity(source);
+  if (!key) return null;
+  return list.find((item) => isSuspended(item) && phoneIdentity(item) === key) || null;
 }
 
 export function rosterByPhone(roster, phone) {

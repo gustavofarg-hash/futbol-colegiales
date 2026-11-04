@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
+import { SUSPENDED_TEXT, cleanShortName, displayName, findSuspended, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1242,6 +1242,41 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
     { id: 'b', createdAt: 5, text: 'nueva' },
   ]);
   assert.deepEqual(notes.map((n) => n.text), ['nueva', 'vieja']);
+});
+
+test('un suspendido no se anota, ni el otro organizador, y el partido donde ya está sigue', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-susp';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addRoster({ name: 'Suspendido Pérez', phone: '5491166668080' }, 'Gustavo');
+  const first = await store.addMatch({ date: '2026-11-21', time: '21:00', capacity: 14 }, 'Gustavo');
+  await store.addPlayer({ id: first }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Gustavo');
+  await store.setSuspended(id, true);
+  const saved = JSON.parse(mem.get('f7c-test-susp'));
+  assert.equal(saved.roster[id].suspended, true);
+  assert.equal(Object.values(saved.players).length, 1);
+  assert.equal(findSuspended(Object.entries(saved.roster).map(([rid, row]) => ({ id: rid, ...row })), { phone: '5491166668080' })?.id, id);
+  const second = await store.addMatch({ date: '2026-11-22', time: '21:00', capacity: 14 }, 'Gustavo');
+  await assert.rejects(
+    () => store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Gustavo'),
+    (error) => error?.code === 'suspended' && error.message === SUSPENDED_TEXT,
+  );
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await assert.rejects(() => store.setSuspended(id, false), (error) => error?.code === 'edit-locked');
+  await assert.rejects(
+    () => store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080' }, 'Martín'),
+    (error) => error?.code === 'suspended',
+  );
+  await store.addRoster({ name: 'Suspendido Pérez', phone: '5491166668080' }, 'Martín');
+  await store.setSuspended(id, false);
+  await store.addPlayer({ id: second }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Martín');
+  assert.equal(Object.values(JSON.parse(mem.get('f7c-test-susp')).players).length, 2);
 });
 
 test('las notas de un jugador compartido las ve solo quien las escribió', async () => {
@@ -3249,7 +3284,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v109');
+  assert.equal(version, 'f7c-v111');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
