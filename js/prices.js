@@ -71,11 +71,7 @@ function whenOf(match) {
   return 0;
 }
 
-/**
- * Titulares (no espera) de la misma persona en partidos con la misma fecha.
- * Ordenados por hora. Vacío si no hay con quién agrupar.
- */
-export function sameDayTitulars({ player, players, matches }) {
+function personDayRows(player, players, matches) {
   const key = playerPromoKey(player, players);
   if (!key || player?.waiting === true || isFreePlay(player)) return [];
   const own = (matches || []).find((match) => match.id === player.matchId);
@@ -95,6 +91,17 @@ export function sameDayTitulars({ player, players, matches }) {
     });
   }
   return [...byMatch.values()].sort((a, b) => whenOf(a.match) - whenOf(b.match) || String(a.match.id).localeCompare(String(b.match.id)));
+}
+
+/**
+ * Titulares (no espera) de la misma persona en partidos con la misma fecha.
+ * Ordenados por hora. Un partido cancelado no entra en la promo.
+ * Vacío si no hay con quién agrupar.
+ */
+export function sameDayTitulars({ player, players, matches }) {
+  const own = (matches || []).find((match) => match.id === player?.matchId);
+  if (own?.cancelled === true) return [];
+  return personDayRows(player, players, matches).filter((row) => row.match?.cancelled !== true);
 }
 
 /**
@@ -207,28 +214,9 @@ function addNamed(parts, name, amount) {
   else parts.push({ name: key, amount: money });
 }
 
-/**
- * Al salir de la promo (gratis, o quitar ese partido), lo ya cobrado se acomoda
- * al precio nuevo: la promo de los que quedan, o el precio de un partido de Ajustes
- * si queda uno solo. No usa el precio propio de ese partido.
- * Lo que sobra vuelve como saldo a quien lo había cobrado.
- * Los partidos que quedan se reparten ese cobro en partes iguales;
- * el peso que sobra queda en el primero. «Transfiere después» no se movió:
- * todavía no se cobró.
- */
-export function promoRefundAfterFree({ player, players, matches, prices }) {
-  const rows = sameDayTitulars({ player, players, matches });
-  if (!player || rows.length < 2) return null;
-  const others = rows.filter((row) => row.player.id !== player.id);
-  const norm = normalizePrices(prices);
-  const newDue = others.length >= 2
-    ? promoOffer(others.length, norm).total
-    : others.length === 1
-      ? norm.matchPrice
-      : 0;
-  const ordered = [...others, rows.find((row) => row.player.id === player.id)].filter(Boolean);
+function collectedSlices(rows) {
   const slices = [];
-  for (const row of ordered) {
+  for (const row of rows || []) {
     for (const share of paymentShares(row.player)) {
       if (share.kind === 'pending' || !(share.amount > 0)) continue;
       slices.push({
@@ -238,20 +226,25 @@ export function promoRefundAfterFree({ player, players, matches, prices }) {
       });
     }
   }
-  const received = roundARS(slices.reduce((sum, slice) => sum + slice.amount, 0));
+  return slices;
+}
+
+/** Reparte lo cobrado en los partidos que siguen. Lo que sobra es saldo de quien cobró. */
+function settleCollected({ poolRows, keepRows, slices, newDue }) {
+  const received = roundARS((slices || []).reduce((sum, slice) => sum + slice.amount, 0));
   const keptTotal = Math.min(received, roundARS(newDue));
   let room = keptTotal;
   const kept = [];
   const creditByName = new Map();
-  for (const slice of slices) {
+  for (const slice of slices || []) {
     const take = roundARS(Math.min(slice.amount, Math.max(0, room)));
     const extra = roundARS(slice.amount - take);
     if (take > 0) kept.push({ ...slice, amount: take });
     if (extra > 0) creditByName.set(slice.name, roundARS((creditByName.get(slice.name) || 0) + extra));
     room = roundARS(room - take);
   }
-  const targets = splitEven(keptTotal, others.length);
-  const buckets = others.map((row) => ({
+  const targets = splitEven(keptTotal, (keepRows || []).length);
+  const buckets = (keepRows || []).map((row) => ({
     playerId: row.player.id,
     cashParts: [],
     transferParts: [],
@@ -296,8 +289,100 @@ export function promoRefundAfterFree({ player, players, matches, prices }) {
       pendingTo: bucket.pending > 0 ? bucket.pendingTo : '',
     };
   }).filter((row) => row.cash + row.transfer + row.fromCredit + row.pending > 0);
+  const paidIds = new Set(payments.map((row) => row.playerId));
+  const clearIds = (poolRows || []).map((row) => row.player.id).filter((id) => id && !paidIds.has(id));
   const credits = [...creditByName.entries()]
     .filter(([, amount]) => amount > 0)
     .map(([name, amount]) => ({ name, amount }));
-  return { newDue, received, credits, payments };
+  return { newDue: roundARS(newDue), received, credits, payments, clearIds };
+}
+
+/**
+ * Al salir de la promo (gratis, o quitar ese partido), lo ya cobrado se acomoda
+ * al precio nuevo: la promo de los que quedan, o el precio de un partido de Ajustes
+ * si queda uno solo. No usa el precio propio de ese partido.
+ * Un partido cancelado no se queda con una parte: su cobro entra en la cuenta
+ * y, si no queda nadie, vuelve entero como saldo.
+ * Lo que sobra vuelve como saldo a quien lo había cobrado.
+ * «Transfiere después» no se movió: todavía no se cobró.
+ */
+export function promoRefundAfterFree({ player, players, matches, prices }) {
+  if (!player || player.waiting === true || isFreePlay(player)) return null;
+  const all = personDayRows(player, players, matches);
+  const active = all.filter((row) => row.match?.cancelled !== true);
+  const cancelled = all.filter((row) => row.match?.cancelled === true);
+  if (!active.some((row) => row.player.id === player.id)) return null;
+  if (active.length < 2 && cancelled.length === 0) return null;
+  const others = active.filter((row) => row.player.id !== player.id);
+  const norm = normalizePrices(prices);
+  const newDue = others.length >= 2
+    ? promoOffer(others.length, norm).total
+    : others.length === 1
+      ? norm.matchPrice
+      : 0;
+  const leaving = active.filter((row) => row.player.id === player.id);
+  return settleCollected({
+    poolRows: [...others, ...leaving, ...cancelled],
+    keepRows: others,
+    slices: collectedSlices([...others, ...leaving, ...cancelled]),
+    newDue,
+  });
+}
+
+/**
+ * Al cancelar un partido de la promo, lo cobrado de más vuelve como saldo.
+ * El partido que queda usa su precio si lo tiene, si no el de Ajustes.
+ * Si se cancelan todos, vuelve todo lo cobrado.
+ */
+export function promoSettleLeaving({ player, players, matches, prices, matchId }) {
+  const all = personDayRows(player, players, matches);
+  const active = all.filter((row) => row.match?.cancelled !== true);
+  const cancelled = all.filter((row) => row.match?.cancelled === true);
+  const leaving = active.filter((row) => row.match?.id === matchId);
+  const staying = active.filter((row) => row.match?.id !== matchId);
+  if (!leaving.length || staying.length + cancelled.length === 0) return null;
+  const newDue = staying.length >= 2
+    ? promoOffer(staying.length, prices).total
+    : staying.length === 1
+      ? priceOfMatch(staying[0].match, prices)
+      : 0;
+  return settleCollected({
+    poolRows: [...staying, ...leaving, ...cancelled],
+    keepRows: staying,
+    slices: collectedSlices([...staying, ...leaving, ...cancelled]),
+    newDue,
+  });
+}
+
+/**
+ * Al reactivar, el partido vuelve a la promo. Si falta plata y hay saldo
+ * con quien cobró, se usa. Si sobra, vuelve a ser saldo.
+ */
+export function promoSettleJoining({ player, players, matches, prices, matchId, balances = [] }) {
+  const list = (matches || []).map((match) => (match?.id === matchId ? { ...match, cancelled: false } : match));
+  const active = personDayRows(player, players, list).filter((row) => row.match?.cancelled !== true);
+  if (active.length < 2 || !active.some((row) => row.match?.id === matchId)) return null;
+  const newDue = promoOffer(active.length, prices).total;
+  const slices = collectedSlices(active);
+  const received = roundARS(slices.reduce((sum, slice) => sum + slice.amount, 0));
+  const shortfall = roundARS(Math.max(0, newDue - received));
+  const named = new Set(slices.map((slice) => slice.name).filter(Boolean));
+  const funds = [...(balances || [])].sort((a, b) => {
+    const aName = String(a?.organizerName || a?.name || '').trim();
+    const bName = String(b?.organizerName || b?.name || '').trim();
+    return (named.has(bName) - named.has(aName)) || aName.localeCompare(bName, 'es');
+  });
+  const spends = [];
+  let need = shortfall;
+  for (const fund of funds) {
+    if (!(need > 0)) break;
+    const name = String(fund?.organizerName || fund?.name || '').trim();
+    const take = roundARS(Math.min(roundARS(fund?.amount), need));
+    if (!name || !(take > 0)) continue;
+    spends.push({ name, amount: take });
+    slices.push({ kind: 'credit', name, amount: take });
+    need = roundARS(need - take);
+  }
+  const settled = settleCollected({ poolRows: active, keepRows: active, slices, newDue });
+  return { ...settled, spends };
 }

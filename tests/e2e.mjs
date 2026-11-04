@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v102');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v103');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -4555,9 +4555,9 @@ async function assertGuestPromo(fix, visibleName, count) {
     const row = Object.values(db.players).find((player) => player.name === 'Credito Auto' && String(player.matchId || '').includes('1900'));
     const credit = Object.values(db.credits || {}).find((item) => item.name === 'Credito Auto');
     const late = Object.values(db.players).find((player) => player.name === 'Credito Auto' && String(player.matchId || '').includes('2100'));
-    return row && row.autoCredit !== true && late?.fromCredit === 3500 && credit && credit.amount === 4500;
+    return row && row.autoCredit !== true && late?.fromCredit === 5000 && credit && credit.amount === 3000;
   });
-  check('Al cancelar el partido vuelve solo el crédito automático de ese partido', true);
+  check('Al cancelar, la promo baja a un partido y lo que sobra del crédito vuelve al saldo', true);
   await page.evaluate(() => { location.hash = '#/registro/pagos'; });
   await page.waitForSelector('#log-list');
   check('Registro anota la devolución del crédito', (await page.locator('#log-list').innerText()).includes('Crédito devuelto'));
@@ -5246,6 +5246,70 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v102-whatsapp-menu.png' });
   await page.click('#sheet [data-close]');
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (await page.locator('#login-form').count() === 0) {
+    await page.click('#btn-settings');
+    await page.click('#set-logout');
+    await page.waitForSelector('#login-form');
+  }
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  const promoDay = await page.evaluate(async () => {
+    const who = window.__app.who;
+    const store = window.__app.store;
+    const a = await store.addMatch({ date: '2026-12-02', time: '19:00', note: 'Promo queda' }, who);
+    const b = await store.addMatch({ date: '2026-12-02', time: '21:00', note: 'Promo se cancela' }, who);
+    const match = { capacity: 14 };
+    const playerA = await store.addPlayer({ ...match, id: a, date: '2026-12-02' }, { name: 'Promo Queda', phone: '5491199994242' }, who);
+    const playerB = await store.addPlayer({ ...match, id: b, date: '2026-12-02' }, { name: 'Promo Queda', phone: '5491199994242' }, who);
+    const paid = { paid: true, split: true, cash: 4500, cashTo: 'Gustavo', transfer: 0, pendingTransfer: 0, fromCredit: 0 };
+    await store.setPayment(playerA, paid, who);
+    await store.setPayment(playerB, paid, who);
+    return { a, b };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.a);
+  await page.waitForSelector('.promo-badge');
+  check('Antes de cancelar se ve la promo 2', (await page.locator('.promo-badge').innerText()).includes('Promo 2 partidos por $9.000'));
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.b);
+  await page.waitForSelector('#btn-cancel-match');
+  await page.click('#btn-cancel-match');
+  await page.waitForSelector('#app-ask-text');
+  await page.click('#ask-ok');
+  await page.waitForSelector('#cancel-form');
+  await page.click('#cancel-form button[type=submit]');
+  await page.waitForSelector('#app-ask-text');
+  await page.click('#ask-cancel');
+  await page.waitForSelector('#match-cancelled');
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.a);
+  await page.waitForSelector('.slot:has-text("Promo Queda")');
+  const afterCancel = (await page.locator('.slot', { hasText: 'Promo Queda' }).innerText()).replace(/\s+/g, ' ');
+  check('Al cancelar el otro, la promo 2 desaparece', (await page.locator('.promo-badge').count()) === 0 && !afterCancel.includes('Promo 2'), afterCancel);
+  await page.locator('.slot', { hasText: 'Promo Queda' }).locator('[data-menu]').click();
+  await page.waitForSelector('#menu-credit');
+  const menuText = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
+  check('Lo pagado de más queda como saldo y no sigue la promo', menuText.includes('Saldo a favor con Gustavo: $4.000') && !menuText.includes('Promo 2') && !menuText.includes('Debe en total'), menuText.slice(0, 320));
+  await page.locator('#sheet').screenshot({ path: '/opt/cursor/artifacts/screenshots/v103-promo-saldo.png' });
+  await page.click('#sheet [data-close]');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.b);
+  await page.waitForSelector('#btn-reactivate-match');
+  await page.click('#btn-reactivate-match');
+  await page.waitForSelector('#app-ask-text');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => !document.querySelector('#match-cancelled'));
+  await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, promoDay.a);
+  await page.waitForSelector('.promo-badge');
+  check('Al reactivar vuelve la promo 2', (await page.locator('.promo-badge').innerText()).includes('Promo 2 partidos por $9.000'));
+  await page.locator('.slot', { hasText: 'Promo Queda' }).locator('[data-menu]').click();
+  await page.waitForSelector('#sheet h3');
+  const afterBack = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
+  check('Al reactivar el saldo de la cancelación se vuelve a usar', !afterBack.includes('Saldo a favor con Gustavo: $4.000'), afterBack.slice(0, 240));
+  await page.click('#sheet [data-close]');
 }
 
 const fresh = await ctx.newPage();

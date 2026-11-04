@@ -26,11 +26,11 @@ import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWri
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
 import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
-import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditLine, creditLoadSummary, creditPanelRows, retroactiveCreditIds } from './credit.js';
+import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditBalance, creditBalances, creditLine, creditLoadSummary, creditPanelRows, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
-import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, sameDayTitulars, splitPaymentAcross } from './prices.js';
+import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v102';
+const APP_VERSION = 'f7c-v103';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2011,7 +2011,7 @@ function openCancel(m) {
     closeSheet();
     const next = { ...m, notes, cancelled: true };
     const job = (async () => {
-      for (const player of app.players.filter((item) => item.matchId === m.id)) await refundAutoCredit(player);
+      await settlePromoForMatch(m.id, { leaving: true });
       await app.store.updateMatch(m.id, {
         cancelled: true,
         cancelledAt: Date.now(),
@@ -2026,7 +2026,10 @@ function openCancel(m) {
 
 async function reactivateMatch(m) {
   if (!(await askConfirm('¿Volver a activar este partido?'))) return;
-  run(app.store.updateMatch(m.id, { cancelled: false }, app.who), 'Partido reactivado');
+  run((async () => {
+    await app.store.updateMatch(m.id, { cancelled: false }, app.who);
+    await settlePromoForMatch(m.id, { joining: true });
+  })(), 'Partido reactivado');
 }
 
 async function offerCancelWhatsApp(match) {
@@ -4769,6 +4772,16 @@ function openPaymentForm(m, p, opts = {}) {
             },
           });
         }
+        for (const id of refund.clearIds || []) {
+          if (id === p.id || refund.payments.some((row) => row.playerId === id)) continue;
+          const pending = paymentParts(app.players.find((item) => item.id === id)).pending;
+          entries.push({
+            id,
+            input: pending > 0
+              ? { paid: true, split: true, freePlay: false, cash: 0, transfer: 0, pendingTransfer: pending, fromCredit: 0, pendingTo: app.players.find((item) => item.id === id)?.pendingTo || null }
+              : { paid: false, split: true },
+          });
+        }
         const beneficiary = promoPayer(p);
         const key = personKey(beneficiary, app.players);
         if (refund.credits.length && !key) { $('#pay-err').textContent = 'No se puede guardar el saldo sin identificar a quien pagó.'; return; }
@@ -5527,6 +5540,125 @@ function askYesNo(title) {
   });
 }
 
+async function clearSettledPayment(playerId) {
+  const player = app.players.find((item) => item.id === playerId);
+  if (!player) return;
+  const pending = paymentParts(player).pending;
+  if (pending > 0) {
+    await app.store.setPayment(playerId, {
+      paid: true,
+      split: true,
+      freePlay: false,
+      cash: 0,
+      transfer: 0,
+      pendingTransfer: pending,
+      fromCredit: 0,
+      pendingTo: player.pendingTo || null,
+    }, app.who);
+    return;
+  }
+  await app.store.setPayment(playerId, { paid: false, split: true }, app.who);
+}
+
+async function applyPromoSettlement(person, plan) {
+  if (!plan) return false;
+  const beneficiary = promoPayer(person);
+  const key = personKey(beneficiary, app.players);
+  const net = new Map();
+  for (const credit of plan.credits || []) {
+    const name = credit.name || actor().name;
+    net.set(name, roundMoney((net.get(name) || 0) + credit.amount));
+  }
+  for (const spend of plan.spends || []) {
+    const name = spend.name || '';
+    if (!name) continue;
+    net.set(name, roundMoney((net.get(name) || 0) - spend.amount));
+  }
+  const moves = [];
+  for (const [organizerName, delta] of net) {
+    if (!delta) continue;
+    const organizerUid = organizerUidByName(organizerName) || (sameOrganizer(organizerName, actor().name) ? actor().uid : '');
+    if (!organizerUid || !key) throw Object.assign(new Error('No se puede guardar el saldo sin identificar a quien pagó.'), { code: 'invalid-credit' });
+    moves.push({
+      personKey: key,
+      organizerUid,
+      organizerName,
+      name: beneficiary.name || '',
+      delta,
+    });
+  }
+  const done = [];
+  try {
+    for (const move of moves) {
+      await app.store.adjustCredit(move, app.who);
+      done.push(move);
+    }
+    for (const row of plan.payments || []) {
+      const wasAuto = app.players.find((item) => item.id === row.playerId)?.autoCredit === true;
+      await app.store.setPayment(row.playerId, {
+        paid: true,
+        split: true,
+        freePlay: false,
+        cash: row.cash,
+        transfer: row.transfer,
+        pendingTransfer: row.pending,
+        fromCredit: row.fromCredit,
+        cashTo: row.cash > 0 ? row.cashTo : null,
+        transferTo: row.transfer > 0 ? row.transferTo : null,
+        transferParts: row.transferParts,
+        pendingTo: row.pending > 0 ? row.pendingTo : null,
+        creditTo: row.fromCredit > 0 ? row.creditTo : null,
+        autoCredit: row.fromCredit > 0 && (wasAuto || (plan.spends || []).length > 0),
+      }, app.who);
+    }
+    for (const id of plan.clearIds || []) {
+      if ((plan.payments || []).some((row) => row.playerId === id)) continue;
+      await clearSettledPayment(id);
+    }
+    for (const move of moves) {
+      if (!(move.delta > 0)) continue;
+      await app.store.recordCreditLoad({
+        match: null,
+        player: { ...beneficiary, creditTo: move.organizerName },
+        amount: move.delta,
+        solo: true,
+      });
+    }
+  } catch (error) {
+    for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
+    throw error;
+  }
+  return true;
+}
+
+async function settlePromoForMatch(matchId, { leaving = false, joining = false } = {}) {
+  const people = app.players.filter((item) => item.matchId === matchId && item.waiting !== true && !isFreePlay(item) && !isNoPlay(item));
+  const seen = new Set();
+  for (const person of people) {
+    const key = personKey(person, app.players);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    const prices = livePrices();
+    const matches = knownMatches();
+    const plan = leaving
+      ? promoSettleLeaving({ player: person, players: app.players, matches, prices, matchId })
+      : promoSettleJoining({
+        player: person,
+        players: app.players,
+        matches,
+        prices,
+        matchId,
+        balances: creditBalances(app.credits, personKey(promoPayer(person), app.players)),
+      });
+    if (plan) await applyPromoSettlement(person, plan);
+    else if (leaving) await refundAutoCredit(person);
+  }
+  if (!leaving) return;
+  for (const person of app.players.filter((item) => item.matchId === matchId && (item.waiting === true || isFreePlay(item) || isNoPlay(item)))) {
+    await refundAutoCredit(person);
+  }
+}
+
 /** Al quedar un solo partido de la promo, cobra el precio de Ajustes y el sobrante es saldo de quien pagó. */
 async function unwindPromoPayment(player) {
   if (!player || player.waiting === true || isFreePlay(player)) return false;
@@ -5565,6 +5697,10 @@ async function unwindPromoPayment(player) {
       creditTo: row.fromCredit > 0 ? row.creditTo : null,
       autoCredit: wasAuto && row.fromCredit > 0,
     }, app.who);
+  }
+  for (const id of refund.clearIds || []) {
+    if (id === player.id || (refund.payments || []).some((row) => row.playerId === id)) continue;
+    await clearSettledPayment(id);
   }
   for (const move of grants) await app.store.adjustCredit(move, app.who);
   for (const credit of grants) {
