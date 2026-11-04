@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v103');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v104');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5310,6 +5310,23 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const afterBack = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
   check('Al reactivar el saldo de la cancelación se vuelve a usar', !afterBack.includes('Saldo a favor con Gustavo: $4.000'), afterBack.slice(0, 240));
   await page.click('#sheet [data-close]');
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(async () => {
+    await window.__app.store.addMatch({ date: '2026-10-24', time: '20:00', court: '1', note: 'Cancha lista', price: 5000 }, window.__app.who);
+  });
+  await page.evaluate(() => { location.hash = '#/'; });
+  await page.waitForSelector('.match-card[data-note="Cancha lista"] .match-when');
+  const when = (await page.locator('.match-card[data-note="Cancha lista"] .match-when').innerText()).replace(/\s+/g, ' ').trim();
+  check('La lista muestra la cancha al lado de la hora', when === '20hs C1 ($5.000)', when);
+  const plain = await page.locator('.match-card').evaluateAll((cards) => {
+    const card = cards.find((el) => (el.getAttribute('data-note') || '') !== 'Cancha lista');
+    return card?.querySelector('.match-when')?.textContent || '';
+  });
+  check('Sin número de cancha la lista no escribe la C', plain !== '' && !/\bC\d/.test(plain), plain);
+  await page.locator('.match-card[data-note="Cancha lista"]').screenshot({ path: '/opt/cursor/artifacts/screenshots/v104-cancha-lista.png' });
 }
 
 const fresh = await ctx.newPage();
