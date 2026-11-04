@@ -5,7 +5,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
@@ -20,7 +20,7 @@ import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { ROSTER_DENIED_WRITE, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, searchRoster, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v107';
+const APP_VERSION = 'f7c-v108';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1541,9 +1541,19 @@ function detailPlaceLine(m) {
   return bits.join(' - ');
 }
 
-/** Hay otro partido de Próximos al que se puede pasar, y este está en esa lista. */
+/** Próximos, o los últimos 7 días del historial. El más reciente primero en el pasado. */
+function detailSwitchRows(match) {
+  const all = knownMatches();
+  if (matchAlreadyPlayed(match)) {
+    const from = addDays(todayISO(), -7);
+    return pastMatches(all).filter((item) => item.date >= from);
+  }
+  return currentMatches(all);
+}
+
+/** Hay otro partido de esa lista, y este está en ella. */
 function canSwitchMatch(match) {
-  const rows = currentMatches(app.matches);
+  const rows = detailSwitchRows(match);
   if (!match?.id || !rows.some((item) => item.id === match.id)) return false;
   return rows.length > 1;
 }
@@ -1555,7 +1565,7 @@ function matchSwitchOption(item) {
 }
 
 function openMatchSwitch(current) {
-  const rows = currentMatches(app.matches);
+  const rows = detailSwitchRows(current);
   const items = rows.map((item) => {
     const on = item.id === current.id;
     return `<button type="button" class="btn${on ? ' primary' : ''}" data-match-switch="${esc(item.id)}"${on ? ' aria-current="true"' : ''}>${esc(matchSwitchOption(item))}</button>`;
@@ -1635,7 +1645,7 @@ function renderMatch(id) {
   const notesText = String(m.notes || '').trim();
   const hour = shortHour(m.time) || '--:--';
   const priceText = formatARS(priceOfMatch(m, livePrices()));
-  const switchLabel = matchSwitchLabel(m.date, m.time, courtMark(m));
+  const switchLabel = matchTitleLabel(m.date);
   const switchable = canSwitchMatch(m);
   const title = switchable
     ? `<button type="button" class="match-switch" id="match-date" aria-haspopup="dialog">${esc(switchLabel)}<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`
@@ -1644,7 +1654,7 @@ function renderMatch(id) {
   const notesBtn = canEdit ? '<button type="button" class="btn" id="btn-notes">Notas</button>' : '';
   const notesBody = notesText ? `<p class="match-notes-text">${esc(m.notes)}</p>` : '';
   const notesBlock = (notesBtn || notesBody)
-    ? `<div class="match-notes" id="match-notes">${notesBtn ? `<div class="match-notes-head">${notesBtn}</div>` : ''}${notesBody}</div>`
+    ? `<div class="match-notes" id="match-notes">${notesBody}${notesBtn}</div>`
     : '';
   if (!replaceView(`
     <section class="detail-head">

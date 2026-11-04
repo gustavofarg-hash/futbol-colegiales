@@ -83,6 +83,15 @@ export function dayMonth(iso) {
   return num.length >= 5 ? num.slice(0, 5) : '';
 }
 
+/** "Miércoles 04/11". Día completo y fecha, sin año. */
+export function matchTitleLabel(iso) {
+  const dm = dayMonth(iso);
+  if (!dm) return '';
+  const name = DIAS[weekdayOf(iso)];
+  if (!name) return '';
+  return `${capitalize(name)} ${dm}`;
+}
+
 /** "Mié 04/11 20hs C2". court es la marca ("C2") o vacío. */
 export function matchSwitchLabel(date, time, court = '') {
   return [shortWeekday(date), dayMonth(date), shortHour(time), String(court || '').trim()].filter(Boolean).join(' ');

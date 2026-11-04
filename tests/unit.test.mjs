@@ -19,7 +19,7 @@ import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableL
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { addDays, compensationWhen, dayMonth, matchSwitchLabel, numericDate, shortHour, shortWeekday, toEpoch, weekdayDate } from '../js/dates.js';
+import { addDays, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, toEpoch, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -68,6 +68,10 @@ test('el día con mayúscula precede a la fecha del partido', () => {
   assert.equal(matchSwitchLabel('2026-11-04', '20:00', ''), 'Mié 04/11 20hs');
   assert.equal(matchSwitchLabel('2026-11-08', '19:30', 'C3'), 'Dom 08/11 19:30hs C3');
   assert.equal(matchSwitchLabel('2026-10-22', '21:00', ''), 'Jue 22/10 21hs');
+  assert.equal(matchTitleLabel('2026-11-04'), 'Miércoles 04/11');
+  assert.equal(matchTitleLabel('2026-11-08'), 'Domingo 08/11');
+  assert.equal(matchTitleLabel('2026-10-22'), 'Jueves 22/10');
+  assert.equal(matchTitleLabel(''), '');
   assert.equal(compensationWhen('2026-11-03'), 'MARTES 03/11/2026');
 });
 
@@ -3240,7 +3244,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v107');
+  assert.equal(version, 'f7c-v108');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
