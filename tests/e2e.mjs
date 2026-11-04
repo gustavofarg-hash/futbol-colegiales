@@ -118,7 +118,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v105');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v106');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -2061,7 +2061,7 @@ check('Quien no puede anotar ve los equipos y no los cambia', (await page.locato
 await page.locator('#team-bib .team-name', { hasText: 'Lectura Luis' }).click();
 await page.waitForSelector('#pm-profile');
 check('Quien solo mira abre el mismo menú, sin cargar pago', (await page.locator('#sheet h3').innerText()) === 'Lectura Luis' && await page.locator('#pm-pay').count() === 0 && await page.locator('#menu-pay').count() === 1);
-check('Quien no puede anotar igual ve Cargar crédito y el apodo', (await page.locator('#pm-credit').innerText()) === 'Cargar' && await page.locator('#menu-nick').count() === 1 && (await page.locator('#menu-credit').innerText()).includes('Saldo a favor'));
+check('Quien no puede anotar igual ve Cargar crédito y el apodo', (await page.locator('#pm-credit').innerText()) === 'Cargar' && await page.locator('#menu-nick').count() === 1 && (await page.locator('#menu-credit').innerText()).includes('Crédito disponible con'));
 await page.click('#sheet [data-close]');
 await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
 check('Quien solo mira igual puede compartir por WhatsApp', (await page.getAttribute('#btn-teams-wa', 'href') || '').includes('wa.me/'));
@@ -3232,15 +3232,17 @@ const debtLayout = await page.evaluate(() => {
   const line = lineEl.getBoundingClientRect();
   const green = (color) => color === 'rgb(15, 122, 61)' || color === 'rgb(34, 197, 94)';
   const red = (color) => color === 'rgb(198, 40, 40)' || color === 'rgb(255, 107, 107)';
+  const sharesRow = (a, b) => a.top < b.bottom - 4 && b.top < a.bottom - 4;
   return {
-    btnUnder: btn.top >= credit.bottom - 1 && btn.top - credit.bottom <= 16,
+    beside: sharesRow(credit, btn) && btn.left >= credit.right - 2,
     btnGreen: green(getComputedStyle(btnEl).backgroundColor),
+    lineGreen: green(getComputedStyle(creditEl).color),
     lineUnder: line.top >= debt.bottom - 1 && line.top - debt.bottom <= 12,
     lineRed: red(getComputedStyle(lineEl).color),
     debtRed: red(getComputedStyle(debtEl).color),
   };
 });
-check('En el menú, Cargar crédito verde queda bajo el saldo y el detalle rojo bajo el total', debtLayout.btnUnder && debtLayout.btnGreen && debtLayout.lineUnder && debtLayout.lineRed && debtLayout.debtRed, JSON.stringify(debtLayout));
+check('En el menú, Cargar queda al lado del crédito verde y el detalle rojo bajo el total', debtLayout.beside && debtLayout.btnGreen && debtLayout.lineGreen && debtLayout.lineUnder && debtLayout.lineRed && debtLayout.debtRed, JSON.stringify(debtLayout));
 await page.click('#pm-credit');
 await page.waitForSelector('#credit-form');
 await page.fill('#credit-form [name=amount]', '8000');
@@ -3258,11 +3260,11 @@ await page.click('.slot:has-text("Deuda Ajena") .more-btn');
 await page.waitForSelector('#menu-credit');
 const creditColor = await page.$eval('#menu-credit', (el) => getComputedStyle(el).color);
 const creditText = await page.locator('#menu-credit').innerText();
-check('El saldo a favor del menú está en verde y es con Gustavo', creditText.includes('Saldo a favor con Gustavo: $3.000') && (creditColor === 'rgb(15, 122, 61)' || creditColor === 'rgb(34, 197, 94)'), `${creditText} ${creditColor}`);
-check('Con saldo, la línea dice el crédito y Devolver está al lado de Cargar', (await page.locator('#pm-credit-available').innerText()) === 'Crédito disponible: $3.000' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && (await page.locator('#pm-credit-return').innerText()) === 'Devolver' && !(await page.isDisabled('#pm-credit-return')));
+check('El crédito del menú está en verde y es con Gustavo', creditText === 'Crédito disponible con Gustavo: $3.000' && (creditColor === 'rgb(15, 122, 61)' || creditColor === 'rgb(34, 197, 94)'), `${creditText} ${creditColor}`);
+check('Con saldo, la línea dice el crédito y Devolver está al lado de Cargar', (await page.locator('#menu-credit').innerText()) === 'Crédito disponible con Gustavo: $3.000' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && (await page.locator('#pm-credit-return').innerText()) === 'Devolver' && !(await page.isDisabled('#pm-credit-return')) && !(await page.locator('#menu-panel').innerText()).includes('Saldo a favor'));
 const creditRow = await page.evaluate(() => {
   const panel = document.querySelector('#menu-panel').getBoundingClientRect();
-  const lineEl = document.querySelector('#pm-credit-available');
+  const lineEl = document.querySelector('#menu-credit');
   const loadEl = document.querySelector('#pm-credit');
   const backEl = document.querySelector('#pm-credit-return');
   const line = lineEl.getBoundingClientRect();
@@ -3279,17 +3281,17 @@ const creditRow = await page.evaluate(() => {
   };
 });
 check('A 390px el crédito y los dos botones quedan en la misma fila', creditRow.sameRow && creditRow.beside && creditRow.inside && !creditRow.cut, JSON.stringify(creditRow));
-await page.locator('#menu-panel .credit-stack').screenshot({ path: '/opt/cursor/artifacts/screenshots/v105-credito-linea.png' });
+await page.locator('#menu-panel .credit-stack').screenshot({ path: '/opt/cursor/artifacts/screenshots/v106-credito-linea.png' });
 await page.click('#pm-credit-return');
 await page.waitForSelector('#return-form');
-check('Devolver muestra cuánto crédito hay', (await page.locator('#return-now').innerText()) === 'Crédito disponible: $3.000');
+check('Devolver muestra cuánto crédito hay', (await page.locator('#return-now').innerText()) === 'Crédito disponible con Gustavo: $3.000');
 await page.fill('#return-form [name=amount]', '4000');
 check('Un monto mayor al crédito no deja confirmar', await page.isDisabled('#return-ok') && (await page.locator('#return-err').innerText()).includes('Supera el crédito disponible'));
-await page.locator('#return-form').screenshot({ path: '/opt/cursor/artifacts/screenshots/v105-devolver.png' });
+await page.locator('#return-form').screenshot({ path: '/opt/cursor/artifacts/screenshots/v106-devolver.png' });
 await page.fill('#return-form [name=amount]', '-1');
 check('Un monto negativo no deja confirmar', await page.isDisabled('#return-ok') && (await page.locator('#return-err').innerText()).includes('no es válido'));
 await page.fill('#return-form [name=amount]', '0');
-check('Devolver $0 deja confirmar', !(await page.isDisabled('#return-ok')) && (await page.locator('#return-err').innerText()) === '');
+check('Devolver $0 no deja confirmar', await page.isDisabled('#return-ok') && (await page.locator('#return-err').innerText()).includes('Poné el monto'));
 await page.fill('#return-form [name=amount]', '1000');
 await page.click('#return-ok');
 await page.waitForFunction(() => {
@@ -3298,13 +3300,32 @@ await page.waitForFunction(() => {
   const logged = Object.values(db.log || {}).some((row) => row.type === 'devolución de crédito' && row.playerName === 'Deuda Ajena');
   return credit === 2000 && logged;
 });
-const afterReturn = await page.evaluate(() => {
+const afterReturn = await page.evaluate(async () => {
+  const { paymentLedger } = await import('./js/ledger.js');
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
-  const credit = Object.values(db.credits || {}).find((row) => row.name === 'Deuda Ajena')?.amount;
+  const players = Object.values(db.players);
+  const player = players.find((row) => row.name === 'Deuda Ajena');
+  const credits = Object.values(db.credits || {});
+  const creditRow = credits.find((row) => row.name === 'Deuda Ajena');
+  const credit = creditRow?.amount;
   const log = Object.values(db.log || {}).find((row) => row.type === 'devolución de crédito' && row.playerName === 'Deuda Ajena');
-  return { credit, type: log?.type, amount: log?.amount, section: log?.section, method: log?.method, soloEditors: log?.editors || [] };
+  const who = { phone: player?.phone, phoneKey: player?.phoneKey, rosterId: player?.rosterId, name: player?.name };
+  const ledger = paymentLedger({
+    ...who, players, matches: Object.values(db.matches),
+    credits, creditKeys: [creditRow?.personKey],
+  });
+  const gus = ledger.byOrganizer.find((row) => row.name === 'Gustavo');
+  const without = paymentLedger({
+    ...who, players, matches: Object.values(db.matches),
+  });
+  const paid = without.byOrganizer.find((row) => row.name === 'Gustavo')?.amount || 0;
+  return {
+    credit, type: log?.type, amount: log?.amount, section: log?.section, method: log?.method,
+    soloEditors: log?.editors || [], paidTo: log?.paidTo || '', paid, collected: gus?.amount || 0,
+  };
 });
 check('Devolver descuenta el crédito del organizador y lo anota como las cargas', afterReturn.credit === 2000 && afterReturn.amount === 1000 && afterReturn.section === 'pagos' && afterReturn.method === 'credito' && afterReturn.soloEditors.length === 1, JSON.stringify(afterReturn));
+check('Lo cobrado de Gustavo baja el crédito que todavía tiene', afterReturn.paid === 5000 && afterReturn.collected === 7000 && afterReturn.paidTo === 'Gustavo', JSON.stringify(afterReturn));
 await page.evaluate(async () => {
   const app = window.__app;
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
@@ -3321,13 +3342,14 @@ const creditLayout = await page.evaluate(() => {
   const credit = creditEl.getBoundingClientRect();
   const btn = btnEl.getBoundingClientRect();
   const bg = getComputedStyle(btnEl).backgroundColor;
+  const sharesRow = (a, b) => a.top < b.bottom - 4 && b.top < a.bottom - 4;
   return {
-    btnUnder: btn.top >= credit.bottom - 1 && btn.top - credit.bottom <= 16,
+    beside: sharesRow(credit, btn) && btn.left >= credit.right - 2,
     btnGreen: bg === 'rgb(15, 122, 61)' || bg === 'rgb(34, 197, 94)',
     noDebt: document.querySelector('#menu-debt') == null,
   };
 });
-check('Con saldo y sin deuda, el botón verde queda pegado al saldo', creditLayout.btnUnder && creditLayout.btnGreen && creditLayout.noDebt, JSON.stringify(creditLayout));
+check('Con saldo y sin deuda, el botón verde queda al lado del crédito', creditLayout.beside && creditLayout.btnGreen && creditLayout.noDebt, JSON.stringify(creditLayout));
 await page.click('#pm-pay');
 await page.waitForSelector('#pay-credit-field');
 const creditField = await page.locator('#pay-credit-field').innerText();
@@ -3436,7 +3458,7 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, real.normal)
 await page.waitForSelector('#slots .more-btn');
 await page.click('#slots .more-btn');
 await page.waitForSelector('#pm-credit');
-check('Lista del partido: apodo, saldo, deuda y Cargar crédito', (await page.inputValue('#menu-nick')) === 'Normi' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && (await page.locator('#menu-credit').innerText()).includes('Saldo a favor con Gus') && (await page.locator('#menu-debt').innerText()).includes('Debe en total'));
+check('Lista del partido: apodo, saldo, deuda y Cargar crédito', (await page.inputValue('#menu-nick')) === 'Normi' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && (await page.locator('#menu-credit').innerText()).includes('Crédito disponible con Gus') && (await page.locator('#menu-debt').innerText()).includes('Debe en total'));
 check('Sin ficha el menú avisa y no ofrece agregar nota', (await page.locator('#menu-panel').innerText()).includes('Sin ficha en Jugadores') && await page.locator('#btn-add-note').count() === 0 && (await page.locator('#pm-stats').innerText()) === 'Ver estadísticas');
 await page.click('#sheet [data-close]');
 await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
@@ -3446,7 +3468,7 @@ await page.waitForSelector('#match-readonly');
 check('Sin permiso de anotar no está el menú en la lista principal', await page.locator('#slots .more-btn').count() === 0 && await page.locator('#wait-list .more-btn').count() === 1);
 await page.click('#wait-list .more-btn');
 await page.waitForSelector('#pm-credit');
-check('Lista de espera: el mismo bloque aunque canAdd sea falso', (await page.inputValue('#menu-nick')) === 'Ficha' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && await page.locator('#pm-pay').count() === 0 && (await page.locator('#menu-credit').innerText()).includes('Saldo a favor con Gus'));
+check('Lista de espera: el mismo bloque aunque canAdd sea falso', (await page.inputValue('#menu-nick')) === 'Ficha' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && await page.locator('#pm-pay').count() === 0 && (await page.locator('#menu-credit').innerText()).includes('Crédito disponible con Gus'));
 const waitGreen = await page.$eval('#menu-credit', (el) => getComputedStyle(el).color);
 const waitRed = await page.$eval('#menu-debt', (el) => getComputedStyle(el).color);
 check('En la espera el saldo está en verde y la deuda en rojo', (waitGreen === 'rgb(15, 122, 61)' || waitGreen === 'rgb(34, 197, 94)') && (waitRed === 'rgb(198, 40, 40)' || waitRed === 'rgb(255, 107, 107)'), `${waitGreen} ${waitRed}`);
@@ -3488,7 +3510,7 @@ await page.click('#list-history .match-card[data-note="Uid historial"]');
 await page.waitForSelector('#wait-list .more-btn');
 await page.click('#wait-list .more-btn');
 await page.waitForSelector('#pm-credit');
-check('Historial: el menú de la espera tiene el mismo bloque', (await page.inputValue('#menu-nick')) === 'Ficha' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && (await page.locator('#pm-credit-available').innerText()) === 'Crédito disponible: $0' && await page.isDisabled('#pm-credit-return') && (await page.locator('#menu-credit').innerText()).includes('Saldo a favor con Gus: $0'));
+check('Historial: el menú de la espera tiene el mismo bloque', (await page.inputValue('#menu-nick')) === 'Ficha' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && (await page.locator('#menu-credit').innerText()) === 'Crédito disponible con Gus: $0' && await page.isDisabled('#pm-credit-return'));
 await page.click('#sheet [data-close]');
 await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
 
@@ -3496,7 +3518,7 @@ await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id
 await page.waitForSelector('#profile-credit-btn');
 const profileGreen = await page.$eval('#profile-credit', (el) => getComputedStyle(el).color);
 const profileRed = await page.$eval('#debt-total', (el) => getComputedStyle(el).color);
-check('Jugadores: el perfil tiene apodo, saldo en verde, deuda en rojo y Cargar crédito', (await page.inputValue('#profile-nick')) === 'Ficha' && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar' && (await page.locator('#profile-credit-available').innerText()) === 'Crédito disponible: $0' && await page.isDisabled('#profile-credit-return') && (await page.locator('#profile-credit').innerText()).includes('Saldo a favor con Gus: $0') && (await page.locator('#debt-total').innerText()).includes('Debe en total') && (profileGreen === 'rgb(15, 122, 61)' || profileGreen === 'rgb(34, 197, 94)') && (profileRed === 'rgb(198, 40, 40)' || profileRed === 'rgb(255, 107, 107)'), `${profileGreen} ${profileRed}`);
+check('Jugadores: el perfil tiene apodo, saldo en verde, deuda en rojo y Cargar crédito', (await page.inputValue('#profile-nick')) === 'Ficha' && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar' && (await page.locator('#profile-credit').innerText()) === 'Crédito disponible con Gus: $0' && await page.isDisabled('#profile-credit-return') && (await page.locator('#debt-total').innerText()).includes('Debe en total') && (profileGreen === 'rgb(15, 122, 61)' || profileGreen === 'rgb(34, 197, 94)') && (profileRed === 'rgb(198, 40, 40)' || profileRed === 'rgb(255, 107, 107)'), `${profileGreen} ${profileRed}`);
 check('La ficha sigue teniendo las notas', (await page.locator('#profile #notes').innerText()).includes('Llegó tarde') && await page.locator('#profile #ledger').count() === 0);
 await page.click('#profile-stats');
 await page.waitForSelector('#stats-player');
@@ -3580,7 +3602,7 @@ const saldoPaga = await page.evaluate(() => {
 check('Lo que sobra del crédito queda como saldo con Gustavo', saldoPaga?.amount === 2000 && saldoPaga?.organizerName === 'Gustavo', JSON.stringify(saldoPaga));
 await page.waitForSelector('#profile-credit');
 const debtLeft = (await page.locator('#debt').innerText()).replace(/\s+/g, ' ');
-check('Debe en total ya no cuenta lo pagado con el crédito', !debtLeft.includes('01/09/2026') && !debtLeft.includes('15/09/2026') && !debtLeft.includes('20/09/2026') && !debtLeft.includes('Debe en total') && debtLeft.includes('Saldo a favor con Gustavo: $2.000'), debtLeft);
+check('Debe en total ya no cuenta lo pagado con el crédito', !debtLeft.includes('01/09/2026') && !debtLeft.includes('15/09/2026') && !debtLeft.includes('20/09/2026') && !debtLeft.includes('Debe en total') && debtLeft.includes('Crédito disponible con Gustavo: $2.000'), debtLeft);
 await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, viejas.older);
 await page.waitForSelector('.slot .pay-line');
 check('El partido viejo figura pagado con crédito', (await page.locator('.slot .pay-line').innerText()).includes('Crédito') && (await page.locator('.slot .pay-line').innerText()).includes('Gustavo'));
@@ -5218,7 +5240,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.evaluate((id) => { location.hash = `#/jugador/${id}`; }, sharedId);
   await page.waitForSelector('#profile-credit');
   const gustavoMoney = (await page.locator('#profile').innerText()).replace(/\s+/g, ' ');
-  check('La ficha de Gustavo muestra solo su saldo y su deuda', gustavoMoney.includes('Saldo a favor con Gustavo: $2.500') && gustavoMoney.includes('Crédito disponible: $2.500') && gustavoMoney.includes('Debe en total: $5.000') && !gustavoMoney.includes('Saldo a favor con Martín') && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar' && !(await page.isDisabled('#profile-credit-return')), gustavoMoney.slice(0, 400));
+  check('La ficha de Gustavo muestra solo su saldo y su deuda', gustavoMoney.includes('Crédito disponible con Gustavo: $2.500') && gustavoMoney.includes('Debe en total: $5.000') && !gustavoMoney.includes('Crédito disponible con Martín') && !gustavoMoney.includes('Saldo a favor con') && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar' && !(await page.isDisabled('#profile-credit-return')), gustavoMoney.slice(0, 400));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v94-ficha-gustavo.png' });
   await page.click('#btn-settings');
   await page.click('#set-logout');
@@ -5240,7 +5262,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.locator('#roster-list .slot', { hasText: 'Díaz de Martín' }).locator('.who').click();
   await page.waitForSelector('#profile-phone');
   const martinProfile = (await page.locator('#profile').innerText()).replace(/\s+/g, ' ');
-  check('Martín ve el teléfono y no el saldo ni la deuda de Gustavo', martinProfile.includes('6666') && martinProfile.includes('Saldo a favor con Martín: $0') && !martinProfile.includes('$2.500') && !martinProfile.includes('Debe en total') && !martinProfile.includes('Saldo a favor con Gustavo'), martinProfile.slice(0, 500));
+  check('Martín ve el teléfono y no el saldo ni la deuda de Gustavo', martinProfile.includes('6666') && martinProfile.includes('Crédito disponible con Martín: $0') && !martinProfile.includes('$2.500') && !martinProfile.includes('Debe en total') && !martinProfile.includes('Gustavo'), martinProfile.slice(0, 500));
   check('El detalle sigue mostrando los partidos jugados', await page.locator('#stat-times').count() === 1);
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v94-ficha-martin.png' });
   await page.click('#btn-roster');
@@ -5348,7 +5370,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.locator('.slot', { hasText: 'Promo Queda' }).locator('[data-menu]').click();
   await page.waitForSelector('#menu-credit');
   const menuText = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
-  check('Lo pagado de más queda como saldo y no sigue la promo', menuText.includes('Saldo a favor con Gustavo: $4.000') && !menuText.includes('Promo 2') && !menuText.includes('Debe en total'), menuText.slice(0, 320));
+  check('Lo pagado de más queda como saldo y no sigue la promo', menuText.includes('Crédito disponible con Gustavo: $4.000') && !menuText.includes('Promo 2') && !menuText.includes('Debe en total'), menuText.slice(0, 320));
   await page.locator('#sheet').screenshot({ path: '/opt/cursor/artifacts/screenshots/v103-promo-saldo.png' });
   await page.click('#sheet [data-close]');
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
@@ -5364,7 +5386,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.locator('.slot', { hasText: 'Promo Queda' }).locator('[data-menu]').click();
   await page.waitForSelector('#sheet h3');
   const afterBack = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
-  check('Al reactivar el saldo de la cancelación se vuelve a usar', !afterBack.includes('Saldo a favor con Gustavo: $4.000'), afterBack.slice(0, 240));
+  check('Al reactivar el saldo de la cancelación se vuelve a usar', !afterBack.includes('Crédito disponible con Gustavo: $4.000'), afterBack.slice(0, 240));
   await page.click('#sheet [data-close]');
 }
 
