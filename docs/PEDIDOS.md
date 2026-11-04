@@ -55,7 +55,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **unit 114/114 OK** (`node --test tests/unit.test.mjs`) y **e2e pendiente** (`node tests/e2e.mjs`, modo demo, 390×844). Incluye v110 (página vacía del enlace) y v111 (suspensión por organizador).
+Pruebas sobre esta copia: **unit 114/114 OK** (`node --test tests/unit.test.mjs`) y **e2e 823/823 OK** (`node tests/e2e.mjs`, modo demo, 390×844). Incluye v110 (página vacía del enlace) y v111 (suspensión por organizador).
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
