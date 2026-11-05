@@ -24,7 +24,7 @@ import { addDays, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel,
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
-  needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderLinks, reminderMessage,
+  needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderAudience, reminderLinks, reminderMessage,
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
 import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
@@ -1126,9 +1126,21 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(needsReminderBanner(match, players.map((p) => (p.phone ? { ...p, reminderSentAt: 1 } : p)), start - 60_000), false);
   assert.equal(needsReminderBanner(match, players.map((p) => (p.id === 'p1' ? { ...p, reminderSentAt: 1 } : p)), start - 60_000), true);
   assert.equal(needsReminderBanner(match, [{ name: 'Nadie', phone: '' }], start - 60_000), false);
+  assert.equal(needsReminderBanner(match, [{ name: 'Espera', phone: '5491199999999', waiting: true, confirmToken: token }], start - 60_000), false);
   const links = reminderLinks({ match, players, venue: 'Polideportivo Colegiales' });
   assert.equal(links.length, 1);
   assert.equal(links[0].name, 'Juan Pérez');
+  const withWait = reminderLinks({
+    match,
+    players: [...players, { id: 'w', name: 'Espera Recordatorio', phone: '5491133333333', confirmToken: token, waiting: true }],
+  });
+  assert.equal(withWait.length, 1);
+  assert.equal(withWait[0].name, 'Juan Pérez');
+  assert.deepEqual(reminderAudience([
+    { phone: '5491100000001', waiting: true },
+    { phone: '5491100000002' },
+    { phone: '' },
+  ]).map((p) => p.phone), ['5491100000002']);
   assert.equal(links[0].confirmUrl, `https://gustavofarg-hash.github.io/futbol-colegiales/confirmar.html?m=2026-10-19_1500&p=p1&t=${token}`);
   assert.equal(links[0].id, 'p1');
   assert.ok(links[0].waUrl.startsWith('https://wa.me/5491112345678?text='));
@@ -3376,7 +3388,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v118');
+  assert.equal(version, 'f7c-v119');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

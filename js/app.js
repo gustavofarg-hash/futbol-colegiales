@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v118';
+const APP_VERSION = 'f7c-v119';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2011,7 +2011,7 @@ function clearReservedSpot(player) {
 const REMINDER_BANNER = 'Faltan 2 horas: mandá los recordatorios';
 
 function myReminderPlayers(matchId) {
-  return playersForOrganizer(app.players.filter((p) => p.matchId === matchId), app.who);
+  return playersForOrganizer(playersOf(matchId), app.who);
 }
 
 function reminderBanners(matches) {
@@ -2038,7 +2038,7 @@ function bindReminderBanners() {
 
 async function openReminders(m) {
   if (m?.cancelled === true) { toast('El partido está cancelado. No se mandan recordatorios.'); return; }
-  const everyone = [...playersOf(m.id), ...waitingOf(m.id)];
+  const everyone = playersOf(m.id);
   if (!everyone.length) { toast('No hay jugadores para avisar'); return; }
   let showAll = false;
   openSheet(`<h3>Enviar recordatorios</h3><p class="hint">Armando los links…</p>`);
