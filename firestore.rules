@@ -936,6 +936,38 @@ service cloud.firestore {
       allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
     }
 
+    function validSuspensionHistory(d) {
+      return d.keys().hasOnly(['ownerUid', 'rosterId', 'date', 'note', 'lifted', 'at'])
+          && d.ownerUid == request.auth.uid
+          && d.rosterId is string && d.rosterId.size() > 0 && d.rosterId.size() <= 200
+          && suspensionDayOk(d.date)
+          && d.note is string && d.note.size() > 0 && d.note.size() <= 300
+          && suspensionDayOk(d.lifted)
+          && d.at is int && d.at > 0;
+    }
+    function validPayBatch(d) {
+      return d.keys().hasOnly(['ownerUid', 'at', 'payload'])
+          && d.ownerUid == request.auth.uid
+          && d.at is int && d.at > 0
+          && d.payload is string && d.payload.size() > 2 && d.payload.size() <= 100000;
+    }
+    match /payBatches/{batchId} {
+      allow read, write: if isAdmin();
+      allow get, list: if isActiveStaff();
+      allow create: if isActiveStaff() && validPayBatch(request.resource.data)
+          && batchId == request.auth.uid + '_' + string(request.resource.data.at);
+      allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
+      allow update: if false;
+    }
+
+    match /suspensionHistory/{eventId} {
+      allow read, write: if isAdmin();
+      allow get, list: if isActiveStaff();
+      allow create: if isActiveStaff() && validSuspensionHistory(request.resource.data)
+          && eventId == request.resource.data.rosterId + '_' + request.auth.uid + '_' + string(request.resource.data.at);
+      allow update, delete: if false;
+    }
+
     match /rosterRedirects/{fromId} {
       allow read, write: if isAdmin();
       allow get, list: if isActiveStaff();

@@ -342,6 +342,133 @@ export function annulCreditDeltas(player, share, due = 0) {
   return [...byName.entries()].filter(([, delta]) => delta !== 0).map(([name, delta]) => ({ name, delta }));
 }
 
+function snapshotParts(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((part) => ({ to: String(part?.to || '').trim(), amount: roundARS(part?.amount) }))
+    .filter((part) => part.to && part.amount > 0);
+}
+
+/** Los montos de un jugador, para saber qué cambió un Guardar. */
+export function payBatchSnapshot(player) {
+  const parts = paymentParts(player || {});
+  return {
+    playerId: String(player?.id || ''),
+    cash: parts.cash,
+    transfer: parts.transfer,
+    pending: parts.pending,
+    credit: parts.credit,
+    cashTo: String(player?.cashTo || '').trim(),
+    transferTo: String(player?.transferTo || '').trim(),
+    pendingTo: String(player?.pendingTo || '').trim(),
+    creditTo: String(player?.creditTo || '').trim(),
+    transferParts: snapshotParts(player?.transferParts),
+    autoCredit: player?.autoCredit === true,
+    freePlay: isFreePlay(player),
+  };
+}
+
+export function samePaySnapshot(a, b) {
+  if (!a || !b) return false;
+  const keys = ['cash', 'transfer', 'pending', 'credit'];
+  if (keys.some((key) => roundARS(a[key]) !== roundARS(b[key]))) return false;
+  if (['cashTo', 'transferTo', 'pendingTo', 'creditTo'].some((key) => String(a[key] || '') !== String(b[key] || ''))) return false;
+  if (!!a.autoCredit !== !!b.autoCredit || !!a.freePlay !== !!b.freePlay) return false;
+  const left = snapshotParts(a.transferParts);
+  const right = snapshotParts(b.transferParts);
+  if (left.length !== right.length) return false;
+  return left.every((part, index) => part.to === right[index].to && part.amount === right[index].amount);
+}
+
+/** El pago que había antes de ese Guardar. */
+export function payInputFromSnapshot(snap) {
+  if (!snap || snap.freePlay) return { freePlay: true, paid: true, split: true };
+  const cash = roundARS(snap.cash);
+  const transfer = roundARS(snap.transfer);
+  const pending = roundARS(snap.pending);
+  const credit = roundARS(snap.credit);
+  const parts = snapshotParts(snap.transferParts);
+  if (!(cash + transfer + credit > 0) && !(pending > 0)) return { paid: false, split: true, freePlay: false };
+  return {
+    paid: cash + transfer + credit > 0,
+    split: true,
+    freePlay: false,
+    cash,
+    transfer,
+    pendingTransfer: pending,
+    fromCredit: credit,
+    cashTo: cash > 0 ? (snap.cashTo || null) : null,
+    transferTo: transfer > 0 && parts.length <= 1 ? (snap.transferTo || null) : null,
+    transferParts: parts.length > 1 ? parts : null,
+    pendingTo: pending > 0 ? (snap.pendingTo || null) : null,
+    creditTo: credit > 0 ? (snap.creditTo || null) : null,
+    autoCredit: snap.autoCredit === true && credit > 0,
+  };
+}
+
+export function snapshotAfterPayment(player, input, who) {
+  const rec = paymentRecord(input, who, Date.now());
+  if (!rec.ok) return null;
+  return payBatchSnapshot({ ...(player || {}), ...rec.patch, id: player?.id || '' });
+}
+
+/** Quién cobró plata nueva en ese Guardar. */
+export function payBatchCollectorNames(batch) {
+  const names = [];
+  const add = (name) => {
+    const clean = String(name || '').trim();
+    if (clean && !names.some((have) => sameOrganizer(have, clean))) names.push(clean);
+  };
+  for (const row of batch?.payments || []) {
+    const before = row?.before || {};
+    const after = row?.after || {};
+    if (roundARS(after.cash) > roundARS(before.cash)) add(after.cashTo);
+    if (roundARS(after.pending) > roundARS(before.pending)) add(after.pendingTo);
+    if (roundARS(after.credit) > roundARS(before.credit)) add(after.creditTo);
+    if (roundARS(after.transfer) > roundARS(before.transfer)) {
+      const parts = snapshotParts(after.transferParts);
+      if (parts.length > 1) parts.forEach((part) => add(part.to));
+      else add(after.transferTo);
+    }
+  }
+  return names;
+}
+
+export function reversedCreditMoves(credits) {
+  const by = new Map();
+  for (const move of credits || []) {
+    const delta = roundARS(-(Number(move?.delta) || 0));
+    if (!delta || !move?.organizerUid || !move?.personKey) continue;
+    const key = `${move.personKey}|${move.organizerUid}`;
+    const prev = by.get(key);
+    if (prev) prev.delta = roundARS(prev.delta + delta);
+    else by.set(key, {
+      personKey: String(move.personKey),
+      organizerUid: String(move.organizerUid),
+      organizerName: String(move.organizerName || ''),
+      name: String(move.name || ''),
+      delta,
+    });
+  }
+  return [...by.values()].filter((move) => move.delta !== 0);
+}
+
+/**
+ * Deshace un Guardar entero si cada jugador sigue igual que cuando se guardó.
+ * Si alguien ya cambió un monto, no toca nada.
+ */
+export function revertPayBatch(players, batch) {
+  const rows = Array.isArray(batch?.payments) ? batch.payments : [];
+  if (!rows.length) return { ok: false, error: 'changed' };
+  const payments = [];
+  for (const row of rows) {
+    const player = (players || []).find((item) => item.id === row.playerId);
+    if (!player || !samePaySnapshot(payBatchSnapshot(player), row.after)) return { ok: false, error: 'changed' };
+    payments.push({ id: row.playerId, input: payInputFromSnapshot(row.before), before: row.before, after: row.after });
+  }
+  return { ok: true, payments, credits: reversedCreditMoves(batch.credits) };
+}
+
 function uniqueNames(names) {
   const out = [];
   for (const name of names) {

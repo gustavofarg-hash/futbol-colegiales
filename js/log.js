@@ -300,6 +300,7 @@ export function logText(entry) {
     if (entry.type === 'devolución de crédito') return [match, player, `${method} ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'crédito automático') return [match, player, `Crédito automático ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'crédito devuelto') return [match, player, `Crédito devuelto ${money}`].filter(Boolean).join(' · ');
+    if (entry.type === 'Anulado') return [match, player, `${method} ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'pago borrado') return [match, player, `${method} borrado ${money}`].filter(Boolean).join(' · ');
     if (entry.type === 'pago editado') return [match, player, `${method} ${money}`, entry.detail].filter(Boolean).join(' · ');
     if (entry.type === 'compensación') return [match, entry.detail || `${method} ${money}`].filter(Boolean).join(' · ');

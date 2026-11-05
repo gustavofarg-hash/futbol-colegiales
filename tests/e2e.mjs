@@ -119,7 +119,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v113');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v114');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5617,7 +5617,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('.slot:has-text("Suspendido Pérez") .more-btn');
   await page.waitForSelector('#suspend-flag');
   await page.click('#suspend-flag');
-  await page.waitForFunction(() => window.__app.suspensions.some((row) => row.suspended !== true && row.history?.[0]?.note === 'Llegó tarde tres veces'));
+  await page.waitForFunction(() => window.__app.suspensions.some((row) => row.suspended !== true) && window.__app.suspensionHistory.some((row) => row.note === 'Llegó tarde tres veces'));
   await page.click('#sheet [data-close]');
   await page.click('.slot:has-text("Suspendido Pérez") .more-btn');
   await page.waitForSelector('#suspend-history');
@@ -5636,7 +5636,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#suspend-note-form button[type=submit]');
   await page.waitForFunction(() => {
     const row = window.__app.suspensions.find((item) => item.suspensionNote === 'No avisó');
-    return row?.suspended === true && row.history?.[0]?.note === 'Llegó tarde tres veces';
+    return row?.suspended === true && window.__app.suspensionHistory.some((item) => item.note === 'Llegó tarde tres veces');
   });
   await page.click('.slot:has-text("Suspendido Pérez") .more-btn');
   await page.click('#suspend-note');
@@ -5673,7 +5673,12 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('#sheet h3');
   const byGustavo = page.locator('.checkline', { hasText: 'Suspendido por Gustavo' });
   check('Otro organizador ve Suspendido por Gustavo, sin poder sacarlo', await byGustavo.locator('input').isDisabled() && await byGustavo.locator('input').isChecked() && await page.locator('#suspend-flag').count() === 0);
-  await page.click('#sheet [data-close]');
+  await byGustavo.locator('button').click();
+  await page.waitForSelector('#suspend-view');
+  const otherHistory = (await page.locator('#suspend-history').innerText()).replace(/\s+/g, ' ').trim();
+  check('El otro organizador ve el historial completo', otherHistory.includes('No avisó') && otherHistory.includes('Llegó tarde tres veces') && otherHistory.includes('levantada el') && await page.locator('#suspend-reason').count() === 0, otherHistory);
+  await page.locator('#sheet .sheet-body').screenshot({ path: '/opt/cursor/artifacts/screenshots/v114-historial.png' });
+  await page.click('#suspend-view [data-close]');
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, made.second);
   await page.waitForSelector('#btn-add-player');
   await page.click('#btn-add-player');
@@ -5737,7 +5742,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#ask-ok');
   await page.waitForFunction(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && !(Number(p.transfer) > 0)));
   check('Anular saca la transferencia', await page.evaluate(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && p.paid !== true)));
-  check('La anulación queda en el registro', await page.evaluate(() => (window.__app.log || []).some((row) => row.type === 'pago borrado' && row.playerName === 'Anula Díaz' && row.method === 'transferencia')));
+  check('La anulación queda en el registro', await page.evaluate(() => (window.__app.log || []).some((row) => row.type === 'Anulado' && row.playerName === 'Anula Díaz' && row.method === 'transferencia')));
   await page.click('#sheet [data-close]');
   await page.click('.slot:has-text("Anula Díaz") .more-btn');
   await page.waitForSelector('#menu-pay');
