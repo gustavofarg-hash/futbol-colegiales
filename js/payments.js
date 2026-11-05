@@ -264,7 +264,82 @@ export function paymentShares(player) {
     const name = directed ? String(player?.pendingTo || '').trim() : String(player?.paidUpdatedBy || '').trim();
     shares.push({ kind: 'pending', name, amount: parts.pending });
   }
-  return shares;
+  let transferIndex = 0;
+  return shares.map((share) => {
+    if (share.kind !== 'transfer' || !(Array.isArray(player?.transferParts) && player.transferParts.length > 1)) return share;
+    const row = { ...share, partIndex: transferIndex };
+    transferIndex += 1;
+    return row;
+  });
+}
+
+/** El pago de este jugador sin esa parte. Lo demás queda igual. */
+export function paymentWithoutShare(player, share) {
+  const parts = paymentParts(player);
+  let cash = parts.cash;
+  let transfer = parts.transfer;
+  let pending = parts.pending;
+  let credit = parts.credit;
+  let transferParts = Array.isArray(player?.transferParts)
+    ? player.transferParts.map((part) => ({ to: String(part?.to || '').trim(), amount: finiteMoney(part?.amount) })).filter((part) => part.amount > 0 && part.to)
+    : null;
+  if (share?.kind === 'cash') cash = 0;
+  else if (share?.kind === 'credit') credit = 0;
+  else if (share?.kind === 'pending') pending = 0;
+  else if (share?.kind === 'received') { cash = 0; transfer = 0; credit = 0; }
+  else if (share?.kind === 'transfer') {
+    if (transferParts && transferParts.length > 1 && Number.isInteger(share.partIndex)) {
+      transferParts = transferParts.filter((_, index) => index !== share.partIndex);
+      transfer = roundARS(transferParts.reduce((sum, part) => sum + part.amount, 0));
+    } else {
+      transfer = 0;
+      transferParts = null;
+    }
+  }
+  const received = roundARS(cash + transfer + credit);
+  if (!(received > 0) && !(pending > 0)) return { paid: false, split: true, freePlay: false };
+  const oneTransfer = transferParts && transferParts.length === 1 ? transferParts[0] : null;
+  return {
+    paid: received > 0,
+    split: true,
+    freePlay: false,
+    cash,
+    transfer,
+    pendingTransfer: pending,
+    fromCredit: credit,
+    cashTo: cash > 0 ? (player.cashTo || null) : null,
+    transferTo: oneTransfer ? oneTransfer.to : (transfer > 0 && !(transferParts && transferParts.length > 1) ? (player.transferTo || null) : null),
+    transferParts: transferParts && transferParts.length > 1 ? transferParts : null,
+    pendingTo: pending > 0 ? (player.pendingTo || null) : null,
+    creditTo: credit > 0 ? (player.creditTo || null) : null,
+    autoCredit: player?.autoCredit === true && credit > 0,
+  };
+}
+
+/**
+ * Al anular una parte: el crédito usado vuelve al saldo.
+ * Si efectivo o transferencia habían dejado saldo de más, esa diferencia se saca.
+ */
+export function annulCreditDeltas(player, share, due = 0) {
+  const parts = paymentParts(player);
+  const moves = [];
+  if (share?.kind === 'credit' && share.amount > 0) {
+    moves.push({ name: String(share.name || player?.creditTo || '').trim(), delta: roundARS(share.amount) });
+  }
+  if (share?.kind === 'cash' || share?.kind === 'transfer' || share?.kind === 'credit' || share?.kind === 'received') {
+    const removed = share.kind === 'received' ? parts.received : roundARS(share.amount);
+    const next = roundARS(Math.max(0, parts.received - removed));
+    const before = roundARS(Math.max(0, parts.received - roundARS(due)));
+    const after = roundARS(Math.max(0, next - roundARS(due)));
+    const claw = roundARS(before - after);
+    if (claw > 0) moves.push({ name: String(share.name || '').trim(), delta: -claw });
+  }
+  const byName = new Map();
+  for (const move of moves) {
+    const key = move.name;
+    byName.set(key, roundARS((byName.get(key) || 0) + move.delta));
+  }
+  return [...byName.entries()].filter(([, delta]) => delta !== 0).map(([name, delta]) => ({ name, delta }));
 }
 
 function uniqueNames(names) {
