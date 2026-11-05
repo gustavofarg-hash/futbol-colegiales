@@ -97,7 +97,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, SUSPENDED_TEXT, blockingSuspensions, cleanShortName, cleanSuspensionHistory, cleanSuspensionNote, isRosterDenied, legacyNoteOwnerUid, nextSuspensionHistory, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterIdForSuspension, rosterNoteDocId, rosterPhoneAction, suspensionDocId, withHolder } from './roster.js';
+import { ROSTER_DENIED_READ, SUSPENDED_TEXT, blockingSuspensions, cleanShortName, cleanSuspensionHistory, cleanSuspensionNote, isRosterDenied, legacyNoteOwnerUid, liftedSuspensionEvent, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterIdForSuspension, rosterNoteDocId, rosterPhoneAction, suspensionDocId, withHolder } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -557,6 +557,19 @@ function actorRecord(user) {
   return { uid: user?.uid || '', name: user?.name || '', role };
 }
 
+function presentPayBatch(id, row) {
+  let body = {};
+  try { body = JSON.parse(row?.payload || '{}'); }
+  catch { body = {}; }
+  return {
+    id,
+    ownerUid: String(row?.ownerUid || ''),
+    at: Number(row?.at) || 0,
+    payments: Array.isArray(body.payments) ? body.payments : [],
+    credits: Array.isArray(body.credits) ? body.credits : [],
+  };
+}
+
 function localCollections(db) {
   return {
     matches: db.matches || {},
@@ -577,6 +590,8 @@ function localCollections(db) {
     rosterClaims: db.rosterClaims || {},
     rosterRedirects: db.rosterRedirects || {},
     rosterSuspensions: db.rosterSuspensions || {},
+    suspensionHistory: db.suspensionHistory || {},
+    payBatches: db.payBatches || {},
   };
 }
 
@@ -772,6 +787,8 @@ class LocalStore {
       if (row?.ownerUid === uid && row.rosterId) rosterNotes[row.rosterId] = row.notes || [];
     }
     const suspensions = Object.entries(db.rosterSuspensions || {}).map(([id, row]) => ({ id, ...row }));
+    const suspensionHistory = Object.entries(db.suspensionHistory || {}).map(([id, row]) => ({ id, ...row }));
+    const payBatches = Object.entries(db.payBatches || {}).map(([id, row]) => presentPayBatch(id, row));
     const organizers = Object.entries(db.organizers).map(([id, o]) => ({ id, ...o }));
     const venues = Object.entries(db.venues || {}).map(([id, venue]) => ({ id, ...venue }));
     const prices = db.settings?.prices || null;
@@ -787,7 +804,7 @@ class LocalStore {
     const { matches: _rows, ...historyMeta } = windowed;
     this.listeners.forEach((fn) => fn({
       matches, history, historyMeta, historyError: '',
-      players, roster, rosterNotes, suspensions, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
+      players, roster, rosterNotes, suspensions, suspensionHistory, payBatches, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
       credits, creditsError: null, creditsReady: true, playersReady: true, compensations, log, logError: '',
     }));
   }
@@ -1000,14 +1017,35 @@ class LocalStore {
     const newKey = personKey(fresh, preview);
     if (newKey && newKey !== oldKey) await this.moveCredit(oldKey, newKey, fresh?.name || '');
   }
-  async setPayment(id, input, who) {
+  async setPayment(id, input, who, options) {
     const rec = paymentRecord(input, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
     const before = this._load().players[id];
     await this.updatePlayer(id, rec.patch);
+    if (options?.log === false) return;
     const db = this._load();
     this._logPayment(db, before ? { id, ...before } : null, db.players[id] ? { id, ...db.players[id] } : null);
     if (paymentLines(before, db.players[id]).length) this._save(db);
+  }
+  async savePayBatch(batch) {
+    const uid = String(this.actor?.uid || '').trim();
+    if (!uid) return '';
+    const payload = JSON.stringify({ payments: batch?.payments || [], credits: batch?.credits || [] });
+    if (payload.length > 100000) return '';
+    const db = this._load();
+    db.payBatches ||= {};
+    let at = Date.now();
+    while (db.payBatches[`${uid}_${at}`]) at += 1;
+    const id = `${uid}_${at}`;
+    db.payBatches[id] = { ownerUid: uid, at, payload };
+    this._save(db);
+    return id;
+  }
+  async deletePayBatch(id) {
+    const db = this._load();
+    if (!db.payBatches?.[id]) return;
+    delete db.payBatches[id];
+    this._save(db);
   }
   async logPlayerPago(playerId, line) {
     const db = this._load();
@@ -1368,12 +1406,20 @@ class LocalStore {
   }
   async setSuspended(id, value) {
     const db = this._load();
-    const { docId, row } = this._ownSuspension(db, id);
+    const { uid, docId, row } = this._ownSuspension(db, id);
     if (value === true) return;
     if (!row || row.suspended !== true) return;
+    const event = liftedSuspensionEvent(row, todayISO());
     row.suspended = false;
-    row.history = nextSuspensionHistory({ ...row, suspended: true }, todayISO());
     db.rosterSuspensions[docId] = row;
+    if (event) {
+      db.suspensionHistory ||= {};
+      let at = Date.now();
+      while (db.suspensionHistory[`${id}_${uid}_${at}`]) at += 1;
+      db.suspensionHistory[`${id}_${uid}_${at}`] = {
+        ownerUid: uid, rosterId: id, date: event.date, note: event.note, lifted: event.lifted, at,
+      };
+    }
     this._save(db);
   }
   async setSuspension(id, { note, date } = {}) {
@@ -1389,7 +1435,7 @@ class LocalStore {
       suspended: true,
       suspensionNote: text,
       suspensionDate: day,
-      history: cleanSuspensionHistory(row?.history),
+      history: cleanSuspensionHistory(row?.history).slice(0, 10),
     };
     this._save(db);
   }
@@ -1522,6 +1568,8 @@ class LocalStore {
     db.rosterClaims = structuredClone(docs.rosterClaims || {});
     db.rosterRedirects = structuredClone(docs.rosterRedirects || {});
     db.rosterSuspensions = structuredClone(docs.rosterSuspensions || {});
+    db.suspensionHistory = structuredClone(docs.suspensionHistory || {});
+    db.payBatches = structuredClone(docs.payBatches || {});
     ensureContacts(db);
     db.contacts.players = structuredClone(docs.playerContacts);
     db.contacts.roster = structuredClone(docs.rosterContacts);
@@ -1534,7 +1582,7 @@ class LocalStore {
     const db = {
       matches: {}, players: {}, roster: {}, organizers: {}, venues: {},
       confirmations: {}, settings: {}, links: {}, credits: {}, log: {},
-      rosterNotes: {}, rosterClaims: {}, rosterRedirects: {}, rosterSuspensions: {},
+      rosterNotes: {}, rosterClaims: {}, rosterRedirects: {}, rosterSuspensions: {}, suspensionHistory: {}, payBatches: {},
       contacts: { players: {}, roster: {} },
     };
     localStorage.setItem(this.key, JSON.stringify(db));
@@ -1585,7 +1633,7 @@ export class FirebaseStore {
     this._historyFilter = null;
     this._queryDay = '';
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
     this._noteMoves = new Set();
     this._rosterReady = false;
     this._logRange = weekRange();
@@ -1672,7 +1720,7 @@ export class FirebaseStore {
     // partido). El partido al final: borrarlo con jugadores hacía fallar el permiso.
     const order = [
       'links', 'log', 'compensations', 'credits', 'confirmations',
-      'rosterNotes', 'rosterClaims', 'rosterRedirects', 'rosterSuspensions',
+      'rosterNotes', 'rosterClaims', 'rosterRedirects', 'rosterSuspensions', 'suspensionHistory', 'payBatches',
       'playerContacts', 'rosterContacts', 'players', 'roster', 'organizers',
       'settings', 'venues', 'matches',
     ];
@@ -2011,6 +2059,20 @@ export class FirebaseStore {
       this._emit();
     }, () => {
       this.state.suspensions = [];
+      this._emit();
+    });
+    watch(collection(this.db, 'suspensionHistory'), null, (snap) => {
+      this.state.suspensionHistory = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this._emit();
+    }, () => {
+      this.state.suspensionHistory = [];
+      this._emit();
+    });
+    watch(collection(this.db, 'payBatches'), null, (snap) => {
+      this.state.payBatches = snap.docs.map((d) => presentPayBatch(d.id, d.data()));
+      this._emit();
+    }, () => {
+      this.state.payBatches = [];
       this._emit();
     });
     watch(collection(this.db, 'roster'), null, (snap) => {
@@ -2644,18 +2706,36 @@ export class FirebaseStore {
     if (!token) return;
     await this._writeConfirmation(token, id, { ...cur, ...data }, match);
   }
-  async setPayment(id, input, who) {
+  async setPayment(id, input, who, options) {
     const rec = paymentRecord(input, who);
     if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-payment' });
     const before = this.state.players.find((item) => item.id === id);
     await this._writePayment(id, rec.patch);
-    if (!before) return;
+    if (options?.log === false || !before) return;
     const after = { ...before, ...rec.patch };
     const lines = paymentLines(before, after);
     if (!lines.length) return;
     const match = this.state.matches.find((item) => item.id === before.matchId) || null;
     const mates = this.state.players.filter((item) => item.matchId === before.matchId);
     await this._appendLogs(lines.map((line) => pagoEntry(this._actor(), match, this.state.venues, after, mates, line)));
+  }
+  async savePayBatch(batch) {
+    const uid = String(this.actor?.uid || '').trim();
+    if (!uid) return '';
+    const payload = JSON.stringify({ payments: batch?.payments || [], credits: batch?.credits || [] });
+    if (payload.length > 100000) return '';
+    const { doc, setDoc } = this.fs;
+    let at = Date.now();
+    const idOf = (stamp) => `${uid}_${stamp}`;
+    while ((this.state.payBatches || []).some((row) => row.id === idOf(at))) at += 1;
+    const id = idOf(at);
+    await setDoc(doc(this.db, 'payBatches', id), { ownerUid: uid, at, payload });
+    return id;
+  }
+  async deletePayBatch(id) {
+    if (!id) return;
+    const { doc, deleteDoc } = this.fs;
+    await deleteDoc(doc(this.db, 'payBatches', id));
   }
   async logPlayerPago(playerId, line) {
     const player = this.state.players.find((item) => item.id === playerId);
@@ -3229,14 +3309,21 @@ export class FirebaseStore {
   }
   async setSuspended(id, value) {
     if (value === true) return;
-    const { docId } = this._ownSuspensionRef(id);
+    const { uid, docId } = this._ownSuspensionRef(id);
     const current = (this.state.suspensions || []).find((row) => row.id === docId);
     if (!current || current.suspended !== true) return;
-    const { doc, updateDoc } = this.fs;
-    await updateDoc(doc(this.db, 'rosterSuspensions', docId), {
-      suspended: false,
-      history: nextSuspensionHistory(current, todayISO()),
-    });
+    const event = liftedSuspensionEvent(current, todayISO());
+    const { doc, writeBatch } = this.fs;
+    const batch = writeBatch(this.db);
+    batch.update(doc(this.db, 'rosterSuspensions', docId), { suspended: false });
+    if (event) {
+      let at = Date.now();
+      while ((this.state.suspensionHistory || []).some((row) => row.id === `${id}_${uid}_${at}`)) at += 1;
+      batch.set(doc(this.db, 'suspensionHistory', `${id}_${uid}_${at}`), {
+        ownerUid: uid, rosterId: id, date: event.date, note: event.note, lifted: event.lifted, at,
+      });
+    }
+    await batch.commit();
   }
   async setSuspension(id, { note, date } = {}) {
     const { uid, docId } = this._ownSuspensionRef(id);
@@ -3252,7 +3339,7 @@ export class FirebaseStore {
       suspended: true,
       suspensionNote: text,
       suspensionDate: day,
-      history: cleanSuspensionHistory(current?.history),
+      history: cleanSuspensionHistory(current?.history).slice(0, 10),
     });
   }
   async deleteRoster(id) {

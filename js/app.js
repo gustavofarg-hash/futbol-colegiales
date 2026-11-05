@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, paymentWithoutShare, annulCreditDeltas, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -18,7 +18,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, cleanSuspensionHistory, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, visibleRosterPhone } from './roster.js';
+import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v113';
+const APP_VERSION = 'f7c-v114';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -190,27 +190,54 @@ function run(p, okMsg, deniedMsg) {
     else toast('No se pudo guardar: ' + (e.code || e.message || e));
   });
 }
+/** Un Guardar: los pagos y el saldo, y el recuerdo para poder anularlo entero. */
+async function applyPaySave(entries, credits) {
+  const moves = (Array.isArray(credits) ? credits : [credits]).filter((move) => move && roundMoney(move.delta));
+  const running = new Map();
+  const done = [];
+  try {
+    for (const move of moves) {
+      await app.store.adjustCredit(move, app.who);
+      done.push(move);
+    }
+    for (const entry of entries || []) {
+      if (!entry?.id) continue;
+      if (entry.awaitingOnly) {
+        await app.store.updatePlayer(entry.id, { awaiting: entry.awaitingOnly });
+        continue;
+      }
+      let state = running.get(entry.id);
+      if (!state) {
+        const player = app.players.find((item) => item.id === entry.id) || { id: entry.id };
+        state = { player: { ...player }, before: payBatchSnapshot(player) };
+        running.set(entry.id, state);
+      }
+      await app.store.setPayment(entry.id, entry.input, app.who);
+      const rec = paymentRecord(entry.input, app.who);
+      if (rec.ok) {
+        state.player = { ...state.player, ...rec.patch, id: entry.id };
+        state.after = payBatchSnapshot(state.player);
+      }
+    }
+    const payments = [...running.values()].filter((state) => state.after).map((state) => ({
+      playerId: state.before.playerId || state.player.id,
+      before: state.before,
+      after: state.after,
+    }));
+    if (payments.length && app.store.savePayBatch) await app.store.savePayBatch({ payments, credits: moves });
+  } catch (error) {
+    for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
+    throw error;
+  }
+}
+
 function savePayments(entries, okMsg) {
-  return run(writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who)), okMsg);
+  return run(applyPaySave(entries, []), okMsg);
 }
 
 /** Cada delta suma al saldo (negativo lo gasta). Si el pago falla, el saldo vuelve. */
 function savePaymentsSpendingCredit(entries, okMsg, creditMove) {
-  const moves = (Array.isArray(creditMove) ? creditMove : [creditMove]).filter((move) => move && roundMoney(move.delta));
-  const job = (async () => {
-    const done = [];
-    try {
-      for (const move of moves) {
-        await app.store.adjustCredit(move, app.who);
-        done.push(move);
-      }
-      await writePaymentsInOrder(entries, (entry) => app.store.setPayment(entry.id, entry.input, app.who));
-    } catch (error) {
-      for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
-      throw error;
-    }
-  })();
-  return run(job, okMsg);
+  return run(applyPaySave(entries, creditMove), okMsg);
 }
 
 function organizerUidByName(name) {
@@ -4573,11 +4600,104 @@ function bindAnnulList(root, player) {
   });
 }
 
+function annulLogLines(before, after) {
+  const rows = [];
+  const bits = [
+    ['cash', 'efectivo', after?.cashTo || before?.cashTo || ''],
+    ['transfer', 'transferencia', after?.transferTo || before?.transferTo || ''],
+    ['credit', 'credito', after?.creditTo || before?.creditTo || ''],
+    ['pending', 'transferencia', after?.pendingTo || before?.pendingTo || ''],
+  ];
+  for (const [key, method, paidTo] of bits) {
+    const diff = roundMoney((after?.[key] || 0) - (before?.[key] || 0));
+    if (!diff) continue;
+    rows.push({
+      type: 'Anulado',
+      method,
+      amount: Math.abs(diff),
+      detail: key === 'pending' ? 'Transfiere después' : '',
+      paidTo,
+    });
+  }
+  return rows;
+}
+
+function payBatchForShare(player) {
+  const batches = (app.payBatches || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+  return batches.find((batch) => {
+    const row = (batch.payments || []).find((item) => item.playerId === player.id);
+    return row && samePaySnapshot(payBatchSnapshot(player), row.after);
+  }) || null;
+}
+
+function annulConfirmText(batch) {
+  const ids = (batch?.payments || []).map((row) => row.playerId);
+  const matches = new Set(ids.map((id) => app.players.find((player) => player.id === id)?.matchId).filter(Boolean));
+  if (matches.size > 1) return '¿Anular este pago? También anula lo cargado en otros partidos.';
+  if (ids.length > 1) return '¿Anular este pago? También anula lo cargado para los otros.';
+  return '¿Anular este pago?';
+}
+
+async function finishAnnul(moves, writes, logs, batchId) {
+  for (const move of moves) {
+    if (move.delta < 0 && roundMoney(-move.delta) > creditBalance(app.credits, move.personKey, move.organizerUid)) {
+      askNotice('No alcanza el saldo a favor para anular este pago.');
+      return false;
+    }
+  }
+  const done = [];
+  try {
+    for (const move of moves) {
+      await app.store.adjustCredit(move, app.who);
+      done.push(move);
+    }
+    for (const write of writes) await app.store.setPayment(write.id, write.input, app.who, { log: false });
+    for (const line of logs) await app.store.logPlayerPago(line.playerId, line.entry);
+    if (batchId && app.store.deletePayBatch) await app.store.deletePayBatch(batchId);
+  } catch (error) {
+    for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
+    askNotice(error?.message || 'No se pudo anular el pago.');
+    return false;
+  }
+  return true;
+}
+
+function reopenAfterAnnul(player) {
+  const updated = app.players.find((item) => item.id === player.id) || player;
+  const matchNow = knownMatches().find((item) => item.id === updated.matchId);
+  if ($('#pay-form') && matchNow) openPaymentForm(matchNow, updated);
+  else if (matchNow) openPlayerMenu(matchNow, updated);
+}
+
 async function annulRecordedPayment(player, share) {
   const fresh = app.players.find((item) => item.id === player.id) || player;
   if (!canAnnulPayment(fresh, share)) return;
+  const batch = payBatchForShare(fresh);
+  if (batch) {
+    const names = payBatchCollectorNames(batch);
+    if (names.some((name) => !sameOrganizer(name, actor().name))) {
+      askNotice('Este pago se cargó junto con un cobro de otro organizador.');
+      return;
+    }
+    const plan = revertPayBatch(app.players, batch);
+    if (!plan.ok) {
+      askNotice('Este pago ya se modificó. No se puede anular.');
+      return;
+    }
+    if (!(await askConfirm(annulConfirmText(batch), { danger: true, okText: 'Anular' }))) return;
+    const again = revertPayBatch(app.players, payBatchForShare(app.players.find((item) => item.id === fresh.id) || fresh) || batch);
+    if (!again.ok) {
+      askNotice('Este pago ya se modificó. No se puede anular.');
+      return;
+    }
+    const logs = again.payments.flatMap((row) => annulLogLines(row.before, row.after).map((entry) => ({ playerId: row.id, entry })));
+    const ok = await finishAnnul(again.credits, again.payments, logs, batch.id);
+    if (ok) reopenAfterAnnul(fresh);
+    return;
+  }
   if (!(await askConfirm('¿Anular este pago?', { danger: true, okText: 'Anular' }))) return;
   const current = app.players.find((item) => item.id === fresh.id) || fresh;
+  const before = payBatchSnapshot(current);
   const input = paymentWithoutShare(current, share);
   const match = knownMatches().find((item) => item.id === current.matchId);
   const promo = promoForPlayer({ player: current, players: app.players, matches: knownMatches(), prices: livePrices() });
@@ -4593,37 +4713,30 @@ async function annulRecordedPayment(player, share) {
       askNotice('No se puede anular este pago sin identificar al jugador y a quien cobró.');
       return;
     }
-    if (item.delta < 0 && roundMoney(-item.delta) > creditBalance(app.credits, key, uid)) {
-      askNotice('No alcanza el saldo a favor para anular este pago.');
-      return;
-    }
     moves.push({ personKey: key, organizerUid: uid, organizerName: name, name: current.name, delta: item.delta });
   }
-  const done = [];
-  try {
-    for (const move of moves) {
-      await app.store.adjustCredit(move, app.who);
-      done.push(move);
-    }
-    await app.store.setPayment(current.id, input, app.who);
-    if (share.kind === 'pending') {
-      await app.store.logPlayerPago(current.id, {
-        type: 'pago borrado',
-        method: 'transferencia',
+  const after = snapshotAfterFallback(current, input);
+  const logs = annulLogLines(before, after).map((entry) => ({ playerId: current.id, entry }));
+  if (!logs.length && share?.amount > 0) {
+    logs.push({
+      playerId: current.id,
+      entry: {
+        type: 'Anulado',
+        method: share.kind === 'cash' ? 'efectivo' : share.kind === 'credit' ? 'credito' : 'transferencia',
         amount: share.amount,
-        paidTo: share.name,
-        detail: 'Transfiere después',
-      });
-    }
-  } catch (error) {
-    for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
-    askNotice(error?.message || 'No se pudo anular el pago.');
-    return;
+        detail: share.kind === 'pending' ? 'Transfiere después' : '',
+        paidTo: share.name || '',
+      },
+    });
   }
-  const updated = app.players.find((item) => item.id === current.id) || current;
-  const matchNow = knownMatches().find((item) => item.id === updated.matchId);
-  if ($('#pay-form') && matchNow) openPaymentForm(matchNow, updated);
-  else if (matchNow) openPlayerMenu(matchNow, updated);
+  const ok = await finishAnnul(moves, [{ id: current.id, input }], logs, '');
+  if (ok) reopenAfterAnnul(current);
+}
+
+function snapshotAfterFallback(player, input) {
+  const rec = paymentRecord(input, app.who);
+  if (!rec.ok) return payBatchSnapshot(player);
+  return payBatchSnapshot({ ...player, ...rec.patch, id: player.id });
 }
 
 function openPaymentForm(m, p, opts = {}) {
@@ -5297,44 +5410,35 @@ function openPaymentForm(m, p, opts = {}) {
       return;
     }
     const job = (async () => {
-      const done = [];
-      try {
-        const moves = mergeCreditMoves([...(delta ? [creditMoveFor(p, delta)] : []), ...grants]);
-        for (const move of moves) {
-          await app.store.adjustCredit(move, app.who);
-          done.push(move);
-        }
-        for (const entry of entries) {
-          if (entry.awaitingOnly) await app.store.updatePlayer(entry.id, { awaiting: entry.awaitingOnly });
-          else await app.store.setPayment(entry.id, entry.input, app.who);
-        }
-        for (const item of debtAdds) {
-          const who = app.players.find((player) => player.id === item.id);
-          if (!who) continue;
-          const prev = paymentParts(who);
-          const cash = item.kind === 'cash' ? roundMoney(prev.cash + item.amount) : prev.cash;
-          const transfer = item.kind === 'transfer' ? roundMoney(prev.transfer + item.amount) : prev.transfer;
-          const credit = item.kind === 'credit' ? roundMoney(prev.credit + item.amount) : prev.credit;
-          await app.store.setPayment(who.id, {
+      const debtEntries = [];
+      for (const item of debtAdds) {
+        const who = app.players.find((player) => player.id === item.id);
+        if (!who) continue;
+        const prev = paymentParts(who);
+        const cash = item.kind === 'cash' ? roundMoney(prev.cash + item.amount) : prev.cash;
+        const transfer = item.kind === 'transfer' ? roundMoney(prev.transfer + item.amount) : prev.transfer;
+        const credit = item.kind === 'credit' ? roundMoney(prev.credit + item.amount) : prev.credit;
+        debtEntries.push({
+          id: who.id,
+          input: {
             paid: true, split: true, freePlay: false,
             cash, transfer, pendingTransfer: prev.pending, fromCredit: credit,
             cashTo: cash > 0 ? (item.kind === 'cash' ? item.name : who.cashTo) : null,
             transferTo: transfer > 0 ? (item.kind === 'transfer' ? item.name : who.transferTo) : null,
             pendingTo: prev.pending > 0 ? who.pendingTo : null,
             creditTo: credit > 0 ? (item.kind === 'credit' ? item.name : who.creditTo) : null,
-          }, app.who);
+          },
+        });
+      }
+      const moves = mergeCreditMoves([...(delta ? [creditMoveFor(p, delta)] : []), ...grants]);
+      await applyPaySave([...entries, ...debtEntries], moves);
+      for (const grant of grants) {
+        await app.store.recordCreditLoad({ match: null, player: { ...p, creditTo: grant.organizerName }, amount: grant.delta, solo: true });
+      }
+      for (const row of planned) {
+        for (const item of row.pending || []) {
+          await app.store.logPlayerPago(row.player.id, { type: 'pago pendiente', method: item.kind === 'transfer' ? 'transferencia' : item.kind === 'credit' ? 'credito' : 'efectivo', amount: item.amount, paidTo: item.name, detail: 'Pendiente de confirmar' });
         }
-        for (const grant of grants) {
-          await app.store.recordCreditLoad({ match: null, player: { ...p, creditTo: grant.organizerName }, amount: grant.delta, solo: true });
-        }
-        for (const row of planned) {
-          for (const item of row.pending || []) {
-            await app.store.logPlayerPago(row.player.id, { type: 'pago pendiente', method: item.kind === 'transfer' ? 'transferencia' : item.kind === 'credit' ? 'credito' : 'efectivo', amount: item.amount, paidTo: item.name, detail: 'Pendiente de confirmar' });
-          }
-        }
-      } catch (error) {
-        for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
-        throw error;
       }
     })();
     leave(run(job, note.extra > 0 ? 'Pago guardado. Lo que sobra quedó anotado.' : (planned.length > 1 ? 'Promo aplicada' : 'Pago guardado')));
@@ -5810,23 +5914,21 @@ function openSuspensionNote(card) {
   };
 }
 
-function suspensionViewLines(record, { history = false } = {}) {
+function suspensionViewLines(record) {
   const lines = [];
   if (record?.suspended === true) {
     const date = numericDate(record.suspensionDate || '');
     const reason = String(record.suspensionNote || '').trim();
     if (date || reason) lines.push([date, reason].filter(Boolean).join(' · '));
   }
-  if (history) {
-    for (const item of cleanSuspensionHistory(record?.history)) {
-      lines.push(`${numericDate(item.date)} · ${item.note} · levantada el ${numericDate(item.lifted)}`);
-    }
+  for (const item of suspensionHistoryOf(record, app.suspensionHistory)) {
+    lines.push(`${numericDate(item.date)} · ${item.note} · levantada el ${numericDate(item.lifted)}`);
   }
   return lines;
 }
 
-function openSuspensionView(record, { history = false } = {}) {
-  const lines = suspensionViewLines(record, { history });
+function openSuspensionView(record) {
+  const lines = suspensionViewLines(record);
   if (!lines.length) return;
   openSheet(`
     <div id="suspend-view">
@@ -5849,7 +5951,7 @@ function openPlayerMenu(m, p) {
   const rosterId = suspensionRosterId(card || p);
   const mine = (app.suspensions || []).find((row) => row.rosterId === rosterId && row.ownerUid === actor().uid) || null;
   const others = activeSuspensions(app.suspensions, rosterId).filter((row) => row.ownerUid !== actor().uid);
-  const past = card && mine?.suspended !== true && cleanSuspensionHistory(mine?.history).length;
+  const past = card && mine?.suspended !== true && suspensionHistoryOf(mine, app.suspensionHistory).length;
   const ownBox = card
     ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${mine?.suspended === true ? ' checked' : ''} aria-label="Suspendido"><button type="button" class="suspend-label" id="suspend-note">Suspendido</button></div>${past ? '<button type="button" class="suspend-label" id="suspend-history">Suspensiones anteriores</button>' : ''}`
     : '';
@@ -5886,12 +5988,12 @@ function openPlayerMenu(m, p) {
   const suspendNote = $('#suspend-note');
   if (suspendNote && rosterId) suspendNote.onclick = () => {
     const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
-    openSuspensionView(row, { history: true });
+    openSuspensionView(row);
   };
   const suspendHistory = $('#suspend-history');
   if (suspendHistory && rosterId) suspendHistory.onclick = () => {
     const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
-    openSuspensionView(row, { history: true });
+    openSuspensionView(row);
   };
   sheet.querySelectorAll('[data-suspend-view]').forEach((btn) => {
     btn.onclick = () => {
@@ -6556,6 +6658,8 @@ async function boot() {
     app.roster = roster || [];
     app.rosterNotes = view.rosterNotes || {};
     app.suspensions = view.suspensions || [];
+    app.suspensionHistory = view.suspensionHistory || [];
+    app.payBatches = view.payBatches || [];
     app.organizers = organizers || [];
     app.venues = venues || [];
     app.prices = prices || null;
@@ -6575,7 +6679,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

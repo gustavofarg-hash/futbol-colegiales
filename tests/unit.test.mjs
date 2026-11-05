@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
@@ -303,6 +303,34 @@ test('el apodo del menú se copia a los partidos del día y la promo no baja a p
   assert.equal(saved.players.find((row) => row.id === others[2]).name, 'Invitado 1');
   assert.equal(promoForPlayer({ player: saved.players.find((row) => row.id === guests[2]), ...saved, prices: null }).label, 'Promo 3 partidos por $12.000');
   assert.equal(amountOwed(saved.players.find((row) => row.id === guests[0]), saved), 4000);
+});
+
+test('anular un guardado deshace todos los partidos y el saldo de ese pago', () => {
+  const empty = payBatchSnapshot({ id: 'a' });
+  const paidA = payBatchSnapshot({ id: 'a', paid: true, cash: 0, transfer: 5000, transferTo: 'Gustavo', fromCredit: 0, pendingTransfer: 0 });
+  const paidB = payBatchSnapshot({ id: 'b', paid: true, cash: 0, transfer: 4000, transferTo: 'Gustavo', fromCredit: 0, pendingTransfer: 0 });
+  const batch = {
+    payments: [
+      { playerId: 'a', before: { ...empty, playerId: 'a' }, after: paidA },
+      { playerId: 'b', before: { ...empty, playerId: 'b' }, after: paidB },
+    ],
+    credits: [{ personKey: 'p:1', organizerUid: 'g', organizerName: 'Gustavo', name: 'Ana', delta: 1000 }],
+  };
+  const players = [
+    { id: 'a', paid: true, cash: 0, transfer: 5000, transferTo: 'Gustavo', fromCredit: 0, pendingTransfer: 0 },
+    { id: 'b', paid: true, cash: 0, transfer: 4000, transferTo: 'Gustavo', fromCredit: 0, pendingTransfer: 0 },
+  ];
+  const plan = revertPayBatch(players, batch);
+  assert.equal(plan.ok, true);
+  assert.equal(plan.payments.length, 2);
+  assert.equal(plan.payments[0].input.paid, false);
+  assert.equal(plan.payments[1].input.paid, false);
+  assert.equal(plan.credits[0].delta, -1000);
+  const changed = revertPayBatch([
+    { id: 'a', paid: true, cash: 0, transfer: 1000, transferTo: 'Gustavo', fromCredit: 0, pendingTransfer: 0 },
+    players[1],
+  ], batch);
+  assert.equal(changed.ok, false);
 });
 
 test('anular una parte deja el resto y devuelve el saldo de más o el crédito usado', () => {
@@ -1286,16 +1314,18 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   assert.equal(saved.roster[id].suspended, undefined);
   await store.setSuspended(id, false);
   let lifted = JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`];
+  const past = Object.values(JSON.parse(mem.get('f7c-test-susp')).suspensionHistory);
   assert.equal(lifted.suspended, false);
-  assert.equal(lifted.history.length, 1);
-  assert.equal(lifted.history[0].date, '2026-10-19');
-  assert.equal(lifted.history[0].note, 'Llegó tarde tres veces');
-  assert.match(lifted.history[0].lifted, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(lifted.history.length, 0);
+  assert.equal(past.length, 1);
+  assert.equal(past[0].date, '2026-10-19');
+  assert.equal(past[0].note, 'Llegó tarde tres veces');
+  assert.match(past[0].lifted, /^\d{4}-\d{2}-\d{2}$/);
   await store.setSuspension(id, { note: 'No avisó', date: '2026-11-01' });
   lifted = JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`];
   assert.equal(lifted.suspended, true);
   assert.equal(lifted.suspensionNote, 'No avisó');
-  assert.equal(lifted.history[0].note, 'Llegó tarde tres veces');
+  assert.equal(Object.values(JSON.parse(mem.get('f7c-test-susp')).suspensionHistory)[0].note, 'Llegó tarde tres veces');
   assert.equal(Object.values(saved.players).length, 1);
   const second = await store.addMatch({ date: '2026-11-22', time: '21:00', capacity: 14 }, 'Gustavo');
   await assert.rejects(
@@ -1322,6 +1352,15 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   }, 'Martín');
   await store.addPlayer({ id: solo }, { name: 'Suspendido Pérez', phone: '5491166668080', rosterId: id }, 'Martín');
   assert.equal(Object.values(JSON.parse(mem.get('f7c-test-susp')).players).length, 2);
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  for (let i = 0; i < 12; i += 1) {
+    await store.setSuspension(id, { note: `Vez ${i}`, date: '2026-10-19' });
+    await store.setSuspended(id, false);
+  }
+  const all = Object.values(JSON.parse(mem.get('f7c-test-susp')).suspensionHistory);
+  assert.equal(all.length, 13);
+  assert.ok(all.some((item) => item.note === 'Vez 11'));
+  assert.equal(JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`].history.length, 0);
 });
 
 test('las notas de un jugador compartido las ve solo quien las escribió', async () => {
@@ -3222,6 +3261,7 @@ test('el registro copia quién podía editar y separa los pagos', () => {
   assert.equal(paymentRecord({ paid: true, split: true, cash: 0, transfer: 0, pendingTransfer: 0, fromCredit: 4500, creditTo: 'Gustavo', autoCredit: true }, 'Gustavo').patch.autoCredit, true);
   assert.equal(paymentRecord({ paid: true, split: true, cash: 5000, transfer: 0, pendingTransfer: 0, fromCredit: 0, cashTo: 'Gustavo' }, 'Gustavo').patch.autoCredit, null);
   const deletedPay = paymentLines({ cash: 2000, cashTo: 'Martín' }, { cash: 0, cashTo: null });
+  assert.equal(logText({ section: 'pagos', type: 'Anulado', method: 'transferencia', amount: 5000, playerName: 'Ana', matchLabel: 'Martes 20/10 · 21:00' }), 'Martes 20/10 · 21:00 · Ana · Transferencia $5.000');
   assert.equal(deletedPay[0].type, 'pago borrado');
   assert.equal(deletedPay[0].paidTo, 'Martín → nadie');
   const creditLine = pagoEntry(actor, day, [], { name: 'Ana', creditTo: 'Gustavo' }, [], { type: 'pago', method: 'credito', amount: 500 });
@@ -3333,7 +3373,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v113');
+  assert.equal(version, 'f7c-v114');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
