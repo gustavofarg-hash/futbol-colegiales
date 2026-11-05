@@ -105,6 +105,12 @@ main#view { overflow-anchor: none; }
 .banner { padding: 10px 16px; font-size: 0.875rem; }
 .banner.demo { background: var(--warn-bg); color: var(--warn-text); border-bottom: 1px solid rgba(0,0,0,.05); }
 .banner.error { background: #fde2e2; color: #7a1010; }
+.banner.activity:not([hidden]) {
+  display: block; width: 100%; text-align: left; border: 0; cursor: pointer;
+  background: var(--green-soft); color: var(--green); font-weight: 700;
+}
+.activity-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+.activity-list li { font-size: 0.875rem; }
 
 main { max-width: 640px; margin: 0 auto; padding: 14px 14px 0; }
 .loading, .noscript { text-align: center; color: var(--muted); padding: 40px 0; }

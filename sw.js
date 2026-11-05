@@ -1,9 +1,9 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v117';
+const VERSION = 'f7c-v118';
 const SHELL = [
   './', 'index.html', 'confirmar.html', 'c/index.html', 'styles.css', 'config.js', 'manifest.webmanifest',
-  'js/app.js', 'js/store.js', 'js/backup.js', 'js/drive.js', 'js/parser.js', 'js/phone.js', 'js/dates.js', 'js/payments.js', 'js/waiting.js', 'js/reminders.js', 'js/confirm.js', 'js/roster.js', 'js/guests.js', 'js/profile.js', 'js/organizers.js', 'js/venues.js', 'js/ledger.js', 'js/auth.js', 'js/text-size.js', 'js/prices.js', 'js/access.js', 'js/teams.js', 'js/privacy.js', 'js/short.js', 'js/shorten.js', 'js/short-go.js', 'js/edit-lock.js', 'js/credit.js', 'js/compensate.js', 'js/stats.js', 'js/log.js',
+  'js/app.js', 'js/store.js', 'js/backup.js', 'js/drive.js', 'js/parser.js', 'js/phone.js', 'js/dates.js', 'js/payments.js', 'js/waiting.js', 'js/reminders.js', 'js/confirm.js', 'js/roster.js', 'js/guests.js', 'js/profile.js', 'js/organizers.js', 'js/venues.js', 'js/ledger.js', 'js/auth.js', 'js/text-size.js', 'js/prices.js', 'js/access.js', 'js/teams.js', 'js/privacy.js', 'js/short.js', 'js/shorten.js', 'js/short-go.js', 'js/edit-lock.js', 'js/credit.js', 'js/compensate.js', 'js/stats.js', 'js/log.js', 'js/notify.js',
   'icons/favicon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];
 
@@ -16,6 +16,16 @@ self.addEventListener('activate', (e) => {
     caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    const open = clients.find((client) => client.url && client.url.includes(self.registration.scope)) || clients[0];
+    if (open) return open.focus();
+    if (self.clients.openWindow) return self.clients.openWindow('./');
+    return undefined;
+  }));
 });
 
 self.addEventListener('fetch', (e) => {

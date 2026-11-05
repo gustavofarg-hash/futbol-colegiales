@@ -18,6 +18,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
+import { activityNoticeText, activityNotices } from './notify.js';
 import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
@@ -41,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v117';
+const APP_VERSION = 'f7c-v118';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1029,6 +1030,7 @@ function render() {
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'users') renderUsers();
   else renderHome();
+  paintActivity();
   requestAnimationFrame(placeBars);
   if (same && y > 0) {
     const top = y;
@@ -2510,6 +2512,8 @@ function openSettings() {
       <button type="button" class="btn" id="set-restore">Cargar base de datos desde un backup</button>
       <button type="button" class="btn danger" id="set-reset-db">Resetear base de datos</button>
     </div>` : ''}
+    <label class="checkline" id="set-activity"><input type="checkbox" id="set-activity-on"${notifyEnabled() ? ' checked' : ''}><span>Notificaciones</span></label>
+    <p class="hint">Cuando otro organizador anota, da de baja o crea un partido que podés ver.</p>
     <div class="menu">
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -2543,6 +2547,15 @@ function openSettings() {
   if (resetDbBtn) resetDbBtn.onclick = () => openResetDb();
   const users = $('#set-organizers');
   if (users) users.onclick = () => closeSheet();
+  const activityToggle = $('#set-activity-on');
+  if (activityToggle) activityToggle.onchange = () => {
+    const uid = actor().uid;
+    if (!uid) return;
+    const on = activityToggle.checked === true;
+    localStorage.setItem(notifyOnKey(uid), on ? '1' : '0');
+    if (on) localStorage.setItem(notifySeenKey(uid), String(Date.now()));
+    paintActivity();
+  };
   $('#set-notify').onclick = async () => {
     if (typeof Notification === 'undefined') { toast('Este navegador no muestra avisos'); return; }
     let perm = Notification.permission;
@@ -6834,6 +6847,71 @@ function checkReminderWindow() {
   }
   if (crossed.length && (!sheet.open || !sheet.querySelector('input, textarea'))) render();
   armReminderTimer();
+}
+
+const notifyOnKey = (uid) => `f7c-notify-on:${uid}`;
+const notifySeenKey = (uid) => `f7c-notify-seen:${uid}`;
+let activityOpenedAt = 0;
+const activityPinged = new Set();
+
+function notifyEnabled() {
+  const uid = actor().uid;
+  return !!uid && localStorage.getItem(notifyOnKey(uid)) === '1';
+}
+function notifySeen() {
+  return Number(localStorage.getItem(notifySeenKey(actor().uid)) || 0) || 0;
+}
+function currentActivity() {
+  if (!notifyEnabled()) return [];
+  const matches = [...(app.matches || []), ...(app.history || [])];
+  return activityNotices(app.log, { uid: actor().uid, since: notifySeen(), matches });
+}
+function markActivitySeen(items) {
+  const uid = actor().uid;
+  if (!uid) return;
+  const max = (items || []).reduce((top, item) => Math.max(top, Number(item.at) || 0), notifySeen());
+  localStorage.setItem(notifySeenKey(uid), String(max || Date.now()));
+}
+function openActivity(items) {
+  markActivitySeen(items);
+  paintActivity();
+  const shown = items.slice(0, 12);
+  const more = items.length - shown.length;
+  openSheet(`
+    <h3>Notificaciones</h3>
+    <ul class="activity-list" id="activity-list">${shown.map((item) => `<li>${esc(activityNoticeText(item))}</li>`).join('')}</ul>
+    ${more > 0 ? `<p class="hint">Y ${more} más en Registro.</p>` : ''}
+    <div class="sheet-actions"><button type="button" class="btn" data-close>Listo</button></div>`);
+}
+function pingActivity(items) {
+  if (!notifyEnabled() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const fresh = items.filter((item) => Number(item.at) > activityOpenedAt && !activityPinged.has(item.id));
+  fresh.slice(0, 3).forEach((item) => {
+    activityPinged.add(item.id);
+    const body = activityNoticeText(item);
+    const title = 'Mis Partidos';
+    const tag = `f7c-act-${item.id || item.at}`;
+    const fallback = () => { try { new Notification(title, { body, tag }); } catch { /* el navegador no muestra avisos */ } };
+    const ready = navigator.serviceWorker?.ready;
+    if (ready && typeof ready.then === 'function') ready.then((reg) => reg.showNotification(title, { body, tag })).catch(fallback);
+    else fallback();
+  });
+}
+function paintActivity() {
+  if (!activityOpenedAt) activityOpenedAt = Date.now();
+  const banner = $('#activity-banner');
+  if (!banner) return;
+  const items = currentActivity();
+  pingActivity(items);
+  if (!items.length) {
+    banner.hidden = true;
+    banner.onclick = null;
+    banner.textContent = '';
+    return;
+  }
+  banner.hidden = false;
+  banner.textContent = items.length === 1 ? activityNoticeText(items[0]) : `${items.length} novedades de otros organizadores`;
+  banner.onclick = () => openActivity(items);
 }
 
 function fireReminderNotification(m) {
