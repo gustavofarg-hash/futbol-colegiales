@@ -18,7 +18,7 @@ import {
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
-import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, visibleRosterPhone } from './roster.js';
+import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, cleanSuspensionHistory, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v111';
+const APP_VERSION = 'f7c-v112';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -5716,14 +5716,28 @@ function openSuspensionNote(card) {
   };
 }
 
-function openSuspensionView(record) {
-  const reason = String(record?.suspensionNote || '').trim();
-  const date = numericDate(record?.suspensionDate || '');
-  if (!reason && !date) return;
+function suspensionViewLines(record, { history = false } = {}) {
+  const lines = [];
+  if (record?.suspended === true) {
+    const date = numericDate(record.suspensionDate || '');
+    const reason = String(record.suspensionNote || '').trim();
+    if (date || reason) lines.push([date, reason].filter(Boolean).join(' · '));
+  }
+  if (history) {
+    for (const item of cleanSuspensionHistory(record?.history)) {
+      lines.push(`${numericDate(item.date)} · ${item.note} · levantada el ${numericDate(item.lifted)}`);
+    }
+  }
+  return lines;
+}
+
+function openSuspensionView(record, { history = false } = {}) {
+  const lines = suspensionViewLines(record, { history });
+  if (!lines.length) return;
   openSheet(`
     <div id="suspend-view">
       <h3>Suspendido</h3>
-      <p id="suspend-summary">${esc([date, reason].filter(Boolean).join(' · '))}</p>
+      <div id="suspend-history">${lines.map((line, index) => `<p${index === 0 ? ' id="suspend-summary"' : ' class="hint"'}>${esc(line)}</p>`).join('')}</div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>
     </div>`);
 }
@@ -5741,8 +5755,9 @@ function openPlayerMenu(m, p) {
   const rosterId = suspensionRosterId(card || p);
   const mine = (app.suspensions || []).find((row) => row.rosterId === rosterId && row.ownerUid === actor().uid) || null;
   const others = activeSuspensions(app.suspensions, rosterId).filter((row) => row.ownerUid !== actor().uid);
+  const past = card && mine?.suspended !== true && cleanSuspensionHistory(mine?.history).length;
   const ownBox = card
-    ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${mine?.suspended === true ? ' checked' : ''} aria-label="Suspendido"><button type="button" class="suspend-label" id="suspend-note">Suspendido</button></div>`
+    ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${mine?.suspended === true ? ' checked' : ''} aria-label="Suspendido"><button type="button" class="suspend-label" id="suspend-note">Suspendido</button></div>${past ? '<button type="button" class="suspend-label" id="suspend-history">Suspensiones anteriores</button>' : ''}`
     : '';
   const otherBoxes = others.map((row) => `<div class="checkline"><input type="checkbox" checked disabled aria-label="Suspendido por ${esc(organizerLabel(row.ownerUid))}"><button type="button" class="suspend-label" data-suspend-view="${esc(row.ownerUid)}">Suspendido por ${esc(organizerLabel(row.ownerUid))}</button></div>`).join('');
   const suspendBox = `${ownBox}${otherBoxes}`;
@@ -5776,7 +5791,12 @@ function openPlayerMenu(m, p) {
   const suspendNote = $('#suspend-note');
   if (suspendNote && rosterId) suspendNote.onclick = () => {
     const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
-    openSuspensionView(row);
+    openSuspensionView(row, { history: true });
+  };
+  const suspendHistory = $('#suspend-history');
+  if (suspendHistory && rosterId) suspendHistory.onclick = () => {
+    const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
+    openSuspensionView(row, { history: true });
   };
   sheet.querySelectorAll('[data-suspend-view]').forEach((btn) => {
     btn.onclick = () => {

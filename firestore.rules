@@ -897,13 +897,36 @@ service cloud.firestore {
       allow delete: if isActiveStaff() && resource.data.ownerUid == request.auth.uid;
     }
 
+    function suspensionDayOk(value) {
+      return value is string && value.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+    function suspensionEventOk(e) {
+      return e.keys().hasOnly(['date', 'note', 'lifted'])
+          && suspensionDayOk(e.date)
+          && e.note is string && e.note.size() > 0 && e.note.size() <= 300
+          && suspensionDayOk(e.lifted);
+    }
+    function suspensionHistoryOk(h) {
+      return h is list && h.size() <= 10
+          && (h.size() < 1 || suspensionEventOk(h[0]))
+          && (h.size() < 2 || suspensionEventOk(h[1]))
+          && (h.size() < 3 || suspensionEventOk(h[2]))
+          && (h.size() < 4 || suspensionEventOk(h[3]))
+          && (h.size() < 5 || suspensionEventOk(h[4]))
+          && (h.size() < 6 || suspensionEventOk(h[5]))
+          && (h.size() < 7 || suspensionEventOk(h[6]))
+          && (h.size() < 8 || suspensionEventOk(h[7]))
+          && (h.size() < 9 || suspensionEventOk(h[8]))
+          && (h.size() < 10 || suspensionEventOk(h[9]));
+    }
     function validSuspension(d) {
-      return d.keys().hasOnly(['ownerUid', 'rosterId', 'suspended', 'suspensionNote', 'suspensionDate'])
+      return d.keys().hasOnly(['ownerUid', 'rosterId', 'suspended', 'suspensionNote', 'suspensionDate', 'history'])
           && d.ownerUid == request.auth.uid
           && d.rosterId is string && d.rosterId.size() > 0 && d.rosterId.size() <= 200
           && d.suspended is bool
           && d.suspensionNote is string && d.suspensionNote.size() > 0 && d.suspensionNote.size() <= 300
-          && d.suspensionDate is string && d.suspensionDate.matches('^\\d{4}-\\d{2}-\\d{2}$');
+          && suspensionDayOk(d.suspensionDate)
+          && (!('history' in d) || suspensionHistoryOk(d.history));
     }
     match /rosterSuspensions/{suspensionId} {
       allow read, write: if isAdmin();

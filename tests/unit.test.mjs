@@ -1268,6 +1268,18 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   assert.equal(mine.suspensionNote, 'Llegó tarde tres veces');
   assert.equal(mine.suspensionDate, '2026-10-19');
   assert.equal(saved.roster[id].suspended, undefined);
+  await store.setSuspended(id, false);
+  let lifted = JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`];
+  assert.equal(lifted.suspended, false);
+  assert.equal(lifted.history.length, 1);
+  assert.equal(lifted.history[0].date, '2026-10-19');
+  assert.equal(lifted.history[0].note, 'Llegó tarde tres veces');
+  assert.match(lifted.history[0].lifted, /^\d{4}-\d{2}-\d{2}$/);
+  await store.setSuspension(id, { note: 'No avisó', date: '2026-11-01' });
+  lifted = JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`];
+  assert.equal(lifted.suspended, true);
+  assert.equal(lifted.suspensionNote, 'No avisó');
+  assert.equal(lifted.history[0].note, 'Llegó tarde tres veces');
   assert.equal(Object.values(saved.players).length, 1);
   const second = await store.addMatch({ date: '2026-11-22', time: '21:00', capacity: 14 }, 'Gustavo');
   await assert.rejects(
@@ -3305,7 +3317,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v111');
+  assert.equal(version, 'f7c-v112');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
