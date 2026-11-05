@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v114';
+const APP_VERSION = 'f7c-v115';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -532,6 +532,10 @@ function suspendedClass(source) {
   if (activeSuspensions(app.suspensions, rosterId).some((row) => row.ownerUid === uid)) return ' suspended';
   const match = source?.matchId ? (knownMatches().find((item) => item.id === source.matchId) || null) : null;
   return match && blockingSuspensions(app.suspensions, match, rosterId).length ? ' suspended' : '';
+}
+function suspendedName(source, name) {
+  if (!suspendedClass(source)) return esc(name);
+  return `${esc(name)} <span class="suspended-tag">(suspendido)</span>`;
 }
 function organizerLabel(uid) {
   const user = (app.users || []).find((item) => item.uid === uid);
@@ -3770,8 +3774,9 @@ function renderProfile(id) {
   const money = profileMoney(person);
   const painted = replaceView(`
     <article id="profile">
+      ${suspensionControls(person).html}
       <div class="name-share">
-        <h2 class="section${suspendedClass(person)}">${esc(person.name)}</h2>
+        <h2 class="section${suspendedClass(person)}">${suspendedName(person, person.name)}</h2>
         ${playerShareButton('profile-share')}
       </div>
       ${money.panel.nickHtml}
@@ -3815,6 +3820,8 @@ function renderProfile(id) {
   }
   if (!painted) return;
   bindPlayerPanel($('#profile'), null, person, PROFILE_PANEL, money.panel);
+  const profileSuspend = suspensionControls(person);
+  bindSuspensionControls($('#profile'), profileSuspend.rosterId, profileSuspend.card);
   const profileShare = $('#profile-share');
   if (profileShare) profileShare.onclick = () => copyPlayerLink(person.id);
   const addPhone = $('#profile-add-phone');
@@ -3895,8 +3902,10 @@ function partidosSection(person) {
   const draft = signupDraft(person);
   const rows = signupRows(person).map(({ match, state }) => {
     const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
-    const picked = !state.existing && draft.ids.has(match.id);
-    const locked = state.existing ? 'checked disabled' : (playerBlockedOn(match, person) ? 'disabled' : (picked ? 'checked' : ''));
+    const blocked = playerBlockedOn(match, person);
+    if (blocked && !state.existing) draft.ids.delete(match.id);
+    const picked = !state.existing && !blocked && draft.ids.has(match.id);
+    const locked = state.existing ? 'checked disabled' : (blocked ? 'disabled' : (picked ? 'checked' : ''));
     const remove = state.existing && state.playerId
       ? `<button type="button" class="btn" data-signup-remove="${esc(state.playerId)}">Quitar</button>`
       : '';
@@ -3966,7 +3975,7 @@ function bindPartidos(person) {
       const match = matchById(id);
       const stillUp = match && upcomingMatches(app.matches).some((item) => item.id === id);
       const state = match ? matchSignupState({ ...rosterIdentity(person), match, players: app.players }) : null;
-      if (!match || !stillUp || !state || state.existing) {
+      if (!match || !stillUp || !state || state.existing || playerBlockedOn(match, person)) {
         draft.ids.delete(id);
         continue;
       }
@@ -5877,6 +5886,65 @@ function openCreditReturnForm({ player, person, panel }) {
   };
 }
 
+function suspensionCard(source) {
+  if (source && !source.matchId && rosterHeldBy(source, actor())) return source;
+  return heldCard(source);
+}
+
+function suspensionControls(source) {
+  const card = suspensionCard(source);
+  const rosterId = suspensionRosterId(card || source);
+  const mine = (app.suspensions || []).find((row) => row.rosterId === rosterId && row.ownerUid === actor().uid) || null;
+  const others = activeSuspensions(app.suspensions, rosterId).filter((row) => row.ownerUid !== actor().uid);
+  const past = card && mine?.suspended !== true && suspensionHistoryOf(mine, app.suspensionHistory).length;
+  const ownBox = card
+    ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${mine?.suspended === true ? ' checked' : ''} aria-label="Suspender"><button type="button" class="suspend-label" id="suspend-note">Suspender</button></div>${past ? '<button type="button" class="suspend-label" id="suspend-history">Suspensiones anteriores</button>' : ''}`
+    : '';
+  const otherBoxes = others.map((row) => `<div class="checkline"><input type="checkbox" checked disabled aria-label="Suspendido por ${esc(organizerLabel(row.ownerUid))}"><button type="button" class="suspend-label" data-suspend-view="${esc(row.ownerUid)}">Suspendido por ${esc(organizerLabel(row.ownerUid))}</button></div>`).join('');
+  return { html: `${ownBox}${otherBoxes}`, card, rosterId };
+}
+
+function bindSuspensionControls(root, rosterId, card) {
+  if (!root || !rosterId) return;
+  const suspendFlag = root.querySelector('#suspend-flag');
+  const suspendNote = root.querySelector('#suspend-note');
+  if (suspendNote) suspendNote.onclick = () => {
+    const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
+    openSuspensionView(row);
+  };
+  const suspendHistory = root.querySelector('#suspend-history');
+  if (suspendHistory) suspendHistory.onclick = () => {
+    const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
+    openSuspensionView(row);
+  };
+  root.querySelectorAll('[data-suspend-view]').forEach((btn) => {
+    btn.onclick = () => {
+      const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === btn.dataset.suspendView);
+      openSuspensionView(row);
+    };
+  });
+  if (suspendFlag && card) {
+    let ignoreSuspend = false;
+    suspendFlag.onchange = async () => {
+      if (ignoreSuspend) return;
+      if (suspendFlag.checked === true) {
+        ignoreSuspend = true;
+        suspendFlag.checked = false;
+        ignoreSuspend = false;
+        openSuspensionNote(card);
+        return;
+      }
+      try {
+        await app.store.setSuspended(card.id, false);
+        root.querySelectorAll('h2.section, h3, #menu-full-name').forEach((el) => el.classList.remove('suspended'));
+      } catch (error) {
+        suspendFlag.checked = true;
+        askNotice(error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.'));
+      }
+    };
+  }
+}
+
 function openSuspensionNote(card) {
   openSheet(`
     <form id="suspend-note-form" novalidate>
@@ -5947,20 +6015,11 @@ function openPlayerMenu(m, p) {
   const payLine = `${payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>'}${recordedPaymentList(p, 'menu-payments')}`;
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   const canAnnotate = !!(match && canAdd(match, actor().uid));
-  const card = heldCard(p);
-  const rosterId = suspensionRosterId(card || p);
-  const mine = (app.suspensions || []).find((row) => row.rosterId === rosterId && row.ownerUid === actor().uid) || null;
-  const others = activeSuspensions(app.suspensions, rosterId).filter((row) => row.ownerUid !== actor().uid);
-  const past = card && mine?.suspended !== true && suspensionHistoryOf(mine, app.suspensionHistory).length;
-  const ownBox = card
-    ? `<div class="checkline" id="pm-suspended"><input type="checkbox" id="suspend-flag"${mine?.suspended === true ? ' checked' : ''} aria-label="Suspendido"><button type="button" class="suspend-label" id="suspend-note">Suspendido</button></div>${past ? '<button type="button" class="suspend-label" id="suspend-history">Suspensiones anteriores</button>' : ''}`
-    : '';
-  const otherBoxes = others.map((row) => `<div class="checkline"><input type="checkbox" checked disabled aria-label="Suspendido por ${esc(organizerLabel(row.ownerUid))}"><button type="button" class="suspend-label" data-suspend-view="${esc(row.ownerUid)}">Suspendido por ${esc(organizerLabel(row.ownerUid))}</button></div>`).join('');
-  const suspendBox = `${ownBox}${otherBoxes}`;
+  const suspend = suspensionControls(p);
   openSheet(`
-    ${suspendBox}
+    ${suspend.html}
     <div class="name-share">
-      <h3 class="${suspendedClass(p).trim()}">${esc(shownName(p))}</h3>
+      <h3 class="${suspendedClass(p).trim()}">${suspendedName(p, shownName(p))}</h3>
       ${playerShareButton('pm-share')}
     </div>
     <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.notesHtml}${panel.statsButton}</div>
@@ -5984,45 +6043,7 @@ function openPlayerMenu(m, p) {
     </div>`);
   bindPlayerPanel(sheet, p, null, MENU_PANEL, panel);
   bindAnnulList($('#menu-payments'), p);
-  const suspendFlag = $('#suspend-flag');
-  const suspendNote = $('#suspend-note');
-  if (suspendNote && rosterId) suspendNote.onclick = () => {
-    const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
-    openSuspensionView(row);
-  };
-  const suspendHistory = $('#suspend-history');
-  if (suspendHistory && rosterId) suspendHistory.onclick = () => {
-    const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === actor().uid);
-    openSuspensionView(row);
-  };
-  sheet.querySelectorAll('[data-suspend-view]').forEach((btn) => {
-    btn.onclick = () => {
-      const row = (app.suspensions || []).find((item) => item.rosterId === rosterId && item.ownerUid === btn.dataset.suspendView);
-      openSuspensionView(row);
-    };
-  });
-  if (suspendFlag && card) {
-    let ignoreSuspend = false;
-    suspendFlag.onchange = async () => {
-    if (ignoreSuspend) return;
-    if (suspendFlag.checked === true) {
-      ignoreSuspend = true;
-      suspendFlag.checked = false;
-      ignoreSuspend = false;
-      openSuspensionNote(card);
-      return;
-    }
-    try {
-      await app.store.setSuspended(card.id, false);
-      sheet.querySelector('h3')?.classList.remove('suspended');
-      const full = $('#menu-full-name');
-      if (full) full.classList.remove('suspended');
-    } catch (error) {
-      suspendFlag.checked = true;
-      askNotice(error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.'));
-    }
-    };
-  }
+  bindSuspensionControls(sheet, suspend.rosterId, suspend.card);
   const menuShare = $('#pm-share');
   if (menuShare) menuShare.onclick = () => copyPlayerLink(shareRosterId(p));
   $('#pm-profile').onclick = () => { closeSheet(); openPlayerProfile(p, match?.id); };

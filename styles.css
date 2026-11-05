@@ -719,6 +719,7 @@ h2.section.suspended,
 .roster-hit.suspended b,
 #menu-full-name.suspended,
 .suspended { color: var(--danger); }
+.suspended-tag { text-transform: none; }
 .name-share { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .name-share > .section { flex: 1 1 auto; min-width: 0; margin: 4px 0 10px; }
 .sheet .name-share > h3 { flex: 1 1 auto; min-width: 0; margin: 0; }
