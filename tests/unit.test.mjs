@@ -3388,13 +3388,15 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v120');
+  assert.equal(version, 'f7c-v121');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
   assert.equal(/input\.select\(/.test(app), false);
   assert.match(app, /id="app-version">Versión \$\{APP_VERSION\}/);
+  assert.equal(app.includes('Crear cuenta de administrador'), false);
+  assert.match(readFileSync(new URL('../js/auth.js', import.meta.url), 'utf8'), /async registerAdmin\(/);
 });
 
 test('un aviso es de otro organizador y solo si podés ver el partido', () => {

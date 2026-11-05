@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v120';
+const APP_VERSION = 'f7c-v121';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -6590,11 +6590,10 @@ function promptLogin(session) {
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
           <label class="field"><span>Contraseña</span><input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
-          <label class="field" id="login-name-wrap" hidden><span>Tu nombre</span><input id="login-name" maxlength="40" autocomplete="name" placeholder="Gustavo"></label>
           <div class="err" id="login-err">${esc(message)}</div>
           <button class="btn primary block" type="submit">Entrar</button>
           <button class="btn block" type="button" id="login-forgot">Olvidé mi contraseña</button>
-          ${session.mode === 'firebase' ? '<button class="btn block" type="button" id="login-register">Crear cuenta de administrador</button>' : '<p class="footer-note">Demo: gustavo@demo.local · martin@demo.local</p>'}
+          ${session.mode === 'firebase' ? '' : '<p class="footer-note">Demo: gustavo@demo.local · martin@demo.local</p>'}
         </form>`)) return;
       $('#login-form').onsubmit = async (e) => {
         e.preventDefault();
@@ -6611,17 +6610,6 @@ function promptLogin(session) {
           await session.forgot(email);
           draw('Te mandamos un mail para elegir una contraseña nueva.');
         } catch (error) { draw(error.message || 'No se pudo enviar el mail.'); }
-      };
-      const register = $('#login-register');
-      if (register) register.onclick = async () => {
-        $('#login-name-wrap').hidden = false;
-        const name = $('#login-name').value.trim();
-        if (!name) { $('#login-err').textContent = 'Poné tu nombre y tocá de nuevo.'; return; }
-        try {
-          await session.registerAdmin({ email: $('#login-email').value, password: $('#login-password').value, name });
-          if (session.user) done();
-          else draw(session.error || 'No se pudo crear la cuenta.');
-        } catch (error) { draw(error.message || 'No se pudo crear la cuenta.'); }
       };
     };
     redrawLogin = () => { if (!session.user) draw(session.error || ''); };
