@@ -10,6 +10,38 @@ export const SUSPENSION_NOTE_MAX = 300;
 export function cleanSuspensionNote(value) {
   return String(value || '').replace(/\r\n/g, '\n').trim().slice(0, SUSPENSION_NOTE_MAX);
 }
+
+export const SUSPENSION_HISTORY_MAX = 10;
+
+function suspensionDay(value) {
+  const day = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : '';
+}
+
+/** Suspensiones ya levantadas, la más nueva primero. Hasta 10. */
+export function cleanSuspensionHistory(list) {
+  const rows = [];
+  for (const item of Array.isArray(list) ? list : []) {
+    const date = suspensionDay(item?.date);
+    const note = cleanSuspensionNote(item?.note);
+    const lifted = suspensionDay(item?.lifted);
+    if (!date || !note || !lifted) continue;
+    rows.push({ date, note, lifted });
+    if (rows.length >= SUSPENSION_HISTORY_MAX) break;
+  }
+  return rows;
+}
+
+/** Al sacar el tilde, la suspensión de ahora pasa al historial. */
+export function nextSuspensionHistory(current, liftedOn) {
+  const prev = cleanSuspensionHistory(current?.history);
+  if (current?.suspended !== true) return prev;
+  const date = suspensionDay(current?.suspensionDate);
+  const note = cleanSuspensionNote(current?.suspensionNote);
+  const lifted = suspensionDay(liftedOn);
+  if (!date || !note || !lifted) return prev;
+  return [{ date, note, lifted }, ...prev].slice(0, SUSPENSION_HISTORY_MAX);
+}
 export const ROSTER_DENIED_READ = 'No se pueden leer los jugadores guardados. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 export const ROSTER_DENIED_WRITE = 'No se pudo guardar en Jugadores. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 

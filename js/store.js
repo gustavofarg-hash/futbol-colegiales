@@ -97,7 +97,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, SUSPENDED_TEXT, blockingSuspensions, cleanShortName, cleanSuspensionNote, isRosterDenied, legacyNoteOwnerUid, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterIdForSuspension, rosterNoteDocId, rosterPhoneAction, suspensionDocId, withHolder } from './roster.js';
+import { ROSTER_DENIED_READ, SUSPENDED_TEXT, blockingSuspensions, cleanShortName, cleanSuspensionHistory, cleanSuspensionNote, isRosterDenied, legacyNoteOwnerUid, nextSuspensionHistory, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterIdForSuspension, rosterNoteDocId, rosterPhoneAction, suspensionDocId, withHolder } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -1370,14 +1370,15 @@ class LocalStore {
     const db = this._load();
     const { docId, row } = this._ownSuspension(db, id);
     if (value === true) return;
-    if (!row) return;
+    if (!row || row.suspended !== true) return;
     row.suspended = false;
+    row.history = nextSuspensionHistory({ ...row, suspended: true }, todayISO());
     db.rosterSuspensions[docId] = row;
     this._save(db);
   }
   async setSuspension(id, { note, date } = {}) {
     const db = this._load();
-    const { uid, docId } = this._ownSuspension(db, id);
+    const { uid, docId, row } = this._ownSuspension(db, id);
     const text = cleanSuspensionNote(note);
     const day = String(date || '').trim();
     if (!text) throw Object.assign(new Error('Poné el motivo.'), { code: 'invalid-note' });
@@ -1388,6 +1389,7 @@ class LocalStore {
       suspended: true,
       suspensionNote: text,
       suspensionDate: day,
+      history: cleanSuspensionHistory(row?.history),
     };
     this._save(db);
   }
@@ -3229,9 +3231,12 @@ export class FirebaseStore {
     if (value === true) return;
     const { docId } = this._ownSuspensionRef(id);
     const current = (this.state.suspensions || []).find((row) => row.id === docId);
-    if (!current) return;
+    if (!current || current.suspended !== true) return;
     const { doc, updateDoc } = this.fs;
-    await updateDoc(doc(this.db, 'rosterSuspensions', docId), { suspended: false });
+    await updateDoc(doc(this.db, 'rosterSuspensions', docId), {
+      suspended: false,
+      history: nextSuspensionHistory(current, todayISO()),
+    });
   }
   async setSuspension(id, { note, date } = {}) {
     const { uid, docId } = this._ownSuspensionRef(id);
@@ -3239,6 +3244,7 @@ export class FirebaseStore {
     const day = String(date || '').trim();
     if (!text) throw Object.assign(new Error('Poné el motivo.'), { code: 'invalid-note' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw Object.assign(new Error('Poné la fecha.'), { code: 'invalid-date' });
+    const current = (this.state.suspensions || []).find((row) => row.id === docId);
     const { doc, setDoc } = this.fs;
     await setDoc(doc(this.db, 'rosterSuspensions', docId), {
       ownerUid: uid,
@@ -3246,6 +3252,7 @@ export class FirebaseStore {
       suspended: true,
       suspensionNote: text,
       suspensionDate: day,
+      history: cleanSuspensionHistory(current?.history),
     });
   }
   async deleteRoster(id) {
