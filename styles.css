@@ -262,6 +262,7 @@ h2.section:first-child { margin-top: 4px; }
 button.who, a.who { text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 0; cursor: pointer; text-decoration: none; }
 .name-row { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .slot .name { flex: 1 1 auto; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 100%; }
+#roster-list .name.suspended { white-space: normal; overflow: visible; text-overflow: unset; }
 #stats-view .name { white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: break-word; }
 #slots .name { white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: break-word; }
 /* En el partido se ve el apodo (o el nombre) entero: nunca cortado ni partido en medio de una palabra. */

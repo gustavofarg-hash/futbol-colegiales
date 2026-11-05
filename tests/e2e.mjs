@@ -119,7 +119,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v116');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v117');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5737,6 +5737,11 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   check('El otro organizador ve el historial completo', otherHistory.includes('No avisó') && otherHistory.includes('Llegó tarde tres veces') && otherHistory.includes('Pagó lo que debía') && await page.locator('#suspend-reason').count() === 0, otherHistory);
   await page.click('#suspend-view [data-close]');
   const linked = await page.evaluate(async () => window.__app.store.addRoster({ name: 'Suspendido Pérez', phone: '5491166668080' }, window.__app.who));
+  await page.click('#btn-roster');
+  await page.waitForSelector('#roster-list .slot:has-text("Suspendido Pérez") .suspended-tag');
+  const rosterRed = await page.locator('#roster-list .slot:has-text("Suspendido Pérez") .name').evaluate((el) => getComputedStyle(el).color);
+  check('En Jugadores de Martín también dice (suspendido)', (await page.locator('#roster-list .slot:has-text("Suspendido Pérez") .name').innerText()).includes('(suspendido)') && (rosterRed === 'rgb(198, 40, 40)' || rosterRed === 'rgb(255, 107, 107)'), rosterRed);
+  await page.locator('#roster-list .slot:has-text("Suspendido Pérez")').screenshot({ path: '/opt/cursor/artifacts/screenshots/v117-jugadores.png' });
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, linked);
   await page.waitForSelector('#profile h2 .suspended-tag');
   check('En la ficha de Martín el nombre también dice (suspendido)', (await page.locator('#profile .name-share h2').innerText()).includes('(suspendido)'));
