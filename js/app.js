@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v119';
+const APP_VERSION = 'f7c-v120';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -874,7 +874,41 @@ function route() {
   return { name: 'home' };
 }
 let releaseAnonymousLock = null;
+let redrawLogin = null;
+function lockShell() {
+  document.documentElement.classList.add('signed-out');
+  const stack = document.getElementById('topstack');
+  if (!stack) return;
+  stack.inert = true;
+  stack.setAttribute('aria-hidden', 'true');
+}
+function unlockShell() {
+  document.documentElement.classList.remove('signed-out');
+  const stack = document.getElementById('topstack');
+  if (stack) {
+    stack.inert = false;
+    stack.removeAttribute('aria-hidden');
+  }
+  requestAnimationFrame(placeBars);
+}
 window.addEventListener('hashchange', () => {
+  if (!app.session?.user) {
+    lockShell();
+    if (isPlayerDeepLink(location.hash)) {
+      showAnonymousDenial();
+      return;
+    }
+    if (releaseAnonymousLock) {
+      const go = releaseAnonymousLock;
+      releaseAnonymousLock = null;
+      document.documentElement.classList.remove('anon-lock');
+      go();
+      return;
+    }
+    document.documentElement.classList.remove('anon-lock');
+    if (redrawLogin) redrawLogin();
+    return;
+  }
   if (releaseAnonymousLock) {
     if (isPlayerDeepLink(location.hash)) {
       showAnonymousDenial();
@@ -1000,6 +1034,8 @@ function playerLinkDenied(id) {
   return !person || !rosterHeldBy(person, actor());
 }
 function render() {
+  if (!app.session?.user) { lockShell(); return; }
+  if (document.documentElement.classList.contains('signed-out')) unlockShell();
   const r = route();
   if (document.documentElement.classList.contains('anon-lock')) {
     if (releaseAnonymousLock) return;
@@ -2419,6 +2455,7 @@ sheet.addEventListener('close', () => {
   body.style.maxHeight = '';
 });
 if (tabbar) tabbar.addEventListener('click', (e) => {
+  if (!app.session?.user) { e.preventDefault(); return; }
   const link = e.target.closest('a[href]');
   if (!link || !sheet.open) return;
   e.preventDefault();
@@ -2482,6 +2519,7 @@ function bindExternalShortClicks() {
 
 /* Ajustes */
 function openSettings() {
+  if (!app.session?.user) return;
   const demo = app.session?.mode !== 'firebase';
   openSheet(`
     <h3>Ajustes</h3>
@@ -6542,7 +6580,8 @@ function openFriendForm(m, host) {
 /* ───────── código de acceso (opcional) ───────── */
 function promptLogin(session) {
   return new Promise((resolve) => {
-    if (session.user) return resolve();
+    const done = () => { redrawLogin = null; resolve(); };
+    if (session.user) return done();
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
@@ -6561,7 +6600,7 @@ function promptLogin(session) {
         e.preventDefault();
         try {
           await session.login($('#login-email').value, $('#login-password').value);
-          if (session.user) resolve();
+          if (session.user) done();
           else draw(session.error || 'No tenés acceso.');
         } catch (error) { draw(error.message || 'No se pudo entrar.'); }
       };
@@ -6580,11 +6619,12 @@ function promptLogin(session) {
         if (!name) { $('#login-err').textContent = 'Poné tu nombre y tocá de nuevo.'; return; }
         try {
           await session.registerAdmin({ email: $('#login-email').value, password: $('#login-password').value, name });
-          if (session.user) resolve();
+          if (session.user) done();
           else draw(session.error || 'No se pudo crear la cuenta.');
         } catch (error) { draw(error.message || 'No se pudo crear la cuenta.'); }
       };
     };
+    redrawLogin = () => { if (!session.user) draw(session.error || ''); };
     draw();
   });
 }
@@ -6681,9 +6721,9 @@ async function boot() {
   $('#btn-text-smaller').onclick = () => { stepTextSize(-1); syncTextSize(); };
   $('#btn-text-bigger').onclick = () => { stepTextSize(1); syncTextSize(); };
   syncTextSize();
-  $('#btn-settings').onclick = openSettings;
+  $('#btn-settings').onclick = () => { if (app.session?.user) openSettings(); };
   bindExternalShortClicks();
-  $('#brand').onclick = () => { location.hash = '#/'; };
+  $('#brand').onclick = () => { if (!app.session?.user) return; location.hash = '#/'; };
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
@@ -6697,7 +6737,7 @@ async function boot() {
       await new Promise((resolve) => { releaseAnonymousLock = resolve; });
     }
     document.documentElement.classList.remove('anon-lock');
-    requestAnimationFrame(placeBars);
+    if (app.session.user) unlockShell();
   }
 
   await gate();
@@ -6722,7 +6762,11 @@ async function boot() {
     if (sheet.open && app.refreshPaySheet) app.refreshPaySheet();
     if (!sameSession && app.loaded && (!sheet.open || !sheet.querySelector('input, textarea')) && location.hash !== '#/usuarios') render();
   });
-  if (!app.session.user) await promptLogin(app.session);
+  if (!app.session.user) {
+    lockShell();
+    await promptLogin(app.session);
+  }
+  unlockShell();
   app.who = app.session.user.name;
   app.role = app.session.user.role;
   app.uid = app.session.user.uid;
