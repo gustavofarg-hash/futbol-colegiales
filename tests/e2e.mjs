@@ -104,7 +104,9 @@ const loginBare = await page.evaluate(() => {
   return gone('.topbar') && gone('#tabbar') && gone('#btn-settings') && gone('#btn-text-smaller') && gone('#btn-text-bigger');
 });
 check('Sin sesión Entrar no muestra menús', loginBare && await page.locator('#login-form').isVisible(), JSON.stringify(loginBare));
-await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v120-entrar.png' });
+const loginText = (await page.locator('#login-form').innerText()).replace(/\s+/g, ' ');
+check('Entrar no ofrece crear la cuenta de administrador', !loginText.includes('Crear cuenta') && (await page.locator('#login-register').count()) === 0 && loginText.includes('Olvidé mi contraseña') && loginText.includes('Mail') && loginText.includes('Contraseña'), loginText);
+await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v121-entrar.png' });
 await page.evaluate(() => { location.hash = '#/jugadores'; });
 await page.waitForFunction(() => location.hash === '#/jugadores' && document.querySelector('#login-form') && document.querySelector('#tabbar').getClientRects().length === 0);
 check('Cambiar la URL sin sesión no abre los menús', await page.locator('#login-forgot').isVisible() && await page.locator('#btn-settings').evaluate((el) => el.getClientRects().length === 0));
@@ -129,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v120');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v121');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
