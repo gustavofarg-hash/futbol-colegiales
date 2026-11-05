@@ -1404,22 +1404,21 @@ class LocalStore {
     db.rosterSuspensions ||= {};
     return { uid, docId, row: db.rosterSuspensions[docId] || null };
   }
-  async setSuspended(id, value) {
+  async setSuspended(id, value, liftNote) {
     const db = this._load();
     const { uid, docId, row } = this._ownSuspension(db, id);
     if (value === true) return;
     if (!row || row.suspended !== true) return;
-    const event = liftedSuspensionEvent(row, todayISO());
+    const event = liftedSuspensionEvent(row, todayISO(), liftNote);
+    if (!event?.liftNote) throw Object.assign(new Error('Poné el motivo.'), { code: 'invalid-note' });
     row.suspended = false;
     db.rosterSuspensions[docId] = row;
-    if (event) {
-      db.suspensionHistory ||= {};
-      let at = Date.now();
-      while (db.suspensionHistory[`${id}_${uid}_${at}`]) at += 1;
-      db.suspensionHistory[`${id}_${uid}_${at}`] = {
-        ownerUid: uid, rosterId: id, date: event.date, note: event.note, lifted: event.lifted, at,
-      };
-    }
+    db.suspensionHistory ||= {};
+    let at = Date.now();
+    while (db.suspensionHistory[`${id}_${uid}_${at}`]) at += 1;
+    db.suspensionHistory[`${id}_${uid}_${at}`] = {
+      ownerUid: uid, rosterId: id, date: event.date, note: event.note, lifted: event.lifted, liftNote: event.liftNote, at,
+    };
     this._save(db);
   }
   async setSuspension(id, { note, date } = {}) {
@@ -3307,22 +3306,21 @@ export class FirebaseStore {
     if (!docId) throw editLockedError();
     return { uid, docId };
   }
-  async setSuspended(id, value) {
+  async setSuspended(id, value, liftNote) {
     if (value === true) return;
     const { uid, docId } = this._ownSuspensionRef(id);
     const current = (this.state.suspensions || []).find((row) => row.id === docId);
     if (!current || current.suspended !== true) return;
-    const event = liftedSuspensionEvent(current, todayISO());
+    const event = liftedSuspensionEvent(current, todayISO(), liftNote);
+    if (!event?.liftNote) throw Object.assign(new Error('Poné el motivo.'), { code: 'invalid-note' });
     const { doc, writeBatch } = this.fs;
     const batch = writeBatch(this.db);
     batch.update(doc(this.db, 'rosterSuspensions', docId), { suspended: false });
-    if (event) {
-      let at = Date.now();
-      while ((this.state.suspensionHistory || []).some((row) => row.id === `${id}_${uid}_${at}`)) at += 1;
-      batch.set(doc(this.db, 'suspensionHistory', `${id}_${uid}_${at}`), {
-        ownerUid: uid, rosterId: id, date: event.date, note: event.note, lifted: event.lifted, at,
-      });
-    }
+    let at = Date.now();
+    while ((this.state.suspensionHistory || []).some((row) => row.id === `${id}_${uid}_${at}`)) at += 1;
+    batch.set(doc(this.db, 'suspensionHistory', `${id}_${uid}_${at}`), {
+      ownerUid: uid, rosterId: id, date: event.date, note: event.note, lifted: event.lifted, liftNote: event.liftNote, at,
+    });
     await batch.commit();
   }
   async setSuspension(id, { note, date } = {}) {

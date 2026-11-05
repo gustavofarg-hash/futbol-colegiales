@@ -30,13 +30,14 @@ export function cleanSuspensionHistory(list) {
 }
 
 /** La suspensión de ahora, lista para guardarse aparte al sacar el tilde. */
-export function liftedSuspensionEvent(current, liftedOn) {
+export function liftedSuspensionEvent(current, liftedOn, liftNote) {
   if (current?.suspended !== true) return null;
   const date = suspensionDay(current?.suspensionDate);
   const note = cleanSuspensionNote(current?.suspensionNote);
   const lifted = suspensionDay(liftedOn);
   if (!date || !note || !lifted) return null;
-  return { date, note, lifted };
+  const reason = cleanSuspensionNote(liftNote);
+  return reason ? { date, note, lifted, liftNote: reason } : { date, note, lifted };
 }
 
 /** Historial completo: cada levantada nueva y las que ya estaban en el documento. La más nueva primero. */
@@ -46,12 +47,12 @@ export function suspensionHistoryOf(record, events) {
   const extra = [];
   for (const item of Array.isArray(events) ? events : []) {
     if (String(item?.rosterId || '') !== rosterId || String(item?.ownerUid || '') !== ownerUid) continue;
-    const row = liftedSuspensionEvent({ suspended: true, suspensionDate: item?.date, suspensionNote: item?.note }, item?.lifted);
+    const row = liftedSuspensionEvent({ suspended: true, suspensionDate: item?.date, suspensionNote: item?.note }, item?.lifted, item?.liftNote);
     if (!row) continue;
     extra.push({ ...row, at: Number(item.at) || 0 });
   }
   extra.sort((a, b) => b.at - a.at || b.lifted.localeCompare(a.lifted) || b.date.localeCompare(a.date));
-  return [...extra.map(({ date, note, lifted }) => ({ date, note, lifted })), ...cleanSuspensionHistory(record?.history)];
+  return [...extra.map(({ date, note, lifted, liftNote }) => (liftNote ? { date, note, lifted, liftNote } : { date, note, lifted })), ...cleanSuspensionHistory(record?.history)];
 }
 export const ROSTER_DENIED_READ = 'No se pueden leer los jugadores guardados. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
 export const ROSTER_DENIED_WRITE = 'No se pudo guardar en Jugadores. Gustavo tiene que republicar las reglas de Firestore para la colección roster.';
