@@ -119,7 +119,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v118');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v119');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5862,6 +5862,25 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   check('La lista no incluye el partido privado', list.includes('Aviso Pérez') && !list.includes('18:00'), list);
   await page.click('#sheet [data-close]');
   await page.waitForFunction(() => document.querySelector('#activity-banner')?.hidden === true);
+}
+
+{
+  const remindMatch = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-12-03', time: '21:00', note: 'Recordatorio', capacity: 14 }, app.who);
+    await app.store.addPlayer({ id }, { name: 'Titular Recordatorio', phone: '5491166665050' }, app.who);
+    await app.store.addPlayer({ id }, { name: 'Espera Recordatorio', phone: '5491166664040' }, app.who, { waiting: true });
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, remindMatch);
+  await page.waitForSelector('#wait-list .name:text-is("Espera Recordatorio")');
+  await page.click('#btn-remind');
+  await page.waitForSelector('#remind-list');
+  await page.click('[data-remind-scope="all"]');
+  const remindNames = await page.$$eval('#remind-list .name', (els) => els.map((el) => el.textContent));
+  check('El recordatorio no incluye la lista de espera', remindNames.includes('Titular Recordatorio') && !remindNames.includes('Espera Recordatorio'), remindNames.join(', '));
+  await page.locator('#remind-list').screenshot({ path: '/opt/cursor/artifacts/screenshots/v119-recordatorio.png' });
+  await page.click('dialog.sheet [data-close]');
 }
 
 const fresh = await ctx.newPage();

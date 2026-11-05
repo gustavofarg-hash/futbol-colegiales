@@ -181,9 +181,9 @@ export function playersForOrganizer(players, organizer) {
   return (players || []).filter((player) => sameOrganizer(player?.addedBy, organizer));
 }
 
-/** Jugadores a los que se les puede abrir un chat de WhatsApp. */
+/** Quien juega y tiene WhatsApp. La lista de espera no juega: no entra. */
 export function reminderAudience(players) {
-  return (players || []).filter((p) => String(p?.phone || '').trim());
+  return (players || []).filter((p) => p?.waiting !== true && String(p?.phone || '').trim());
 }
 
 export function reminderProgress(players) {
@@ -243,6 +243,7 @@ export function reminderLinks({ match, players, venue, origin, choice, android }
   const out = [];
   if (!match?.id) return out;
   for (const p of players || []) {
+    if (p?.waiting === true) continue;
     const phone = String(p?.phone || '').trim();
     const token = p?.confirmToken;
     if (!phone || !token || !p.id) continue;
