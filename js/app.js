@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, paymentFailureText, paymentHeadline, paymentParts, paymentShares, paymentStatusText, paymentWithoutShare, annulCreditDeltas, pendingStatusText, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v112';
+const APP_VERSION = 'f7c-v113';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -4534,6 +4534,98 @@ function readMoney(raw) {
   if (String(raw ?? '').trim() === '') return { ok: true, amount: 0 };
   return parseAmount(raw);
 }
+const PAYMENT_KIND = { cash: 'Efectivo', transfer: 'Transferencia', credit: 'Crédito', pending: 'Transfiere después', received: 'Pago' };
+
+function paymentShareLabel(share) {
+  const kind = PAYMENT_KIND[share?.kind] || 'Pago';
+  const who = String(share?.name || '').trim();
+  return `${kind} ${formatARS(share?.amount || 0)}${who ? ` · ${who}` : ''}`;
+}
+
+function canAnnulPayment(player, share) {
+  const me = actor().name;
+  const name = String(share?.name || '').trim();
+  if (name) return sameOrganizer(name, me);
+  return sameOrganizer(player?.paidUpdatedBy, me);
+}
+
+function recordedPaymentList(player, listId) {
+  const rows = paymentShares(player);
+  if (!rows.length) return '';
+  return `<ul class="pay-recorded" id="${listId}">${rows.map((share, index) => {
+    const label = paymentShareLabel(share);
+    const x = canAnnulPayment(player, share)
+      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">✕</button>`
+      : '';
+    return `<li><span>${esc(label)}</span>${x}</li>`;
+  }).join('')}</ul>`;
+}
+
+function bindAnnulList(root, player) {
+  if (!root) return;
+  root.querySelectorAll('[data-annul]').forEach((btn) => {
+    btn.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const share = paymentShares(player)[Number(btn.dataset.annul)];
+      if (share) annulRecordedPayment(player, share);
+    };
+  });
+}
+
+async function annulRecordedPayment(player, share) {
+  const fresh = app.players.find((item) => item.id === player.id) || player;
+  if (!canAnnulPayment(fresh, share)) return;
+  if (!(await askConfirm('¿Anular este pago?', { danger: true, okText: 'Anular' }))) return;
+  const current = app.players.find((item) => item.id === fresh.id) || fresh;
+  const input = paymentWithoutShare(current, share);
+  const match = knownMatches().find((item) => item.id === current.matchId);
+  const promo = promoForPlayer({ player: current, players: app.players, matches: knownMatches(), prices: livePrices() });
+  const due = !match || match.cancelled === true || current.waiting === true || isFreePlay(current)
+    ? 0
+    : (promo ? Number(promo.share) : priceOfMatch(match, livePrices()));
+  const key = personKey(current, app.players);
+  const moves = [];
+  for (const item of annulCreditDeltas(current, share, due)) {
+    const name = item.name || actor().name;
+    const uid = sameOrganizer(name, actor().name) ? actor().uid : organizerUidByName(name);
+    if (!uid || !key) {
+      askNotice('No se puede anular este pago sin identificar al jugador y a quien cobró.');
+      return;
+    }
+    if (item.delta < 0 && roundMoney(-item.delta) > creditBalance(app.credits, key, uid)) {
+      askNotice('No alcanza el saldo a favor para anular este pago.');
+      return;
+    }
+    moves.push({ personKey: key, organizerUid: uid, organizerName: name, name: current.name, delta: item.delta });
+  }
+  const done = [];
+  try {
+    for (const move of moves) {
+      await app.store.adjustCredit(move, app.who);
+      done.push(move);
+    }
+    await app.store.setPayment(current.id, input, app.who);
+    if (share.kind === 'pending') {
+      await app.store.logPlayerPago(current.id, {
+        type: 'pago borrado',
+        method: 'transferencia',
+        amount: share.amount,
+        paidTo: share.name,
+        detail: 'Transfiere después',
+      });
+    }
+  } catch (error) {
+    for (const move of done) await app.store.adjustCredit({ ...move, delta: roundMoney(-move.delta) }, app.who);
+    askNotice(error?.message || 'No se pudo anular el pago.');
+    return;
+  }
+  const updated = app.players.find((item) => item.id === current.id) || current;
+  const matchNow = knownMatches().find((item) => item.id === updated.matchId);
+  if ($('#pay-form') && matchNow) openPaymentForm(matchNow, updated);
+  else if (matchNow) openPlayerMenu(matchNow, updated);
+}
+
 function openPaymentForm(m, p, opts = {}) {
   if (!p || !canAdd(m, actor().uid)) return;
   const back = typeof opts.returnTo === 'function' ? opts.returnTo : null;
@@ -4578,6 +4670,7 @@ function openPaymentForm(m, p, opts = {}) {
       <div id="pay-scroll">
       <h3>Pago</h3>
       <p class="hint">${esc(p.name)} · ${esc(fmtWhen(m))}</p>
+      ${recordedPaymentList(p, 'pay-recorded')}
       <div id="pay-promo">${promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : ''}</div>
       ${parts.pending > 0 ? `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(parts.pending))}</p>
       <button type="button" class="btn block" id="btn-receive-pending">Marcar transferencia como cobrada</button>` : ''}
@@ -4622,6 +4715,7 @@ function openPaymentForm(m, p, opts = {}) {
     </form>`);
   sheet.querySelector('.sheet-body')?.classList.add('pay-sheet');
   bindPayDock();
+  bindAnnulList($('#pay-recorded'), p);
   const form = $('#pay-form');
   const payBack = $('#pay-back');
   if (payBack && back) payBack.onclick = () => back();
@@ -5748,7 +5842,7 @@ function openPlayerMenu(m, p) {
   const own = canEditPlayer(p, actor());
   const phoneView = withAgendaPhone(p);
   const panel = playerPanelPieces(p, null, MENU_PANEL, personKey(p, app.players));
-  const payLine = payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>';
+  const payLine = `${payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>'}${recordedPaymentList(p, 'menu-payments')}`;
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   const canAnnotate = !!(match && canAdd(match, actor().uid));
   const card = heldCard(p);
@@ -5787,6 +5881,7 @@ function openPlayerMenu(m, p) {
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
   bindPlayerPanel(sheet, p, null, MENU_PANEL, panel);
+  bindAnnulList($('#menu-payments'), p);
   const suspendFlag = $('#suspend-flag');
   const suspendNote = $('#suspend-note');
   if (suspendNote && rosterId) suspendNote.onclick = () => {
@@ -5857,7 +5952,7 @@ const ask = $('#ask');
 function askNotice(message) {
   return askConfirm(message, { notice: true });
 }
-function askConfirm(message, { danger = false, notice = false } = {}) {
+function askConfirm(message, { danger = false, notice = false, okText = 'Aceptar' } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     let pushed = false;
@@ -5884,7 +5979,7 @@ function askConfirm(message, { danger = false, notice = false } = {}) {
     const onCancel = (event) => { event.preventDefault(); finish(false); };
     const onClose = () => finish(false);
     const cancel = notice ? '' : '<button type="button" class="btn" id="ask-cancel">Cancelar</button>';
-    ask.innerHTML = `<div class="ask-card" id="app-ask"><p id="app-ask-text"></p><div class="sheet-actions">${cancel}<button type="button" class="btn ${danger ? 'danger solid' : 'primary'}" id="ask-ok">Aceptar</button></div></div>`;
+    ask.innerHTML = `<div class="ask-card" id="app-ask"><p id="app-ask-text"></p><div class="sheet-actions">${cancel}<button type="button" class="btn ${danger ? 'danger solid' : 'primary'}" id="ask-ok">${esc(okText)}</button></div></div>`;
     ask.querySelector('#app-ask-text').textContent = String(message || '');
     const cancelBtn = ask.querySelector('#ask-cancel');
     if (cancelBtn) cancelBtn.onclick = () => finish(false);

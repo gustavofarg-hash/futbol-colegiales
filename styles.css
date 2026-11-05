@@ -321,6 +321,10 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
   color: var(--warn-text); background: var(--warn-bg); border-radius: 99px; padding: 1px 8px;
   min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.pay-recorded { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 6px; }
+.pay-recorded li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pay-recorded li span { flex: 1 1 auto; min-width: 0; font-size: 0.875rem; }
+.pay-x { width: 32px; height: 32px; flex: none; border: 0; border-radius: 8px; background: transparent; color: var(--danger); font-size: 1.125rem; font-weight: 700; }
 .signup-check { flex: none; display: grid; place-items: center; }
 .signup-check input { width: 1.375rem; height: 1.375rem; margin: 0; }
 .signup-row .btn { flex: none; min-height: 40px; padding: 0 10px; }

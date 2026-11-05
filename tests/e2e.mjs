@@ -119,7 +119,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v112');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v113');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5706,6 +5706,42 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.fill('#login-password', 'demo-gustavo');
   await page.click('#login-form button[type=submit]');
   await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+}
+
+{
+  const matchId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-25', time: '21:00', price: 5000, note: 'Anular', capacity: 14 }, app.who);
+    await app.store.addPlayer({ id }, { name: 'Anula Díaz', phone: '5491166667070' }, app.who);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+  await page.waitForSelector('.slot:has-text("Anula Díaz") .more-btn');
+  await page.click('.slot:has-text("Anula Díaz") .more-btn');
+  await page.click('#pm-pay');
+  await page.waitForSelector('#pay-form [name=transfer]');
+  await page.fill('#pay-form [name=transfer]', '5000');
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForFunction(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && p.transfer === 5000));
+  await page.click('.slot:has-text("Anula Díaz") .more-btn');
+  await page.waitForSelector('#menu-payments .pay-x');
+  await page.click('#pm-pay');
+  await page.waitForSelector('#pay-recorded .pay-x');
+  await page.locator('#pay-recorded').screenshot({ path: '/opt/cursor/artifacts/screenshots/v113-anular.png' });
+  await page.click('#pay-recorded .pay-x');
+  await page.waitForSelector('#ask-ok');
+  check('Anular pregunta antes', (await page.locator('#app-ask-text').innerText()).includes('¿Anular este pago?') && (await page.locator('#ask-ok').innerText()) === 'Anular');
+  await page.click('#ask-cancel');
+  check('Cancelar no saca el pago', await page.evaluate(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && p.transfer === 5000)));
+  await page.click('#pay-recorded .pay-x');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && !(Number(p.transfer) > 0)));
+  check('Anular saca la transferencia', await page.evaluate(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && p.paid !== true)));
+  check('La anulación queda en el registro', await page.evaluate(() => (window.__app.log || []).some((row) => row.type === 'pago borrado' && row.playerName === 'Anula Díaz' && row.method === 'transferencia')));
+  await page.click('#sheet [data-close]');
+  await page.click('.slot:has-text("Anula Díaz") .more-btn');
+  await page.waitForSelector('#menu-pay');
+  check('Vuelve a figurar sin pago', (await page.locator('#menu-pay').innerText()).includes('No pagó') && await page.locator('#menu-payments .pay-x').count() === 0);
 }
 
 const fresh = await ctx.newPage();

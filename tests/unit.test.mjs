@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
@@ -303,6 +303,22 @@ test('el apodo del menú se copia a los partidos del día y la promo no baja a p
   assert.equal(saved.players.find((row) => row.id === others[2]).name, 'Invitado 1');
   assert.equal(promoForPlayer({ player: saved.players.find((row) => row.id === guests[2]), ...saved, prices: null }).label, 'Promo 3 partidos por $12.000');
   assert.equal(amountOwed(saved.players.find((row) => row.id === guests[0]), saved), 4000);
+});
+
+test('anular una parte deja el resto y devuelve el saldo de más o el crédito usado', () => {
+  const transfer = { paid: true, cash: 0, transfer: 8000, transferTo: 'Gustavo', fromCredit: 0 };
+  const cleared = paymentWithoutShare(transfer, { kind: 'transfer', amount: 8000, name: 'Gustavo' });
+  assert.equal(cleared.paid, false);
+  assert.deepEqual(annulCreditDeltas(transfer, { kind: 'transfer', amount: 8000, name: 'Gustavo' }, 5000), [{ name: 'Gustavo', delta: -3000 }]);
+  const mixed = { paid: true, cash: 5000, cashTo: 'Gustavo', transfer: 3000, transferTo: 'Gustavo', fromCredit: 0 };
+  const left = paymentWithoutShare(mixed, { kind: 'transfer', amount: 3000, name: 'Gustavo' });
+  assert.equal(left.cash, 5000);
+  assert.equal(left.transfer, 0);
+  assert.equal(left.paid, true);
+  const credit = { paid: true, cash: 0, transfer: 0, fromCredit: 2000, creditTo: 'Gustavo' };
+  assert.deepEqual(annulCreditDeltas(credit, { kind: 'credit', amount: 2000, name: 'Gustavo' }, 5000), [{ name: 'Gustavo', delta: 2000 }]);
+  const over = { paid: true, cash: 3000, cashTo: 'Gustavo', transfer: 0, fromCredit: 4000, creditTo: 'Gustavo' };
+  assert.deepEqual(annulCreditDeltas(over, { kind: 'credit', amount: 4000, name: 'Gustavo' }, 5000), [{ name: 'Gustavo', delta: 2000 }]);
 });
 
 test('lo que sobra de un pago dividido queda como saldo de quien paga', () => {
@@ -3317,7 +3333,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v112');
+  assert.equal(version, 'f7c-v113');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
