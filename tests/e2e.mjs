@@ -99,7 +99,17 @@ await page.goto(BASE);
 await page.waitForSelector('#login-form');
 check('El texto arranca en Normal', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize) === '18px');
 check('Pide entrar al abrir por primera vez', await page.isVisible('text=Entrar') && await page.isVisible('#login-forgot'));
-check('Sin el enlace, sin sesión, se ve el login', await page.locator('.topbar').isVisible() && await page.locator('#tabbar').isVisible() && await page.locator('#login-form').isVisible());
+const loginBare = await page.evaluate(() => {
+  const gone = (sel) => document.querySelector(sel).getClientRects().length === 0;
+  return gone('.topbar') && gone('#tabbar') && gone('#btn-settings') && gone('#btn-text-smaller') && gone('#btn-text-bigger');
+});
+check('Sin sesión Entrar no muestra menús', loginBare && await page.locator('#login-form').isVisible(), JSON.stringify(loginBare));
+await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v120-entrar.png' });
+await page.evaluate(() => { location.hash = '#/jugadores'; });
+await page.waitForFunction(() => location.hash === '#/jugadores' && document.querySelector('#login-form') && document.querySelector('#tabbar').getClientRects().length === 0);
+check('Cambiar la URL sin sesión no abre los menús', await page.locator('#login-forgot').isVisible() && await page.locator('#btn-settings').evaluate((el) => el.getClientRects().length === 0));
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForFunction(() => (location.hash === '#/' || location.hash === '') && document.querySelector('#login-form') && document.querySelector('#tabbar').getClientRects().length === 0);
 await page.fill('#login-email', 'gustavo@demo.local');
 await page.click('#login-forgot');
 check('Olvidé mi contraseña', (await page.textContent('#login-err')).includes('no se envían mails'));
@@ -119,7 +129,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v119');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v120');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -481,7 +491,10 @@ await confirmPage.goto(`${BASE}confirmar.html?m=${encodeURIComponent(juan.matchI
 await confirmPage.waitForSelector('#btn-si');
 check('confirmar.html no pide ¿Quién sos?', (await confirmPage.locator('text=¿Quién sos?').count()) === 0);
 const confirmBody = await confirmPage.locator('body').innerText();
+const confirmBare = await confirmPage.evaluate(() => !document.querySelector('.topbar') && !document.querySelector('#tabbar') && !document.querySelector('#btn-settings') && !document.querySelector('#btn-text-smaller') && !document.querySelector('#btn-text-bigger'));
+check('La confirmación no tiene menús', confirmBare && confirmBody.includes('Sí, juego') && confirmBody.includes('No juego') && !confirmBody.includes('Próximos partidos') && !confirmBody.includes('Ajustes'));
 check('La página no muestra teléfonos ni a los otros', !confirmBody.includes('549') && !confirmBody.includes('1234') && !confirmBody.includes('Pedro') && confirmBody.includes('Juan Pérez') && confirmBody.includes('Cancha 2'), confirmBody.replace(/\s+/g, ' ').slice(0, 180));
+await confirmPage.screenshot({ path: '/opt/cursor/artifacts/screenshots/v120-confirmar.png' });
 await confirmPage.click('#btn-si');
 await confirmPage.waitForSelector('#thanks:not([hidden])');
 check('Agradece el sí', (await confirmPage.textContent('#thanks')).includes('jugás'));
@@ -3055,8 +3068,8 @@ await page.click('#pay-form [data-close]');
 const confirmSize = await ctx.newPage();
 await confirmSize.setViewportSize({ width: 360, height: 740 });
 await confirmSize.goto(`${BASE}confirmar.html?m=x&p=y&t=token-corto`);
-await confirmSize.waitForSelector('#btn-text-smaller');
-check('confirmar.html usa el tamaño guardado', await confirmSize.evaluate(() => getComputedStyle(document.documentElement).fontSize) === '24px');
+await confirmSize.waitForSelector('text=Este link no es válido');
+check('confirmar.html no trae el tamaño ni los botones de la app', await confirmSize.evaluate(() => getComputedStyle(document.documentElement).fontSize === '16px' && !document.querySelector('#btn-text-smaller') && !document.querySelector('.topbar')));
 const overflowConfirm = await confirmSize.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('confirmar.html en 360px no desborda', overflowConfirm <= 1, String(overflowConfirm));
 await confirmSize.close();
@@ -5924,7 +5937,7 @@ await fresh.close();
   await locked.screenshot({ path: '/opt/cursor/artifacts/screenshots/v110-sin-sesion.png' });
   await locked.goto(BASE);
   await locked.waitForSelector('#login-form');
-  check('Al salir del enlace, sin sesión, vuelve el login', await locked.locator('.topbar').isVisible() && await locked.locator('#tabbar').isVisible() && await locked.locator('#login-form').isVisible());
+  check('Al salir del enlace, sin sesión, vuelve el login', await locked.locator('#login-form').isVisible() && await locked.locator('.topbar').evaluate((el) => el.getClientRects().length === 0) && await locked.locator('#tabbar').evaluate((el) => el.getClientRects().length === 0));
   await anon.close();
 }
 

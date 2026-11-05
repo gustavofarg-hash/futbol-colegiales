@@ -28,21 +28,17 @@
         else if (n >= 0 && n < legacy.length) i = steps.indexOf(legacy[n]);
       } catch (e) {}
       document.documentElement.style.fontSize = steps[i] + 'px';
+      var logged = false;
+      try { logged = !!(JSON.parse(localStorage.getItem('f7c-demo-auth') || 'null') || {}).session; } catch (e) {}
+      if (!logged) document.documentElement.classList.add('signed-out');
+      var h = (location.hash || '').replace(/^#\/?/, '').split('/');
+      if (!logged && h[0] === 'jugador' && h[1]) document.documentElement.classList.add('anon-lock');
     })();
   </script>
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
-  <script>
-    (function () {
-      var h = (location.hash || '').replace(/^#\/?/, '').split('/');
-      if (h[0] !== 'jugador' || !h[1]) return;
-      var logged = false;
-      try { logged = !!(JSON.parse(localStorage.getItem('f7c-demo-auth') || 'null') || {}).session; } catch (e) {}
-      if (!logged) document.documentElement.classList.add('anon-lock');
-    })();
-  </script>
   <div class="topstack" id="topstack">
   <header class="topbar">
     <button class="icon-btn back" id="btn-back" aria-label="Volver" hidden>
@@ -73,6 +69,12 @@
     </nav>
   </div>
   </div>
+  <script>
+    if (document.documentElement.classList.contains('signed-out')) {
+      var stack = document.getElementById('topstack');
+      if (stack) { stack.inert = true; stack.setAttribute('aria-hidden', 'true'); }
+    }
+  </script>
 
   <div class="banner demo" id="demo-banner" hidden>
     <strong>Modo demo:</strong> los datos no se comparten todavía.

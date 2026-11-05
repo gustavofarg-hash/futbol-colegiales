@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v120** (rama `cursor/entrar-sin-menus-c20d`, 05/11/2026): sin sesión no se ve el encabezado ni las pestañas. Entrar queda solo con el mail, la clave, «Olvidé mi contraseña» y, en Firebase, «Crear cuenta de administrador». Cambiar la URL no los vuelve a mostrar. El link de confirmar partido muestra lugar, día, horario y sí/no, sin la barra de la app. `firestore.rules` no cambió.
 **Actualizada para f7c-v119** (rama `cursor/recordatorio-titulares-c20d`, 05/11/2026): el recordatorio del partido no incluye la lista de espera. Solo va a quienes están para jugar. `firestore.rules` no cambió.
 **Actualizada para f7c-v118** (rama `cursor/avisos-organizador-c20d`, 05/11/2026): en Ajustes, «Notificaciones» arranca apagado. Si se prende, avisa cuando otro organizador anota, da de baja o crea un partido que el logueado puede ver o editar (o es el dueño). No avisa lo propio ni un partido al que no tiene acceso. Con la app cerrada no llega. `firestore.rules` no cambió.
 **Actualizada para f7c-v117** (rama `cursor/jugadores-suspendido-c20d`, 05/11/2026): en la lista de Jugadores, si lo suspendió otro organizador, el nombre también va en rojo y termina en «(suspendido)», igual que en la ficha. Equipos, Estadísticas y el buscador siguen sin esa marca. `firestore.rules` no cambió.
@@ -63,7 +64,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **unit 117/117 OK** (`node --test tests/unit.test.mjs`) y **e2e 851/851 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v119 revisa que «Enviar recordatorios» muestra al titular y no a quien está en la lista de espera.
+Pruebas sobre esta copia: **unit 117/117 OK** (`node --test tests/unit.test.mjs`) y **e2e 853/853 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v120 revisa que Entrar no muestra menús aunque se cambie la URL, y que confirmar un partido no tiene barra ni A−/A+.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
@@ -73,6 +74,7 @@ Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reempla
 
 | Fecha | Pedido | Estado | Evidencia |
 |---|---|---|---|
+| 05/11 (v120) | **Sin sesión no hay menús** | ✅ | El encabezado y las pestañas están en el HTML, pero `signed-out` se pone antes de pintarlos y el router no abre la app hasta que hay usuario. Cambiar el hash no lo saca. `confirmar.html` ya no tiene barra ni A−/A+. e2e «Sin sesión Entrar no muestra menús» y «La confirmación no tiene menús». `firestore.rules` no cambió. |
 | 19/10 (#3) | Lista de espera, lugar reservado, confirmación por link | ✅ | `js/waiting.js`, `confirmar.html`, «Confirmar lugar» |
 | 19/10 (#7) | «Subir al partido» en cada fila de espera y aviso por WhatsApp al subir | ✅ | `app.js`: «Subir al partido». Desde v63 el aviso pregunta con Sí/No (`offerPromotionWhatsApp`, `app.js:1397`) |
 | 19/10 (#5) | Anotar en varios partidos desde el perfil | ✅ | «Anotar en …» en el perfil, «Aplicar a los» |
