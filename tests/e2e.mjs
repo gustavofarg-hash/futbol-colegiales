@@ -119,7 +119,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v117');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v118');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5814,6 +5814,54 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('.slot:has-text("Anula Díaz") .more-btn');
   await page.waitForSelector('#menu-pay');
   check('Vuelve a figurar sin pago', (await page.locator('#menu-pay').innerText()).includes('No pagó') && await page.locator('#menu-payments .pay-x').count() === 0);
+}
+
+{
+  if (await page.locator('#sheet[open]').count()) await page.locator('#sheet [data-close]').last().click();
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  await page.click('#btn-settings');
+  await page.waitForSelector('#set-activity-on');
+  check('Notificaciones arranca apagada', !(await page.isChecked('#set-activity-on')));
+  await page.locator('#set-activity').screenshot({ path: '/opt/cursor/artifacts/screenshots/v118-ajustes.png' });
+  await page.click('#set-activity-on');
+  await page.clock.fastForward(5000);
+  const shared = await page.evaluate(async () => {
+    const app = window.__app;
+    return app.store.addMatch({ date: '2026-12-01', time: '21:00', note: 'Avisar', capacity: 14 }, app.who);
+  });
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.clock.fastForward(5000);
+  await page.evaluate(async (id) => {
+    const app = window.__app;
+    const me = app.session.user;
+    await app.store.addPlayer({ id }, { name: 'Aviso Pérez', phone: '5491166663030' }, app.who);
+    await app.store.addMatch({
+      date: '2026-12-02', time: '18:00', note: 'Secreto', capacity: 14,
+      access: { solo: true, viewers: [me.uid], viewerNames: [{ uid: me.uid, name: me.name }], adders: [me.uid], adderNames: [{ uid: me.uid, name: me.name }], limits: [], createdByUid: me.uid },
+    }, app.who);
+  }, shared);
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  await page.waitForSelector('#activity-banner');
+  const banner = (await page.locator('#activity-banner').innerText()).replace(/\s+/g, ' ');
+  check('Avisa que otro anotó en un partido visible', banner.includes('Martín') && banner.includes('Aviso Pérez') && !banner.includes('18:00'), banner);
+  await page.locator('#activity-banner').screenshot({ path: '/opt/cursor/artifacts/screenshots/v118-aviso.png' });
+  await page.click('#activity-banner');
+  await page.waitForSelector('#activity-list');
+  const list = (await page.locator('#activity-list').innerText()).replace(/\s+/g, ' ');
+  check('La lista no incluye el partido privado', list.includes('Aviso Pérez') && !list.includes('18:00'), list);
+  await page.click('#sheet [data-close]');
+  await page.waitForFunction(() => document.querySelector('#activity-banner')?.hidden === true);
 }
 
 const fresh = await ctx.newPage();

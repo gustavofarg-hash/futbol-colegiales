@@ -13,6 +13,7 @@ import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBo
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
+import { activityNoticeText, activityNotices } from '../js/notify.js';
 import { planRows } from '../js/settle.js';
 import { dayCompensation, reconcileTransfers } from '../js/compensate.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, nextCredit, retroactiveCreditIds } from '../js/credit.js';
@@ -3375,13 +3376,32 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v117');
+  assert.equal(version, 'f7c-v118');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
   assert.equal(/input\.select\(/.test(app), false);
   assert.match(app, /id="app-version">Versión \$\{APP_VERSION\}/);
+});
+
+test('un aviso es de otro organizador y solo si podés ver el partido', () => {
+  const entries = [
+    { id: '1', section: 'partidos', type: 'alta', actorUid: 'martin', actorName: 'Martín', playerName: 'Ana', matchId: 'pub', matchLabel: 'Martes 01/12 · 21:00', at: 20, editors: ['*'] },
+    { id: '2', section: 'partidos', type: 'alta', actorUid: 'gustavo', actorName: 'Gustavo', playerName: 'Ana', matchId: 'pub', matchLabel: 'Martes 01/12 · 21:00', at: 21, editors: ['*'] },
+    { id: '3', section: 'partidos', type: 'nuevo partido', actorUid: 'martin', actorName: 'Martín', matchId: 'solo', matchLabel: 'Miércoles 02/12 · 18:00', at: 22, editors: ['martin'] },
+    { id: '4', section: 'partidos', type: 'baja', actorUid: 'martin', actorName: 'Martín', playerName: 'Ana', matchId: 'pub', matchLabel: 'Martes 01/12 · 21:00', at: 23, editors: ['*'] },
+    { id: '5', section: 'pagos', type: 'pago', actorUid: 'martin', actorName: 'Martín', matchId: 'pub', at: 24, editors: ['*'] },
+  ];
+  const matches = [
+    { id: 'pub', viewers: ['*'], createdByUid: 'gustavo' },
+    { id: 'solo', viewers: ['martin'], adders: ['martin'], createdByUid: 'martin' },
+  ];
+  const notes = activityNotices(entries, { uid: 'gustavo', since: 10, matches });
+  assert.deepEqual(notes.map((item) => item.id), ['4', '1']);
+  assert.match(activityNoticeText(notes[0]), /Martín dio de baja a Ana/);
+  assert.match(activityNoticeText(notes[1]), /Martín anotó a Ana/);
+  assert.equal(activityNotices(entries, { uid: 'gustavo', since: 10, matches: [] }).some((item) => item.id === '3'), false);
 });
 
 test('la carga muestra el avance y deja el aviso de éxito hasta cerrarlo', async () => {
