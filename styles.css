@@ -325,8 +325,9 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
 .pay-recorded li { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pay-recorded li span { flex: 1 1 auto; min-width: 0; font-size: 0.875rem; }
 .pay-x { width: 32px; height: 32px; flex: none; border: 0; border-radius: 8px; background: transparent; color: var(--danger); font-size: 1.125rem; font-weight: 700; }
-.signup-check { flex: none; display: grid; place-items: center; }
+.signup-check { position: relative; flex: none; display: grid; place-items: center; }
 .signup-check input { width: 1.375rem; height: 1.375rem; margin: 0; }
+.signup-block { position: absolute; inset: -6px; border: 0; background: transparent; }
 .signup-row .btn { flex: none; min-height: 40px; padding: 0 10px; }
 .pay-btn {
   width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line);

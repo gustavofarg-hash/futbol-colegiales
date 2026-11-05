@@ -41,7 +41,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v115';
+const APP_VERSION = 'f7c-v116';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -537,6 +537,27 @@ function suspendedName(source, name) {
   if (!suspendedClass(source)) return esc(name);
   return `${esc(name)} <span class="suspended-tag">(suspendido)</span>`;
 }
+function fichaSuspended(source) {
+  const rosterId = suspensionRosterId(source);
+  if (rosterId && activeSuspensions(app.suspensions, rosterId).length) return ' suspended';
+  return '';
+}
+function fichaName(source, name) {
+  if (!fichaSuspended(source)) return esc(name);
+  return `${esc(name)} <span class="suspended-tag">(suspendido)</span>`;
+}
+function blockedByText(match, source) {
+  const rows = blockingSuspensions(app.suspensions, match, suspensionRosterId(source));
+  const names = [];
+  for (const row of rows) {
+    const label = row.ownerUid === actor().uid ? 'vos' : organizerLabel(row.ownerUid);
+    if (!names.includes(label)) names.push(label);
+  }
+  if (!names.length) return '';
+  if (names.length === 1 && names[0] === 'vos') return 'Suspendido por vos.';
+  const who = names.map((name) => (name === 'vos' ? 'vos' : name)).join(' y por ');
+  return `El jugador fue suspendido por ${who}.`;
+}
 function organizerLabel(uid) {
   const user = (app.users || []).find((item) => item.uid === uid);
   return user?.name || 'otro organizador';
@@ -554,7 +575,7 @@ function heldCard(source) {
 }
 /** Nombre en la fila del partido: solo el apodo; sin apodo, el nombre completo. El nombre completo va en el menú. */
 function nameRow(p) {
-  return `<div class="name-row"><div class="name${suspendedClass(p)}">${esc(shownName(p))}</div>${levelBadge(p)}</div>`;
+  return `<div class="name-row"><div class="name${suspendedClass(p)}">${suspendedName(p, shownName(p))}</div>${levelBadge(p)}</div>`;
 }
 /** actor() con el rol, para lo que el admin puede aunque no sea el creador. */
 const actorWithRole = () => ({ ...actor(), role: app.role || '' });
@@ -3125,7 +3146,7 @@ function renderRoster() {
     return `
     <li class="slot" data-roster="${esc(person.id)}">
       <button type="button" class="who" data-roster-open="${esc(person.id)}">
-        <div class="name${suspendedClass(person)}">${esc(person.name)}</div>
+        <div class="name${suspendedClass(person)}">${suspendedName(person, person.name)}</div>
         <div class="sub">${cleanShortName(person.shortName) ? `<span class="nick">“${esc(cleanShortName(person.shortName))}”</span>` : ''}${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
       </button>
       ${waButton(person)}
@@ -3776,7 +3797,7 @@ function renderProfile(id) {
     <article id="profile">
       ${suspensionControls(person).html}
       <div class="name-share">
-        <h2 class="section${suspendedClass(person)}">${suspendedName(person, person.name)}</h2>
+        <h2 class="section${fichaSuspended(person)}">${fichaName(person, person.name)}</h2>
         ${playerShareButton('profile-share')}
       </div>
       ${money.panel.nickHtml}
@@ -3903,14 +3924,16 @@ function partidosSection(person) {
   const rows = signupRows(person).map(({ match, state }) => {
     const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
     const blocked = playerBlockedOn(match, person);
+    const why = blocked ? blockedByText(match, person) : '';
     if (blocked && !state.existing) draft.ids.delete(match.id);
     const picked = !state.existing && !blocked && draft.ids.has(match.id);
     const locked = state.existing ? 'checked disabled' : (blocked ? 'disabled' : (picked ? 'checked' : ''));
+    const cover = why ? `<button type="button" class="signup-block" data-blocked="${esc(why)}" aria-label="${esc(why)}"></button>` : '';
     const remove = state.existing && state.playerId
       ? `<button type="button" class="btn" data-signup-remove="${esc(state.playerId)}">Quitar</button>`
       : '';
     return `<li class="slot signup-row" data-match="${esc(match.id)}">
-      <label class="signup-check"><input type="checkbox" data-signup="${esc(match.id)}" ${locked} aria-label="${esc(when)}"></label>
+      <label class="signup-check"><input type="checkbox" data-signup="${esc(match.id)}" ${locked} aria-label="${esc(when)}">${cover}</label>
       <button type="button" class="who" data-open-match="${esc(match.id)}">
         <div class="name">${esc(capitalize(labelDate(match.date)))}</div>
         <div class="sub"><span>${esc(match.time || '--:--')} hs</span><span class="tag">${esc(state.label)}</span></div>
@@ -3955,6 +3978,11 @@ function bindPartidos(person) {
   const tent = $('#signup-tentative');
   if (tent) tent.addEventListener('change', () => { draft.tentative = tent.checked; });
   list.addEventListener('click', async (event) => {
+    const blockedBtn = event.target.closest('[data-blocked]');
+    if (blockedBtn) {
+      askNotice(blockedBtn.dataset.blocked);
+      return;
+    }
     const open = event.target.closest('[data-open-match]');
     if (open) {
       location.hash = `#/partido/${encodeURIComponent(open.dataset.openMatch)}`;
@@ -4000,7 +4028,7 @@ function bindPartidos(person) {
       for (const row of chosen) {
         const again = matchSignupState({ ...rosterIdentity(person), match: row.match, players: app.players });
         if (again.existing) { toast(ALREADY_IN_MATCH); continue; }
-        if (playerBlockedOn(row.match, person)) { askNotice(SUSPENDED_TEXT); continue; }
+        if (playerBlockedOn(row.match, person)) { askNotice(blockedByText(row.match, person) || SUSPENDED_TEXT); continue; }
         const blocked = addBlock(row.match);
         if (blocked) { toast(blocked); continue; }
         try {
@@ -5934,13 +5962,10 @@ function bindSuspensionControls(root, rosterId, card) {
         openSuspensionNote(card);
         return;
       }
-      try {
-        await app.store.setSuspended(card.id, false);
-        root.querySelectorAll('h2.section, h3, #menu-full-name').forEach((el) => el.classList.remove('suspended'));
-      } catch (error) {
-        suspendFlag.checked = true;
-        askNotice(error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.'));
-      }
+      ignoreSuspend = true;
+      suspendFlag.checked = true;
+      ignoreSuspend = false;
+      openLiftSuspension(card);
     };
   }
 }
@@ -5982,6 +6007,36 @@ function openSuspensionNote(card) {
   };
 }
 
+function suspensionHistoryLine(item) {
+  const base = `${numericDate(item.date)} · ${item.note} · levantada el ${numericDate(item.lifted)}`;
+  return item.liftNote ? `${base} · ${item.liftNote}` : base;
+}
+
+function openLiftSuspension(card) {
+  openSheet(`
+    <form id="lift-form" novalidate>
+      <h3>Levantar suspensión</h3>
+      <p class="hint">Contá cómo se resolvió. La fecha es hoy.</p>
+      <label class="field"><span>Motivo</span><textarea id="lift-reason" maxlength="300"></textarea></label>
+      <div class="field"><div class="err" id="lift-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#lift-form');
+  if (!form) return;
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = String($('#lift-reason')?.value || '').replace(/\r\n/g, '\n').trim();
+    const err = $('#lift-err');
+    if (!text) { if (err) err.textContent = 'Poné el motivo.'; return; }
+    try {
+      await app.store.setSuspended(card.id, false, text);
+      closeSheet();
+    } catch (error) {
+      if (err) err.textContent = error?.code === 'edit-locked' ? EDIT_LOCK_TEXT : (error?.message || 'No se pudo guardar.');
+    }
+  };
+}
+
 function suspensionViewLines(record) {
   const lines = [];
   if (record?.suspended === true) {
@@ -5990,7 +6045,7 @@ function suspensionViewLines(record) {
     if (date || reason) lines.push([date, reason].filter(Boolean).join(' · '));
   }
   for (const item of suspensionHistoryOf(record, app.suspensionHistory)) {
-    lines.push(`${numericDate(item.date)} · ${item.note} · levantada el ${numericDate(item.lifted)}`);
+    lines.push(suspensionHistoryLine(item));
   }
   return lines;
 }

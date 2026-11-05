@@ -937,12 +937,13 @@ service cloud.firestore {
     }
 
     function validSuspensionHistory(d) {
-      return d.keys().hasOnly(['ownerUid', 'rosterId', 'date', 'note', 'lifted', 'at'])
+      return d.keys().hasOnly(['ownerUid', 'rosterId', 'date', 'note', 'lifted', 'liftNote', 'at'])
           && d.ownerUid == request.auth.uid
           && d.rosterId is string && d.rosterId.size() > 0 && d.rosterId.size() <= 200
           && suspensionDayOk(d.date)
           && d.note is string && d.note.size() > 0 && d.note.size() <= 300
           && suspensionDayOk(d.lifted)
+          && (!('liftNote' in d) || (d.liftNote is string && d.liftNote.size() > 0 && d.liftNote.size() <= 300))
           && d.at is int && d.at > 0;
     }
     function validPayBatch(d) {

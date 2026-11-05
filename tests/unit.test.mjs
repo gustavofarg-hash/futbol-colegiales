@@ -1312,7 +1312,8 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   assert.equal(mine.suspensionNote, 'Llegó tarde tres veces');
   assert.equal(mine.suspensionDate, '2026-10-19');
   assert.equal(saved.roster[id].suspended, undefined);
-  await store.setSuspended(id, false);
+  await assert.rejects(() => store.setSuspended(id, false), (error) => error?.code === 'invalid-note');
+  await store.setSuspended(id, false, 'Pagó lo que debía');
   let lifted = JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`];
   const past = Object.values(JSON.parse(mem.get('f7c-test-susp')).suspensionHistory);
   assert.equal(lifted.suspended, false);
@@ -1321,6 +1322,7 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   assert.equal(past[0].date, '2026-10-19');
   assert.equal(past[0].note, 'Llegó tarde tres veces');
   assert.match(past[0].lifted, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(past[0].liftNote, 'Pagó lo que debía');
   await store.setSuspension(id, { note: 'No avisó', date: '2026-11-01' });
   lifted = JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`];
   assert.equal(lifted.suspended, true);
@@ -1355,11 +1357,11 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
   for (let i = 0; i < 12; i += 1) {
     await store.setSuspension(id, { note: `Vez ${i}`, date: '2026-10-19' });
-    await store.setSuspended(id, false);
+    await store.setSuspended(id, false, `Se levantó ${i}`);
   }
   const all = Object.values(JSON.parse(mem.get('f7c-test-susp')).suspensionHistory);
   assert.equal(all.length, 13);
-  assert.ok(all.some((item) => item.note === 'Vez 11'));
+  assert.ok(all.some((item) => item.note === 'Vez 11' && item.liftNote === 'Se levantó 11'));
   assert.equal(JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`].history.length, 0);
 });
 
@@ -3373,7 +3375,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v115');
+  assert.equal(version, 'f7c-v116');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
