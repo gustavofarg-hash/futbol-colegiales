@@ -59,7 +59,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **unit 116/116 OK** (`node --test tests/unit.test.mjs`) y **e2e 832/832 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v114 revisa que el otro organizador ve el historial y que anular un pago queda en el registro como «Anulado».
+Pruebas sobre esta copia: **unit 116/116 OK** (`node --test tests/unit.test.mjs`) y **e2e 839/839 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v115 revisa que en la ficha está «Suspender», que el nombre dice «(suspendido)» y que los partidos bloqueados no se pueden tildar.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
