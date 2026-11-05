@@ -119,7 +119,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v114');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v115');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -5575,10 +5575,21 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     const second = await app.store.addMatch({ date: '2026-11-22', time: '21:00', note: 'Libre', capacity: 14 }, app.who);
     return { id, first, second };
   });
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, made.id);
+  await page.waitForSelector('#profile #suspend-note');
+  check('Desde Jugadores también se puede suspender', (await page.locator('#profile #suspend-note').innerText()).trim() === 'Suspender' && !(await page.locator('#profile #suspend-flag').isChecked()));
+  const profileAbove = await page.evaluate(() => {
+    const box = document.querySelector('#pm-suspended').getBoundingClientRect();
+    const name = document.querySelector('#profile h2').getBoundingClientRect();
+    return box.top < name.top;
+  });
+  check('Suspender está arriba del nombre en la ficha', profileAbove);
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v115-suspender.png', clip: { x: 0, y: 0, width: 390, height: 280 } });
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, made.first);
   await page.waitForSelector('.slot:has-text("Suspendido Pérez") .more-btn');
   await page.click('.slot:has-text("Suspendido Pérez") .more-btn');
   await page.waitForSelector('#pm-suspended');
+  check('El casillero del partido dice Suspender', (await page.locator('#sheet #suspend-note').innerText()).trim() === 'Suspender');
   const above = await page.evaluate(() => {
     const box = document.querySelector('#pm-suspended').getBoundingClientRect();
     const name = document.querySelector('#sheet h3').getBoundingClientRect();
@@ -5639,6 +5650,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     return row?.suspended === true && window.__app.suspensionHistory.some((item) => item.note === 'Llegó tarde tres veces');
   });
   await page.click('.slot:has-text("Suspendido Pérez") .more-btn');
+  check('En el menú del partido el nombre dice (suspendido)', (await page.locator('#sheet h3').innerText()).includes('(suspendido)'));
   await page.click('#suspend-note');
   await page.waitForSelector('#suspend-history');
   const again = (await page.locator('#suspend-history').innerText()).replace(/\s+/g, ' ').trim();
@@ -5647,6 +5659,31 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('.slot:has-text("Suspendido Pérez") .name.suspended');
   const red = await page.locator('.slot:has-text("Suspendido Pérez") .name.suspended').evaluate((el) => getComputedStyle(el).color);
   check('El nombre suspendido se ve en rojo', red === 'rgb(198, 40, 40)' || red === 'rgb(255, 107, 107)', red);
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, made.id);
+  await page.waitForSelector('#profile #suspend-flag');
+  const ficha = await page.evaluate((ids) => {
+    const box = (id) => document.querySelector(`#signup-list input[data-signup="${id}"]`);
+    const on = box(ids.first);
+    const off = box(ids.second);
+    const name = document.querySelector('#profile h2');
+    return {
+      label: document.querySelector('#profile #suspend-note')?.textContent?.trim() || '',
+      checked: !!document.querySelector('#profile #suspend-flag')?.checked,
+      red: !!name?.classList.contains('suspended'),
+      text: name?.innerText || '',
+      on: on ? { checked: on.checked, disabled: on.disabled } : null,
+      off: off ? { checked: off.checked, disabled: off.disabled } : null,
+    };
+  }, made);
+  check('En la ficha Suspender queda marcado', ficha.label === 'Suspender' && ficha.checked && ficha.red && ficha.text.includes('(suspendido)'), JSON.stringify(ficha));
+  check('Los partidos bloqueados no se pueden tildar y el que ya está sigue anotado', ficha.on?.checked === true && ficha.on?.disabled === true && ficha.off?.checked === false && ficha.off?.disabled === true, JSON.stringify(ficha));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v115-ficha.png', clip: { x: 0, y: 0, width: 390, height: 320 } });
+  await page.click('#profile #suspend-note');
+  await page.waitForSelector('#suspend-summary');
+  check('Desde la ficha, tocar Suspender muestra el motivo', (await page.locator('#suspend-summary').innerText()).includes('No avisó') && await page.locator('#suspend-reason').count() === 0);
+  await page.click('#suspend-view [data-close]');
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, made.first);
+  await page.waitForSelector('.slot:has-text("Suspendido Pérez") .name.suspended');
   await page.locator('.slot:has-text("Suspendido Pérez")').screenshot({ path: '/opt/cursor/artifacts/screenshots/v111-rojo.png' });
   check('Sigue anotado en el partido de antes', await page.locator('.slot:has-text("Suspendido Pérez")').count() === 1);
   check('El motivo no aparece al lado del nombre', !(await page.locator('.slot:has-text("Suspendido Pérez")').innerText()).includes('Llegó tarde'));
