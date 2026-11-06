@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v121';
+const APP_VERSION = 'f7c-v122';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -4500,6 +4500,7 @@ function openPlayerForm(m, p, opts = {}) {
     hint.textContent = r.ok ? `✓ ${r.display}` : r.error;
   });
   const find = $('#roster-find');
+  let pickedId = '';
   if (find) {
     const paint = () => {
       const hits = $('#roster-hits');
@@ -4511,27 +4512,55 @@ function openPlayerForm(m, p, opts = {}) {
       hits.innerHTML = found.map((person) => {
         const taken = signupError(m.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]);
         const detail = person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número';
-        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+        const on = person.id === pickedId;
+        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${on ? ' on' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${on ? ' aria-pressed="true"' : ''}${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
       }).join('');
     };
+    const selectPerson = (person) => {
+      if (!person) return;
+      pickedId = person.id;
+      form.dataset.rosterPick = person.id;
+      form.name.value = person.name;
+      if (form.phone && person.phone && !phoneHidden(person)) {
+        form.phone.value = displayFromWa(person.phone);
+        form.phone.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      const share = $('#wa-share');
+      if (share && person.phoneShared === true) share.checked = true;
+      paint();
+    };
+    const chooseHit = (e) => {
+      const btn = e.target.closest('[data-pick]');
+      if (!btn || btn.disabled) return;
+      const person = app.roster.find((r) => r.id === btn.dataset.pick);
+      if (!person) return;
+      selectPerson(person);
+    };
     find.addEventListener('input', paint);
+    form.name.addEventListener('input', () => {
+      const person = pickedId ? app.roster.find((r) => r.id === pickedId) : null;
+      if (person && foldText(person.name) !== foldText(form.name.value)) {
+        pickedId = '';
+        delete form.dataset.rosterPick;
+        paint();
+      }
+    });
     $('#roster-add-new').onclick = () => {
       const text = find.value.trim();
       if (!text) return;
+      pickedId = '';
+      delete form.dataset.rosterPick;
       form.name.value = text;
+      paint();
       if (!focusField(form.name)) {
         const next = [...form.querySelectorAll('input, textarea, select')].find((el) => el !== find && !el.disabled && !String(el.value || '').trim() && el.type !== 'checkbox');
         focusField(next);
       }
     };
-    $('#roster-hits').addEventListener('click', async (e) => {
-      const btn = e.target.closest('[data-pick]');
-      if (!btn || btn.disabled) return;
-      const person = app.roster.find((r) => r.id === btn.dataset.pick);
-      if (!person) return;
-      const result = await addSignedPlayer(m, { name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
-      if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#pf-err').textContent = result;
-    });
+    // pointerdown corre antes del blur del buscador. En el celular ese blur
+    // cierra el teclado, mueve la hoja y se come el click: la elección ya quedó.
+    $('#roster-hits').addEventListener('pointerdown', chooseHit);
+    $('#roster-hits').addEventListener('click', chooseHit);
     setTimeout(() => {
       if (!form.isConnected) return;
       const active = document.activeElement;
@@ -4632,7 +4661,19 @@ function openPlayerForm(m, p, opts = {}) {
       })(), promoRenames.length ? 'Nombre actualizado en los partidos del día' : (editingFriend ? 'Invitado actualizado' : 'Jugador actualizado'));
       return;
     }
-    const result = await addSignedPlayer(m, { name, phone, phoneShared: $('#wa-share')?.checked === true }, asWait, !!$('#player-tentative')?.checked, friendRowValues());
+    const person = pickedId ? app.roster.find((r) => r.id === pickedId) : null;
+    const usePick = person && foldText(person.name) === foldText(name);
+    const host = usePick
+      ? {
+          name: person.name,
+          phone: phone || person.phone || '',
+          rosterId: person.id,
+          phoneKey: person.phoneKey || '',
+          hasPhone: person.hasPhone === true || !!phone,
+          phoneShared: $('#wa-share')?.checked === true,
+        }
+      : { name, phone, phoneShared: $('#wa-share')?.checked === true };
+    const result = await addSignedPlayer(m, host, asWait, !!$('#player-tentative')?.checked, friendRowValues());
     if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#pf-err').textContent = result;
   };
 }

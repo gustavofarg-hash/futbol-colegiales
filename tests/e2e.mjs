@@ -131,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v121');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v122');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -1143,8 +1143,11 @@ await page.fill('#roster-find', '2222-3333');
 await page.waitForSelector('#roster-hits .roster-hit:has-text("Ernesto Pereira")');
 check('Un tramo del teléfono lo encuentra', (await page.textContent('#roster-hits')).includes('Ernesto Pereira'));
 await page.click('#roster-hits .roster-hit');
+await page.waitForFunction(() => document.querySelector('#player-name')?.value === 'Ernesto Pereira' && document.querySelector('#player-form'));
+check('Un toque en el resultado lo deja elegido', (await page.inputValue('#player-name')) === 'Ernesto Pereira');
+await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Ernesto Pereira")');
-check('Tocarlo lo anota en el partido', (await page.textContent('#slot-count')) === '1/14');
+check('Elegirlo y Agregar lo anota en el partido', (await page.textContent('#slot-count')) === '1/14');
 await page.click('#btn-add-player');
 await page.fill('#player-form [name=name]', 'Luis Gómez');
 await page.fill('#player-form [name=phone]', '11 6666-7777');
@@ -5896,6 +5899,56 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   check('El recordatorio no incluye la lista de espera', remindNames.includes('Titular Recordatorio') && !remindNames.includes('Espera Recordatorio'), remindNames.join(', '));
   await page.locator('#remind-list').screenshot({ path: '/opt/cursor/artifacts/screenshots/v119-recordatorio.png' });
   await page.click('dialog.sheet [data-close]');
+}
+
+{
+  async function elegirYAgregar(width, height, fullName, query, time) {
+    await page.setViewportSize({ width, height });
+    const matchId = await page.evaluate(async ({ fullName, time }) => {
+      const app = window.__app;
+      await app.store.addRoster({ name: fullName, phone: '' }, app.who);
+      return app.store.addMatch({ date: '2026-12-09', time, note: fullName, capacity: 14 }, app.who);
+    }, { fullName, time });
+    await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+    await page.waitForSelector('#btn-add-player');
+    await page.click('#btn-add-player');
+    await page.waitForSelector('#roster-find');
+    await page.fill('#roster-find', query);
+    const hit = page.locator('#roster-hits .roster-hit', { hasText: fullName });
+    await hit.waitFor();
+    await page.locator('#roster-find').focus();
+    await hit.click();
+    await page.evaluate(() => {
+      const find = document.querySelector('#roster-find');
+      find.blur();
+      find.dispatchEvent(new Event('input', { bubbles: true }));
+      window.__app.syncPayDock();
+    });
+    const selected = await page.evaluate((fullName) => {
+      const form = document.querySelector('#player-form');
+      const on = document.querySelector('#roster-hits .roster-hit.on');
+      return {
+        open: !!form,
+        name: document.querySelector('#player-name')?.value || '',
+        pick: form?.dataset.rosterPick || '',
+        marked: !!on && on.textContent.includes(fullName),
+      };
+    }, fullName);
+    return { selected, fullName };
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile = await elegirYAgregar(390, 844, 'Parcial Movil', 'Parc', '18:00');
+  check('En 390px un toque deja elegido y no se pierde al buscar o salir del campo', mobile.selected.open && mobile.selected.name === 'Parcial Movil' && mobile.selected.pick && mobile.selected.marked, JSON.stringify(mobile.selected));
+  await page.locator('#sheet .sheet-body').screenshot({ path: '/opt/cursor/artifacts/screenshots/v122-elegido.png' });
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#slots .name:text-is("Parcial Movil")');
+  check('En 390px Agregar anota al elegido una sola vez', await page.locator('#slots .name:text-is("Parcial Movil")').count() === 1);
+  const desk = await elegirYAgregar(1280, 800, 'Parcial Escritorio', 'Escri', '19:00');
+  check('En escritorio un toque deja elegido y no se pierde al buscar o salir del campo', desk.selected.open && desk.selected.name === 'Parcial Escritorio' && desk.selected.pick && desk.selected.marked, JSON.stringify(desk.selected));
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#slots .name:text-is("Parcial Escritorio")');
+  check('En escritorio Agregar anota al elegido una sola vez', await page.locator('#slots .name:text-is("Parcial Escritorio")').count() === 1);
+  await page.setViewportSize({ width: 390, height: 844 });
 }
 
 const fresh = await ctx.newPage();
