@@ -528,6 +528,7 @@ button.team-name {
 }
 .roster-hit b { font-size: 0.96875rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roster-hit small { color: var(--muted); font-size: 0.8125rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roster-hit.on { border-color: var(--green-2); background: var(--green-soft); }
 .roster-hit.taken { opacity: .72; }
 .roster-hit small.taken { color: var(--warn-text); font-weight: 800; }
 .find-row { display: flex; align-items: stretch; gap: 8px; min-width: 0; }
