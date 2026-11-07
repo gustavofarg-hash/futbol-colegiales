@@ -9,7 +9,7 @@ import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting }
 import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
+import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
@@ -608,6 +608,35 @@ test('el nivel acepta un solo decimal y lo muestra con coma', () => {
   assert.equal(stepLevel(6.8, 1), 7.8);
   assert.equal(stepLevel(10, 1), null);
   assert.equal(stepLevel(1, -1), null);
+  assert.equal(levelStepSide('', 0), 'integer');
+  assert.equal(levelStepSide('6', 0), 'integer');
+  assert.equal(levelStepSide('6', 1), 'decimal');
+  assert.equal(levelStepSide('10', 1), 'integer');
+  assert.equal(levelStepSide('10', 2), 'decimal');
+  assert.equal(levelStepSide('6,8', 0), 'integer');
+  assert.equal(levelStepSide('6,8', 1), 'integer');
+  assert.equal(levelStepSide('6,8', 2), 'decimal');
+  assert.equal(levelStepSide('6,8', 3), 'decimal');
+  assert.equal(levelStepSide('6.8', 3), 'decimal');
+  assert.equal(stepLevel(6.8, 1, 'decimal'), 6.9);
+  assert.equal(stepLevel(6.8, -1, 'decimal'), 6.7);
+  assert.equal(stepLevel(6.8, 1, 'integer'), 7.8);
+  assert.equal(stepLevel(6.8, -1, 'integer'), 5.8);
+  assert.equal(stepLevel(9.9, 1, 'decimal'), 10);
+  assert.equal(stepLevel(10, 1, 'decimal'), null);
+  assert.equal(stepLevel(10, -1, 'decimal'), 9.9);
+  assert.equal(stepLevel(1, -1, 'decimal'), null);
+  assert.equal(stepLevel(1.2, -1, 'integer'), null);
+  assert.equal(stepLevel(1.2, -1, 'decimal'), 1.1);
+  assert.equal(stepLevel(stepLevel(6.8, 1, 'decimal'), 1, 'decimal'), 7);
+  assert.equal(stepLevel(stepLevel(6.8, 1, 'integer'), 1, 'integer'), 8.8);
+  assert.equal(levelCaretAfterStep('6,8', 3, '6,9'), 3);
+  assert.equal(levelCaretAfterStep('6,8', 0, '7,8'), 0);
+  assert.equal(levelCaretAfterStep('6,8', 1, '7,8'), 1);
+  assert.equal(levelCaretAfterStep('10,0', 2, '9,0'), 1);
+  assert.equal(levelCaretAfterStep('6', 1, '6,1'), 3);
+  assert.equal(levelStepSide('9,0', levelCaretAfterStep('10,0', 2, '9,0')), 'integer');
+  assert.equal(levelStepSide('6,9', levelCaretAfterStep('6,8', 3, '6,9')), 'decimal');
 });
 
 test('no se anota dos veces y Amigo N es de quien invita', () => {
@@ -3388,7 +3417,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v122');
+  assert.equal(version, 'f7c-v123');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

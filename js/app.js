@@ -21,7 +21,7 @@ import { PRIVATE_WA_TEXT } from './privacy.js';
 import { activityNoticeText, activityNotices } from './notify.js';
 import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
-import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
+import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v122';
+const APP_VERSION = 'f7c-v123';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3823,6 +3823,8 @@ function renderUsers() {
   };
 }
 
+let levelCaretIntent = null;
+
 function renderProfile(id) {
   const person = app.roster.find((r) => r.id === id);
   const fromMatch = app.profileViaMatchId === id;
@@ -3913,28 +3915,94 @@ function renderProfile(id) {
   const share = $('#phone-share');
   if (share) share.onchange = () => run(app.store.setPhoneShared({ rosterId: person.id }, share.checked));
   const levelInput = $('#level-val');
+  const levelBase = () => {
+    const parsed = parseLevel(levelInput?.value ?? '');
+    return parsed.ok ? parsed.level : level;
+  };
+  const rememberLevelCaret = () => {
+    if (!levelInput || document.activeElement !== levelInput) return;
+    const caret = levelInput.selectionStart ?? 0;
+    levelCaretIntent = { id: person.id, caret, side: levelStepSide(levelInput.value, caret) };
+    syncLevelButtons();
+  };
+  const levelCaret = () => {
+    if (levelInput && document.activeElement === levelInput) return levelInput.selectionStart ?? 0;
+    if (levelCaretIntent?.id === person.id && Number.isFinite(levelCaretIntent.caret)) return levelCaretIntent.caret;
+    return 0;
+  };
+  function syncLevelButtons() {
+    const base = levelBase();
+    const side = levelStepSide(levelInput?.value ?? '', levelCaret());
+    const down = $('#level-down');
+    const up = $('#level-up');
+    if (down) down.disabled = !own || stepLevel(base, -1, side) == null;
+    if (up) up.disabled = !own || stepLevel(base, 1, side) == null;
+  }
+  const nudgeLevel = (dir) => {
+    if (!own || !levelInput) return;
+    const caret = levelCaret();
+    const side = levelStepSide(levelInput.value, caret);
+    const next = stepLevel(levelBase(), dir, side);
+    if (next == null) return;
+    const formatted = formatLevel(next);
+    const kept = levelCaretAfterStep(levelInput.value, caret, formatted);
+    levelCaretIntent = { id: person.id, caret: kept, side: levelStepSide(formatted, kept) };
+    saveProfile(person.id, { level: next });
+    const again = $('#level-val');
+    if (again) {
+      try { again.setSelectionRange(kept, kept); } catch { /* sin foco el navegador puede ignorarlo */ }
+    }
+  };
   if (levelInput && own) {
     levelInput.addEventListener('input', () => {
       const next = filterLevelTyping(levelInput.value);
-      if (next === levelInput.value) return;
-      const pos = levelInput.selectionStart;
-      levelInput.value = next;
-      try { levelInput.setSelectionRange(pos, pos); } catch { /* el navegador puede rechazar el rango */ }
+      if (next !== levelInput.value) {
+        const pos = levelInput.selectionStart;
+        levelInput.value = next;
+        try { levelInput.setSelectionRange(pos, pos); } catch { /* el navegador puede rechazar el rango */ }
+      }
+      rememberLevelCaret();
+      syncLevelButtons();
     });
+    levelInput.addEventListener('keyup', rememberLevelCaret);
+    levelInput.addEventListener('click', rememberLevelCaret);
+    levelInput.addEventListener('pointerup', rememberLevelCaret);
+    levelInput.addEventListener('blur', () => {
+      const caret = levelInput.selectionStart ?? 0;
+      levelCaretIntent = { id: person.id, caret, side: levelStepSide(levelInput.value, caret) };
+      syncLevelButtons();
+    });
+    if (app.levelSelection) document.removeEventListener('selectionchange', app.levelSelection);
+    app.levelSelection = () => rememberLevelCaret();
+    document.addEventListener('selectionchange', app.levelSelection);
     levelInput.addEventListener('change', () => {
       const parsed = parseLevel(levelInput.value);
       if (!parsed.ok || parsed.level == null) {
         levelInput.value = level == null ? '' : formatLevel(level);
         if (!parsed.ok) toast(parsed.error);
+        syncLevelButtons();
         return;
       }
-      levelInput.value = formatLevel(parsed.level);
+      const formatted = formatLevel(parsed.level);
+      const caret = levelCaret();
+      const kept = levelCaretAfterStep(levelInput.value, caret, formatted);
+      levelInput.value = formatted;
+      levelCaretIntent = { id: person.id, caret: kept, side: levelStepSide(formatted, kept) };
+      try { levelInput.setSelectionRange(kept, kept); } catch { /* sigue el lado elegido */ }
+      syncLevelButtons();
       if (storedLevel(level) === parsed.level) return;
       saveProfile(person.id, { level: parsed.level });
     });
+    for (const id of ['level-down', 'level-up']) {
+      const btn = $('#' + id);
+      if (!btn) continue;
+      btn.addEventListener('pointerdown', rememberLevelCaret);
+      btn.addEventListener('keydown', rememberLevelCaret);
+    }
   }
-  $('#level-down').onclick = () => { const next = stepLevel(level, -1); if (own && next != null) saveProfile(person.id, { level: next }); };
-  $('#level-up').onclick = () => { const next = stepLevel(level, 1); if (own && next != null) saveProfile(person.id, { level: next }); };
+  syncLevelButtons();
+  $('#level-down').onclick = () => nudgeLevel(-1);
+  $('#level-up').onclick = () => nudgeLevel(1);
   $('#positions').onclick = (e) => {
     if (!own) return;
     const btn = e.target.closest('[data-pos]');
