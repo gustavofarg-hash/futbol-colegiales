@@ -201,3 +201,23 @@ export function payeeNames(match, staff, extra = []) {
 export function compensationApplies(matches, staff) {
   return (matches || []).some((match) => match?.cancelled !== true && matchStaff(match, staff).length > 1);
 }
+
+/** «Se anotó con». Quien ya quedó guardado sigue en la lista aunque ya no organice. */
+export function signupOptions(match, staff, extra) {
+  const options = matchStaff(match, staff).map((user) => ({ uid: user.uid, name: user.name }));
+  const uid = String(extra?.uid || '').trim();
+  const name = String(extra?.name || '').trim();
+  if (uid && name && !options.some((item) => item.uid === uid)) options.push({ uid, name });
+  return options;
+}
+
+/** Atribución nueva: el elegido si organiza ese partido; si no, quien está logueado y puede anotar. */
+export function signupForMatch(match, signup, actor) {
+  const uid = String(signup?.signedUpWith || '').trim();
+  const name = String(signup?.signedUpWithName || '').trim();
+  if (uid && name && canAdd(match, uid)) return { signedUpWith: uid, signedUpWithName: name };
+  const meUid = String(actor?.uid || '').trim();
+  const meName = String(actor?.name || '').trim();
+  if (meUid && meName && canAdd(match, meUid)) return { signedUpWith: meUid, signedUpWithName: meName };
+  return {};
+}

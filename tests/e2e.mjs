@@ -131,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v125');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v126');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -6179,6 +6179,111 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#pay-form [data-close]');
   const kept = await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).players[id].cashTo, payAccess.oldPlayer);
   check('Cerrar el pago no cambia el cobro guardado', kept === 'Martín', kept);
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  const signed = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const martin = app.users.find((user) => user.name === 'Martín');
+    const byId = (id) => app.matches.find((match) => match.id === id) || { id };
+    const soloAccess = { solo: true, viewers: [me.uid], adders: [me.uid], limits: [], createdByUid: me.uid };
+    const solo = await app.store.addMatch({ date: '2026-12-22', time: '21:00', capacity: 14, note: 'Anota solo', access: soloAccess }, me.name);
+    const player = await app.store.addPlayer(byId(solo), { name: 'Anota Solo', phone: '' }, me.name);
+    const oldPlayer = await app.store.addPlayer(byId(solo), { name: 'Anota Viejo', phone: '' }, me.name);
+    await app.store.updatePlayer(oldPlayer, { signedUpWith: martin.uid, signedUpWithName: 'Martín' });
+    await app.store.addPlayer(byId(solo), { name: 'Anota Espera', phone: '' }, me.name, { waiting: true });
+    const onlyAdd = await app.store.addMatch({
+      date: '2026-12-23', time: '18:00', capacity: 14, note: 'Anota uno',
+      access: { solo: false, viewers: ['*'], adders: [me.uid], adderNames: [{ uid: martin.uid, name: 'Martín' }], limits: [], createdByUid: me.uid },
+    }, me.name);
+    await app.store.addPlayer(byId(onlyAdd), { name: 'Anota Uno', phone: '' }, me.name);
+    const listed = await app.store.addMatch({
+      date: '2026-12-24', time: '19:00', capacity: 14, note: 'Anota lista',
+      access: { viewers: [me.uid], adders: [me.uid], createdByUid: me.uid },
+    }, me.name);
+    await app.store.addPlayer(byId(listed), { name: 'Anota Lista', phone: '' }, me.name);
+    const shared = await app.store.addMatch({
+      date: '2026-12-25', time: '20:00', capacity: 14, note: 'Anota juntos',
+      access: { solo: false, viewers: [me.uid, martin.uid], adders: [me.uid, martin.uid], limits: [], createdByUid: me.uid },
+    }, me.name);
+    await app.store.addPlayer(byId(shared), { name: 'Anota Juntos', phone: '11 7000-0126' }, me.name);
+    const daySolo = await app.store.addMatch({ date: '2026-12-25', time: '22:00', capacity: 14, note: 'Anota dia', access: soloAccess }, me.name);
+    await app.store.addPlayer(byId(daySolo), { name: 'Anota Juntos', phone: '11 7000-0126' }, me.name);
+    return { solo, onlyAdd, listed, shared, daySolo, player, oldPlayer, gustavoUid: me.uid, martinUid: martin.uid };
+  });
+  const signupNow = () => page.evaluate(() => {
+    const sel = document.querySelector('#signed-up-with');
+    return {
+      value: sel?.value || '',
+      options: [...(sel?.options || [])].map((opt) => opt.textContent),
+    };
+  });
+  const openMenu = async (matchId, name, list = '#slots') => {
+    await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+    await page.waitForSelector(`${list} [aria-label="Opciones de ${name}"]`);
+    await page.click(`${list} [aria-label="Opciones de ${name}"]`);
+    await page.waitForSelector('#signed-up-with');
+  };
+  await openMenu(signed.solo, 'Anota Solo');
+  const soloMenu = await signupNow();
+  check('En el menú de un partido solo aparece el logueado', soloMenu.options.join(',') === 'Gustavo' && soloMenu.value === signed.gustavoUid, JSON.stringify(soloMenu));
+  const soloFit = await page.evaluate(() => {
+    const sel = document.querySelector('#signed-up-with');
+    const box = sel.getBoundingClientRect();
+    return { overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, inside: box.left >= -1 && box.right <= window.innerWidth + 1 };
+  });
+  check('En 390px Se anotó con no desborda', soloFit.overflow <= 1 && soloFit.inside, JSON.stringify(soloFit));
+  await page.locator('label.field:has(#signed-up-with)').screenshot({ path: '/opt/cursor/artifacts/screenshots/v126-anoto-con.png' });
+  await page.locator('dialog.sheet[open] [data-close]').click();
+  await page.waitForFunction(() => !document.querySelector('dialog.sheet')?.open);
+  await openMenu(signed.solo, 'Anota Viejo');
+  const oldMenu = await signupNow();
+  check('El menú conserva con quién se anotó', oldMenu.value === signed.martinUid && oldMenu.options.join(',') === 'Gustavo,Martín', JSON.stringify(oldMenu));
+  await page.locator('dialog.sheet[open] [data-close]').click();
+  await page.waitForFunction(() => !document.querySelector('dialog.sheet')?.open);
+  const keptSignup = await page.evaluate((id) => {
+    const row = JSON.parse(localStorage.getItem('f7c-demo-db')).players[id];
+    return { uid: row.signedUpWith, name: row.signedUpWithName };
+  }, signed.oldPlayer);
+  check('Abrir y cerrar el menú no reescribe Se anotó con', keptSignup.uid === signed.martinUid && keptSignup.name === 'Martín', JSON.stringify(keptSignup));
+  await openMenu(signed.solo, 'Anota Espera', '#wait-list');
+  const waitMenu = await signupNow();
+  check('En la espera también aparece solo el logueado', waitMenu.options.join(',') === 'Gustavo', JSON.stringify(waitMenu));
+  await page.click('#pm-friend');
+  await page.waitForSelector('#friend-form #signed-up-with');
+  const friendMenu = await signupNow();
+  check('Agregar invitado en un partido solo lista al logueado', friendMenu.options.join(',') === 'Gustavo' && friendMenu.value === signed.gustavoUid, JSON.stringify(friendMenu));
+  await page.click('#friend-form button[type=submit]');
+  await page.waitForSelector('#wait-list .name:text-is("Invitado 1")');
+  const guestSignup = await page.evaluate(() => {
+    const row = window.__app.players.find((player) => player.name === 'Invitado 1' && player.invitedBy);
+    return { uid: row?.signedUpWith || '', name: row?.signedUpWithName || '' };
+  });
+  check('El invitado nuevo queda con el logueado', guestSignup.uid === signed.gustavoUid && guestSignup.name === 'Gustavo', JSON.stringify(guestSignup));
+  for (const [id, name] of [[signed.onlyAdd, 'Anota Uno'], [signed.listed, 'Anota Lista']]) {
+    await openMenu(id, name);
+    const rows = await signupNow();
+    check(`${name} solo lista al logueado`, rows.options.join(',') === 'Gustavo', JSON.stringify(rows));
+    await page.locator('dialog.sheet[open] [data-close]').click();
+    await page.waitForFunction(() => !document.querySelector('dialog.sheet')?.open);
+  }
+  await openMenu(signed.shared, 'Anota Juntos');
+  const sharedMenu = await signupNow();
+  check('En un partido compartido Se anotó con lista a quien organiza', sharedMenu.options.join(',') === 'Gustavo,Martín', JSON.stringify(sharedMenu));
+  await page.click('#pm-friend');
+  await page.waitForSelector('#friend-form #signed-up-with');
+  const sharedFriend = await signupNow();
+  check('Agregar invitado en un partido compartido no lista ajenos', sharedFriend.options.join(',') === 'Gustavo,Martín', JSON.stringify(sharedFriend));
+  await page.selectOption('#friend-form #signed-up-with', { label: 'Martín' });
+  await page.click('#friend-form button[type=submit]');
+  await page.waitForFunction(() => window.__app.players.some((player) => player.name === 'Invitado 1' && player.signedUpWithName === 'Martín'));
+  const copied = await page.evaluate(({ shared, daySolo }) => window.__app.players
+    .filter((player) => player.name === 'Invitado 1' && (player.matchId === shared || player.matchId === daySolo))
+    .map((player) => `${player.matchId === shared ? 'compartido' : 'solo'}:${player.signedUpWithName}`)
+    .sort(), { shared: signed.shared, daySolo: signed.daySolo });
+  check('En el otro partido del día no se atribuye a quien no organiza', copied.join(',') === 'compartido:Martín,solo:Gustavo', copied.join(','));
 }
 
 const fresh = await ctx.newPage();

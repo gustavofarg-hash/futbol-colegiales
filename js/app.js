@@ -29,7 +29,7 @@ import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
-import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, limitFor, limitMessage, matchStaff, payeeNames, publicAccess } from './access.js';
+import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v125';
+const APP_VERSION = 'f7c-v126';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -647,18 +647,27 @@ function livePrices() {
 function addedTag(player) {
   return `<span class="tag ${organizerTagClass(player.addedBy)}">Agregó: ${esc(player.addedBy || '?')}</span>`;
 }
-function signupStaffOptions(player) {
-  const options = staffUsers(app.users).map((user) => ({ uid: user.uid, name: user.name }));
+function signupStaffOptions(player, match) {
+  const staff = staffUsers(app.users);
   const me = actor();
-  if (me?.uid && !options.some((item) => item.uid === me.uid)) options.unshift({ uid: me.uid, name: me.name || 'Yo' });
-  if (player?.signedUpWith && !options.some((item) => item.uid === player.signedUpWith)) {
-    options.push({ uid: player.signedUpWith, name: player.signedUpWithName || 'Organizador' });
+  const savedUid = String(player?.signedUpWith || '').trim();
+  const savedName = String(player?.signedUpWithName || '').trim();
+  const extra = savedUid ? { uid: savedUid, name: savedName || 'Organizador' } : null;
+  let options = match
+    ? signupOptions(match, staff, extra)
+    : staff.map((user) => ({ uid: user.uid, name: user.name }));
+  if (me?.uid && (!match || canAdd(match, me.uid)) && !options.some((item) => item.uid === me.uid)) {
+    options.unshift({ uid: me.uid, name: me.name || 'Yo' });
   }
-  const selected = player?.signedUpWith || me?.uid || options[0]?.uid || '';
+  if (extra?.uid && !options.some((item) => item.uid === extra.uid)) options.push(extra);
+  if (!options.length && me?.uid) options = [{ uid: me.uid, name: me.name || 'Yo' }];
+  const selected = (savedUid && options.some((item) => item.uid === savedUid))
+    ? savedUid
+    : (options.some((item) => item.uid === me?.uid) ? me.uid : (options[0]?.uid || ''));
   return { options, selected };
 }
-function signupFields(player) {
-  const { options, selected } = signupStaffOptions(player);
+function signupFields(player, match) {
+  const { options, selected } = signupStaffOptions(player, match);
   if (!options.length) return '';
   return `<label class="field"><span>Se anotó con:</span><select name="signedUpWith" id="signed-up-with">${options.map((item) => `<option value="${esc(item.uid)}"${item.uid === selected ? ' selected' : ''}>${esc(item.name)}</option>`).join('')}</select></label>`;
 }
@@ -4367,7 +4376,7 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { re
       offset += 1;
     }
     if (also.length) {
-      const notes = await addGuestsToSameDay(also, friends, signup);
+      const notes = await addGuestsToSameDay(also, friends, signup, m);
       if (notes.length) toast(notes.join(' · '), 4500);
     }
   })(), msg);
@@ -4405,7 +4414,7 @@ function sameDayLine({ match, host }, from) {
  * en cada partido elegido. De a un jugador, en orden. Lo que ya está no se
  * repite; lo que no entra va a la espera, como en el partido de origen.
  */
-async function addGuestsToSameDay(targets, friends, signup) {
+async function addGuestsToSameDay(targets, friends, signup, source) {
   const notes = [];
   for (const { match, host } of targets) {
     const label = `${match.time || '--:--'} hs`;
@@ -4422,13 +4431,14 @@ async function addGuestsToSameDay(targets, friends, signup) {
     const place = placeGroup({ mainCount: playersOf(match.id).length, capacity: capOf(match), count: todo.length, forceWait: host.waiting === true });
     let offset = 0;
     for (const friend of todo) {
+      const thereSignup = match.id === source?.id ? signup : signupForMatch(match, signup, actor());
       const friendId = await app.store.addPlayer(match, {
         name: friend.name,
         phone: '',
         invitedBy: host.id,
         invitedByName: host.name,
         guestAuto: friend.guestAuto === true,
-        ...signup,
+        ...thereSignup,
       }, app.who, { waiting: offset >= place.main });
       if (offset < place.main) await applyAutoCredit(friendId);
       offset += 1;
@@ -4521,7 +4531,7 @@ function openPlayerForm(m, p, opts = {}) {
       <div id="player-scroll">
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
-      ${signupFields(p)}
+      ${signupFields(p, m)}
       ${editingFriend ? `<p class="hint" id="friend-stays">Sigue siendo invitado de ${esc(hostName || 'quien lo invitó')}.</p>` : ''}
       ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
@@ -6264,7 +6274,7 @@ function openPlayerMenu(m, p) {
     <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.notesHtml}${panel.statsButton}</div>
     <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name" class="${suspendedClass(p).trim()}">${esc(p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
-    ${canAnnotate ? signupFields(p) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
+    ${canAnnotate ? signupFields(p, match) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
       ${canAnnotate ? `<button class="btn" id="pm-pay">${paidAlready ? 'Editar pago' : 'Cargar pago'}</button>` : ''}
       ${phoneView.phone && match ? `<a class="btn" id="pm-wa" href="${esc(waHref(phoneView.phone, waMessage(match, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(phoneView) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
@@ -6681,7 +6691,7 @@ function openFriendForm(m, host) {
     <form id="friend-form" novalidate>
       <h3>Invitados de ${esc(host.name)}</h3>
       <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Cuentan para el cupo como cualquier jugador.</p>
-      ${signupFields(null)}
+      ${signupFields(null, m)}
       <div class="friend-box">
         ${guestQtyHtml(1)}
         <div id="friend-rows"></div>

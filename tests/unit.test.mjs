@@ -30,7 +30,7 @@ import {
 import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, indexFromStored, readTextSize, stepTextSize, textSizeIndex } from '../js/text-size.js';
-import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, compensationApplies, isRestricted, limitFor, limitMessage, matchStaff, payeeNames, publicAccess } from '../js/access.js';
+import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, compensationApplies, isRestricted, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from '../js/access.js';
 import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, nextInGoalAt, normalizeScore, normalizeTeams, orderByGoal, orderTeamsByGoal, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, playerLink } from '../js/share.js';
 import {
@@ -2365,6 +2365,26 @@ test('invitados con el mismo nombre no se mezclan en resúmenes ni en Jugadores'
   assert.equal(playerMatchesPerson(players[0], { id: 'r2', name: 'Vinicio', phone: '' }), true);
 });
 
+test('Se anotó con lista a quien organiza y conserva el dato viejo', () => {
+  const staff = [
+    { uid: 'gustavo', name: 'Gustavo', role: 'admin', active: true },
+    { uid: 'martin', name: 'Martín', role: 'organizer', active: true },
+    { uid: 'rita', name: 'Rita', role: 'organizer', active: true },
+  ];
+  const names = (match, extra) => signupOptions(match, staff, extra).map((item) => item.name);
+  const solo = { viewers: ['gustavo'], adders: ['gustavo'], createdByUid: 'gustavo' };
+  assert.deepEqual(names(solo), ['Gustavo']);
+  assert.deepEqual(names(solo, { uid: 'martin', name: 'Martín' }), ['Gustavo', 'Martín']);
+  assert.deepEqual(names({ viewers: ['*'], adders: ['gustavo'], createdByUid: 'gustavo', adderNames: [{ uid: 'martin', name: 'Martín' }] }), ['Gustavo']);
+  const shared = { viewers: ['gustavo', 'martin'], adders: ['gustavo', 'martin'], createdByUid: 'gustavo' };
+  assert.deepEqual(names(shared), ['Gustavo', 'Martín']);
+  assert.deepEqual(names({ viewers: ['*'], adders: ['*'], createdByUid: 'gustavo' }), ['Gustavo', 'Martín', 'Rita']);
+  const picked = signupForMatch(solo, { signedUpWith: 'martin', signedUpWithName: 'Martín' }, { uid: 'gustavo', name: 'Gustavo' });
+  assert.deepEqual(picked, { signedUpWith: 'gustavo', signedUpWithName: 'Gustavo' });
+  const kept = signupForMatch(shared, { signedUpWith: 'martin', signedUpWithName: 'Martín' }, { uid: 'gustavo', name: 'Gustavo' });
+  assert.deepEqual(kept, { signedUpWith: 'martin', signedUpWithName: 'Martín' });
+});
+
 test('el pago lista solo a quien organiza y la compensación no aparece si es uno', () => {
   const staff = [
     { uid: 'gustavo', name: 'Gustavo', role: 'admin', active: true },
@@ -3467,7 +3487,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v125');
+  assert.equal(version, 'f7c-v126');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
