@@ -62,13 +62,45 @@ export function formatLevel(value) {
   return `${whole},${frac}`;
 }
 
-/** Los botones mueven un entero. null si se sale de 1..10. */
-export function stepLevel(level, direction) {
+/**
+ * Lado del cursor en el nivel. La coma o el punto separan.
+ * A la izquierda del separador (o antes del final, si todavía no hay decimal) es el entero.
+ * A la derecha, el decimal. El campo vacío cuenta como entero.
+ */
+export function levelStepSide(text, caret) {
+  const raw = String(text ?? '');
+  if (!raw) return 'integer';
+  const at = Math.max(0, Math.min(Number.isFinite(caret) ? caret : 0, raw.length));
+  const sep = raw.search(/[.,]/);
+  if (sep < 0) return at >= raw.length ? 'decimal' : 'integer';
+  return at > sep ? 'decimal' : 'integer';
+}
+
+/** Dónde dejar el cursor después de +/− para que siga del mismo lado. */
+export function levelCaretAfterStep(beforeText, beforeCaret, afterText) {
+  const before = String(beforeText ?? '');
+  const after = String(afterText ?? '');
+  const caret = Math.max(0, Math.min(Number.isFinite(beforeCaret) ? beforeCaret : 0, before.length));
+  if (!after) return 0;
+  const side = levelStepSide(before, caret);
+  const sep = after.search(/[.,]/);
+  if (side === 'decimal') {
+    const beforeSep = before.search(/[.,]/);
+    if (beforeSep >= 0 && sep >= 0) return Math.min(after.length, sep + Math.max(0, caret - beforeSep));
+    return after.length;
+  }
+  const limit = sep < 0 ? after.length : sep;
+  return Math.max(0, Math.min(caret, limit));
+}
+
+/** +/− del nivel. El entero suma 1 y deja el decimal; el decimal suma 0,1. null si se sale de 1..10. */
+export function stepLevel(level, direction, side = 'integer') {
   const dir = direction < 0 ? -1 : 1;
   if (level == null || level === '') return dir > 0 ? 1 : null;
   const current = storedLevel(level);
   if (current == null) return null;
-  const tenths = Math.round((current + Number.EPSILON) * 10) + dir * 10;
+  const delta = side === 'decimal' ? 1 : 10;
+  const tenths = Math.round((current + Number.EPSILON) * 10) + dir * delta;
   if (tenths < 10 || tenths > 100) return null;
   return tenths / 10;
 }

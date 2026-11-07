@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v123** (rama `cursor/nivel-cursor-c20d`, 07/11/2026): en Nivel de juego, el + y el − miran el cursor. A la izquierda de la coma suman o restan 1 y dejan el decimal. A la derecha suman o restan 0,1. Sigue de 1 a 10, con un solo decimal. `firestore.rules` no cambió.
 **Actualizada para f7c-v122** (rama `cursor/elegir-guardado-c20d`, 06/11/2026): en Agregar jugador, un toque en un resultado de Buscar guardados lo deja elegido. Agregar usa esa elección, aunque el teclado se cierre o la lista se vuelva a dibujar. `firestore.rules` no cambió.
 **Actualizada para f7c-v121** (rama `cursor/entrar-sin-admin-c20d`, 05/11/2026): Entrar ya no muestra «Crear cuenta de administrador». Siguen el mail, la contraseña, Entrar y «Olvidé mi contraseña». `registerAdmin` queda en el código. `firestore.rules` no cambió.
 **Actualizada para f7c-v120** (rama `cursor/entrar-sin-menus-c20d`, 05/11/2026): sin sesión no se ve el encabezado ni las pestañas. Entrar queda solo con el mail, la clave, «Olvidé mi contraseña» y, en Firebase, «Crear cuenta de administrador». Cambiar la URL no los vuelve a mostrar. El link de confirmar partido muestra lugar, día, horario y sí/no, sin la barra de la app. `firestore.rules` no cambió.
@@ -66,7 +67,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **unit 117/117 OK** (`node --test tests/unit.test.mjs`) y **e2e 859/859 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v122 revisa que un toque en la búsqueda deja al jugador elegido y Agregar lo anota, en 390px y en escritorio.
+Pruebas sobre esta copia: **unit 117/117 OK** (`node --test tests/unit.test.mjs`) y **e2e 871/871 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v123 revisa el +/− del nivel con el cursor en los enteros y en los decimales, en 390px y en escritorio.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
@@ -76,6 +77,7 @@ Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reempla
 
 | Fecha | Pedido | Estado | Evidencia |
 |---|---|---|---|
+| 07/11 (v123) | **Nivel: +/− según el cursor** | ✅ | `levelStepSide` y `stepLevel` en `profile.js`. El cursor a la izquierda de la coma mueve el entero; a la derecha, 0,1. El lado se recuerda si el botón saca el foco. e2e en 390px y en escritorio, con +/− repetidos y topes 1 y 10. `firestore.rules` no cambió. |
 | 06/11 (v122) | **Elegir un guardado y Agregar** | ✅ | El toque en `#roster-hits` elige al jugador (`pointerdown`, antes de que el blur mueva la hoja) y completa el nombre. Agregar manda esa ficha. e2e en 390px y en escritorio: búsqueda parcial, un toque, blur, redibujo y Agregar. `firestore.rules` no cambió. |
 | 05/11 (v121) | **Entrar sin crear cuenta de administrador** | ✅ | El botón salió de `promptLogin`. Siguen mail, contraseña, Entrar y «Olvidé mi contraseña». `registerAdmin` sigue en `js/auth.js`. e2e «Entrar no ofrece crear la cuenta de administrador». `firestore.rules` no cambió. |
 | 05/11 (v120) | **Sin sesión no hay menús** | ✅ | El encabezado y las pestañas están en el HTML, pero `signed-out` se pone antes de pintarlos y el router no abre la app hasta que hay usuario. Cambiar el hash no lo saca. `confirmar.html` ya no tiene barra ni A−/A+. e2e «Sin sesión Entrar no muestra menús» y «La confirmación no tiene menús». `firestore.rules` no cambió. |
