@@ -131,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v124');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v125');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -6093,6 +6093,92 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const silentWhy = (await page.locator('#pay-remind-why').innerText()).trim();
   check('Sin teléfono el recordatorio queda deshabilitado', await page.locator('#btn-pending-remind').isDisabled() && (await page.locator('#btn-pending-remind').getAttribute('href')) == null && silentWhy === 'Sin número', silentWhy);
   await page.click('#pay-form [data-close]');
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  const payAccess = await page.evaluate(async () => {
+    const app = window.__app;
+    const me = app.session.user;
+    const martin = app.users.find((user) => user.name === 'Martín');
+    const byId = (id) => app.matches.find((match) => match.id === id) || { id };
+    const solo = await app.store.addMatch({
+      date: '2026-12-15', time: '21:00', capacity: 14, note: 'Solo Gustavo',
+      access: { solo: true, viewers: [me.uid], viewerNames: [{ uid: me.uid, name: me.name }], adders: [me.uid], adderNames: [{ uid: me.uid, name: me.name }], limits: [], createdByUid: me.uid },
+    }, me.name);
+    await app.store.addPlayer(byId(solo), { name: 'Pago Solo', phone: '11 6000-0125' }, me.name);
+    const onlyAdd = await app.store.addMatch({
+      date: '2026-12-16', time: '18:00', capacity: 14, note: 'Solo anota',
+      access: { solo: false, viewers: ['*'], adders: [me.uid], viewerNames: [], adderNames: [{ uid: martin.uid, name: 'Martín' }], limits: [], createdByUid: me.uid },
+    }, me.name);
+    await app.store.addPlayer(byId(onlyAdd), { name: 'Pago Anota', phone: '' }, me.name);
+    const listed = await app.store.addMatch({
+      date: '2026-12-17', time: '19:00', capacity: 14, note: 'Lista sola',
+      access: { viewers: [me.uid], adders: [me.uid], createdByUid: me.uid },
+    }, me.name);
+    await app.store.addPlayer(byId(listed), { name: 'Pago Lista', phone: '' }, me.name);
+    const shared = await app.store.addMatch({
+      date: '2026-12-18', time: '20:00', capacity: 14, note: 'Compartido',
+      access: { solo: false, viewers: [me.uid, martin.uid], adders: [me.uid, martin.uid], viewerNames: [], adderNames: [], limits: [], createdByUid: me.uid },
+    }, me.name);
+    await app.store.addPlayer(byId(shared), { name: 'Pago Juntos', phone: '' }, me.name);
+    const oldId = await app.store.addMatch({
+      date: '2026-12-19', time: '21:00', capacity: 14, note: 'Cobro viejo',
+      access: { solo: true, viewers: [me.uid], adders: [me.uid], limits: [], createdByUid: me.uid },
+    }, me.name);
+    const oldPlayer = await app.store.addPlayer(byId(oldId), { name: 'Pago Viejo', phone: '' }, me.name);
+    await app.store.setPayment(oldPlayer, { paid: true, split: true, cash: 2000, transfer: 0, pendingTransfer: 0, fromCredit: 0, cashTo: 'Martín' }, me.name, { log: false });
+    return { solo, onlyAdd, listed, shared, oldId, oldPlayer };
+  });
+  const payOptions = async () => page.$$eval('#pay-form select', (els) => els.map((el) => ({
+    name: el.name,
+    value: el.value,
+    options: [...el.options].map((opt) => opt.textContent),
+  })));
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, payAccess.solo);
+  await page.waitForSelector('.slot:has-text("Pago Solo") .pay-btn');
+  check('Un partido solo de Gustavo no ofrece compensar', await page.locator('#btn-comp, [data-comp-make]').count() === 0);
+  await page.click('.slot:has-text("Pago Solo") .pay-btn');
+  await page.waitForSelector('#pay-form [name=cashTo]');
+  const soloPay = await payOptions();
+  check('En el pago solo aparece Gustavo', soloPay.length === 3 && soloPay.every((row) => row.options.length === 1 && row.options[0] === 'Gustavo' && row.value === 'Gustavo'), JSON.stringify(soloPay));
+  const soloFit = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#pay-form .pay-money')].map((row) => {
+      const box = row.getBoundingClientRect();
+      return box.left >= -1 && box.right <= window.innerWidth + 1;
+    });
+    return { overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, rows };
+  });
+  check('En 390px el pago de un solo organizador no desborda', soloFit.overflow <= 1 && soloFit.rows.length === 4 && soloFit.rows.every(Boolean), JSON.stringify(soloFit));
+  await page.locator('#pay-form').screenshot({ path: '/opt/cursor/artifacts/screenshots/v125-pago-solo.png' });
+  await page.click('#pay-form [data-close]');
+  for (const [id, name] of [[payAccess.onlyAdd, 'Pago Anota'], [payAccess.listed, 'Pago Lista']]) {
+    await page.evaluate((matchId) => { location.hash = `#/partido/${encodeURIComponent(matchId)}`; }, id);
+    await page.waitForSelector(`.slot:has-text("${name}") .pay-btn`);
+    check(`${name} tampoco ofrece compensar`, await page.locator('#btn-comp, [data-comp-make]').count() === 0);
+    await page.click(`.slot:has-text("${name}") .pay-btn`);
+    await page.waitForSelector('#pay-form [name=cashTo]');
+    const rows = await payOptions();
+    check(`${name} solo lista a Gustavo`, rows.every((row) => row.options.length === 1 && row.options[0] === 'Gustavo'), JSON.stringify(rows));
+    await page.click('#pay-form [data-close]');
+  }
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, payAccess.shared);
+  await page.waitForSelector('.slot:has-text("Pago Juntos") .pay-btn');
+  check('Un partido compartido sigue ofreciendo compensar', await page.locator('#btn-comp').count() === 1);
+  await page.click('.slot:has-text("Pago Juntos") .pay-btn');
+  await page.waitForSelector('#pay-form [name=transferTo]');
+  const sharedPay = await payOptions();
+  check('El partido compartido lista a quien tiene acceso y no al resto', sharedPay.every((row) => row.options.join(',') === 'Gustavo,Martín'), JSON.stringify(sharedPay));
+  await page.click('#pay-form [data-close]');
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, payAccess.oldId);
+  await page.waitForSelector('.slot:has-text("Pago Viejo") .pay-btn');
+  await page.click('.slot:has-text("Pago Viejo") .pay-btn');
+  await page.waitForSelector('#pay-form [name=cashTo]');
+  const oldPay = await payOptions();
+  check('Un cobro ya guardado sigue elegido y no se reasigna', oldPay.find((row) => row.name === 'cashTo')?.value === 'Martín' && oldPay.find((row) => row.name === 'cashTo')?.options.join(',') === 'Gustavo,Martín', JSON.stringify(oldPay));
+  await page.click('#pay-form [data-close]');
+  const kept = await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).players[id].cashTo, payAccess.oldPlayer);
+  check('Cerrar el pago no cambia el cobro guardado', kept === 'Martín', kept);
 }
 
 const fresh = await ctx.newPage();
