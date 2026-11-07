@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
+import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -20,7 +20,7 @@ import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableL
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { addDays, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, toEpoch, weekdayDate } from '../js/dates.js';
+import { addDays, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -2457,6 +2457,27 @@ test('sin WhatsApp el perfil agrupa por plantel o por nombre', () => {
   assert.equal(ciro.paidTotal, 5000);
 });
 
+test('el recordatorio de la transferencia nombra ayer, el día o la fecha', () => {
+  const now = new Date('2026-10-19T13:00:00-03:00');
+  assert.equal(transferReminderWhen('2026-10-19', now), 'de hoy');
+  assert.equal(transferReminderWhen('2026-10-18', now), 'de ayer');
+  assert.equal(transferReminderWhen('2026-10-17', now), 'del sábado');
+  assert.equal(transferReminderWhen('2026-10-12', now), 'del lunes');
+  assert.equal(transferReminderWhen('2026-10-11', now), 'del 11/10');
+  assert.equal(transferReminderWhen('2026-10-20', now), 'del 20/10');
+  assert.equal(transferReminderWhen('2026-10-19T21:00', now), '');
+  const text = transferReminderText('Ana', 'de ayer');
+  assert.equal(text, 'Qué tal Ana? No te olvides de transferirme el partido de ayer porfa');
+  assert.equal(text.includes('http'), false);
+  assert.equal(text.includes('$'), false);
+  assert.equal(givenName({ name: 'Ani', rosterId: 'r1', shortName: 'Ani' }, [{ id: 'r1', name: 'Ana María López', shortName: 'Ani' }]), 'Ana');
+  assert.equal(givenName({ name: 'Luis Gómez' }, []), 'Luis');
+  assert.equal(givenName({ name: '' }, []), '');
+  const url = waSendUrl({ phone: '5491112345678', text: transferReminderText('Juan', transferReminderWhen('2026-10-11', now)) });
+  assert.equal(url.startsWith('https://wa.me/5491112345678?text='), true);
+  assert.equal(decodeURIComponent(url.split('text=')[1]), 'Qué tal Juan? No te olvides de transferirme el partido del 11/10 porfa');
+});
+
 test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   const now = Date.parse('2026-10-19T13:00:00-03:00');
   const matches = [
@@ -3417,7 +3438,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v123');
+  assert.equal(version, 'f7c-v124');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

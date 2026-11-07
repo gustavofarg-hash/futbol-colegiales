@@ -112,6 +112,31 @@ export function labelDate(iso) {
   return `${DIAS[weekdayOf(iso)]} ${pad(d)}/${pad(m)}`;
 }
 export function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
+/**
+ * Cómo nombrar el día en el recordatorio de una transferencia pendiente.
+ * Cuenta días de calendario en Buenos Aires, no horas.
+ * Hoy y ayer tienen frase propia. De 2 a 7 días atrás, el día de la semana.
+ * Más de 7, o una fecha futura, va con día y mes para no confundir.
+ */
+export function transferReminderWhen(iso, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
+  const today = todayISO(now);
+  const n = diffDays(today, iso);
+  if (n === 0) return 'de hoy';
+  if (n === -1) return 'de ayer';
+  if (n <= -2 && n >= -7) {
+    const day = DIAS[weekdayOf(iso)];
+    return day ? `del ${day}` : `del ${dayMonth(iso)}`;
+  }
+  const dm = dayMonth(iso);
+  return dm ? `del ${dm}` : '';
+}
+
+/** Texto del chat. No lleva importe ni link: la persona aprieta Enviar en WhatsApp. */
+export function transferReminderText(firstName, when) {
+  return `Qué tal ${firstName}? No te olvides de transferirme el partido ${when} porfa`;
+}
+
 /** "Hoy", "Mañana" o "" */
 export function relativeLabel(iso, now = new Date()) {
   const n = diffDays(todayISO(now), iso);

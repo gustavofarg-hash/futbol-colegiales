@@ -131,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v123');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v124');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -1480,6 +1480,22 @@ check('La ruta vieja de la solapa abre la lista', await page.isVisible('#roster-
 await page.click('#tab-proximos');
 await page.click('.match-card[data-date="2026-10-19"]');
 await page.click('.slot:has-text("Ana Hoy") .pay-btn');
+await page.waitForSelector('#pay-receive-row');
+const anaWhy = (await page.locator('#pay-remind-why').innerText()).trim();
+check('Sin el WhatsApp de Ana el recordatorio no abre el chat',
+  await page.locator('#btn-pending-remind').isDisabled() && (await page.getAttribute('#btn-pending-remind', 'href')) == null && anaWhy === 'El WhatsApp de este jugador es privado',
+  anaWhy);
+const anaRemindFit = await page.evaluate(() => {
+  const row = document.querySelector('#pay-receive-row').getBoundingClientRect();
+  const remind = document.querySelector('#btn-pending-remind').getBoundingClientRect();
+  const receive = document.querySelector('#btn-receive-pending').getBoundingClientRect();
+  return {
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    inside: row.right <= window.innerWidth + 1 && row.left >= -1,
+    right: remind.left >= receive.right - 1,
+  };
+});
+check('En 390px el recordatorio queda a la derecha sin desbordar', anaRemindFit.overflow <= 1 && anaRemindFit.inside && anaRemindFit.right, JSON.stringify(anaRemindFit));
 await page.click('#btn-receive-pending');
 await page.waitForFunction(() => {
   const row = [...document.querySelectorAll('.slot')].find((el) => el.innerText.includes('Ana Hoy'));
@@ -1488,6 +1504,10 @@ await page.waitForFunction(() => {
 check('Marcar la transferencia la suma a lo cobrado', (await page.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $6.500'));
 const anaStored = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Ana Hoy'));
 check('Quedó como transferencia cobrada por Gustavo', anaStored.pendingTransfer == null && anaStored.transfer === 4500 && anaStored.cash === 2000 && anaStored.amount === 6500 && anaStored.transferReceivedBy === 'Gustavo' && anaStored.paid === true);
+await page.click('.slot:has-text("Ana Hoy") .pay-btn');
+await page.waitForSelector('#pay-form');
+check('Sin transfiere después no hay recordatorio', await page.locator('#btn-pending-remind').count() === 0 && await page.locator('#btn-receive-pending').count() === 0);
+await page.click('#pay-form [data-close]');
 
 // Anotar a un jugador en otro partido desde su perfil
 await page.evaluate(() => { location.hash = '#/jugadores'; });
@@ -6016,6 +6036,63 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('#slots .name:text-is("Parcial Escritorio")');
   check('En escritorio Agregar anota al elegido una sola vez', await page.locator('#slots .name:text-is("Parcial Escritorio")').count() === 1);
   await page.setViewportSize({ width: 390, height: 844 });
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cases = [
+    ['2026-10-18', 'Ayer Gómez', '11 6000-0001', '', 'de ayer', 'Ayer'],
+    ['2026-10-12', 'Semana Gómez', '11 6000-0007', '', 'del lunes', 'Semana'],
+    ['2026-10-11', 'Ocho Gómez', '11 6000-0008', '', 'del 11/10', 'Ocho'],
+    ['2026-10-20', 'Futu Gómez', '11 6000-0020', 'Futuro Real Gómez', 'del 20/10', 'Futuro'],
+  ];
+  for (const [date, name, phone, rosterName, when, first] of cases) {
+    const matchId = await page.evaluate(async ({ date, name, phone, rosterName }) => {
+      const app = window.__app;
+      let rosterId = '';
+      if (rosterName) rosterId = await app.store.addRoster({ name: rosterName, phone }, app.who);
+      const id = await app.store.addMatch({ date, time: '21:00', capacity: 14, note: name }, app.who);
+      const playerId = await app.store.addPlayer({ id }, { name, phone, rosterId }, app.who);
+      await app.store.setPayment(playerId, { paid: true, split: true, cash: 0, transfer: 0, pendingTransfer: 1500, fromCredit: 0, pendingTo: app.who }, app.who, { log: false });
+      return id;
+    }, { date, name, phone, rosterName });
+    await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+    await page.waitForSelector(`.slot:has-text("${name}") .pay-btn`);
+    await page.click(`.slot:has-text("${name}") .pay-btn`);
+    await page.waitForSelector('#btn-pending-remind');
+    const href = await page.getAttribute('#btn-pending-remind', 'href');
+    const text = decodeURIComponent(String(href || '').split('text=')[1] || '');
+    check(`El recordatorio de ${when} dice el texto exacto`, text === `Qué tal ${first}? No te olvides de transferirme el partido ${when} porfa` && String(href).startsWith('https://wa.me/'), text);
+    if (when === 'de ayer') {
+      const fit = await page.evaluate(() => {
+        const remind = document.querySelector('#btn-pending-remind');
+        const span = remind.querySelector('span');
+        const row = document.querySelector('#pay-receive-row').getBoundingClientRect();
+        return {
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          inside: row.right <= window.innerWidth + 1,
+          text: span.scrollWidth <= remind.clientWidth + 2,
+        };
+      });
+      check('El texto del recordatorio entra en el botón', fit.overflow <= 1 && fit.inside && fit.text, JSON.stringify(fit));
+      await page.locator('#pay-receive-row').screenshot({ path: '/opt/cursor/artifacts/screenshots/v124-recordatorio.png' });
+    }
+    await page.click('#pay-form [data-close]');
+  }
+  const silentId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-10-16', time: '21:00', capacity: 14, note: 'Sin número' }, app.who);
+    const playerId = await app.store.addPlayer({ id }, { name: 'Sin Tel Gómez' }, app.who);
+    await app.store.setPayment(playerId, { paid: true, split: true, cash: 0, transfer: 0, pendingTransfer: 800, fromCredit: 0, pendingTo: app.who }, app.who, { log: false });
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, silentId);
+  await page.waitForSelector('.slot:has-text("Sin Tel Gómez") .pay-btn');
+  await page.click('.slot:has-text("Sin Tel Gómez") .pay-btn');
+  await page.waitForSelector('#btn-pending-remind');
+  const silentWhy = (await page.locator('#pay-remind-why').innerText()).trim();
+  check('Sin teléfono el recordatorio queda deshabilitado', await page.locator('#btn-pending-remind').isDisabled() && (await page.locator('#btn-pending-remind').getAttribute('href')) == null && silentWhy === 'Sin número', silentWhy);
+  await page.click('#pay-form [data-close]');
 }
 
 const fresh = await ctx.newPage();

@@ -328,6 +328,20 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
   color: var(--warn-text); background: var(--warn-bg); border-radius: 99px; padding: 1px 8px;
   min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.pay-receive-row {
+  display: flex; align-items: stretch; gap: 8px; margin: 8px 0 12px; min-width: 0;
+}
+.pay-receive-row .btn {
+  white-space: normal; line-height: 1.2; height: auto; min-height: 44px; min-width: 0;
+}
+#btn-receive-pending { flex: 1 1 0; }
+.pay-remind {
+  flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  color: var(--wa); text-decoration: none; padding: 8px 10px;
+}
+.pay-remind span { min-width: 0; overflow-wrap: anywhere; text-align: center; }
+.pay-remind svg { width: 18px; height: 18px; flex: none; fill: currentColor; stroke: none; }
+.pay-remind:disabled { opacity: .55; }
 .pay-recorded { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 6px; }
 .pay-recorded li { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pay-recorded li span { flex: 1 1 auto; min-width: 0; font-size: 0.875rem; }

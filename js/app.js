@@ -5,7 +5,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch,
+  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
@@ -19,7 +19,7 @@ import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { activityNoticeText, activityNotices } from './notify.js';
-import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterPhone } from './roster.js';
+import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v123';
+const APP_VERSION = 'f7c-v124';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -4936,6 +4936,23 @@ function snapshotAfterFallback(player, input) {
   return payBatchSnapshot({ ...player, ...rec.patch, id: player.id });
 }
 
+function pendingTransferReminderRow(m, p, pending) {
+  const view = withAgendaPhone(p);
+  const phone = String(view?.phone || '').trim();
+  const hidden = phoneHidden(view);
+  const why = hidden ? PRIVATE_WA_TEXT : 'Sin número';
+  const text = transferReminderText(givenName(p, app.roster), transferReminderWhen(m?.date));
+  const remind = phone && !hidden
+    ? `<a class="btn pay-remind" id="btn-pending-remind" href="${esc(waHref(phone, text))}" target="_blank" rel="noopener">${ICON.wa}<span>Enviar recordatorio</span></a>`
+    : `<button type="button" class="btn pay-remind" id="btn-pending-remind" disabled>${ICON.wa}<span>Enviar recordatorio</span></button>`;
+  return `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(pending))}</p>
+      <div class="pay-receive-row" id="pay-receive-row">
+        <button type="button" class="btn" id="btn-receive-pending">Marcar transferencia como cobrada</button>
+        ${remind}
+      </div>
+      ${phone && !hidden ? '' : `<p class="hint" id="pay-remind-why">${esc(why)}</p>`}`;
+}
+
 function openPaymentForm(m, p, opts = {}) {
   if (!p || !canAdd(m, actor().uid)) return;
   const back = typeof opts.returnTo === 'function' ? opts.returnTo : null;
@@ -4982,8 +4999,7 @@ function openPaymentForm(m, p, opts = {}) {
       <p class="hint">${esc(p.name)} · ${esc(fmtWhen(m))}</p>
       ${recordedPaymentList(p, 'pay-recorded')}
       <div id="pay-promo">${promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : ''}</div>
-      ${parts.pending > 0 ? `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(parts.pending))}</p>
-      <button type="button" class="btn block" id="btn-receive-pending">Marcar transferencia como cobrada</button>` : ''}
+      ${parts.pending > 0 ? pendingTransferReminderRow(m, p, parts.pending) : ''}
       ${receivedNote}
       <label class="checkline" id="free-play-line"><input type="checkbox" id="pay-free" name="freePlay"${isFreePlay(p) ? ' checked' : ''}><span>Juega gratis</span></label>
       <div id="pay-details">
