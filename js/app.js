@@ -29,7 +29,7 @@ import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
-import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, limitFor, limitMessage, publicAccess } from './access.js';
+import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, limitFor, limitMessage, matchStaff, payeeNames, publicAccess } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v124';
+const APP_VERSION = 'f7c-v125';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -631,17 +631,15 @@ function loggedInStaffName() {
   if (byEmail?.name) return String(byEmail.name).trim();
   return String(user?.name || app.who || '').trim();
 }
-function payStaffNames(extra = []) {
-  const names = [];
-  const push = (raw) => {
-    const name = String(raw || '').trim();
-    if (!name || names.some((item) => sameOrganizer(item, name))) return;
-    names.push(name);
-  };
-  for (const user of staffUsers(app.users)) push(user.name);
-  for (const name of extra) push(name);
+function payStaffNames(match, extra = []) {
+  const staff = staffUsers(app.users);
+  const names = payeeNames(match, staff, extra);
   if (names.length) return names;
-  return payOrganizerNames(extra);
+  if (!staff.length && matchStaff(match, [{ uid: 'otro', name: 'Otro' }]).length) return payOrganizerNames(extra);
+  const mine = loggedInStaffName();
+  if (!mine) return [];
+  const withMe = payeeNames(match, [{ uid: actor().uid, name: mine }], extra);
+  return withMe.length ? withMe : [mine];
 }
 function livePrices() {
   return normalizePrices(app.prices);
@@ -1411,8 +1409,18 @@ function dayBundle(date) {
 function savedCompensation(date) {
   return (app.compensations || []).find((row) => row.date === date || row.id === date) || null;
 }
+function showMatchCompensation(match) {
+  if (!canAdd(match, actor().uid)) return false;
+  const staff = staffUsers(app.users);
+  if (!staff.length) return true;
+  return matchStaff(match, staff).length > 1;
+}
 function canSeeDayCompensation(date) {
-  return dayMatches(date).some((match) => canAdd(match, actor().uid));
+  const matches = dayMatches(date);
+  if (!matches.some((match) => canAdd(match, actor().uid))) return false;
+  const staff = staffUsers(app.users);
+  if (!staff.length) return true;
+  return compensationApplies(matches, staff);
 }
 function compensationDoc(date, body) {
   return {
@@ -1846,7 +1854,7 @@ function renderMatch(id) {
     ${waitingSection(m, everyone.length >= cap, readOnly)}
     ${noPlaySection(m, readOnly)}
     ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
-    ${canAdd(m, who.uid) ? matchCompensationHtml(m.date) : ''}
+    ${showMatchCompensation(m) ? matchCompensationHtml(m.date) : ''}
     <div class="actionbar"><div class="actionbar-inner match-actions">
       <button class="btn share-btn" id="btn-share" aria-label="Compartir lista">${ICON.share}</button>
       ${readOnly ? '' : `<button class="btn add-choice" id="btn-add-wait" ${block ? 'disabled' : ''}>${block ? esc(block) : 'Anotar en lista de espera'}</button>
@@ -5046,7 +5054,7 @@ function openPaymentForm(m, p, opts = {}) {
   const payBack = $('#pay-back');
   if (payBack && back) payBack.onclick = () => back();
   const paintSelect = (select, selected) => {
-    const names = payStaffNames([selected, ...paymentShares(p).map((share) => share.name)]);
+    const names = payStaffNames(m, [selected, ...paymentShares(p).map((share) => share.name)]);
     const current = names.find((name) => sameOrganizer(name, selected)) || names[0] || '';
     select.innerHTML = names.map((name) => `<option value="${esc(name)}"${sameOrganizer(name, current) ? ' selected' : ''}>${esc(name)}</option>`).join('');
     if (current) select.value = names.find((name) => sameOrganizer(name, current)) || names[0];

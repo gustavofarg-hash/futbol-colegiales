@@ -167,3 +167,37 @@ export function playerAccess(match) {
   const adders = Array.isArray(match?.adders) && match.adders.length ? match.adders : [EVERYONE];
   return { viewers, adders };
 }
+
+/**
+ * Quién organiza este partido: los que pueden anotar, por uid.
+ * Un partido abierto incluye a todos los activos. Haberlo creado no alcanza
+ * si otro uid está en adders, y un nombre suelto no da acceso.
+ */
+export function matchStaff(match, staff) {
+  const people = [];
+  for (const user of staff || []) {
+    if (user?.active === false) continue;
+    const uid = String(user?.uid || '').trim();
+    const name = String(user?.name || '').trim();
+    if (!uid || !name || !canAdd(match, uid)) continue;
+    if (people.some((item) => item.uid === uid || sameOrganizer(item.name, name))) continue;
+    people.push({ uid, name });
+  }
+  return people;
+}
+
+/** Nombres para el pago. Quien ya cobró y no organiza sigue en la lista. */
+export function payeeNames(match, staff, extra = []) {
+  const names = matchStaff(match, staff).map((user) => user.name);
+  for (const raw of extra) {
+    const name = String(raw || '').trim();
+    if (!name || names.some((have) => sameOrganizer(have, name))) continue;
+    names.push(name);
+  }
+  return names;
+}
+
+/** Hay con quién compensar si algún partido del día lo organizan dos o más. */
+export function compensationApplies(matches, staff) {
+  return (matches || []).some((match) => match?.cancelled !== true && matchStaff(match, staff).length > 1);
+}

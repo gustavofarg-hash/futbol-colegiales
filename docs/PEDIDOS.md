@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v125** (rama `cursor/pago-solo-acceso-c20d`, 07/11/2026): si el partido lo organiza solo quien está logueado, el pago lista únicamente a ese organizador y no aparece «Hacer cálculo de compensación». En un partido compartido siguen los que tienen acceso y el cálculo. Un cobro ya guardado no se reasigna. `firestore.rules` no cambió.
 **Actualizada para f7c-v124** (rama `cursor/recordatorio-transferencia-c20d`, 07/11/2026): en el pago, si hay «Transfiere después», a la derecha de «Marcar transferencia como cobrada» está «Enviar recordatorio». Abre el WhatsApp con el texto listo y no lo manda. `firestore.rules` no cambió.
 **Actualizada para f7c-v123** (rama `cursor/nivel-cursor-c20d`, 07/11/2026): en Nivel de juego, el + y el − miran el cursor. A la izquierda de la coma suman o restan 1 y dejan el decimal. A la derecha suman o restan 0,1. Sigue de 1 a 10, con un solo decimal. `firestore.rules` no cambió.
 **Actualizada para f7c-v122** (rama `cursor/elegir-guardado-c20d`, 06/11/2026): en Agregar jugador, un toque en un resultado de Buscar guardados lo deja elegido. Agregar usa esa elección, aunque el teclado se cierre o la lista se vuelva a dibujar. `firestore.rules` no cambió.
@@ -68,7 +69,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **unit 118/118 OK** (`node --test tests/unit.test.mjs`) y **e2e 880/880 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v124 revisa el texto exacto de ayer, de 7 días («del lunes»), de 8 días («del 11/10») y de una fecha futura, el nombre de la ficha, el link de WhatsApp, el pendiente y el que ya no lo está, y que el botón entra en 390px.
+Pruebas sobre esta copia: **unit 119/119 OK** (`node --test tests/unit.test.mjs`) y **e2e 891/891 OK** (`node tests/e2e.mjs`, modo demo, 390×844). El e2e de v125 revisa un partido solo de Gustavo, otro con adders nada más, otro con la lista de uids, uno compartido con Martín (sin el resto), el botón de compensación y un cobro viejo que no se reasigna, en 390px.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 
@@ -78,6 +79,7 @@ Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reempla
 
 | Fecha | Pedido | Estado | Evidencia |
 |---|---|---|---|
+| 07/11 (v125) | **Pago y compensación solo con quien organiza** | ✅ | Los desplegables de efectivo, transferencia y transfiere después salen de `matchStaff`: quien puede anotar en ese partido. Solo yo, adders de uno o viewers de uno dejan únicamente al logueado y ocultan el cálculo. Un partido con Gustavo y Martín los lista a los dos y deja el botón. Rita, si no está en adders, no aparece. Un `cashTo` ya guardado sigue elegido y no se reescribe al cerrar. e2e en 390px. `firestore.rules` no cambió. |
 | 07/11 (v124) | **Recordatorio de transferencia pendiente** | ✅ | En la hoja de pago, si hay transfiere después, `#btn-pending-remind` queda a la derecha de `#btn-receive-pending`. El texto es «Qué tal {nombre}? No te olvides de transferirme el partido {de hoy / de ayer / del lunes / del DD/MM} porfa». El nombre sale de la ficha. Sin teléfono, el botón queda deshabilitado. No cambia el pago. e2e de hoy, ayer, 7 días, 8 días y una fecha futura. `firestore.rules` no cambió. |
 | 07/11 (v123) | **Nivel: +/− según el cursor** | ✅ | `levelStepSide` y `stepLevel` en `profile.js`. El cursor a la izquierda de la coma mueve el entero; a la derecha, 0,1. El lado se recuerda si el botón saca el foco. e2e en 390px y en escritorio, con +/− repetidos y topes 1 y 10. `firestore.rules` no cambió. |
 | 06/11 (v122) | **Elegir un guardado y Agregar** | ✅ | El toque en `#roster-hits` elige al jugador (`pointerdown`, antes de que el blur mueva la hoja) y completa el nombre. Agregar manda esa ficha. e2e en 390px y en escritorio: búsqueda parcial, un toque, blur, redibujo y Agregar. `firestore.rules` no cambió. |
