@@ -97,6 +97,15 @@ export function displayName(player, roster) {
   return nickOf(player, roster) || player?.name || '';
 }
 
+/** Nombre de pila: el primer término de la ficha, o el del partido si no hay ficha. */
+export function givenName(player, roster) {
+  const list = roster || [];
+  const id = String(player?.rosterId || '').trim();
+  const person = id ? list.find((item) => item?.id === id) : null;
+  const source = String(person?.name || player?.name || '').trim().replace(/\s+/g, ' ');
+  return source.split(' ').filter(Boolean)[0] || '';
+}
+
 /** El nombre completo, solo si en la lista se ve el apodo en su lugar. */
 export function fullNameBehind(player, roster) {
   const name = String(player?.name || '').trim();
