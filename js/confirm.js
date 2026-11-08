@@ -4,6 +4,7 @@
 import { VENUE, firebaseConfig } from '../config.js';
 import { isFirebaseConfigured, DEMO_STORAGE_KEY } from './store.js';
 import { capitalize, labelDate } from './dates.js';
+import { givenName } from './roster.js';
 import { confirmationAllowed } from './reminders.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -101,6 +102,9 @@ function saveDemo(answer) {
   return true;
 }
 
+function publicName(player) {
+  return givenName(player);
+}
 function render(state) {
   const root = $('#confirm');
   const { match, player, error } = state;
@@ -113,7 +117,7 @@ function render(state) {
     const reason = String(match.notes || '').trim();
     root.innerHTML = `
       <section class="detail-head confirm-card">
-        <h1>${esc(player.name)}</h1>
+        <h1>${esc(publicName(player))}</h1>
         <div class="when">${esc(when)}</div>
         <div class="note">${esc(match.venueName || VENUE)}</div>
         <p class="match-cancelled" id="confirm-cancelled">Este partido se canceló.</p>
@@ -130,7 +134,7 @@ function render(state) {
       : '';
   root.innerHTML = `
     <section class="detail-head confirm-card">
-      <h1>${esc(player.name)}</h1>
+      <h1>${esc(publicName(player))}</h1>
       <div class="when">${esc(when)}</div>
       <div class="note">${esc(match.venueName || VENUE)}${match.note ? ` · ${esc(match.note)}` : ''}</div>
       <p class="hint">¿Jugás este partido?</p>

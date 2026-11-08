@@ -1,7 +1,8 @@
 // Recordatorios y links de confirmación. Puro: lo usan la app, la página
 // confirmar.html y las pruebas. No abre WhatsApp ni escribe en Firestore.
-import { labelDate, toEpoch } from './dates.js';
+import { attendanceWhen, clockTime, labelDate, toEpoch } from './dates.js';
 import { sameOrganizer } from './organizers.js';
+import { givenName } from './roster.js';
 import { playerAccess } from './access.js';
 import { waSendUrl } from './phone.js';
 import { isShortCode, shortConfirmUrl } from './short.js';
@@ -27,13 +28,24 @@ export function confirmPageUrl({ matchId, playerId, token, origin = CONFIRM_ORIG
   return url.href;
 }
 
-export function reminderMessage({ player, match, venue, confirmUrl }) {
-  const first = String(player?.name || '').trim().split(/\s+/)[0] || 'hola';
-  const when = `${labelDate(match.date)} a las ${match.time} hs`;
-  const note = match.note ? ` (${match.note})` : '';
-  const court = courtLabel(match);
-  const place = court ? `${venue} (${court})` : venue;
-  return `¡Hola ${first}! Te escribo por el ${footballPhrase(match)} en ${place} el ${when}${note}. ¿Confirmás que jugás? Respondé en este link: ${confirmUrl}`;
+/** WhatsApp para confirmar asistencia. El link es el de esa persona, corto o largo. */
+export function attendanceMessage({ player, roster, when, time, confirmUrl }) {
+  const first = givenName(player, roster);
+  const hello = first ? `¡Hola ${first}!` : '¡Hola!';
+  const slot = [String(when || '').trim(), clockTime(time)].filter(Boolean).join(' ');
+  const ask = slot ? `¿Confirmás que jugás ${slot}?` : '¿Confirmás que jugás?';
+  const link = String(confirmUrl || '').trim();
+  return link ? `${hello} ${ask}\n\nRespondé en este link: ${link}` : `${hello} ${ask}`;
+}
+
+export function reminderMessage({ player, match, confirmUrl, roster, now }) {
+  return attendanceMessage({
+    player,
+    roster,
+    when: attendanceWhen(match?.date, now),
+    time: match?.time,
+    confirmUrl,
+  });
 }
 
 export function waReminderUrl(phone, text, opts = {}) {
@@ -239,7 +251,7 @@ export function cancelLinks({ match, players, venue, choice, android } = {}) {
  * Omite a quien no tenga teléfono o confirmToken: el token tiene que estar ya
  * guardado en el jugador (se crea al anotarlo).
  */
-export function reminderLinks({ match, players, venue, origin, choice, android } = {}) {
+export function reminderLinks({ match, players, venue, origin, choice, android, roster, now } = {}) {
   const out = [];
   if (!match?.id) return out;
   for (const p of players || []) {
@@ -250,7 +262,7 @@ export function reminderLinks({ match, players, venue, origin, choice, android }
     const confirmUrl = isShortCode(p.shortCode)
       ? shortConfirmUrl(p.shortCode, origin)
       : confirmPageUrl({ matchId: match.id, playerId: p.id, token, origin });
-    const text = reminderMessage({ player: p, match, venue: venue || 'Polideportivo Colegiales', confirmUrl });
+    const text = reminderMessage({ player: p, match, confirmUrl, roster, now });
     out.push({ id: p.id, name: p.name, phone, text, waUrl: waSendUrl({ phone, text, choice, android }), confirmUrl });
   }
   return out;

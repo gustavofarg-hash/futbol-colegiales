@@ -20,10 +20,10 @@ import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableL
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
-import { addDays, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
+import { addDays, attendanceWhen, clockTime, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
-  cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
+  attendanceMessage, cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderAudience, reminderLinks, reminderMessage,
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
@@ -1064,12 +1064,12 @@ test('recordatorio: token, link y mensaje', () => {
     match: { date: '2026-10-22', time: '21:00', note: 'Cancha 2' },
     venue: 'Polideportivo Colegiales',
     confirmUrl: url,
+    now: new Date('2026-10-19T13:00:00-03:00'),
   });
-  assert.match(msg, /^¡Hola Juan!/);
-  assert.match(msg, /jueves 22\/10 a las 21:00 hs/);
-  assert.match(msg, /Polideportivo Colegiales/);
-  assert.match(msg, /\(Cancha 2\)/);
-  assert.ok(msg.includes(url));
+  assert.equal(msg, `¡Hola Juan! ¿Confirmás que jugás jueves 22/10 21:00?\n\nRespondé en este link: ${url}`);
+  assert.equal(msg.includes('hs'), false);
+  assert.equal(msg.includes('Pérez'), false);
+  assert.equal(msg.includes('Polideportivo'), false);
   assert.ok(waReminderUrl('5491112345678', msg).startsWith('https://wa.me/5491112345678?text='));
   const forced = waReminderUrl('5491112345678', msg, { choice: 'whatsapp', android: true });
   assert.equal(forced.startsWith('https://wa.me/5491112345678?text='), true);
@@ -1079,6 +1079,39 @@ test('recordatorio: token, link y mensaje', () => {
   assert.equal(confirmationAllowed(player, '2026-10-22_2100', 'otro-token-largo-falso'), false);
   assert.equal(confirmationAllowed(player, 'otro-partido', a), false);
   assert.equal(confirmSummary([{ confirmed: 'si' }, { confirmed: 'no' }, { name: 'x' }]).text, 'Confirmados: 1 · No juegan: 1 · Sin respuesta: 1');
+});
+
+test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
+  const roster = [{ id: 'r1', name: 'Ana María López', shortName: 'Ani' }];
+  const player = { name: 'Ani', rosterId: 'r1', shortName: 'Ani' };
+  const before = new Date('2026-10-19T23:30:00-03:00');
+  const after = new Date('2026-10-20T00:30:00-03:00');
+  assert.equal(clockTime('17:30'), '17:30');
+  assert.equal(clockTime('9:05'), '09:05');
+  assert.equal(clockTime('21:00hs'), '');
+  assert.equal(attendanceWhen('2026-10-19', before), 'HOY');
+  assert.equal(attendanceWhen('2026-10-20', before), 'Mañana');
+  assert.equal(attendanceWhen('2026-10-22', before), 'jueves 22/10');
+  assert.equal(attendanceWhen('2026-10-19', after), 'lunes 19/10');
+  assert.equal(attendanceWhen('2026-10-20', after), 'HOY');
+  assert.equal(attendanceWhen('2026-10-21', after), 'Mañana');
+  const url = 'https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=Ab3x9Zk2';
+  const today = attendanceMessage({ player, roster, when: attendanceWhen('2026-10-19', before), time: '17:30', confirmUrl: url });
+  assert.equal(today, `¡Hola Ana! ¿Confirmás que jugás HOY 17:30?\n\nRespondé en este link: ${url}`);
+  assert.equal(today.includes('Ani'), false);
+  assert.equal(today.includes('López'), false);
+  assert.equal(today.includes('Ufm0uQ4'), false);
+  const rolled = attendanceMessage({ player, roster, when: attendanceWhen('2026-10-19', after), time: '17:30', confirmUrl: url });
+  assert.equal(rolled, `¡Hola Ana! ¿Confirmás que jugás lunes 19/10 17:30?\n\nRespondé en este link: ${url}`);
+  const named = reminderMessage({
+    player, roster, now: before, confirmUrl: url,
+    match: { date: '2026-10-19', time: '17:30', note: 'Cancha 2' },
+  });
+  assert.equal(named, today);
+  const house = 'https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=Ab3x9Zk2';
+  const swapped = named.split(house).join('https://spoo.me/ZXwB0uF');
+  assert.equal(swapped.endsWith('https://spoo.me/ZXwB0uF'), true);
+  assert.equal(swapped.includes(house), false);
 });
 
 test('aviso al subir de la espera y lugar reservado', () => {
@@ -1156,7 +1189,7 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(needsReminderBanner(match, players.map((p) => (p.id === 'p1' ? { ...p, reminderSentAt: 1 } : p)), start - 60_000), true);
   assert.equal(needsReminderBanner(match, [{ name: 'Nadie', phone: '' }], start - 60_000), false);
   assert.equal(needsReminderBanner(match, [{ name: 'Espera', phone: '5491199999999', waiting: true, confirmToken: token }], start - 60_000), false);
-  const links = reminderLinks({ match, players, venue: 'Polideportivo Colegiales' });
+  const links = reminderLinks({ match, players, venue: 'Polideportivo Colegiales', now: new Date('2026-11-08T12:00:00-03:00') });
   assert.equal(links.length, 1);
   assert.equal(links[0].name, 'Juan Pérez');
   const withWait = reminderLinks({
@@ -1187,9 +1220,8 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   assert.equal(businessLinks[0].waUrl.includes('package='), false);
   assert.equal(businessLinks[0].phone, '5491112345678');
   const text = decodeURIComponent(links[0].waUrl.split('text=')[1]);
-  assert.match(text, /^¡Hola Juan!/);
-  assert.match(text, /lunes 19\/10 a las 15:00 hs \(Cancha 2\)/);
-  assert.ok(text.includes(links[0].confirmUrl));
+  assert.equal(text, `¡Hola Juan! ¿Confirmás que jugás lunes 19/10 15:00?\n\nRespondé en este link: ${links[0].confirmUrl}`);
+  assert.equal(text.includes('Cancha 2'), false);
   assert.deepEqual(matchesCrossingReminderWindow([match], start - twoH - 1000, start - twoH + 1000).map((m) => m.id), ['2026-10-19_1500']);
   assert.equal(matchesCrossingReminderWindow([match], start - 1000, start - 500).length, 0);
   const mixed = [
@@ -3487,7 +3519,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v126');
+  assert.equal(version, 'f7c-v127');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

@@ -131,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v126');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v127');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -418,17 +418,21 @@ const juanLink = await page.evaluate((code) => {
   const found = Object.entries(db.players).find(([, p]) => p.name === 'Juan Pérez');
   return { id: found[0], player: found[1], link: db.links?.[code] || null };
 }, juanShort);
+const juanLinkUrl = juanHrefText.split('Respondé en este link: ')[1] || '';
 check('Link wa.me Juan correcto',
   hrefs[0].startsWith('https://wa.me/5491112345678?text=')
-  && juanHrefText.includes('¡Hola Juan!')
-  && juanHrefText.includes('¿Confirmás?')
+  && juanHrefText === `¡Hola Juan! ¿Confirmás que jugás jueves 22/10 21:00?\n\nRespondé en este link: ${juanLinkUrl}`
+  && juanLinkUrl.includes(`/c/?k=${juanShort}`)
+  && juanHrefText.includes('hs') === false
+  && juanHrefText.includes('Pérez') === false
+  && juanHrefText.includes('Ufm0uQ4') === false
   && juanShort.length === 8
   && juanLink.player.shortCode === juanShort
   && juanLink.link?.m === juanLink.player.matchId
   && juanLink.link?.p === juanLink.id
   && juanLink.link?.t === juanLink.player.confirmToken
   && juanHrefText.includes(juanLink.player.confirmToken) === false,
-  juanHrefText.slice(0, 180));
+  juanHrefText.slice(0, 220));
 players.forEach(([n, , wa], i) => check(`Número normalizado ${n} → ${wa}`, hrefs[i]?.startsWith(`https://wa.me/${wa}?text=`)));
 check('Cada jugador muestra "Agregó: Gustavo"', (await page.$$('.tag.g')).length === 3);
 check('Juan se anotó con Gustavo', juanLink.player.signedUpWith === 'gustavo' && juanLink.player.signedUpWithName === 'Gustavo' && (await page.textContent('.slot:has-text("Juan Pérez")')).includes('Se anotó con: Gustavo'));
@@ -453,10 +457,13 @@ const remindLink = page.locator('#remind-list .remind-row', { hasText: 'Juan Pé
 const remindHref = await remindLink.getAttribute('href');
 const remindText = decodeURIComponent(remindHref.split('text=')[1]);
 check('Recordatorio abre wa.me de Juan', remindHref.startsWith('https://wa.me/5491112345678?text='), remindHref.slice(0, 80));
-check('El mensaje saluda, da día, hora, lugar, nota y link corto',
-  remindText.includes('¡Hola Juan!') && remindText.includes('jueves 22/10 a las 21:00 hs')
-  && remindText.includes('Polideportivo Colegiales') && remindText.includes('(Cancha 2)')
-  && remindText.includes('/c/?k='));
+const remindUrl = remindText.split('Respondé en este link: ')[1] || '';
+check('El mensaje saluda con el nombre de pila, el día y el link corto',
+  remindText === `¡Hola Juan! ¿Confirmás que jugás jueves 22/10 21:00?\n\nRespondé en este link: ${remindUrl}`
+  && remindUrl.includes(`/c/?k=${juanShort}`)
+  && remindText.includes('hs') === false
+  && remindText.includes('Pérez') === false
+  && remindText.includes('Ufm0uQ4') === false);
 const [popup] = await Promise.all([page.waitForEvent('popup'), remindLink.click()]);
 await popup.close();
 await page.waitForFunction(() => [...document.querySelectorAll('#remind-list .remind-row')].some((r) => r.textContent.includes('Juan') && r.textContent.includes('Enviado')));
@@ -480,7 +487,7 @@ await bad.close();
 const shortPage = await ctx.newPage();
 await shortPage.goto(`${BASE}c/?k=${encodeURIComponent(juan.shortCode)}`);
 await shortPage.waitForSelector('#btn-si');
-check('El link corto abre la misma confirmación', (await shortPage.locator('body').innerText()).includes('Juan Pérez') && shortPage.url().includes('confirmar.html') && shortPage.url().includes(`t=${encodeURIComponent(juan.confirmToken)}`));
+check('El link corto abre la misma confirmación', (await shortPage.locator('h1').innerText()) === 'Juan' && !(await shortPage.locator('body').innerText()).includes('Pérez') && shortPage.url().includes('confirmar.html') && shortPage.url().includes(`t=${encodeURIComponent(juan.confirmToken)}`));
 const badShort = await ctx.newPage();
 await badShort.goto(`${BASE}c/?k=zzzzzzzz`);
 await badShort.waitForSelector('text=Este link no es válido');
@@ -495,7 +502,7 @@ check('confirmar.html no pide ¿Quién sos?', (await confirmPage.locator('text=�
 const confirmBody = await confirmPage.locator('body').innerText();
 const confirmBare = await confirmPage.evaluate(() => !document.querySelector('.topbar') && !document.querySelector('#tabbar') && !document.querySelector('#btn-settings') && !document.querySelector('#btn-text-smaller') && !document.querySelector('#btn-text-bigger'));
 check('La confirmación no tiene menús', confirmBare && confirmBody.includes('Sí, juego') && confirmBody.includes('No juego') && !confirmBody.includes('Próximos partidos') && !confirmBody.includes('Ajustes'));
-check('La página no muestra teléfonos ni a los otros', !confirmBody.includes('549') && !confirmBody.includes('1234') && !confirmBody.includes('Pedro') && confirmBody.includes('Juan Pérez') && confirmBody.includes('Cancha 2'), confirmBody.replace(/\s+/g, ' ').slice(0, 180));
+check('La página no muestra teléfonos ni a los otros', !confirmBody.includes('549') && !confirmBody.includes('1234') && !confirmBody.includes('Pedro') && !confirmBody.includes('Pérez') && (await confirmPage.locator('h1').innerText()) === 'Juan' && confirmBody.includes('Cancha 2') && confirmBody.includes('Jueves 22/10') && confirmBody.includes('21:00'), confirmBody.replace(/\s+/g, ' ').slice(0, 180));
 await confirmPage.screenshot({ path: '/opt/cursor/artifacts/screenshots/v120-confirmar.png' });
 await confirmPage.click('#btn-si');
 await confirmPage.waitForSelector('#thanks:not([hidden])');
@@ -2312,7 +2319,8 @@ const [waPop] = await Promise.all([
   page.locator('#slots .slot', { hasText: 'Corto Uno' }).locator('.wa-btn').click(),
 ]);
 await waPop.waitForURL((url) => /wa\.me|spoo\.me|phone=/.test(String(url)), { waitUntil: 'commit' });
-check('El botón de WhatsApp abre WhatsApp con spoo.me', /wa\.me|phone=/.test(waPop.url()) && decodeURIComponent(waPop.url()).includes('https://spoo.me/ZXwB0uF') && decodeURIComponent(waPop.url()).includes('¿Confirmás?'));
+const waOpened = decodeURIComponent(waPop.url()).replace(/\+/g, ' ');
+check('El botón de WhatsApp abre WhatsApp con spoo.me', /wa\.me|phone=/.test(waPop.url()) && waOpened.includes('https://spoo.me/ZXwB0uF') && waOpened.includes('¿Confirmás que jugás'), waOpened.slice(0, 220));
 await waPop.close();
 
 await page.evaluate(async () => {
@@ -6284,6 +6292,58 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     .map((player) => `${player.matchId === shared ? 'compartido' : 'solo'}:${player.signedUpWithName}`)
     .sort(), { shared: signed.shared, daySolo: signed.daySolo });
   check('En el otro partido del día no se atribuye a quien no organiza', copied.join(',') === 'compartido:Martín,solo:Gustavo', copied.join(','));
+}
+
+{
+  await page.setViewportSize({ width: 390, height: 844 });
+  const confirmIds = await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Ana María López', phone: '11 7000-0127', shortName: 'Ani' }, app.who);
+    const today = await app.store.addMatch({ date: '2026-10-19', time: '17:30', capacity: 14, note: 'Cancha 4', court: '4' }, app.who);
+    const tomorrow = await app.store.addMatch({ date: '2026-10-20', time: '18:00', capacity: 14, note: 'Mañana confirma' }, app.who);
+    const by = (id) => app.matches.find((match) => match.id === id);
+    await app.store.addPlayer(by(today), { name: 'Ana María López', shortName: 'Ani', rosterId, phone: '11 7000-0127' }, app.who);
+    await app.store.addPlayer(by(tomorrow), { name: 'Luis Gómez', phone: '11 7000-0128' }, app.who);
+    return { today, tomorrow };
+  });
+  const readWa = async (matchId, name) => {
+    await page.evaluate(() => { location.hash = '#/'; });
+    await page.waitForSelector('#list-next, #tab-proximos');
+    await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+    await page.waitForSelector(`.slot:has-text("${name}") .wa-btn`);
+    const href = await page.getAttribute(`.slot:has-text("${name}") .wa-btn`, 'href');
+    return decodeURIComponent(new URL(href).searchParams.get('text') || '');
+  };
+  const hoy = await readWa(confirmIds.today, 'Ani');
+  const hoyLink = hoy.split('Respondé en este link: ')[1] || '';
+  check('Hoy saluda a Ana y dice HOY 17:30', hoy === `¡Hola Ana! ¿Confirmás que jugás HOY 17:30?\n\nRespondé en este link: ${hoyLink}` && /\/c\/\?k=[0-9A-Za-z]{8}$/.test(hoyLink) && !hoy.includes('Ufm0uQ4') && !hoy.includes('López') && !hoy.includes('Ani'), hoy);
+  const code = hoyLink.match(/k=([0-9A-Za-z]{8})/)?.[1] || '';
+  const confirm = await ctx.newPage();
+  confirm.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  await confirm.clock.install({ time: NOW });
+  await confirm.setViewportSize({ width: 390, height: 844 });
+  await confirm.goto(`${BASE}c/?k=${encodeURIComponent(code)}`);
+  await confirm.waitForSelector('#btn-si');
+  const body = (await confirm.locator('body').innerText()).replace(/\s+/g, ' ');
+  const fit = await confirm.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    name: document.querySelector('h1')?.textContent || '',
+    chrome: !!document.querySelector('.topbar') || !!document.querySelector('#tabbar'),
+  }));
+  check('La confirmación muestra el nombre de pila, el lugar y sí/no', fit.name === 'Ana' && !body.includes('López') && !body.includes('María') && body.includes('Polideportivo') && body.includes('17:30') && body.includes('Sí, juego') && body.includes('No juego') && !fit.chrome && fit.overflow <= 1, `${body.slice(0, 180)} ${JSON.stringify(fit)}`);
+  await confirm.screenshot({ path: '/opt/cursor/artifacts/screenshots/v127-confirma.png' });
+  await confirm.setViewportSize({ width: 1280, height: 800 });
+  const desk = await confirm.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  check('En escritorio la confirmación no desborda', desk <= 1, String(desk));
+  await confirm.close();
+  const manana = await readWa(confirmIds.tomorrow, 'Luis');
+  const mananaLink = manana.split('Respondé en este link: ')[1] || '';
+  check('Mañana conserva la fecha relativa y su propio link', manana === `¡Hola Luis! ¿Confirmás que jugás Mañana 18:00?\n\nRespondé en este link: ${mananaLink}` && /\/c\/\?k=[0-9A-Za-z]{8}$/.test(mananaLink) && mananaLink !== hoyLink, manana);
+  await page.clock.setSystemTime(new Date('2026-10-20T00:30:00-03:00'));
+  const rolled = await readWa(confirmIds.today, 'Ani');
+  const rolledLink = rolled.split('Respondé en este link: ')[1] || '';
+  check('Pasada la medianoche de Buenos Aires ya no dice HOY', rolled === `¡Hola Ana! ¿Confirmás que jugás lunes 19/10 17:30?\n\nRespondé en este link: ${rolledLink}` && rolledLink === hoyLink, rolled);
+  await page.clock.setSystemTime(NOW);
 }
 
 const fresh = await ctx.newPage();
