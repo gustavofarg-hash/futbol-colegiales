@@ -144,3 +144,25 @@ export function relativeLabel(iso, now = new Date()) {
   if (n === 1) return 'Mañana';
   return '';
 }
+
+/** "17:30" o "21:00". Sin "hs". Vacío si la hora no sirve. */
+export function clockTime(time) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(time || '').trim());
+  if (!match) return '';
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return '';
+  return `${pad(hour)}:${match[2]}`;
+}
+
+/**
+ * Día de la confirmación de asistencia, en calendario de Buenos Aires.
+ * Hoy es HOY. Mañana conserva la etiqueta relativa. El resto, "jueves 22/10".
+ */
+export function attendanceWhen(iso, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
+  const n = diffDays(todayISO(now), iso);
+  if (n === 0) return 'HOY';
+  if (n === 1) return 'Mañana';
+  return labelDate(iso);
+}

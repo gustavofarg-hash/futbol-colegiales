@@ -5,13 +5,13 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, toEpoch, transferReminderText, transferReminderWhen,
+  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
-  cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
+  attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
   needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress,
   reservationClearedByAnswer,
 } from './reminders.js';
@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v126';
+const APP_VERSION = 'f7c-v127';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -78,7 +78,7 @@ function waButton(p, text) {
   const view = withAgendaPhone(p);
   if (view?.phone) {
     const code = isShortCode(view?.shortCode) ? view.shortCode : '';
-    const shorten = code ? ` data-short-code="${esc(code)}" data-wa-phone="${esc(view.phone)}" data-wa-text="${esc(text || '')}"` : '';
+    const shorten = code ? ` data-short-code="${esc(code)}" data-wa-phone="${esc(view.phone)}" data-wa-text="${esc(text || '').replace(/\n/g, '&#10;')}"` : '';
     return `<a class="wa-btn" href="${esc(waHref(view.phone, text || ''))}"${shorten} target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(view.name)}">${ICON.wa}</a>`;
   }
   if (phoneHidden(view)) return `<button type="button" class="wa-btn" disabled aria-label="${esc(PRIVATE_WA_TEXT)}">${ICON.wa}</button>`;
@@ -1946,10 +1946,13 @@ function placeLine(m) {
   return court ? `${placeOf(m)} (${court})` : placeOf(m);
 }
 function waMessage(m, p) {
-  const first = (p.name || '').trim().split(/\s+/)[0];
-  const link = confirmUrlFor(m, p);
-  return `¡Hola ${first}! Te anoté para el ${footballPhrase(m)} en ${placeLine(m)} el ${labelDate(m.date)} a las ${m.time} hs.` +
-    (m.note ? ` (${m.note})` : '') + ` ¿Confirmás? ⚽` + (link ? ` ${link}` : '');
+  return attendanceMessage({
+    player: p,
+    roster: app.roster,
+    when: attendanceWhen(m?.date),
+    time: m?.time,
+    confirmUrl: confirmUrlFor(m, p),
+  });
 }
 function listText(m) {
   const ps = playersOf(m.id);
@@ -2116,7 +2119,7 @@ async function openReminders(m) {
     shortCode: codes.get(p.id) || p.shortCode,
   }));
   const linkById = new Map(reminderLinks({
-    match: m, players: fresh, venue: placeOf(m),
+    match: m, players: fresh, venue: placeOf(m), roster: app.roster,
   }).map((row) => [row.id, row]));
   const externalById = new Map();
   const hrefFor = (link) => {
