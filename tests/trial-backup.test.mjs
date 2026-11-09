@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hostsBeforeGuests, remapTrialBackup, trialLinkStages } from '../js/backup.js';
+import { hostsBeforeGuests, remapTrialBackup, trialBackupResultText, trialLinkStages, trialPlayerPlan } from '../js/backup.js';
 import { isTrialPage } from '../js/trial.js';
 
 const TRIAL = 'BeHA5u1OoNXj13uMQaEjcxauZdo2';
@@ -90,6 +90,35 @@ test('el link corto de la prueba se escribe en dos pasos', () => {
   assert.equal(staged.length, 2);
   assert.deepEqual(Object.keys(staged[0]).sort(), ['m', 'p', 't']);
   assert.equal(staged[1].shortUrl, 'https://spoo.me/Abcd123');
+});
+
+test('un jugador de la prueba se parte y el que no tiene partido no se escribe', () => {
+  const plan = trialPlayerPlan({
+    '0qRNjwQQVZRJzjmQVSyu': {
+      matchId: 'solo', name: 'Pesado', phone: '11 4444-5555', invitedBy: 'host', invitedByName: 'Luis',
+      paid: true, cash: 5000, method: 'mp', goals: 2, confirmToken: 'x', viewers: ['*'],
+    },
+    nieto: { matchId: 'solo', name: 'Nieto', invitedBy: 'guest', phone: '' },
+    guest: { matchId: 'solo', name: 'Invitado', invitedBy: 'host', phone: '' },
+    host: { matchId: 'solo', name: 'Luis', phone: '' },
+    huerfano: { matchId: 'borrado', name: 'Sin partido', phone: null },
+  }, {
+    solo: { viewers: ['admin'], adders: ['admin'] },
+  });
+  const heavy = plan.creates.find((row) => row.id === '0qRNjwQQVZRJzjmQVSyu');
+  assert.equal(heavy.data.phone, '');
+  assert.equal(heavy.data.invitedBy, undefined);
+  assert.equal(heavy.data.paid, undefined);
+  assert.equal(heavy.data.confirmToken, undefined);
+  assert.deepEqual(heavy.data.viewers, ['admin']);
+  assert.equal(plan.invitePatches.find((row) => row.id === '0qRNjwQQVZRJzjmQVSyu').data.invitedBy, 'host');
+  assert.equal(plan.invitePatches.some((row) => row.id === 'nieto'), false);
+  assert.equal(plan.moneyPatches.find((row) => row.id === '0qRNjwQQVZRJzjmQVSyu').data.paid, true);
+  assert.equal(plan.moneyPatches.find((row) => row.id === '0qRNjwQQVZRJzjmQVSyu').data.method, undefined);
+  assert.equal(plan.goalPatches.find((row) => row.id === '0qRNjwQQVZRJzjmQVSyu').data.goals, 2);
+  assert.deepEqual(plan.skipped, [{ path: 'players/huerfano', reason: 'el partido no está en el backup' }]);
+  assert.match(trialBackupResultText(plan.skipped), /No se pudieron guardar 1/);
+  assert.match(trialBackupResultText(plan.skipped), /el partido no está en el backup/);
 });
 
 test('los anfitriones se escriben antes que el invitado', () => {

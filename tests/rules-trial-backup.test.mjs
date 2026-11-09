@@ -78,6 +78,47 @@ function productionBackup() {
       },
     },
     players: {
+      '0qRNjwQQVZRJzjmQVSyu': {
+        matchId: 'solo',
+        matchDate: '2026-11-12',
+        name: 'Pesado',
+        phone: '11 4444-5555',
+        invitedBy: 'host',
+        invitedByName: 'Luis',
+        addedBy: 'Gustavo',
+        addedByUid: GUSTAVO,
+        createdAt: 3,
+        updatedAt: 3,
+        viewers: ['*'],
+        adders: ['*'],
+        confirmToken: 'x',
+        paid: true,
+        cash: 5000,
+        method: 'mp',
+        goals: 2,
+        waiting: false,
+      },
+      nieto: {
+        matchId: 'solo',
+        matchDate: '2026-11-12',
+        name: 'Nieto',
+        phone: '',
+        invitedBy: 'guest',
+        invitedByName: 'Invitado',
+        addedByUid: GUSTAVO,
+        createdAt: 4,
+        updatedAt: 4,
+        viewers: [GUSTAVO],
+        adders: [GUSTAVO],
+      },
+      huerfano: {
+        matchId: 'partido-borrado',
+        name: 'Sin partido',
+        phone: null,
+        addedByUid: GUSTAVO,
+        viewers: [GUSTAVO],
+        adders: [GUSTAVO],
+      },
       guest: {
         matchId: 'solo',
         matchDate: '2026-11-12',
@@ -180,6 +221,7 @@ function productionBackup() {
         m: 'solo', p: 'host', t: 'token-anfitrion-prueba',
         shortAt: 5, shortProvider: 'spoo', shortUrl: 'https://spoo.me/Abcd123',
       },
+      corto: { m: 'solo', p: 'host', t: 'token-anfitrion-prueba' },
     },
     users: {
       [GUSTAVO]: { role: 'admin', name: 'Gustavo', email: 'gustavof.arg@gmail.com', active: true, createdAt: 1 },
@@ -287,7 +329,9 @@ test('en /prueba/ un admin nuevo carga el backup de producción y lo ve', { time
     store.fs = fs;
     store.db = db;
     watchOneByOne(store);
-    await store.importDatabase(productionBackup());
+    const summary = await store.importDatabase(productionBackup());
+    assert.ok(summary.failures.some((item) => item.path === 'players/huerfano' && /partido no está/.test(item.reason)));
+    assert.ok(summary.failures.some((item) => item.path === 'links/corto'));
 
     const admin = (await fs.getDoc(fs.doc(db, 'users', TRIAL))).data();
     assert.equal(admin.marker, 'vivo');
@@ -304,7 +348,15 @@ test('en /prueba/ un admin nuevo carga el backup de producción y lo ve', { time
     assert.equal(early.createdByUid, TRIAL);
     assert.deepEqual(early.viewers, [TRIAL]);
     assert.equal((await fs.getDoc(fs.doc(db, 'links', 'Wxyz9876'))).data().shortUrl, 'https://spoo.me/Abcd123');
-    assert.deepEqual(players.docs.map((item) => item.id).sort(), ['guest', 'host', 'publico']);
+    assert.deepEqual(players.docs.map((item) => item.id).sort(), ['0qRNjwQQVZRJzjmQVSyu', 'guest', 'host', 'nieto', 'publico']);
+    const heavy = (await fs.getDoc(fs.doc(db, 'players', '0qRNjwQQVZRJzjmQVSyu'))).data();
+    assert.equal(heavy.phone, '');
+    assert.equal(heavy.invitedBy, 'host');
+    assert.equal(heavy.paid, true);
+    assert.equal(heavy.goals, 2);
+    assert.equal(heavy.method, undefined);
+    assert.equal((await fs.getDoc(fs.doc(db, 'players', 'nieto'))).data().invitedBy, undefined);
+    assert.equal((await fs.getDoc(fs.doc(db, 'players', 'huerfano'))).exists(), false);
 
     const solo = (await fs.getDoc(fs.doc(db, 'matches', 'solo'))).data();
     assert.deepEqual(solo.viewers, [TRIAL]);
