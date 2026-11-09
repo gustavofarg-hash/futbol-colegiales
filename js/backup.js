@@ -13,6 +13,8 @@ export const BACKUP_ZONE = 'America/Buenos_Aires';
 // pasar de 20 lecturas o de 1000 expresiones. El mensaje es el de permisos.
 // El emulador no aplica ese tope, por eso allá un lote de 400 parece andar.
 export const BACKUP_WRITE_BATCH = 1;
+/** Escrituras a la vez en /prueba/. Cada una es un documento: un lote grande suma las reglas y Firebase niega todo. */
+export const TRIAL_WRITE_PARALLEL = 24;
 export const BACKUP_LOADED_OK = 'Todos los datos fueron cargados con éxito';
 
 /** Texto del avance. Con total 0 todavía no se sabe cuántos documentos van. */
@@ -577,6 +579,37 @@ export function trialPlayerPlan(players, matches) {
     }
   }
   return { skipped, creates, invitePatches, moneyPatches, goalPatches };
+}
+
+export const TRIAL_RESUME_KEY = 'f7c-backup-resume';
+
+export function trialResumeId(text) {
+  return sha256Hex(String(text || ''));
+}
+
+export function readTrialResume(id) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TRIAL_RESUME_KEY) || 'null');
+    if (!saved || saved.id !== id || !Array.isArray(saved.done)) return null;
+    return new Set(saved.done);
+  } catch {
+    return null;
+  }
+}
+
+export function writeTrialResume(id, done) {
+  try {
+    localStorage.setItem(TRIAL_RESUME_KEY, JSON.stringify({ id, done: [...done] }));
+  } catch { /* el navegador no deja guardar */ }
+}
+
+export function clearTrialResume() {
+  try { localStorage.removeItem(TRIAL_RESUME_KEY); } catch { /* modo privado */ }
+}
+
+export function trialOpKey(op) {
+  const path = Array.isArray(op?.segments) ? op.segments.join('/') : '';
+  return `${op?.phase || 0}|${op?.kind || ''}|${op?.merge ? 'm' : 's'}|${path}`;
 }
 
 export function trialBackupResultText(failures) {
