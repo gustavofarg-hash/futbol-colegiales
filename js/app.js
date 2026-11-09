@@ -37,7 +37,7 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup, trialBackupResultText } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -2764,7 +2764,19 @@ function openRestore() {
     app.store.importDatabase(payload, ({ done, total }) => {
       if (!status.isConnected || status.classList.contains('backup-ok')) return;
       status.textContent = backupProgressText(done, total);
-    }).then(() => {
+    }).then((summary) => {
+      const partial = trialBackupResultText(summary?.failures);
+      if (partial) {
+        status.className = 'backup-status';
+        status.textContent = '';
+        const err = $('#backup-err');
+        err.style.whiteSpace = 'pre-line';
+        err.textContent = partial;
+        apply.disabled = false;
+        fileInput.disabled = false;
+        toast(partial, 7000);
+        return;
+      }
       status.className = 'backup-status backup-ok';
       status.textContent = BACKUP_LOADED_OK;
       apply.hidden = true;

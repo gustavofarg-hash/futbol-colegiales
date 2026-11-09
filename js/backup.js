@@ -466,6 +466,128 @@ export function remapTrialBackup(backup, uid) {
   return { ...draft, collections, subcollections };
 }
 
+function clipText(value, max) {
+  const text = String(value ?? '').trim().replace(/\s+/g, ' ');
+  return text ? text.slice(0, max) : '';
+}
+
+function finiteNumber(value, min, max) {
+  if (value == null || value === '') return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) return undefined;
+  return n;
+}
+
+function wholeNumber(value, min, max) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || n > max) return undefined;
+  return n;
+}
+
+/** La alta del jugador evalúa el documento entero. Con pago e invitado pasa el tope y Firebase lo niega. */
+export function trialPlayerPlan(players, matches) {
+  const docs = isPlainObject(players) ? players : {};
+  const games = isPlainObject(matches) ? matches : {};
+  const skipped = [];
+  const creates = [];
+  const invitePatches = [];
+  const moneyPatches = [];
+  const goalPatches = [];
+  for (const [id, raw] of Object.entries(docs)) {
+    if (!isPlainObject(raw)) {
+      skipped.push({ path: `players/${id}`, reason: 'el documento no es válido' });
+      continue;
+    }
+    const match = games[raw.matchId];
+    if (!isPlainObject(match)) {
+      skipped.push({ path: `players/${id}`, reason: 'el partido no está en el backup' });
+      continue;
+    }
+    const create = {
+      matchId: String(raw.matchId),
+      name: clipText(raw.name, 60) || 'Sin nombre',
+      phone: '',
+    };
+    if (typeof raw.matchDate === 'string' && raw.matchDate) create.matchDate = raw.matchDate.slice(0, 10);
+    if (Array.isArray(match.viewers)) create.viewers = match.viewers.slice();
+    if (Array.isArray(match.adders)) create.adders = match.adders.slice();
+    if (typeof raw.addedBy === 'string' && clipText(raw.addedBy, 40)) create.addedBy = clipText(raw.addedBy, 40);
+    if (typeof raw.addedByUid === 'string' && raw.addedByUid && raw.addedByUid.length <= 128) create.addedByUid = raw.addedByUid;
+    if (typeof raw.signedUpWith === 'string' && raw.signedUpWith.trim() && raw.signedUpWith.trim().length <= 128) create.signedUpWith = raw.signedUpWith.trim();
+    if (clipText(raw.signedUpWithName, 40)) create.signedUpWithName = clipText(raw.signedUpWithName, 40);
+    for (const key of ['createdAt', 'updatedAt', 'rosterAt', 'tentativeAt', 'confirmedAt', 'reminderSentAt']) {
+      if (typeof raw[key] === 'number' && Number.isFinite(raw[key])) create[key] = raw[key];
+    }
+    if (typeof raw.hasPhone === 'boolean') create.hasPhone = raw.hasPhone;
+    if (typeof raw.phoneShared === 'boolean') create.phoneShared = raw.phoneShared;
+    if (typeof raw.phoneKey === 'string' && (raw.phoneKey === '' || /^[0-9a-f]{64}$/.test(raw.phoneKey))) create.phoneKey = raw.phoneKey;
+    if (typeof raw.phoneOwnerUid === 'string' && raw.phoneOwnerUid.length <= 128) create.phoneOwnerUid = raw.phoneOwnerUid;
+    if (typeof raw.waiting === 'boolean') create.waiting = raw.waiting;
+    if (typeof raw.noPlay === 'boolean') create.noPlay = raw.noPlay;
+    if (typeof raw.tentative === 'boolean') create.tentative = raw.tentative;
+    const waitOrder = finiteNumber(raw.waitOrder, 0, 1000000);
+    if (waitOrder !== undefined) create.waitOrder = waitOrder;
+    if (typeof raw.confirmToken === 'string' && raw.confirmToken.length >= 16 && raw.confirmToken.length <= 80) create.confirmToken = raw.confirmToken;
+    if (raw.confirmed === 'si' || raw.confirmed === 'no') create.confirmed = raw.confirmed;
+    if (typeof raw.shortCode === 'string' && /^[0-9A-Za-z]{8}$/.test(raw.shortCode)) create.shortCode = raw.shortCode;
+    if (typeof raw.shortName === 'string' && raw.shortName.slice(0, 40)) create.shortName = raw.shortName.slice(0, 40);
+    if (typeof raw.rosterId === 'string' && raw.rosterId && raw.rosterId.length <= 200) create.rosterId = raw.rosterId;
+    creates.push({ id, data: create });
+
+    const hostId = String(raw.invitedBy || '').trim();
+    const host = hostId ? docs[hostId] : null;
+    const hostIsMain = host && !String(host.invitedBy || '').trim() && games[host.matchId] && host.matchId === raw.matchId;
+    if (hostIsMain) {
+      const patch = { invitedBy: hostId.slice(0, 128), updatedAt: Date.now() };
+      const hostName = clipText(raw.invitedByName || host.name, 60);
+      if (hostName) patch.invitedByName = hostName;
+      invitePatches.push({ id, data: patch });
+    }
+
+    const money = {};
+    if (typeof raw.paid === 'boolean') money.paid = raw.paid;
+    const amount = finiteNumber(raw.amount, 0, 1000000000);
+    if (amount !== undefined) money.amount = amount;
+    if (raw.method === 'efectivo' || raw.method === 'transferencia' || raw.method === 'credito') money.method = raw.method;
+    for (const key of ['cash', 'transfer', 'pendingTransfer', 'fromCredit']) {
+      const n = finiteNumber(raw[key], 0, 1000000000);
+      if (n !== undefined) money[key] = n;
+    }
+    if (typeof raw.freePlay === 'boolean') money.freePlay = raw.freePlay;
+    if (typeof raw.autoCredit === 'boolean') money.autoCredit = raw.autoCredit;
+    for (const key of ['paidUpdatedBy', 'receivedBy', 'transferReceivedBy', 'cashTo', 'transferTo', 'pendingTo', 'creditTo']) {
+      const text = clipText(raw[key], key === 'paidUpdatedBy' || key === 'creditTo' ? 40 : 40);
+      if (text) money[key] = text;
+    }
+    if (typeof raw.paidUpdatedAt === 'number') money.paidUpdatedAt = raw.paidUpdatedAt;
+    if (typeof raw.transferReceivedAt === 'number') money.transferReceivedAt = raw.transferReceivedAt;
+    if (Object.keys(money).length) {
+      money.updatedAt = Date.now();
+      moneyPatches.push({ id, data: money });
+    }
+
+    const goals = {};
+    const goalCount = wholeNumber(raw.goals, 0, 99);
+    if (goalCount !== undefined) goals.goals = goalCount;
+    if (typeof raw.inGoal === 'boolean') goals.inGoal = raw.inGoal;
+    if (typeof raw.inGoalAt === 'number' && Number.isFinite(raw.inGoalAt)) goals.inGoalAt = raw.inGoalAt;
+    if (Object.keys(goals).length) {
+      goals.updatedAt = Date.now();
+      goalPatches.push({ id, data: goals });
+    }
+  }
+  return { skipped, creates, invitePatches, moneyPatches, goalPatches };
+}
+
+export function trialBackupResultText(failures) {
+  const list = Array.isArray(failures) ? failures.filter((item) => item?.path) : [];
+  if (!list.length) return '';
+  const shown = list.slice(0, 8);
+  const lines = shown.map((item) => `${item.path}: ${item.reason || 'Firebase rechazó el permiso'}`);
+  const extra = list.length > shown.length ? `\ny ${list.length - shown.length} más` : '';
+  return `Se cargó el resto. No se pudieron guardar ${list.length}:\n${lines.join('\n')}${extra}`;
+}
+
 /**
  * Un link con acortador no se puede crear de una: la regla solo acepta m, p y t.
  * Primero eso, y después el acortador si tiene la forma que la regla permite.
@@ -487,7 +609,7 @@ export function hostsBeforeGuests(ops) {
   const slots = [];
   const players = [];
   ops.forEach((op, index) => {
-    if (op?.kind === 'set' && Array.isArray(op.segments) && op.segments.length === 2 && op.segments[0] === 'players') {
+    if (op?.kind === 'set' && !op.merge && Array.isArray(op.segments) && op.segments.length === 2 && op.segments[0] === 'players') {
       slots.push(index);
       players.push(op);
     }

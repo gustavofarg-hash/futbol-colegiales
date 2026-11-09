@@ -107,7 +107,7 @@ import { canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer, editLo
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
-import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialPlayerPlan } from './backup.js';
 import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 
 function reportBackupProgress(onProgress, done, total) {
@@ -1704,21 +1704,48 @@ export class FirebaseStore {
     reportBackupProgress(onProgress, 0, 0);
     const Timestamp = this.fs.Timestamp;
     const ops = [];
+    const skipped = [];
+    let trialPlayers = null;
     for (const name of BACKUP_COLLECTIONS) {
       const current = await this._readCollection(name);
       const next = backup.collections[name] || {};
-      for (const id of Object.keys(current)) {
+      const ids = trial ? new Set([...Object.keys(current), ...Object.keys(next)]) : new Set(Object.keys(current));
+      for (const id of ids) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
         if (trial) {
-          // Un set sobre un documento que ya está es un update. El partido
-          // cargado a medias tiene uid de producción: la regla no deja
-          // actualizarlo. Borrarlo primero (el admin sí puede) y crearlo de nuevo.
+          // Un set sobre un documento que ya está es un update. La lista no
+          // devuelve un partido o jugador con uid de producción, así que hay
+          // que borrarlo igual por el id del archivo. El admin sí puede.
           if (name === 'users' && current[id]?.role !== 'organizer') continue;
           if (name === 'settings' && id !== 'prices') continue;
           ops.push({ kind: 'delete', segments: [name, id] });
           continue;
         }
+        if (!Object.prototype.hasOwnProperty.call(current, id)) continue;
         if (name === 'log' || !Object.prototype.hasOwnProperty.call(next, id)) ops.push({ kind: 'delete', segments: [name, id] });
+      }
+      if (trial && name === 'players') {
+        trialPlayers = trialPlayerPlan(next, backup.collections.matches || {});
+        skipped.push(...trialPlayers.skipped);
+        for (const row of trialPlayers.creates) ops.push({ kind: 'set', segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        for (const row of [...trialPlayers.invitePatches, ...trialPlayers.moneyPatches, ...trialPlayers.goalPatches]) {
+          ops.push({ kind: 'set', merge: true, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        }
+        continue;
+      }
+      if (trial && name === 'playerContacts' && trialPlayers) {
+        const saved = new Map(trialPlayers.creates.map((row) => [row.id, row.data]));
+        for (const [id, data] of Object.entries(next)) {
+          if (!saved.has(id)) {
+            skipped.push({ path: `playerContacts/${id}`, reason: 'el jugador no se guardó' });
+            continue;
+          }
+          const copy = { ...data };
+          const player = saved.get(id);
+          if (Array.isArray(player.viewers)) copy.viewers = player.viewers.slice();
+          ops.push({ kind: 'set', segments: [name, id], data: reviveValue(copy, Timestamp) });
+        }
+        continue;
       }
       for (const [id, data] of Object.entries(next)) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
@@ -1735,8 +1762,8 @@ export class FirebaseStore {
       if (isOwnUserDoc(segments, keepUser)) continue;
       ops.push({ kind: 'set', segments, data: reviveValue(data, Timestamp) });
     }
-    await this._commitOps(trial ? hostsBeforeGuests(ops) : ops, onProgress);
-    return parsed.summary;
+    const failures = await this._commitOps(trial ? hostsBeforeGuests(ops) : ops, onProgress, trial);
+    return { ...parsed.summary, failures: skipped.concat(failures) };
   }
   async resetDatabase() {
     requireAdmin(this.actor);
@@ -1755,12 +1782,13 @@ export class FirebaseStore {
     }
     await this._commitOps(ops);
   }
-  async _commitOps(ops, onProgress) {
+  async _commitOps(ops, onProgress, keepGoing = false) {
     const { writeBatch, doc } = this.fs;
     const uid = this.actor?.uid || '';
     const size = BACKUP_WRITE_BATCH;
     const work = ops.filter((op) => !isOwnUserDoc(op.segments, uid));
     const total = work.length;
+    const failures = [];
     reportBackupProgress(onProgress, 0, total);
     let done = 0;
     for (let i = 0; i < work.length; i += size) {
@@ -1771,15 +1799,22 @@ export class FirebaseStore {
         for (const op of slice) {
           const ref = doc(this.db, ...op.segments);
           if (op.kind === 'delete') batch.delete(ref);
+          else if (op.merge) batch.set(ref, op.data, { merge: true });
           else batch.set(ref, op.data);
         }
         await batch.commit();
       } catch (error) {
-        throw error?.path ? error : backupWriteError(slice[0], error);
+        if (!keepGoing) throw error?.path ? error : backupWriteError(slice[0], error);
+        const op = slice[0];
+        failures.push({
+          path: Array.isArray(op?.segments) ? op.segments.join('/') : 'documento',
+          reason: 'Firebase rechazó el permiso',
+        });
       }
       done += slice.length;
       reportBackupProgress(onProgress, done, total);
     }
+    return failures;
   }
   async _readCollection(name) {
     const { collection, getDocs } = this.fs;
