@@ -466,6 +466,22 @@ export function remapTrialBackup(backup, uid) {
   return { ...draft, collections, subcollections };
 }
 
+/**
+ * Un link con acortador no se puede crear de una: la regla solo acepta m, p y t.
+ * Primero eso, y después el acortador si tiene la forma que la regla permite.
+ */
+export function trialLinkStages(data) {
+  const base = { m: data?.m, p: data?.p, t: data?.t };
+  const provider = data?.shortProvider;
+  const url = data?.shortUrl;
+  const spoo = provider === 'spoo' && typeof url === 'string' && /^https:\/\/spoo\.me\/[A-Za-z0-9_]+$/.test(url);
+  const dagd = provider === 'dagd' && typeof url === 'string' && /^https:\/\/da\.gd\/[A-Za-z0-9_]+$/.test(url);
+  if ((spoo || dagd) && typeof data.shortAt === 'number') {
+    return [base, { ...base, shortAt: data.shortAt, shortProvider: provider, shortUrl: url }];
+  }
+  return [base];
+}
+
 /** Los anfitriones se escriben antes que sus invitados. invitedBy apunta al id del jugador. */
 export function hostsBeforeGuests(ops) {
   const slots = [];

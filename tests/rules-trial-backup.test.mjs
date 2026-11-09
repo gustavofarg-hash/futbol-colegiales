@@ -42,6 +42,23 @@ function productionBackup() {
         viewerNames: [{ uid: GUSTAVO, name: 'Gustavo' }],
         adderNames: [{ uid: GUSTAVO, name: 'Gustavo' }],
       },
+      '2026-11-01_0630': {
+        date: '2026-11-01',
+        time: '06:30',
+        note: 'Madrugada',
+        capacity: 14,
+        perTeam: 7,
+        playerCount: 0,
+        viewers: [GUSTAVO],
+        adders: [GUSTAVO],
+        solo: true,
+        createdBy: 'Gustavo',
+        createdByUid: GUSTAVO,
+        createdAt: 1,
+        updatedAt: 1,
+        startsAt: 1,
+        source: 'manual',
+      },
       abierto: {
         date: '2026-11-13',
         time: '19:00',
@@ -157,7 +174,13 @@ function productionBackup() {
     },
     organizers: {},
     settings: { prices: { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 } },
-    links: { Abcd1234: { m: 'solo', p: 'host', t: 'token-anfitrion-prueba' } },
+    links: {
+      Abcd1234: { m: 'solo', p: 'host', t: 'token-anfitrion-prueba' },
+      Wxyz9876: {
+        m: 'solo', p: 'host', t: 'token-anfitrion-prueba',
+        shortAt: 5, shortProvider: 'spoo', shortUrl: 'https://spoo.me/Abcd123',
+      },
+    },
     users: {
       [GUSTAVO]: { role: 'admin', name: 'Gustavo', email: 'gustavof.arg@gmail.com', active: true, createdAt: 1 },
       [MARTIN]: { role: 'organizer', name: 'Martín', email: 'martin@demo.local', active: true, createdAt: 2 },
@@ -254,6 +277,11 @@ test('en /prueba/ un admin nuevo carga el backup de producción y lo ve', { time
     await fs.setDoc(fs.doc(db, 'users', TRIAL), {
       role: 'admin', name: 'Gustavo', email: 'gustavof.arg@gmail.com', active: true, createdAt: 5, marker: 'vivo',
     });
+    // La carga anterior ya dejó este partido, con el uid de producción.
+    await fs.setDoc(fs.doc(db, 'matches', '2026-11-01_0630'), {
+      date: '2026-11-01', time: '06:30', note: 'viejo', capacity: 14, perTeam: 7, playerCount: 0,
+      viewers: [GUSTAVO], adders: [GUSTAVO], solo: true, createdByUid: GUSTAVO, createdAt: 1, updatedAt: 1, startsAt: 1, source: 'manual',
+    });
     const store = new FirebaseStore();
     store.actor = { uid: TRIAL, name: 'Gustavo', role: 'admin' };
     store.fs = fs;
@@ -270,7 +298,12 @@ test('en /prueba/ un admin nuevo carga el backup de producción y lo ve', { time
     const access = [TRIAL, '*'];
     const matches = await fs.getDocs(fs.query(fs.collection(db, 'matches'), fs.where('viewers', 'array-contains-any', access)));
     const players = await fs.getDocs(fs.query(fs.collection(db, 'players'), fs.where('viewers', 'array-contains-any', access)));
-    assert.deepEqual(matches.docs.map((item) => item.id).sort(), ['abierto', 'solo']);
+    assert.deepEqual(matches.docs.map((item) => item.id).sort(), ['2026-11-01_0630', 'abierto', 'solo']);
+    const early = (await fs.getDoc(fs.doc(db, 'matches', '2026-11-01_0630'))).data();
+    assert.equal(early.time, '06:30');
+    assert.equal(early.createdByUid, TRIAL);
+    assert.deepEqual(early.viewers, [TRIAL]);
+    assert.equal((await fs.getDoc(fs.doc(db, 'links', 'Wxyz9876'))).data().shortUrl, 'https://spoo.me/Abcd123');
     assert.deepEqual(players.docs.map((item) => item.id).sort(), ['guest', 'host', 'publico']);
 
     const solo = (await fs.getDoc(fs.doc(db, 'matches', 'solo'))).data();
@@ -297,6 +330,9 @@ test('en /prueba/ un admin nuevo carga el backup de producción y lo ve', { time
       fs.where('editors', 'array-contains-any', access),
     ));
     assert.equal(listed.size, 1);
+    await store.importDatabase(productionBackup());
+    assert.equal((await fs.getDoc(fs.doc(db, 'matches', '2026-11-01_0630'))).data().note, 'Madrugada');
+    assert.equal((await fs.getDoc(fs.doc(db, 'users', TRIAL))).data().marker, 'vivo');
   } finally {
     if (prev === undefined) delete globalThis.location;
     else globalThis.location = prev;
