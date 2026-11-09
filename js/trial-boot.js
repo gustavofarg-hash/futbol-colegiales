@@ -14,7 +14,27 @@
     storage.removeItem = function (key) { return rem('prueba:' + key); };
   }
   try { wrap(localStorage); wrap(sessionStorage); } catch (e) { /* modo privado */ }
+  var theme = 'auto';
+  try {
+    var saved = localStorage.getItem('f7c-theme');
+    if (saved === 'light' || saved === 'dark' || saved === 'auto') theme = saved;
+  } catch (e) { /* modo privado */ }
+  var dark = theme === 'dark' || (theme !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = theme;
+  if (dark) document.documentElement.classList.add('dark');
+  var bar = dark ? '#071428' : '#1e4fd7';
+  var metas = document.querySelectorAll('meta[name="theme-color"]');
+  for (var i = 0; i < metas.length; i++) {
+    metas[i].setAttribute('content', bar);
+    metas[i].removeAttribute('media');
+  }
+  var font = document.createElement('link');
+  font.rel = 'stylesheet';
+  font.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&display=swap';
+  document.head.appendChild(font);
   document.addEventListener('DOMContentLoaded', function () {
+    var logo = document.querySelector('.brand img');
+    if (logo) logo.src = 'icons/shield-ball.svg';
     var title = document.querySelector('.brand-title');
     if (title && !title.querySelector('.trial-name')) {
       title.textContent = '';

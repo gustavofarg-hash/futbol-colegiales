@@ -5,7 +5,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
+  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, clockTime, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
@@ -31,6 +31,7 @@ import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableL
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
+import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
@@ -43,7 +44,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v129';
+const APP_VERSION = 'f7c-v130';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1159,7 +1160,7 @@ function oweBox(m) {
   }).join('');
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
-      <span>Faltan pagar (que anoté yo): ${esc(formatARS(debt.total))}</span>
+      <span>Faltan pagar (que anoté yo): <b>${esc(formatARS(debt.total))}</b></span>
       <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <ul class="owe-list"${open ? '' : ' hidden'}>${rows}</ul>
@@ -1179,15 +1180,21 @@ function matchCard(m, opts = {}) {
   const note = history || !m.note ? '' : `<div class="match-note">${esc(m.note)}</div>`;
   const waiting = history || !waitingOf(m.id).length ? '' : `<div class="match-note">${waitingOf(m.id).length} en espera</div>`;
   const debt = history || rel === 'Hoy' ? oweBox(m) : '';
+  const clock = clockTime(m.time) || hour.replace(/hs$/, '');
+  const spots = Math.max(0, Math.min(Number(cap) || 0, 24));
+  const filled = Math.max(0, Math.min(n, spots));
+  const dots = spots ? `<span class="trial-only trial-dots" aria-hidden="true">${Array.from({ length: spots }, (_, i) => `<i class="${i < filled ? 'on' : ''}"></i>`).join('')}</span>` : '';
   return `
   <li class="match-item"><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}" data-note="${esc(m.note || '')}">
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
       ${history ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : `<div class="match-weekday">${esc(weekdayDate(m.date))}</div>`}
-      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(when)}</span></div>
+      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(when)}</span><span class="trial-only trial-break"></span><span class="trial-only trial-clock">${esc(clock)}</span>${court ? `<span class="trial-only trial-court">${esc(court)}</span>` : ''}<span class="trial-only trial-price">${esc(price)}</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${note}
       ${waiting}
+      <span class="trial-only trial-enrolled">Jugadores anotados</span>
+      ${dots}
     </div>
     <div class="count ${n >= cap ? 'full' : ''}" aria-label="${n} de ${cap} anotados">
       <div class="num">${n}<small>/${cap}</small></div>
@@ -1212,7 +1219,7 @@ function renderHome() {
     ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
     ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
     <div class="actionbar"><div class="actionbar-inner">
-      <button class="btn" id="btn-import">${ICON.paste}Importar desde texto</button>
+      <button class="btn" id="btn-import">${ICON.paste}Importar texto</button>
       <button class="btn primary" id="btn-add-match">${ICON.plus}Agregar partido</button>
     </div></div>`)) return;
   $('#btn-add-match').onclick = () => openMatchForm();
@@ -2604,6 +2611,13 @@ function openSettings() {
         ${TEXT_SIZES.map((step, i) => `<option value="${i}"${i === readTextSize() ? ' selected' : ''}>${esc(step.label)}</option>`).join('')}
       </select>
     </label>
+    ${isTrialPage() ? `<label class="field" id="theme-field"><span>Tema</span>
+      <select id="set-theme" aria-label="Tema">
+        <option value="light"${readTheme() === 'light' ? ' selected' : ''}>Claro</option>
+        <option value="dark"${readTheme() === 'dark' ? ' selected' : ''}>Oscuro</option>
+        <option value="auto"${readTheme() === 'auto' ? ' selected' : ''}>Automático según el sistema</option>
+      </select>
+    </label>` : ''}
     <div class="menu" id="set-sections">
       <button type="button" class="btn" id="set-share-app">Compartir app</button>
       <button type="button" class="btn" id="set-venues">Sedes</button>
@@ -2639,6 +2653,8 @@ function openSettings() {
   };
   const sizePick = $('#set-text-size');
   if (sizePick) sizePick.onchange = () => { saveTextSize(Number(sizePick.value)); syncTextSize(); };
+  const themePick = $('#set-theme');
+  if (themePick) themePick.onchange = () => { saveTheme(themePick.value); requestAnimationFrame(placeBars); };
   const venuesBtn = $('#set-venues');
   if (venuesBtn) venuesBtn.onclick = () => openVenues();
   const shareAppBtn = $('#set-share-app');
@@ -6930,6 +6946,7 @@ function showAnonymousDenial() {
 }
 
 async function boot() {
+  if (isTrialPage()) { applyTheme(); watchTheme(); }
   clearWaChoice();
   clearMineFilter();
   $('#venue-name').textContent = 'Agenda de partidos';

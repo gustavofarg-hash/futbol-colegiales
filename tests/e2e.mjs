@@ -131,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v129');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v130');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -228,7 +228,7 @@ await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/header-agenda.p
 check('La lista no muestra sede y formato al pie', await page.locator('#view .footer-note').count() === 0 && !(await page.locator('#view').innerText()).includes('Fútbol 7 contra 7'));
 check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
 const tabLabels = await page.$$eval('#tabbar a', (els) => els.map((el) => el.textContent.trim()));
-const fiveTabs = ['Próximos partidos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro'];
+const fiveTabs = ['Próximos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro'];
 check('Cinco pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(fiveTabs), tabLabels.join(' | '));
 const tabFit = await page.evaluate(() => ({
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -250,7 +250,7 @@ const settingsBars = await page.evaluate(() => {
     inDialog: document.querySelector('#tabbar').parentElement?.id === 'sheet',
   };
 });
-check('En Ajustes las cinco pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos partidos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro']), JSON.stringify(settingsBars));
+check('En Ajustes las cinco pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro']), JSON.stringify(settingsBars));
 check('La hoja de Ajustes no queda debajo de las pestañas', settingsBars.sheetBelow, JSON.stringify(settingsBars));
 await page.click('#btn-historial');
 await page.waitForSelector('#history-filter');
