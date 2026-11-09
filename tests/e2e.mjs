@@ -131,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v128');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v129');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -6416,6 +6416,72 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const rolledLink = rolled.split('Respondé en este link: ')[1] || '';
   check('Pasada la medianoche de Buenos Aires ya no dice HOY', rolled === `¡Hola Ana! ¿Confirmás que jugás lunes 19/10 17:30?\n\nRespondé en este link: ${rolledLink}` && rolledLink === hoyLink, rolled);
   await page.clock.setSystemTime(NOW);
+}
+
+{
+  async function verAgregado(width, height, time, name) {
+    await page.setViewportSize({ width, height });
+    const matchId = await page.evaluate(async (time) => {
+      const app = window.__app;
+      const id = await app.store.addMatch({ date: '2026-12-12', time, capacity: 14, note: 'Ver agregado' }, app.who);
+      const match = app.matches.find((item) => item.id === id);
+      for (let i = 1; i <= 12; i++) await app.store.addPlayer(match, { name: `Antes ${i}` }, app.who);
+      return id;
+    }, time);
+    await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+    await page.waitForSelector('#slots .name:text-is("Antes 12")');
+    await page.click('#btn-add-player');
+    await page.waitForSelector('#player-name');
+    await page.fill('#player-name', name);
+    await page.click('#player-form button[type=submit]');
+    await page.waitForSelector(`#slots .just-added .name:text-is("${name}")`);
+    await page.waitForFunction((wanted) => {
+      const row = document.querySelector('#slots .just-added');
+      if (!row || !row.textContent.includes(wanted)) return false;
+      const box = row.getBoundingClientRect();
+      const top = (document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? 0) - 2;
+      const action = document.querySelector('.actionbar')?.getBoundingClientRect().top;
+      const bottom = (action > top ? action : window.innerHeight) + 2;
+      return box.height > 0 && box.top >= top && box.bottom <= bottom;
+    }, name);
+    return page.evaluate((wanted) => {
+      const row = document.querySelector('#slots .just-added');
+      const names = [...document.querySelectorAll('#slots .name')].map((el) => el.textContent);
+      return { last: names[names.length - 1] === wanted, cls: row?.classList.contains('just-added') === true };
+    }, name);
+  }
+  const mobile = await verAgregado(390, 844, '18:20', 'Visible Movil');
+  check('En 390px el jugador agregado queda visible y resaltado', mobile.last && mobile.cls, JSON.stringify(mobile));
+  await page.locator('#slots .just-added').screenshot({ path: '/opt/cursor/artifacts/screenshots/v129-agregado.png' });
+  const desk = await verAgregado(1280, 800, '19:20', 'Visible Escritorio');
+  check('En escritorio el jugador agregado queda visible y resaltado', desk.last && desk.cls, JSON.stringify(desk));
+  await page.setViewportSize({ width: 390, height: 844 });
+  const waitId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-12-12', time: '20:20', capacity: 2, note: 'Ver espera' }, app.who);
+    const match = app.matches.find((item) => item.id === id);
+    await app.store.addPlayer(match, { name: 'Cupo Uno' }, app.who);
+    await app.store.addPlayer(match, { name: 'Cupo Dos' }, app.who);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, waitId);
+  await page.waitForSelector('#slots .name:text-is("Cupo Dos")');
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#player-name');
+  await page.fill('#player-name', 'Visible Espera');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#wait-list .just-added .name:text-is("Visible Espera")');
+  await page.waitForFunction(() => {
+    const row = document.querySelector('#wait-list .just-added');
+    if (!row) return false;
+    const box = row.getBoundingClientRect();
+    const top = (document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? 0) - 2;
+    const action = document.querySelector('.actionbar')?.getBoundingClientRect().top;
+    const bottom = (action > top ? action : window.innerHeight) + 2;
+    return box.top >= top && box.bottom <= bottom;
+  });
+  check('Si no hay cupo, la fila nueva de la espera queda visible y resaltada', await page.locator('#slots .just-added').count() === 0 && await page.locator('#wait-list .just-added').count() === 1);
+  await page.setViewportSize({ width: 390, height: 844 });
 }
 
 const fresh = await ctx.newPage();

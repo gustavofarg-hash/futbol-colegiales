@@ -43,7 +43,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v128';
+const APP_VERSION = 'f7c-v129';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1079,9 +1079,53 @@ function render() {
   if (same && y > 0) {
     const top = y;
     requestAnimationFrame(() => {
+      if (app.revealPlayerId) return;
       if ((document.scrollingElement?.scrollTop || 0) !== top) document.scrollingElement.scrollTop = top;
     });
   }
+}
+
+function addedPlayerRow(id) {
+  const safe = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(String(id || '')) : String(id || '');
+  if (!safe) return null;
+  return document.querySelector(`#slots [data-player="${safe}"]`) || document.querySelector(`#wait-list [data-player="${safe}"]`);
+}
+
+/** Baja hasta el jugador recién anotado y lo marca un momento. */
+function revealAddedPlayer() {
+  const id = app.revealPlayerId;
+  if (!id) return false;
+  const row = addedPlayerRow(id);
+  if (!row) return false;
+  row.classList.remove('just-added');
+  void row.offsetWidth;
+  row.classList.add('just-added');
+  const scroll = () => {
+    const fresh = addedPlayerRow(id);
+    const scroller = document.scrollingElement;
+    if (!fresh || !scroller) return;
+    const topLimit = (document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? 0) + 8;
+    const actionTop = document.querySelector('.actionbar')?.getBoundingClientRect().top;
+    const bottomLimit = (actionTop > topLimit ? actionTop : window.innerHeight) - 8;
+    const box = fresh.getBoundingClientRect();
+    let delta = 0;
+    if (box.bottom > bottomLimit) delta = box.bottom - bottomLimit;
+    else if (box.top < topLimit) delta = box.top - topLimit;
+    if (Math.abs(delta) > 1) scroller.scrollBy({ top: delta, behavior: 'smooth' });
+  };
+  scroll();
+  requestAnimationFrame(scroll);
+  const vv = window.visualViewport;
+  if (vv) {
+    const onResize = () => { if (app.revealPlayerId) scroll(); };
+    vv.addEventListener('resize', onResize);
+    setTimeout(() => vv.removeEventListener('resize', onResize), 800);
+  }
+  clearTimeout(app.revealTimer);
+  app.revealTimer = setTimeout(() => {
+    if (app.revealPlayerId === id) app.revealPlayerId = '';
+  }, 2100);
+  return true;
 }
 
 function placeOf(match) {
@@ -4300,7 +4344,8 @@ function focusField(el) {
 }
 
 /** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
-async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
+async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], opts = {}) {
+  const { resolved = null, also = [] } = opts;
   if (!host?.id && playerBlockedOn(m, host)) return SUSPENDED_TEXT;
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
@@ -4366,6 +4411,7 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { re
       if (!waiting) await applyAutoCredit(hostId);
       hostName = host.name;
       offset = 1;
+      if (opts.reveal === true) app.revealPlayerId = hostId;
     }
     for (const friend of friends) {
       const waiting = offset >= place.main;
@@ -4383,6 +4429,11 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { re
     if (also.length) {
       const notes = await addGuestsToSameDay(also, friends, signup, m);
       if (notes.length) toast(notes.join(' · '), 4500);
+    }
+    if (opts.reveal === true && app.revealPlayerId) {
+      revealAddedPlayer();
+      const shown = app.revealPlayerId;
+      setTimeout(() => { if (app.revealPlayerId === shown) app.revealPlayerId = ''; }, 900);
     }
   })(), msg);
   return true;
@@ -4774,7 +4825,7 @@ function openPlayerForm(m, p, opts = {}) {
           phoneShared: $('#wa-share')?.checked === true,
         }
       : { name, phone, phoneShared: $('#wa-share')?.checked === true };
-    const result = await addSignedPlayer(m, host, asWait, !!$('#player-tentative')?.checked, friendRowValues());
+    const result = await addSignedPlayer(m, host, asWait, !!$('#player-tentative')?.checked, friendRowValues(), { reveal: true });
     if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#pf-err').textContent = result;
   };
 }
