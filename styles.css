@@ -277,7 +277,12 @@ h2.section:first-child { margin-top: 4px; }
   min-width: 0; max-width: 100%; box-shadow: var(--shadow);
 }
 .slot:active { background: color-mix(in srgb, var(--card) 88%, var(--green-soft)); }
-.slot.just-added { animation: just-added 2s ease; }
+.slot.just-added { animation: just-added 2.2s ease; }
+#slots .slot,
+#wait-list .slot {
+  scroll-margin-top: calc(var(--trial-banner-h, 0px) + var(--header-h, 72px) + var(--tabbar-h, 56px) + 12px);
+  scroll-margin-bottom: calc(var(--actionbar-h, 96px) + 16px);
+}
 @keyframes just-added {
   0% { background: var(--green-soft); box-shadow: inset 0 0 0 2px var(--green); }
   100% { background: var(--card); box-shadow: inset 0 0 0 2px transparent; }

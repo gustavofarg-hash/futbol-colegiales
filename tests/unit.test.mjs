@@ -33,7 +33,7 @@ import {
 import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, indexFromStored, readTextSize, stepTextSize, textSizeIndex } from '../js/text-size.js';
-import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, compensationApplies, isRestricted, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from '../js/access.js';
+import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, compensationApplies, importAccess, isRestricted, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from '../js/access.js';
 import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, nextInGoalAt, normalizeScore, normalizeTeams, orderByGoal, orderTeamsByGoal, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, playerLink } from '../js/share.js';
 import {
@@ -2490,6 +2490,16 @@ test('permisos del partido: todos, solo yo, límite y sin excepción de admin', 
     { uid: 'gustavo', name: 'Gustavo', role: 'admin' },
     { uid: 'martin', name: 'Martín', role: 'organizer' },
   ];
+  const imported = importAccess({ uid: 'gustavo', name: 'Gustavo' });
+  assert.equal(imported.solo, true);
+  assert.deepEqual(imported.viewers, ['gustavo']);
+  assert.deepEqual(imported.adders, ['gustavo']);
+  assert.equal(imported.createdByUid, 'gustavo');
+  assert.equal(canView(imported, 'gustavo'), true);
+  assert.equal(canView(imported, 'martin'), false);
+  const importedOpen = importAccess({ uid: 'gustavo', name: 'Gustavo' }, false);
+  assert.deepEqual(importedOpen.viewers, ['*']);
+  assert.equal(canView(importedOpen, 'martin'), true);
   const open = publicAccess({ uid: 'gustavo', name: 'Gustavo' });
   assert.deepEqual(open.viewers, ['*']);
   assert.equal(isRestricted({ viewers: open.viewers }), false);

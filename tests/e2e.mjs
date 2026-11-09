@@ -343,6 +343,8 @@ check('Fechas/horas parseadas correctamente', JSON.stringify(labels) === JSON.st
 const dupOff = await page.$eval('#imp-list li:nth-child(3) input[type=checkbox]', (e) => !e.checked);
 check('Duplicado ("ya existe") viene destildado', dupOff);
 check('Botón dice "Importar 4"', (await page.textContent('#imp-save')).trim() === 'Importar 4');
+check('Importar texto trae Solo yo marcado', await page.isChecked('#imp-solo'));
+await page.uncheck('#imp-solo');
 await page.click('#imp-save');
 await page.waitForFunction(() => document.querySelectorAll('.match-card').length === 5);
 const order = await page.$$eval('.match-card', (els) => els.map((e) => e.dataset.date));
@@ -360,6 +362,65 @@ check('Ver más adelante despliega los que siguen', await page.locator('#list-ne
 await page.click('#btn-later');
 await page.waitForFunction(() => !document.querySelector('#list-later') && document.querySelector('#btn-later')?.textContent.includes('Ver más adelante'));
 check('Badge "Mañana" en el partido del martes', (await page.textContent('#list-next .match-card >> nth=0')).includes('Mañana'));
+await page.click('#btn-import');
+await page.fill('#imp-text', 'domingo 15/11 21hs');
+await page.click('#imp-parse');
+await page.waitForSelector('#imp-solo');
+check('El partido importado sigue arrancando en Solo yo', await page.isChecked('#imp-solo'));
+await page.click('#imp-save');
+await page.waitForFunction(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db') || '{}');
+  return Object.values(db.matches || {}).some((match) => match.date === '2026-11-15' && match.time === '21:00' && match.solo === true);
+});
+const soloImport = await page.evaluate(() => {
+  const app = window.__app;
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db') || '{}');
+  const row = Object.values(db.matches || {}).find((match) => match.date === '2026-11-15' && match.time === '21:00');
+  const martin = (app.users || []).find((user) => user.name === 'Martín');
+  return {
+    solo: row?.solo === true,
+    viewers: row?.viewers || [],
+    adders: row?.adders || [],
+    createdByUid: row?.createdByUid || '',
+    mine: app.uid,
+    martin: martin?.uid || '',
+  };
+});
+check('El importado queda solo para Gustavo', soloImport.solo && soloImport.viewers.length === 1 && soloImport.viewers[0] === soloImport.mine && soloImport.adders.length === 1 && soloImport.adders[0] === soloImport.mine && soloImport.createdByUid === soloImport.mine && soloImport.martin && soloImport.martin !== soloImport.mine, JSON.stringify(soloImport));
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'martin@demo.local');
+await page.fill('#login-password', 'demo-martin');
+await page.click('#login-form button[type=submit]');
+await page.waitForFunction(() => window.__app?.who === 'Martín');
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('#tab-proximos');
+const martinSees = await page.evaluate(() => {
+  const app = window.__app;
+  const listed = (app.matches || []).some((match) => match.date === '2026-11-15' && match.time === '21:00');
+  const card = [...document.querySelectorAll('.match-card')].some((el) => el.dataset.date === '2026-11-15');
+  return listed || card;
+});
+check('Martín no ve el partido importado por Gustavo', martinSees === false);
+await page.click('#btn-settings');
+await page.click('#set-logout');
+await page.waitForSelector('#login-form');
+await page.fill('#login-email', 'gustavo@demo.local');
+await page.fill('#login-password', 'demo-gustavo');
+await page.click('#login-form button[type=submit]');
+await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db') || '{}');
+  for (const [id, match] of Object.entries(db.matches || {})) {
+    if (match.date === '2026-11-15' && match.time === '21:00') delete db.matches[id];
+  }
+  localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+  sessionStorage.removeItem('f7c-later');
+  location.hash = '#/';
+});
+await page.reload();
+await page.waitForSelector('.match-card[data-date="2026-10-22"]');
 
 // Detalle y jugadores
 await page.click('.match-card[data-date="2026-10-22"]');
@@ -6453,6 +6514,43 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const mobile = await verAgregado(390, 844, '18:20', 'Visible Movil');
   check('En 390px el jugador agregado queda visible y resaltado', mobile.last && mobile.cls, JSON.stringify(mobile));
   await page.locator('#slots .just-added').screenshot({ path: '/opt/cursor/artifacts/screenshots/v129-agregado.png' });
+  await page.setViewportSize({ width: 390, height: 640 });
+  const longId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-12-14', time: '21:40', capacity: 20, note: 'Lista larga' }, app.who);
+    const match = app.matches.find((item) => item.id === id);
+    for (let i = 1; i <= 16; i++) await app.store.addPlayer(match, { name: `Fila ${i}` }, app.who);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, longId);
+  await page.waitForSelector('#slots .name:text-is("Fila 16")');
+  const offscreen = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#slots .slot')].find((el) => el.textContent.includes('Fila 16'));
+    const action = document.querySelector('.actionbar')?.getBoundingClientRect().top ?? window.innerHeight;
+    return (row?.getBoundingClientRect().bottom ?? 0) > action;
+  });
+  check('La lista larga no entra en la pantalla del teléfono', offscreen === true);
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#player-name');
+  await page.fill('#player-name', 'Visible Largo');
+  await page.click('#player-form button[type=submit]');
+  const rowInView = (wanted) => {
+    const row = document.querySelector('#slots .just-added');
+    if (!row || !row.textContent.includes(wanted)) return false;
+    const box = row.getBoundingClientRect();
+    const top = (document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? 0) + 1;
+    const action = document.querySelector('.actionbar')?.getBoundingClientRect().top ?? window.innerHeight;
+    return box.height > 20 && box.top >= top - 1 && box.bottom <= action - 1;
+  };
+  await page.waitForFunction(rowInView, 'Visible Largo');
+  await page.evaluate(() => {
+    const scroller = document.scrollingElement;
+    if (scroller) scroller.scrollTop = 0;
+    window.dispatchEvent(new Event('resize'));
+  });
+  await page.waitForFunction(rowInView, 'Visible Largo');
+  const longSeen = await page.evaluate(rowInView, 'Visible Largo');
+  check('En 390x640 el jugador agregado queda a la vista y no lo tapa la barra', longSeen === true);
   const desk = await verAgregado(1280, 800, '19:20', 'Visible Escritorio');
   check('En escritorio el jugador agregado queda visible y resaltado', desk.last && desk.cls, JSON.stringify(desk));
   await page.setViewportSize({ width: 390, height: 844 });

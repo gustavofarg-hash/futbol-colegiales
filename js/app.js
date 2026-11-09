@@ -29,7 +29,7 @@ import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
-import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
+import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -1077,6 +1077,7 @@ function render() {
   else renderHome();
   paintActivity();
   requestAnimationFrame(placeBars);
+  if (app.revealPlayerId) settleRevealedPlayer();
   if (same && y > 0) {
     const top = y;
     requestAnimationFrame(() => {
@@ -1092,41 +1093,68 @@ function addedPlayerRow(id) {
   return document.querySelector(`#slots [data-player="${safe}"]`) || document.querySelector(`#wait-list [data-player="${safe}"]`);
 }
 
-/** Baja hasta el jugador recién anotado y lo marca un momento. */
+/** Cuánto hay que mover el scroll para que la fila se vea entera, entre el encabezado y la barra de abajo. */
+function revealScrollDelta(row) {
+  const vv = window.visualViewport;
+  const viewTop = vv ? vv.offsetTop : 0;
+  const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  const stackBottom = document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? viewTop;
+  const topLimit = Math.max(stackBottom, viewTop) + 8;
+  const actionTop = document.querySelector('#view .actionbar')?.getBoundingClientRect().top;
+  const bottomLimit = Math.min(actionTop > topLimit ? actionTop : viewBottom, viewBottom) - 8;
+  const box = row.getBoundingClientRect();
+  if (box.height <= 0 || bottomLimit <= topLimit) return 0;
+  if (box.height > bottomLimit - topLimit) return box.top - topLimit;
+  if (box.bottom > bottomLimit) return box.bottom - bottomLimit;
+  if (box.top < topLimit) return box.top - topLimit;
+  return 0;
+}
+
+/** Baja hasta el jugador recién anotado y lo marca un momento.
+ *  En el teléfono el teclado se cierra después del toque y mueve la pantalla:
+ *  el scroll suave se pierde y hay que volver a medirlo cuando el alto ya quedó. */
 function revealAddedPlayer() {
   const id = app.revealPlayerId;
   if (!id) return false;
   const row = addedPlayerRow(id);
   if (!row) return false;
-  row.classList.remove('just-added');
-  void row.offsetWidth;
-  row.classList.add('just-added');
-  const scroll = () => {
-    const fresh = addedPlayerRow(id);
-    const scroller = document.scrollingElement;
-    if (!fresh || !scroller) return;
-    const topLimit = (document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? 0) + 8;
-    const actionTop = document.querySelector('.actionbar')?.getBoundingClientRect().top;
-    const bottomLimit = (actionTop > topLimit ? actionTop : window.innerHeight) - 8;
-    const box = fresh.getBoundingClientRect();
-    let delta = 0;
-    if (box.bottom > bottomLimit) delta = box.bottom - bottomLimit;
-    else if (box.top < topLimit) delta = box.top - topLimit;
-    if (Math.abs(delta) > 1) scroller.scrollBy({ top: delta, behavior: 'smooth' });
-  };
-  scroll();
-  requestAnimationFrame(scroll);
-  const vv = window.visualViewport;
-  if (vv) {
-    const onResize = () => { if (app.revealPlayerId) scroll(); };
-    vv.addEventListener('resize', onResize);
-    setTimeout(() => vv.removeEventListener('resize', onResize), 800);
-  }
-  clearTimeout(app.revealTimer);
-  app.revealTimer = setTimeout(() => {
-    if (app.revealPlayerId === id) app.revealPlayerId = '';
-  }, 2100);
+  if (!row.classList.contains('just-added')) row.classList.add('just-added');
+  const scroller = document.scrollingElement || document.documentElement;
+  const delta = revealScrollDelta(row);
+  if (Math.abs(delta) > 1) scroller.scrollTop += delta;
   return true;
+}
+
+function settleRevealedPlayer() {
+  if (!app.revealPlayerId) return;
+  revealAddedPlayer();
+  requestAnimationFrame(() => {
+    if (!app.revealPlayerId) return;
+    requestAnimationFrame(() => { if (app.revealPlayerId) revealAddedPlayer(); });
+  });
+}
+
+function armRevealWatch(id) {
+  clearTimeout(app.revealTimer);
+  (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
+  const kicks = [60, 180, 400, 700, 1100, 1500];
+  app.revealKicks = kicks.map((ms) => setTimeout(() => {
+    if (app.revealPlayerId === id) settleRevealedPlayer();
+  }, ms));
+  app.revealTimer = setTimeout(() => {
+    (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
+    app.revealKicks = [];
+    if (app.revealPlayerId === id) app.revealPlayerId = '';
+  }, 2600);
+}
+
+function watchRevealViewport() {
+  const kick = () => { if (app.revealPlayerId) settleRevealedPlayer(); };
+  window.addEventListener('resize', kick);
+  const vv = window.visualViewport;
+  if (!vv) return;
+  vv.addEventListener('resize', kick);
+  vv.addEventListener('scroll', kick);
 }
 
 function placeOf(match) {
@@ -1853,7 +1881,7 @@ function renderMatch(id) {
     }
     const payText = paymentStatusText(p);
     slots.push(`
-      <li class="slot ${i >= cap ? 'extra' : ''}${inviteClass(p)}" data-player="${esc(p.id)}">
+      <li class="slot ${i >= cap ? 'extra' : ''}${inviteClass(p)}${app.revealPlayerId === p.id ? ' just-added' : ''}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
           ${nameRow(p)}
@@ -2055,7 +2083,7 @@ function waitingSection(m, full, readOnly) {
     const first = idx <= 0;
     const last = idx === allWait.length - 1;
     return `
-      <li class="slot wait${inviteClass(p)}" data-player="${esc(p.id)}">
+      <li class="slot wait${inviteClass(p)}${app.revealPlayerId === p.id ? ' just-added' : ''}" data-player="${esc(p.id)}">
         <div class="arrows">
           <button type="button" class="arrow-btn" data-wait-up="${esc(p.id)}" ${first ? 'disabled' : ''} aria-label="Subir prioridad de ${esc(p.name)}">↑</button>
           <button type="button" class="arrow-btn" data-wait-down="${esc(p.id)}" ${last ? 'disabled' : ''} aria-label="Bajar prioridad de ${esc(p.name)}">↓</button>
@@ -2082,7 +2110,7 @@ function noPlaySection(m, readOnly) {
   if (!rows.length) return '';
   const full = playersOf(m.id).length >= capOf(m);
   const items = rows.map((p, i) => `
-      <li class="slot wait${inviteClass(p)}" data-player="${esc(p.id)}">
+      <li class="slot wait${inviteClass(p)}${app.revealPlayerId === p.id ? ' just-added' : ''}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
           ${nameRow(p)}
@@ -3177,7 +3205,8 @@ function openImportPreview(text, found) {
   });
   openSheet(`
     <h3>Vista previa</h3>
-    ${items.length ? `<p class="hint">Encontramos ${items.length} partido${items.length > 1 ? 's' : ''}. Revisá fecha y hora, y destildá los que no quieras importar.</p>` :
+    ${items.length ? `<p class="hint">Encontramos ${items.length} partido${items.length > 1 ? 's' : ''}. Revisá fecha y hora, y destildá los que no quieras importar.</p>
+    <label class="checkline" id="imp-solo-line"><input type="checkbox" id="imp-solo" checked> Solo yo: nadie más lo ve, tampoco el admin</label>` :
       '<p class="hint">No encontramos fechas ni horarios en el texto. Probá con algo como “jueves 22/10 21hs”.</p>'}
     <ul class="preview" id="imp-list">${items.map((it, i) => `
       <li class="${it.on ? '' : 'off'}" data-i="${i}">
@@ -3212,8 +3241,9 @@ function openImportPreview(text, found) {
     const sel = items.filter((i) => i.on && i.date && i.time);
     if (!sel.length) return;
     if (sel.some((item) => splitNear([{ date: item.date }]).later.length)) rememberLater(true);
+    const access = importAccess(actor(), $('#imp-solo')?.checked !== false);
     closeSheet();
-    run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, perTeam: 7, venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }), venueName: venueLabel({ venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }) }, app.venues), access: publicAccess(actor()) })), app.who),
+    run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, perTeam: 7, venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }), venueName: venueLabel({ venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }) }, app.venues), access })), app.who),
       `${sel.length} partido${sel.length > 1 ? 's' : ''} importado${sel.length > 1 ? 's' : ''}`);
   };
 }
@@ -4511,9 +4541,9 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], opts
       if (notes.length) toast(notes.join(' · '), 4500);
     }
     if (opts.reveal === true && app.revealPlayerId) {
-      revealAddedPlayer();
       const shown = app.revealPlayerId;
-      setTimeout(() => { if (app.revealPlayerId === shown) app.revealPlayerId = ''; }, 900);
+      settleRevealedPlayer();
+      armRevealWatch(shown);
     }
   })(), msg);
   return true;
@@ -6946,6 +6976,7 @@ function showAnonymousDenial() {
 }
 
 async function boot() {
+  watchRevealViewport();
   if (isTrialPage()) { applyTheme(); watchTheme(); }
   clearWaChoice();
   clearMineFilter();
