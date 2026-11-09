@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hostsBeforeGuests, remapTrialBackup, trialBackupResultText, trialLinkStages, trialPlayerPlan } from '../js/backup.js';
+import { firestoreRestFields, hostsBeforeGuests, remapTrialBackup, trialBackupResultText, trialLinkStages, trialPlayerPlan, trialShouldReplace } from '../js/backup.js';
 import { isTrialPage } from '../js/trial.js';
 
 const TRIAL = 'BeHA5u1OoNXj13uMQaEjcxauZdo2';
@@ -130,4 +130,30 @@ test('los anfitriones se escriben antes que el invitado', () => {
   ];
   const ordered = hostsBeforeGuests(ops).map((op) => op.segments.join('/'));
   assert.deepEqual(ordered, ['matches/m', 'players/host', 'players/otro', 'players/guest']);
+});
+
+test('el pedido a Firebase manda los enteros como enteros', () => {
+  const fields = firestoreRestFields({
+    goals: 2,
+    paid: true,
+    name: 'Luis',
+    cash: 4500,
+    viewers: ['admin'],
+    note: null,
+  });
+  assert.equal(fields.goals.integerValue, '2');
+  assert.equal(fields.cash.integerValue, '4500');
+  assert.equal(fields.paid.booleanValue, true);
+  assert.equal(fields.name.stringValue, 'Luis');
+  assert.equal(fields.viewers.arrayValue.values[0].stringValue, 'admin');
+  assert.equal(fields.note.nullValue, null);
+});
+
+test('una regla que no se puede evaluar no se reintenta', () => {
+  const tooLong = Object.assign(new Error("Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached. for 'update' @ L600"), { code: 'permission-denied' });
+  const hidden = Object.assign(new Error("false for 'update' @ L600"), { code: 'permission-denied' });
+  const fresh = Object.assign(new Error("false for 'create' @ L600"), { code: 'permission-denied' });
+  assert.equal(trialShouldReplace(tooLong), false);
+  assert.equal(trialShouldReplace(hidden), true);
+  assert.equal(trialShouldReplace(fresh), false);
 });
