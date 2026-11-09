@@ -6,7 +6,7 @@ import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterPhone } from '../js/roster.js';
+import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1234,6 +1234,17 @@ test('recordatorio: ventana de 2 horas y links sin abrir el flujo', () => {
   const gustavoSent = mixed.map((p) => (p.id === 'g' ? { ...p, reminderSentAt: 1 } : p));
   assert.equal(needsReminderBanner(match, playersForOrganizer(gustavoSent, 'Gustavo'), start - 60_000), false);
   assert.equal(needsReminderBanner(match, playersForOrganizer(gustavoSent, 'Martín'), start - 60_000), true);
+});
+
+test('elegir un guardado deja solo ese resultado', () => {
+  const found = [
+    { id: 'luciano', name: 'Luciano Faidutti' },
+    { id: 'sobrino', name: 'Sobrino de Lucho F. 1' },
+  ];
+  assert.deepEqual(visibleRosterHits(found, '', false).map((p) => p.id), ['luciano', 'sobrino']);
+  assert.deepEqual(visibleRosterHits(found, 'luciano', true).map((p) => p.id), ['luciano']);
+  assert.deepEqual(visibleRosterHits(found, 'nadie', true), []);
+  assert.deepEqual(visibleRosterHits(found, 'luciano', false).map((p) => p.id), ['luciano', 'sobrino']);
 });
 
 test('búsqueda del plantel: nombre, apellido y teléfono', () => {
@@ -3519,7 +3530,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v127');
+  assert.equal(version, 'f7c-v128');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
