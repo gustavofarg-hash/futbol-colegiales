@@ -131,7 +131,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v127');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v128');
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
 const plainLink = await page.evaluate(async () => {
@@ -6043,6 +6043,77 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#player-form button[type=submit]');
   await page.waitForSelector('#slots .name:text-is("Parcial Escritorio")');
   check('En escritorio Agregar anota al elegido una sola vez', await page.locator('#slots .name:text-is("Parcial Escritorio")').count() === 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+}
+
+{
+  async function elegirEntreDos(width, height, time) {
+    await page.setViewportSize({ width, height });
+    const matchId = await page.evaluate(async (time) => {
+      const app = window.__app;
+      const ensure = async (person) => {
+        const have = app.roster.find((row) => row.name === person.name);
+        if (have) return have.id;
+        return app.store.addRoster(person, app.who);
+      };
+      await ensure({ name: 'Luciano Faidutti', phone: '11 5799-3315' });
+      await ensure({ name: 'Sobrino de Lucho F. 1', phone: '' });
+      return app.store.addMatch({ date: '2026-12-11', time, note: 'Elegido solo', capacity: 14 }, app.who);
+    }, time);
+    await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+    await page.waitForSelector('#btn-add-player');
+    await page.click('#btn-add-player');
+    await page.waitForSelector('#roster-find');
+    await page.fill('#roster-find', 'Lu');
+    await page.waitForSelector('#roster-hits .roster-hit:has-text("Luciano Faidutti")');
+    await page.waitForSelector('#roster-hits .roster-hit:has-text("Sobrino de Lucho")');
+    await page.locator('#roster-find').focus();
+    await page.locator('#roster-hits .roster-hit', { hasText: 'Luciano Faidutti' }).click();
+    return page.evaluate(() => {
+      const hits = [...document.querySelectorAll('#roster-hits .roster-hit')].map((el) => el.textContent.replace(/\s+/g, ' ').trim());
+      return {
+        hits,
+        name: document.querySelector('#player-name')?.value || '',
+        phone: document.querySelector('#player-form [name=phone]')?.value || '',
+        pick: document.querySelector('#player-form')?.dataset.rosterPick || '',
+        on: document.querySelector('#roster-hits .roster-hit.on')?.textContent.includes('Luciano Faidutti') === true,
+      };
+    });
+  }
+  const solo = await elegirEntreDos(390, 844, '18:10');
+  check('En 390px elegir un guardado oculta los otros resultados', solo.hits.length === 1 && solo.hits[0].includes('Luciano Faidutti') && solo.name === 'Luciano Faidutti' && solo.phone.includes('5799') && solo.pick && solo.on, JSON.stringify(solo));
+  const fit = await page.evaluate(() => {
+    const row = document.querySelector('#roster-hits')?.getBoundingClientRect();
+    return {
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      inside: !row || row.right <= window.innerWidth + 1,
+    };
+  });
+  check('En 390px el elegido no desborda', fit.overflow <= 1 && fit.inside, JSON.stringify(fit));
+  await page.locator('#sheet .sheet-body').screenshot({ path: '/opt/cursor/artifacts/screenshots/v128-elegido-solo.png' });
+  await page.fill('#roster-find', 'Sob');
+  await page.waitForSelector('#roster-hits .roster-hit:has-text("Sobrino de Lucho")');
+  const reopened = await page.evaluate(() => [...document.querySelectorAll('#roster-hits .roster-hit')].map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+  check('Cambiar la búsqueda vuelve a mostrar coincidencias', reopened.some((text) => text.includes('Sobrino de Lucho')) && !reopened.some((text) => text.includes('Luciano Faidutti')), reopened.join(' | '));
+  await page.locator('#roster-hits .roster-hit', { hasText: 'Sobrino de Lucho' }).click();
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#slots .name:text-is("Sobrino de Lucho F. 1")');
+  check('Agregar usa la nueva elección', await page.locator('#slots .name:text-is("Sobrino de Lucho F. 1")').count() === 1 && await page.locator('#slots .name:text-is("Luciano Faidutti")').count() === 0);
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#roster-find');
+  await page.fill('#roster-find', 'Lu');
+  await page.locator('#roster-hits .roster-hit', { hasText: 'Luciano Faidutti' }).click();
+  await page.fill('#player-name', 'Luciano');
+  await page.waitForFunction(() => document.querySelectorAll('#roster-hits .roster-hit').length > 1);
+  const renamed = await page.evaluate(() => ({
+    pick: document.querySelector('#player-form')?.dataset.rosterPick || '',
+    hits: document.querySelectorAll('#roster-hits .roster-hit').length,
+  }));
+  check('Cambiar el nombre suelta la ficha y muestra la búsqueda', !renamed.pick && renamed.hits > 1, JSON.stringify(renamed));
+  await page.click('#player-form [data-close]');
+  const desk = await elegirEntreDos(1280, 800, '19:10');
+  check('En escritorio elegir un guardado oculta los otros resultados', desk.hits.length === 1 && desk.hits[0].includes('Luciano Faidutti') && desk.name === 'Luciano Faidutti' && desk.on, JSON.stringify(desk));
+  await page.click('#player-form [data-close]');
   await page.setViewportSize({ width: 390, height: 844 });
 }
 

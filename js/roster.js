@@ -113,6 +113,18 @@ export function fullNameBehind(player, roster) {
   return foldText(displayName(player, roster)) === foldText(name) ? '' : name;
 }
 
+/**
+ * Después de elegir, la lista muestra solo esa ficha.
+ * Si no está entre los resultados de la búsqueda, no se inventa otra fila.
+ */
+export function visibleRosterHits(found, pickedId, collapsed) {
+  const list = Array.isArray(found) ? found : [];
+  const id = String(pickedId || '').trim();
+  if (!collapsed || !id) return list;
+  const chosen = list.find((person) => person?.id === id);
+  return chosen ? [chosen] : [];
+}
+
 /** true si el texto es el comienzo del nombre, del apodo, del apellido (cualquier palabra) o un tramo del teléfono. */
 export function rosterHit(person, query) {
   const raw = String(query || '').trim();

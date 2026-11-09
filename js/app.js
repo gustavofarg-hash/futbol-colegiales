@@ -19,7 +19,7 @@ import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { activityNoticeText, activityNotices } from './notify.js';
-import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterPhone } from './roster.js';
+import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
@@ -42,7 +42,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v127';
+const APP_VERSION = 'f7c-v128';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -4590,12 +4590,15 @@ function openPlayerForm(m, p, opts = {}) {
   });
   const find = $('#roster-find');
   let pickedId = '';
+  let collapseHits = false;
+  let queryAtPick = '';
   if (find) {
     const paint = () => {
       const hits = $('#roster-hits');
       const addNew = $('#roster-add-new');
       const q = find.value.trim();
-      const found = q ? searchRoster(rosterForOrganizer(app.roster, actor()), q).slice(0, 8) : [];
+      const matches = q ? searchRoster(rosterForOrganizer(app.roster, actor()), q).slice(0, 8) : [];
+      const found = visibleRosterHits(matches, pickedId, collapseHits);
       if (addNew) addNew.hidden = !q || found.length > 0;
       hits.hidden = !found.length;
       hits.innerHTML = found.map((person) => {
@@ -4608,6 +4611,8 @@ function openPlayerForm(m, p, opts = {}) {
     const selectPerson = (person) => {
       if (!person) return;
       pickedId = person.id;
+      collapseHits = true;
+      queryAtPick = find.value.trim();
       form.dataset.rosterPick = person.id;
       form.name.value = person.name;
       if (form.phone && person.phone && !phoneHidden(person)) {
@@ -4625,11 +4630,15 @@ function openPlayerForm(m, p, opts = {}) {
       if (!person) return;
       selectPerson(person);
     };
-    find.addEventListener('input', paint);
+    find.addEventListener('input', () => {
+      if (find.value.trim() !== queryAtPick) collapseHits = false;
+      paint();
+    });
     form.name.addEventListener('input', () => {
       const person = pickedId ? app.roster.find((r) => r.id === pickedId) : null;
       if (person && foldText(person.name) !== foldText(form.name.value)) {
         pickedId = '';
+        collapseHits = false;
         delete form.dataset.rosterPick;
         paint();
       }
@@ -4638,6 +4647,7 @@ function openPlayerForm(m, p, opts = {}) {
       const text = find.value.trim();
       if (!text) return;
       pickedId = '';
+      collapseHits = false;
       delete form.dataset.rosterPick;
       form.name.value = text;
       paint();
