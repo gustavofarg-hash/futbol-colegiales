@@ -45,10 +45,10 @@ En una dirección que contiene `/prueba/`:
 - `localStorage` y `sessionStorage` se guardan con el prefijo `prueba:` (la sesión, el modo demo, el tamaño de letra y los avisos no se mezclan);
 - el service worker de `/prueba/sw.js` usa otra caché (`prueba-f7c-…`) y no borra la caché de producción. El de la raíz no intercepta pedidos a `/prueba/`;
 - los links de confirmar asistencia, el link corto `/c/?k=` y el de instalar la app apuntan a `/prueba/`;
-- si `config.prueba.js` sigue con `TU_...`, no se abre Firebase: queda el modo demo. No se usa `config.js` de producción;
+- `config.prueba.js` apunta al proyecto `mis-partidos-prueba`. La raíz no importa ese archivo: sigue con `config.js` de producción. Si el archivo volviera a tener `TU_...`, no se abre Firebase y queda el modo demo;
 - si igual la página de `/prueba/` llegara a cargar el `projectId` `futbol-partidos`, la app no abre Firebase y se queda en modo demo.
 
-Firebase Auth, cuando más adelante haya un proyecto de prueba, guarda la sesión en IndexedDB con la apiKey de **ese** proyecto. No reutiliza la sesión de `futbol-partidos`.
+Firebase Auth del proyecto `mis-partidos-prueba` guarda la sesión en IndexedDB con la apiKey de ese proyecto. No reutiliza la sesión de `futbol-partidos`.
 
 ## Backup: qué copia y qué no
 
@@ -78,7 +78,7 @@ Todo esto lo tiene que hacer él. Un asistente no entra a esa cuenta.
    - Colección `log`: campo `editors`, alcance **Matrices**, y campo `at`, **Descendente**. Sin este, Registro no lee. Está descripto en `firestore.indexes.json`.
    Si otra pantalla pide un índice, el mensaje de la consola del navegador trae un link para crearlo en el proyecto de prueba. No usar los links de `futbol-partidos`.
 9. **Configuración del proyecto** (engranaje al lado de «Descripción general del proyecto») → **Tus apps** → **</>** (Web). Nombre de la app: `Mis Partidos prueba`. No hace falta Hosting de Firebase. Registrar. Copiar el `firebaseConfig` (`apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId`, `appId`).
-10. Pegar esos valores en `config.prueba.js` del repo, en la rama `prueba`. No tocar `config.js`. El `projectId` tiene que ser el del paso 2, nunca `futbol-partidos`.
+10. Esos valores ya están en `config.prueba.js` (`projectId` `mis-partidos-prueba`). No tocar `config.js`. Si se regenera la app web, reemplazar solo ese archivo. El `projectId` nunca puede ser `futbol-partidos`.
 11. Abrir https://gustavofarg-hash.github.io/futbol-colegiales/prueba/ . Tiene que verse el cartel rojo. Crear la cuenta de administrador con `gustavof.arg@gmail.com` **en esa dirección**, no en la de producción. Es otra cuenta, en otro proyecto, aunque el mail sea el mismo.
 12. Recién ahí, Ajustes → Cargar base de datos desde un backup bajado de producción.
 
