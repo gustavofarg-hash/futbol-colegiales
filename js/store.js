@@ -107,7 +107,7 @@ import { canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer, editLo
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
-import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialPlayerPlan } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, hostsBeforeGuests, isFirebasePermissionDenied, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialOpKey, trialPlayerPlan } from './backup.js';
 import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 
 function reportBackupProgress(onProgress, done, total) {
@@ -1693,7 +1693,7 @@ export class FirebaseStore {
     for (const name of BACKUP_COLLECTIONS) collections[name] = await this._readCollection(name);
     return buildBackup(collections, opts.when);
   }
-  async importDatabase(payload, onProgress) {
+  async importDatabase(payload, onProgress, options = {}) {
     requireAdmin(this.actor);
     const parsed = parseBackup(payload);
     if (!parsed.ok) throw Object.assign(new Error(parsed.error), { code: 'invalid-backup' });
@@ -1713,12 +1713,13 @@ export class FirebaseStore {
       for (const id of ids) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
         if (trial) {
-          // Un set sobre un documento que ya está es un update. La lista no
-          // devuelve un partido o jugador con uid de producción, así que hay
-          // que borrarlo igual por el id del archivo. El admin sí puede.
+          // Solo se borra lo que la lectura encontró. Borrar un id que no está
+          // gasta la cuota de Spark y no cambia nada. Si el set choca con un
+          // documento oculto (uid de producción), se borra y se reintenta esa vez.
+          if (!Object.prototype.hasOwnProperty.call(current, id)) continue;
           if (name === 'users' && current[id]?.role !== 'organizer') continue;
           if (name === 'settings' && id !== 'prices') continue;
-          ops.push({ kind: 'delete', segments: [name, id] });
+          ops.push({ kind: 'delete', phase: 0, segments: [name, id] });
           continue;
         }
         if (!Object.prototype.hasOwnProperty.call(current, id)) continue;
@@ -1727,10 +1728,10 @@ export class FirebaseStore {
       if (trial && name === 'players') {
         trialPlayers = trialPlayerPlan(next, backup.collections.matches || {});
         skipped.push(...trialPlayers.skipped);
-        for (const row of trialPlayers.creates) ops.push({ kind: 'set', segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
-        for (const row of [...trialPlayers.invitePatches, ...trialPlayers.moneyPatches, ...trialPlayers.goalPatches]) {
-          ops.push({ kind: 'set', merge: true, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
-        }
+        for (const row of trialPlayers.creates) ops.push({ kind: 'set', phase: 2, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        for (const row of trialPlayers.invitePatches) ops.push({ kind: 'set', merge: true, phase: 3, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        for (const row of trialPlayers.moneyPatches) ops.push({ kind: 'set', merge: true, phase: 4, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        for (const row of trialPlayers.goalPatches) ops.push({ kind: 'set', merge: true, phase: 5, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
         continue;
       }
       if (trial && name === 'playerContacts' && trialPlayers) {
@@ -1743,7 +1744,7 @@ export class FirebaseStore {
           const copy = { ...data };
           const player = saved.get(id);
           if (Array.isArray(player.viewers)) copy.viewers = player.viewers.slice();
-          ops.push({ kind: 'set', segments: [name, id], data: reviveValue(copy, Timestamp) });
+          ops.push({ kind: 'set', phase: 3, segments: [name, id], data: reviveValue(copy, Timestamp) });
         }
         continue;
       }
@@ -1751,19 +1752,26 @@ export class FirebaseStore {
         if (isOwnUserDoc([name, id], keepUser)) continue;
         const revived = reviveValue(data, Timestamp);
         if (trial && name === 'links') {
-          for (const stage of trialLinkStages(revived)) ops.push({ kind: 'set', segments: [name, id], data: stage });
+          const stages = trialLinkStages(revived);
+          stages.forEach((stage, index) => ops.push({ kind: 'set', phase: index === 0 ? 1 : 3, segments: [name, id], data: stage }));
           continue;
         }
-        ops.push({ kind: 'set', segments: [name, id], data: revived });
+        ops.push({ kind: 'set', phase: trial ? 1 : 0, segments: [name, id], data: revived });
       }
     }
     for (const [path, data] of Object.entries(backup.subcollections || {})) {
       const segments = path.split('/');
       if (isOwnUserDoc(segments, keepUser)) continue;
-      ops.push({ kind: 'set', segments, data: reviveValue(data, Timestamp) });
+      ops.push({ kind: 'set', phase: trial ? 1 : 0, segments, data: reviveValue(data, Timestamp) });
     }
-    const failures = await this._commitOps(trial ? hostsBeforeGuests(ops) : ops, onProgress, trial);
-    return { ...parsed.summary, failures: skipped.concat(failures) };
+    const failures = await this._commitOps(trial ? hostsBeforeGuests(ops) : ops, onProgress, trial ? {
+      parallel: TRIAL_WRITE_PARALLEL,
+      skip: options.skipKeys,
+      onDone: options.onDone,
+    } : null);
+    const writes = ops.filter((op) => op.kind === 'set').length;
+    const deletes = ops.filter((op) => op.kind === 'delete').length;
+    return { ...parsed.summary, failures: skipped.concat(failures), ops: trial ? { writes, deletes } : undefined };
   }
   async resetDatabase() {
     requireAdmin(this.actor);
@@ -1782,37 +1790,89 @@ export class FirebaseStore {
     }
     await this._commitOps(ops);
   }
-  async _commitOps(ops, onProgress, keepGoing = false) {
+  async _commitOne(op) {
+    const { writeBatch, doc } = this.fs;
+    const batch = writeBatch(this.db);
+    const ref = doc(this.db, ...op.segments);
+    if (op.kind === 'delete') batch.delete(ref);
+    else if (op.merge) batch.set(ref, op.data, { merge: true });
+    else batch.set(ref, op.data);
+    await batch.commit();
+  }
+  async _commitOps(ops, onProgress, trialOpts = null) {
     const { writeBatch, doc } = this.fs;
     const uid = this.actor?.uid || '';
-    const size = BACKUP_WRITE_BATCH;
-    const work = ops.filter((op) => !isOwnUserDoc(op.segments, uid));
+    const keepGoing = !!trialOpts;
+    let work = ops.filter((op) => !isOwnUserDoc(op.segments, uid));
+    if (trialOpts?.skip?.size) work = work.filter((op) => !trialOpts.skip.has(trialOpKey(op)));
     const total = work.length;
     const failures = [];
-    reportBackupProgress(onProgress, 0, total);
-    let done = 0;
-    for (let i = 0; i < work.length; i += size) {
-      const slice = work.slice(i, i + size);
-      if (!slice.length) continue;
+    let done = trialOpts?.skip?.size || 0;
+    const reportTotal = total + (trialOpts?.skip?.size || 0);
+    reportBackupProgress(onProgress, done, reportTotal);
+    const note = (op) => {
+      done += 1;
+      if (trialOpts?.onDone) trialOpts.onDone(trialOpKey(op));
+      reportBackupProgress(onProgress, done, reportTotal);
+    };
+    const fail = (op) => failures.push({
+      path: Array.isArray(op?.segments) ? op.segments.join('/') : 'documento',
+      reason: 'Firebase rechazó el permiso',
+    });
+    const runOne = async (op) => {
       try {
-        const batch = writeBatch(this.db);
-        for (const op of slice) {
-          const ref = doc(this.db, ...op.segments);
-          if (op.kind === 'delete') batch.delete(ref);
-          else if (op.merge) batch.set(ref, op.data, { merge: true });
-          else batch.set(ref, op.data);
-        }
-        await batch.commit();
+        await this._commitOne(op);
+        note(op);
+        return;
       } catch (error) {
-        if (!keepGoing) throw error?.path ? error : backupWriteError(slice[0], error);
-        const op = slice[0];
-        failures.push({
-          path: Array.isArray(op?.segments) ? op.segments.join('/') : 'documento',
-          reason: 'Firebase rechazó el permiso',
-        });
+        const denied = isFirebasePermissionDenied(error);
+        if (keepGoing && op.kind === 'set' && !op.merge && denied) {
+          try {
+            await this._commitOne({ kind: 'delete', segments: op.segments });
+            await this._commitOne(op);
+            note(op);
+            return;
+          } catch { /* sigue abajo */ }
+        }
+        if (!keepGoing) throw error?.path ? error : backupWriteError(op, error);
+        fail(op);
+        note(op);
       }
-      done += slice.length;
-      reportBackupProgress(onProgress, done, total);
+    };
+    if (!keepGoing) {
+      const size = BACKUP_WRITE_BATCH;
+      for (let i = 0; i < work.length; i += size) {
+        const slice = work.slice(i, i + size);
+        if (!slice.length) continue;
+        try {
+          const batch = writeBatch(this.db);
+          for (const op of slice) {
+            const ref = doc(this.db, ...op.segments);
+            if (op.kind === 'delete') batch.delete(ref);
+            else if (op.merge) batch.set(ref, op.data, { merge: true });
+            else batch.set(ref, op.data);
+          }
+          await batch.commit();
+        } catch (error) {
+          throw error?.path ? error : backupWriteError(slice[0], error);
+        }
+        done += slice.length;
+        reportBackupProgress(onProgress, done, reportTotal);
+      }
+      return failures;
+    }
+    const phases = [...new Set(work.map((op) => op.phase || 0))].sort((a, b) => a - b);
+    const limit = Math.max(1, TRIAL_WRITE_PARALLEL);
+    for (const phase of phases) {
+      const group = work.filter((op) => (op.phase || 0) === phase);
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(limit, group.length) }, async () => {
+        while (cursor < group.length) {
+          const op = group[cursor++];
+          await runOne(op);
+        }
+      });
+      await Promise.all(workers);
     }
     return failures;
   }

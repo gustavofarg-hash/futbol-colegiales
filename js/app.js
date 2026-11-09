@@ -37,7 +37,7 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup, trialBackupResultText } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
@@ -2771,10 +2771,92 @@ function openRestore() {
     <p class="err" id="backup-err"></p>
     <div class="menu">
       <button type="button" class="btn danger" id="backup-apply" disabled>Reemplazar los datos actuales</button>
+      <button type="button" class="btn" id="backup-continue" hidden>Continuar la carga</button>
       <button type="button" class="btn ghost" data-close>Cerrar</button>
     </div>`);
   const fileInput = $('#backup-file');
   const apply = $('#backup-apply');
+  const resumeBtn = $('#backup-continue');
+  let resumeId = '';
+  let resumeDone = null;
+  let waking = false;
+  let wakeLock = null;
+  const holdScreen = async () => {
+    try {
+      if (navigator.wakeLock?.request) wakeLock = await navigator.wakeLock.request('screen');
+    } catch { /* el navegador no deja mantener la pantalla */ }
+  };
+  const onVisible = () => { if (waking && document.visibilityState === 'visible') holdScreen(); };
+  const startLoad = (continuing) => {
+    if (!parsed?.ok) return;
+    apply.disabled = true;
+    if (resumeBtn) resumeBtn.disabled = true;
+    fileInput.disabled = true;
+    const status = $('#backup-status');
+    status.className = 'backup-status';
+    status.textContent = backupProgressText(0, 0);
+    $('#backup-err').textContent = '';
+    const payload = parsed.backup;
+    const trial = isTrialPage();
+    if (!continuing) clearTrialResume();
+    const doneKeys = continuing && resumeDone ? new Set(resumeDone) : new Set();
+    let shown = doneKeys.size;
+    if (trial) {
+      waking = true;
+      holdScreen();
+      document.addEventListener('visibilitychange', onVisible);
+    }
+    const finishWake = () => {
+      waking = false;
+      document.removeEventListener('visibilitychange', onVisible);
+      try { wakeLock?.release(); } catch { /* ya se soltó */ }
+      wakeLock = null;
+    };
+    app.store.importDatabase(payload, ({ done, total }) => {
+      if (!status.isConnected || status.classList.contains('backup-ok')) return;
+      shown = Math.max(shown, done);
+      status.textContent = backupProgressText(shown, total);
+    }, trial ? {
+      skipKeys: doneKeys,
+      onDone: (key) => {
+        doneKeys.add(key);
+        if (doneKeys.size % 25 === 0) writeTrialResume(resumeId, doneKeys);
+      },
+    } : undefined).then((summary) => {
+      finishWake();
+      const partial = trialBackupResultText(summary?.failures);
+      if (partial) {
+        if (trial) writeTrialResume(resumeId, doneKeys);
+        status.className = 'backup-status';
+        status.textContent = '';
+        const err = $('#backup-err');
+        err.style.whiteSpace = 'pre-line';
+        err.textContent = partial;
+        apply.disabled = false;
+        fileInput.disabled = false;
+        if (resumeBtn) resumeBtn.disabled = false;
+        toast(partial, 7000);
+        return;
+      }
+      if (trial) clearTrialResume();
+      status.className = 'backup-status backup-ok';
+      status.textContent = BACKUP_LOADED_OK;
+      apply.hidden = true;
+      if (resumeBtn) resumeBtn.hidden = true;
+      toast(BACKUP_LOADED_OK, 0);
+    }).catch((error) => {
+      finishWake();
+      if (trial) writeTrialResume(resumeId, doneKeys);
+      apply.disabled = false;
+      if (resumeBtn) resumeBtn.disabled = false;
+      fileInput.disabled = false;
+      status.textContent = '';
+      status.className = 'backup-status';
+      const msg = backupSurfaceMessage(error, 'No se pudo cargar el backup.');
+      $('#backup-err').textContent = msg;
+      toast(msg, 7000);
+    });
+  };
   fileInput.onchange = () => {
     const file = fileInput.files?.[0];
     parsed = null;
@@ -2790,51 +2872,21 @@ function openRestore() {
       const result = parseBackup(String(reader.result || ''));
       if (!result.ok) { $('#backup-err').textContent = result.error; return; }
       parsed = result;
+      parsed.rawText = String(reader.result || '');
       $('#backup-summary').innerHTML = backupSummaryHtml(result.summary);
       apply.disabled = false;
+      resumeId = isTrialPage() ? trialResumeId(parsed.rawText) : '';
+      resumeDone = resumeId ? readTrialResume(resumeId) : null;
+      if (resumeBtn) {
+        resumeBtn.hidden = !(resumeDone && resumeDone.size);
+        resumeBtn.textContent = resumeDone?.size ? `Continuar la carga (${resumeDone.size} ya hechos)` : 'Continuar la carga';
+      }
     };
     reader.onerror = () => { $('#backup-err').textContent = 'No se pudo leer el archivo.'; };
     reader.readAsText(file);
   };
-  apply.onclick = () => {
-    if (!parsed?.ok) return;
-    apply.disabled = true;
-    fileInput.disabled = true;
-    const status = $('#backup-status');
-    status.className = 'backup-status';
-    status.textContent = backupProgressText(0, 0);
-    $('#backup-err').textContent = '';
-    const payload = parsed.backup;
-    app.store.importDatabase(payload, ({ done, total }) => {
-      if (!status.isConnected || status.classList.contains('backup-ok')) return;
-      status.textContent = backupProgressText(done, total);
-    }).then((summary) => {
-      const partial = trialBackupResultText(summary?.failures);
-      if (partial) {
-        status.className = 'backup-status';
-        status.textContent = '';
-        const err = $('#backup-err');
-        err.style.whiteSpace = 'pre-line';
-        err.textContent = partial;
-        apply.disabled = false;
-        fileInput.disabled = false;
-        toast(partial, 7000);
-        return;
-      }
-      status.className = 'backup-status backup-ok';
-      status.textContent = BACKUP_LOADED_OK;
-      apply.hidden = true;
-      toast(BACKUP_LOADED_OK, 0);
-    }).catch((error) => {
-      apply.disabled = false;
-      fileInput.disabled = false;
-      status.textContent = '';
-      status.className = 'backup-status';
-      const msg = backupSurfaceMessage(error, 'No se pudo cargar el backup.');
-      $('#backup-err').textContent = msg;
-      toast(msg, 7000);
-    });
-  };
+  apply.onclick = () => startLoad(false);
+  if (resumeBtn) resumeBtn.onclick = () => startLoad(true);
 }
 
 function openBackup() {
