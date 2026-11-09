@@ -107,7 +107,7 @@ import { canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer, editLo
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
-import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, hostsBeforeGuests, isFirebasePermissionDenied, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialOpKey, trialPlayerPlan } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, firestoreRestFields, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialMockToken, trialOpKey, trialPlayerPlan, trialShouldReplace } from './backup.js';
 import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 
 function reportBackupProgress(onProgress, done, total) {
@@ -1790,6 +1790,64 @@ export class FirebaseStore {
     }
     await this._commitOps(ops);
   }
+  _firestoreWire() {
+    const delegate = this.db?._delegate || this.db;
+    const settings = delegate?._settings || {};
+    const databaseId = delegate?._databaseId || {};
+    const projectId = databaseId.projectId || this.app?.options?.projectId || '';
+    const database = databaseId.database || '(default)';
+    const host = settings.host || 'firestore.googleapis.com';
+    if (!projectId || !host) throw new Error('No se pudo conectar con Firebase para la carga.');
+    return {
+      projectId,
+      database,
+      host,
+      ssl: settings.ssl !== false,
+      mock: delegate?._emulatorOptions?.mockUserToken || settings.emulatorOptions?.mockUserToken || null,
+      apiKey: this.app?.options?.apiKey || '',
+    };
+  }
+  async _trialToken(wire) {
+    if (typeof wire.mock === 'string' && wire.mock) return wire.mock;
+    if (wire.mock && typeof wire.mock === 'object') return trialMockToken(wire.mock, wire.projectId);
+    const { getAuth } = await import(`${FB}/firebase-auth.js`);
+    const user = getAuth(this.app).currentUser;
+    if (!user) throw new Error('No hay sesión de administrador.');
+    return user.getIdToken();
+  }
+  async _commitRest(op, wire, token) {
+    const plain = `projects/${wire.projectId}/databases/${wire.database}/documents/${op.segments.join('/')}`;
+    let write;
+    if (op.kind === 'delete') write = { delete: plain };
+    else {
+      const fields = firestoreRestFields(op.data);
+      write = { update: { name: plain, fields } };
+      if (op.merge) write.updateMask = { fieldPaths: Object.keys(fields) };
+    }
+    const root = `${wire.ssl ? 'https' : 'http'}://${wire.host}/v1/${['projects', wire.projectId, 'databases', wire.database].map(encodeURIComponent).join('/')}/documents:commit`;
+    const url = wire.apiKey ? `${root}?key=${encodeURIComponent(wire.apiKey)}` : root;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+        Authorization: `Bearer ${token}`,
+        'google-cloud-resource-prefix': `projects/${wire.projectId}/databases/${wire.database}`,
+        'x-goog-request-params': `project_id=${encodeURIComponent(wire.projectId)}&database_id=${encodeURIComponent(wire.database)}`,
+      },
+      body: JSON.stringify({ writes: [write] }),
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined,
+    });
+    if (response.ok) return;
+    let body = null;
+    try { body = await response.json(); } catch { body = null; }
+    if (Array.isArray(body)) body = body[0];
+    const message = body?.error?.message || response.statusText || 'Firebase rechazó el permiso';
+    const code = response.status === 403 ? 'permission-denied'
+      : response.status === 401 ? 'unauthenticated'
+      : response.status === 429 ? 'resource-exhausted'
+      : 'unknown';
+    throw Object.assign(new Error(message), { code, status: response.status, path: op.segments.join('/') });
+  }
   async _commitOne(op) {
     const { writeBatch, doc } = this.fs;
     const batch = writeBatch(this.db);
@@ -1810,33 +1868,43 @@ export class FirebaseStore {
     let done = trialOpts?.skip?.size || 0;
     const reportTotal = total + (trialOpts?.skip?.size || 0);
     reportBackupProgress(onProgress, done, reportTotal);
-    const note = (op) => {
+    const note = (op, saved) => {
       done += 1;
-      if (trialOpts?.onDone) trialOpts.onDone(trialOpKey(op));
+      if (saved && trialOpts?.onDone) trialOpts.onDone(trialOpKey(op));
       reportBackupProgress(onProgress, done, reportTotal);
     };
-    const fail = (op) => failures.push({
+    const fail = (op, error) => failures.push({
       path: Array.isArray(op?.segments) ? op.segments.join('/') : 'documento',
-      reason: 'Firebase rechazó el permiso',
+      reason: /1000 expressions/i.test(String(error?.message || ''))
+        ? 'la regla de Firebase es demasiado larga'
+        : 'Firebase rechazó el permiso',
     });
+    const wire = keepGoing ? this._firestoreWire() : null;
+    const token = keepGoing ? await this._trialToken(wire) : '';
+    const send = (op) => (keepGoing ? this._commitRest(op, wire, token) : this._commitOne(op));
     const runOne = async (op) => {
       try {
-        await this._commitOne(op);
-        note(op);
+        await send(op);
+        note(op, true);
         return;
       } catch (error) {
-        const denied = isFirebasePermissionDenied(error);
-        if (keepGoing && op.kind === 'set' && !op.merge && denied) {
+        // Una sola vez, y solo si el documento ya estaba. Sin espera: si la
+        // regla no se puede evaluar, reintentar tarda y vuelve a fallar.
+        if (keepGoing && trialShouldReplace(error) && op.kind === 'set' && !op.merge) {
           try {
-            await this._commitOne({ kind: 'delete', segments: op.segments });
-            await this._commitOne(op);
-            note(op);
+            await send({ kind: 'delete', segments: op.segments });
+            await send(op);
+            note(op, true);
             return;
-          } catch { /* sigue abajo */ }
+          } catch (again) {
+            fail(op, again);
+            note(op, false);
+            return;
+          }
         }
         if (!keepGoing) throw error?.path ? error : backupWriteError(op, error);
-        fail(op);
-        note(op);
+        fail(op, error);
+        note(op, false);
       }
     };
     if (!keepGoing) {

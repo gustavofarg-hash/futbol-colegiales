@@ -13,7 +13,7 @@ export const BACKUP_ZONE = 'America/Buenos_Aires';
 // pasar de 20 lecturas o de 1000 expresiones. El mensaje es el de permisos.
 // El emulador no aplica ese tope, por eso allá un lote de 400 parece andar.
 export const BACKUP_WRITE_BATCH = 1;
-/** Escrituras a la vez en /prueba/. Cada una es un documento: un lote grande suma las reglas y Firebase niega todo. */
+/** Escrituras a la vez en /prueba/. Cada una es un pedido aparte: el canal único del SDK, si una se atrasa, frena el resto hasta un minuto. */
 export const TRIAL_WRITE_PARALLEL = 24;
 export const BACKUP_LOADED_OK = 'Todos los datos fueron cargados con éxito';
 
@@ -610,6 +610,84 @@ export function clearTrialResume() {
 export function trialOpKey(op) {
   const path = Array.isArray(op?.segments) ? op.segments.join('/') : '';
   return `${op?.phase || 0}|${op?.kind || ''}|${op?.merge ? 'm' : 's'}|${path}`;
+}
+
+/**
+ * Un documento que ya estaba se niega como update. Se borra y se escribe una vez.
+ * Si la regla no se puede evaluar (tope de 1000), no se reintenta: tarda y vuelve a fallar.
+ */
+export function trialShouldReplace(error) {
+  const message = String(error?.message || '');
+  if (/1000 expressions/i.test(message)) return false;
+  if (!isFirebasePermissionDenied(error)) return false;
+  return /for 'update'|for "update"/.test(message);
+}
+
+function restBase64Url(text) {
+  const bytes = new TextEncoder().encode(String(text));
+  let bin = '';
+  for (const byte of bytes) bin += String.fromCharCode(byte);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Token del emulador. En el navegador la carga usa el token real de la sesión. */
+export function trialMockToken(claims, projectId) {
+  const project = projectId || 'demo-project';
+  const iat = Number(claims?.iat) || 0;
+  const sub = claims?.sub || claims?.user_id || '';
+  const header = restBase64Url(JSON.stringify({ alg: 'none', type: 'JWT' }));
+  const payload = restBase64Url(JSON.stringify({
+    iss: `https://securetoken.google.com/${project}`,
+    aud: project,
+    iat,
+    exp: iat + 3600,
+    auth_time: iat,
+    sub,
+    user_id: sub,
+    firebase: { sign_in_provider: 'custom', identities: {} },
+    ...claims,
+  }));
+  return `${header}.${payload}.`;
+}
+
+function restTimestamp(value) {
+  if (value instanceof Date) return value.toISOString();
+  const seconds = Number(value.seconds) || 0;
+  const nanos = Number(value.nanoseconds) || 0;
+  return new Date(seconds * 1000 + Math.floor(nanos / 1e6)).toISOString();
+}
+
+export function firestoreRestValue(value) {
+  if (value == null) return { nullValue: null };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number') {
+    if (Number.isInteger(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER) return { integerValue: String(value) };
+    return { doubleValue: value };
+  }
+  if (typeof value === 'string') return { stringValue: value };
+  if (value instanceof Date || (typeof value.toDate === 'function' && Number.isFinite(Number(value.seconds)))) {
+    return { timestampValue: restTimestamp(value) };
+  }
+  if (Array.isArray(value)) return { arrayValue: { values: value.map((item) => firestoreRestValue(item)) } };
+  if (isPlainObject(value)) {
+    const fields = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (item === undefined) continue;
+      fields[key] = firestoreRestValue(item);
+    }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(value) };
+}
+
+export function firestoreRestFields(data) {
+  const fields = {};
+  if (!isPlainObject(data)) return fields;
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined) continue;
+    fields[key] = firestoreRestValue(value);
+  }
+  return fields;
 }
 
 export function trialBackupResultText(failures) {
