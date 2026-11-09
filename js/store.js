@@ -107,7 +107,7 @@ import { canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer, editLo
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
-import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages } from './backup.js';
 import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 
 function reportBackupProgress(onProgress, done, total) {
@@ -1709,11 +1709,25 @@ export class FirebaseStore {
       const next = backup.collections[name] || {};
       for (const id of Object.keys(current)) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
+        if (trial) {
+          // Un set sobre un documento que ya está es un update. El partido
+          // cargado a medias tiene uid de producción: la regla no deja
+          // actualizarlo. Borrarlo primero (el admin sí puede) y crearlo de nuevo.
+          if (name === 'users' && current[id]?.role !== 'organizer') continue;
+          if (name === 'settings' && id !== 'prices') continue;
+          ops.push({ kind: 'delete', segments: [name, id] });
+          continue;
+        }
         if (name === 'log' || !Object.prototype.hasOwnProperty.call(next, id)) ops.push({ kind: 'delete', segments: [name, id] });
       }
       for (const [id, data] of Object.entries(next)) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
-        ops.push({ kind: 'set', segments: [name, id], data: reviveValue(data, Timestamp) });
+        const revived = reviveValue(data, Timestamp);
+        if (trial && name === 'links') {
+          for (const stage of trialLinkStages(revived)) ops.push({ kind: 'set', segments: [name, id], data: stage });
+          continue;
+        }
+        ops.push({ kind: 'set', segments: [name, id], data: revived });
       }
     }
     for (const [path, data] of Object.entries(backup.subcollections || {})) {

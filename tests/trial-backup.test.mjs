@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hostsBeforeGuests, remapTrialBackup } from '../js/backup.js';
+import { hostsBeforeGuests, remapTrialBackup, trialLinkStages } from '../js/backup.js';
 import { isTrialPage } from '../js/trial.js';
 
 const TRIAL = 'BeHA5u1OoNXj13uMQaEjcxauZdo2';
@@ -77,6 +77,19 @@ test('el backup de prueba pasa los uid al admin y conserva * y el anfitrión', (
   assert.deepEqual(out.collections.log.e1.editors, [TRIAL, '*']);
   assert.equal(out.collections.log.e1.actorName, 'Gustavo');
   assert.equal(backup.collections.matches.solo.createdByUid, GUSTAVO);
+});
+
+test('el link corto de la prueba se escribe en dos pasos', () => {
+  assert.deepEqual(trialLinkStages({ m: 'solo', p: 'host', t: 'token-anfitrion-prueba' }), [
+    { m: 'solo', p: 'host', t: 'token-anfitrion-prueba' },
+  ]);
+  const staged = trialLinkStages({
+    m: 'solo', p: 'host', t: 'token-anfitrion-prueba',
+    shortAt: 5, shortProvider: 'spoo', shortUrl: 'https://spoo.me/Abcd123',
+  });
+  assert.equal(staged.length, 2);
+  assert.deepEqual(Object.keys(staged[0]).sort(), ['m', 'p', 't']);
+  assert.equal(staged[1].shortUrl, 'https://spoo.me/Abcd123');
 });
 
 test('los anfitriones se escriben antes que el invitado', () => {
