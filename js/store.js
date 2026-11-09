@@ -84,7 +84,7 @@
 // matchId determinístico: "YYYY-MM-DD_HHMM" (si ya existe se agrega un sufijo),
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
-import { blocksProductionFirebase } from './trial.js';
+import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
 import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
@@ -107,7 +107,7 @@ import { canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer, editLo
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
-import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, parseBackup, plainValue, requireAdmin, reviveValue } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue } from './backup.js';
 import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 
 function reportBackupProgress(onProgress, done, total) {
@@ -1557,10 +1557,11 @@ class LocalStore {
     if (Object.keys(parsed.backup.subcollections).length) {
       throw Object.assign(new Error('Este backup tiene subcolecciones y la demo no las puede guardar.'), { code: 'invalid-backup' });
     }
-    const total = backupDocCount(parsed.backup);
+    const backup = isTrialPage() ? remapTrialBackup(parsed.backup, this.actor?.uid || '') : parsed.backup;
+    const total = backupDocCount(backup);
     reportBackupProgress(onProgress, 0, total);
     const db = this._load();
-    const docs = parsed.backup.collections;
+    const docs = backup.collections;
     db.matches = structuredClone(docs.matches);
     db.players = structuredClone(docs.players);
     db.roster = structuredClone(docs.roster);
@@ -1698,12 +1699,14 @@ export class FirebaseStore {
     if (!parsed.ok) throw Object.assign(new Error(parsed.error), { code: 'invalid-backup' });
     const keepUser = this.actor?.uid || '';
     if (!keepUser) throw Object.assign(new Error('No hay sesión de administrador.'), { code: 'admin-only' });
+    const trial = isTrialPage();
+    const backup = trial ? remapTrialBackup(parsed.backup, keepUser) : parsed.backup;
     reportBackupProgress(onProgress, 0, 0);
     const Timestamp = this.fs.Timestamp;
     const ops = [];
     for (const name of BACKUP_COLLECTIONS) {
       const current = await this._readCollection(name);
-      const next = parsed.backup.collections[name] || {};
+      const next = backup.collections[name] || {};
       for (const id of Object.keys(current)) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
         if (name === 'log' || !Object.prototype.hasOwnProperty.call(next, id)) ops.push({ kind: 'delete', segments: [name, id] });
@@ -1713,12 +1716,12 @@ export class FirebaseStore {
         ops.push({ kind: 'set', segments: [name, id], data: reviveValue(data, Timestamp) });
       }
     }
-    for (const [path, data] of Object.entries(parsed.backup.subcollections || {})) {
+    for (const [path, data] of Object.entries(backup.subcollections || {})) {
       const segments = path.split('/');
       if (isOwnUserDoc(segments, keepUser)) continue;
       ops.push({ kind: 'set', segments, data: reviveValue(data, Timestamp) });
     }
-    await this._commitOps(ops, onProgress);
+    await this._commitOps(trial ? hostsBeforeGuests(ops) : ops, onProgress);
     return parsed.summary;
   }
   async resetDatabase() {

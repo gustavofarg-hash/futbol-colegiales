@@ -27,12 +27,17 @@ export function publicAppOrigin() {
   }
 }
 
-export function isTrialPage() {
+function pageLocation() {
   try {
-    return typeof location !== 'undefined' && isTrialPath(location.pathname);
-  } catch {
-    return false;
-  }
+    const loc = globalThis.location;
+    if (loc && typeof loc.pathname === 'string') return loc;
+  } catch { /* sin navegador */ }
+  return null;
+}
+
+export function isTrialPage() {
+  const loc = pageLocation();
+  return !!loc && isTrialPath(loc.pathname);
 }
 
 /** En /prueba/ no se puede abrir el proyecto de producción, aunque config.js lo tenga. */

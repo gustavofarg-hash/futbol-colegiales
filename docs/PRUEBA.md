@@ -60,7 +60,7 @@ Para probar la interfaz sin Firebase: en producción, Hacer backup. En `/prueba/
 
 Para una copia en el Firebase de prueba: primero crear ese proyecto (pasos de abajo), pegar su config en `config.prueba.js`, publicar la rama `prueba`, entrar en `/prueba/` con el admin **de ese proyecto** y recién ahí cargar el backup. Las reglas del proyecto de prueba tienen que estar publicadas. El backup se escribe en el proyecto al que apunta la página, que en `/prueba/` no es `futbol-partidos`.
 
-Los uid de producción no coinciden con cuentas nuevas. Quien entre con una cuenta nueva no va a ser el dueño de los partidos «Solo yo» ni va a estar en `viewers`/`adders` hasta que se recreen las cuentas con los mismos uid (eso solo lo hace el Admin SDK; la consola web no deja elegir el uid). Para mirar la app, el modo demo con el backup alcanza. Para repetir los permisos reales, hace falta importar los usuarios de Auth con los mismos uid.
+En `/prueba/`, al cargar el backup, cada uid de producción (viewers, adders, createdByUid, addedByUid, ownerUid, holders, el id de `users` y el resto de campos de uid) pasa a ser el uid del admin que está logueado. `*` queda. El id de un invitado (`invitedBy`) no es un uid y no se toca. Así las reglas aceptan la escritura y Próximos lista los partidos. La cuenta de Auth de producción no se copia: en la prueba entra la cuenta nueva. Fuera de `/prueba/` el archivo se carga tal cual, sin reasignar uid.
 
 ## Pasos en la cuenta Google de Gustavo (gustavof.arg@gmail.com)
 
