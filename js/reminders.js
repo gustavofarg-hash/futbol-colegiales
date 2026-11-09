@@ -6,6 +6,7 @@ import { givenName } from './roster.js';
 import { playerAccess } from './access.js';
 import { waSendUrl } from './phone.js';
 import { isShortCode, shortConfirmUrl } from './short.js';
+import { publicAppOrigin } from './trial.js';
 import { courtLabel, footballPhrase } from './venues.js';
 
 export const CONFIRM_ORIGIN = 'https://gustavofarg-hash.github.io/futbol-colegiales';
@@ -19,7 +20,7 @@ export function newConfirmToken() {
   return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export function confirmPageUrl({ matchId, playerId, token, origin = CONFIRM_ORIGIN }) {
+export function confirmPageUrl({ matchId, playerId, token, origin = publicAppOrigin() }) {
   const base = origin.endsWith('/') ? origin : `${origin}/`;
   const url = new URL('confirmar.html', base);
   url.searchParams.set('m', matchId);

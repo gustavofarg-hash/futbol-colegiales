@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Infraestructura de prueba** (rama `cursor/version-prueba-c20d`, 09/11/2026): la app de producción sigue en la raíz. `/prueba/` lleva cartel «VERSIÓN DE PRUEBA», otra config (`config.prueba.js`, hoy en modo demo), otro `localStorage`, otra caché del service worker y links de confirmación que apuntan a `/prueba/`. No usa el proyecto `futbol-partidos`. El workflow de Pages no publica hasta cambiar Settings. `firestore.rules` no cambió. La versión de la app sigue en f7c-v128.
 **Actualizada para f7c-v128** (rama `cursor/elegido-solo-c20d`, 09/11/2026): en Agregar jugador, al tocar un resultado de Buscar guardados la lista queda solo con ese jugador, marcado. Si se cambia la búsqueda o el nombre, vuelven las coincidencias y se puede elegir otro. Agregar sigue usando la ficha del toque. `firestore.rules` no cambió.
 **Actualizada para f7c-v127** (rama `cursor/confirma-hoy-c20d`, 08/11/2026): el WhatsApp para confirmar asistencia dice «¡Hola {nombre de pila}! ¿Confirmás que jugás HOY 17:30?» si el partido es hoy en Buenos Aires, y si no usa Mañana o «jueves 22/10». La hora va HH:mm, sin «hs». El link sigue siendo el de esa persona. La página de confirmación muestra el nombre de pila y conserva lugar, día, hora y sí/no. `firestore.rules` no cambió.
 **Actualizada para f7c-v126** (rama `cursor/anoto-con-acceso-c20d`, 07/11/2026): «Se anotó con», en el menú del jugador y al agregar un invitado, lista solo a quien organiza ese partido. Un dato ya guardado sigue elegido y no se reescribe al abrir o cerrar. En otro partido del día no se atribuye a quien no lo organiza. `firestore.rules` no cambió.
@@ -72,7 +73,7 @@ Fuentes: los títulos y textos de los PR #1–#46, `git log` y `README.md`.
 **Nota:** no pude leer las conversaciones del bot «Creador de apps». El acceso a ese otro agente me devolvió la sesión propia, así que puede faltar algún pedido que se hizo en el chat y nunca llegó a un PR.
 Las fechas son de cuando se mergeó el PR, en hora de Buenos Aires.
 
-Pruebas sobre esta copia: **unit 122/122 OK** (`node --test tests/unit.test.mjs`) y **e2e 914/914 OK** (`node tests/e2e.mjs`, modo demo, 390×844 y escritorio). El e2e de v128 busca «Lu», elige a Luciano y comprueba que Sobrino desaparece; al cambiar la búsqueda o el nombre vuelven las coincidencias, y Agregar anota la ficha elegida.
+Pruebas sobre esta copia: **unit 123/123 OK** (`node --test tests/unit.test.mjs`) y **e2e 915/915 OK** (`node tests/e2e.mjs`, modo demo, 390×844 y escritorio). El e2e de la raíz comprueba que no aparece el cartel de prueba. El de v128 busca «Lu», elige a Luciano y comprueba que Sobrino desaparece; al cambiar la búsqueda o el nombre vuelven las coincidencias, y Agregar anota la ficha elegida.
 
 Estados: ✅ está · ⚠️ parcial · ❌ falta o se perdió · ↩️ reemplazado a pedido (no es regresión)
 

@@ -84,6 +84,7 @@
 // matchId determinístico: "YYYY-MM-DD_HHMM" (si ya existe se agrega un sufijo),
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
+import { blocksProductionFirebase } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
 import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
@@ -133,8 +134,15 @@ const FB = `https://www.gstatic.com/firebasejs/${FB_VERSION}`;
 
 let firebaseBundle = null;
 
+function pagePath() {
+  try { return typeof location !== 'undefined' ? location.pathname : ''; } catch { return ''; }
+}
+
 /** Una sola app de Firebase. La sesión y el store la comparten. */
 export async function initFirebase() {
+  if (blocksProductionFirebase(pagePath(), firebaseConfig.projectId)) {
+    throw new Error('La versión de prueba no puede usar el Firebase de producción');
+  }
   if (firebaseBundle) return firebaseBundle;
   const [{ initializeApp, getApps, getApp }, fs] = await Promise.all([
     import(`${FB}/firebase-app.js`),
@@ -153,6 +161,7 @@ export async function initFirebase() {
 
 export function isFirebaseConfigured(cfg = firebaseConfig) {
   if (!cfg || !cfg.apiKey || !cfg.projectId || !cfg.appId) return false;
+  if (blocksProductionFirebase(pagePath(), cfg.projectId)) return false;
   return !Object.values(cfg).some((v) => typeof v === 'string' && /^TU_|TU_PROYECTO|^$/.test(v));
 }
 
