@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
-import { FirebaseStore, createDemoStore, listenDeniedPlan, mergeDocsById } from '../js/store.js';
+import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById } from '../js/store.js';
+import { firebaseConfig as trialConfig } from '../config.prueba.js';
+import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
@@ -43,6 +45,20 @@ import { DRIVE_FOLDER, DRIVE_SCOPE, driveClientId, ensureBackupFolder, forgetDri
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
 const now = new Date('2026-10-19T13:00:00-03:00');
 const dt = (r) => r.map((x) => `${x.date} ${x.time}`);
+
+test('la versión de prueba no usa el Firebase de producción', () => {
+  assert.equal(isTrialPath('/futbol-colegiales/'), false);
+  assert.equal(isTrialPath('/futbol-colegiales/prueba/'), true);
+  assert.equal(isTrialPath('/futbol-colegiales/prueba'), true);
+  assert.equal(publicAppOriginFrom('/futbol-colegiales/', 'https://gustavofarg-hash.github.io'), 'https://gustavofarg-hash.github.io/futbol-colegiales');
+  assert.equal(publicAppOriginFrom('/futbol-colegiales/prueba/c/', 'https://gustavofarg-hash.github.io'), 'https://gustavofarg-hash.github.io/futbol-colegiales/prueba');
+  assert.equal(isFirebaseConfigured(trialConfig), false);
+  assert.notEqual(trialConfig.projectId, PRODUCTION_PROJECT_ID);
+  assert.equal(blocksProductionFirebase('/futbol-colegiales/prueba/', PRODUCTION_PROJECT_ID), true);
+  assert.equal(blocksProductionFirebase('/futbol-colegiales/', PRODUCTION_PROJECT_ID), false);
+  assert.equal(blocksProductionFirebase('/futbol-colegiales/prueba/', 'mis-partidos-prueba'), false);
+  assert.equal(TRIAL_STORAGE_PREFIX, 'prueba:');
+});
 
 test('fecha numérica dd/mm/aaaa', () => {
   assert.equal(numericDate('2023-12-12'), '12/12/2023');

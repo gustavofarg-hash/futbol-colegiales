@@ -1,0 +1,64 @@
+# Publica main en la raíz y, si existe, la rama prueba en /prueba/.
+# No hace nada hasta que Gustavo ponga la variable PAGES_VIA_ACTIONS en true
+# y en Settings → Pages elija Source: GitHub Actions.
+# Así, mientras Pages siga en «Deploy from a branch», producción no cambia.
+name: Pages
+
+on:
+  push:
+    branches: [main, prueba]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.PAGES_VIA_ACTIONS == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Código de main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: src
+
+      - name: Preparar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Armar el sitio
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          tar -C src -cf - --exclude .git . | tar -C _site -xf -
+          if git -C src fetch --depth 1 origin prueba; then
+            mkdir -p /tmp/prueba-src _site/prueba
+            git -C src archive FETCH_HEAD | tar -x -C /tmp/prueba-src
+            cp -a /tmp/prueba-src/. _site/prueba/
+            test -f _site/prueba/config.prueba.js
+            cp _site/prueba/config.prueba.js _site/prueba/config.js
+            if grep -q 'projectId: "futbol-partidos"' _site/prueba/config.js; then
+              echo "La config de /prueba/ no puede usar el proyecto de producción futbol-partidos."
+              exit 1
+            fi
+          else
+            echo "No hay rama prueba: se publica solo la raíz."
+          fi
+
+      - name: Subir el sitio
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Publicar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

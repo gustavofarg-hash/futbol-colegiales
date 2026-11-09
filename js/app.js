@@ -35,7 +35,8 @@ import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInp
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
-import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
+import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
+import { isTrialPage } from './trial.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
@@ -2364,7 +2365,7 @@ async function shareApp() {
   const text = appShareMessage();
   if (navigator.share) {
     try {
-      await navigator.share({ title: 'Mis Partidos', text, url: APP_INSTALL_URL });
+      await navigator.share({ title: 'Mis Partidos', text, url: appInstallUrl() });
       return;
     } catch (e) {
       if (e?.name === 'AbortError') return;
@@ -2579,6 +2580,7 @@ function openSettings() {
       <button class="btn" id="set-logout">Cerrar sesión</button>
       <button class="btn ghost" data-close>Cerrar</button>
     </div>
+    ${isTrialPage() ? '<p class="hint" id="trial-settings">Versión de prueba. El backup se carga en esta copia, no en producción.</p>' : ''}
     <p class="footer-note" id="app-version">Versión ${APP_VERSION}</p>`);
   $('#price-form').onsubmit = (e) => {
     e.preventDefault();

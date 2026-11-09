@@ -114,6 +114,10 @@ Necesitás una cuenta de Google. El plan gratuito (**Spark**) alcanza de sobra; 
 
 Cada vez que cambies archivos, subilos de nuevo al repositorio. Para que los teléfonos tomen la versión nueva enseguida, subí el número de `VERSION` en `sw.js` (ej. `f7c-v2`).
 
+### Versión de prueba
+
+Los cambios se pueden mirar antes en https://gustavofarg-hash.github.io/futbol-colegiales/prueba/ , con otra base, sin escribir en producción. Los pasos están en [docs/PRUEBA.md](docs/PRUEBA.md). Mientras **Settings → Pages** siga en «Deploy from a branch», el sitio público no cambia.
+
 ---
 
 ## Cuentas y reglas (hacer en este orden)

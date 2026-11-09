@@ -1,8 +1,9 @@
 /** Link corto de confirmación. 8 caracteres base62, sin terceros. */
 
+import { publicAppOrigin } from './trial.js';
+
 const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 export const SHORT_LEN = 8;
-const CONFIRM_ORIGIN = 'https://gustavofarg-hash.github.io/futbol-colegiales';
 
 export function isShortCode(value) {
   return typeof value === 'string' && new RegExp(`^[0-9A-Za-z]{${SHORT_LEN}}$`).test(value);
@@ -24,7 +25,7 @@ export function newShortCode() {
 }
 
 /** https://…/futbol-colegiales/c/?k=Ab3x9Zk2 */
-export function shortConfirmUrl(code, origin = CONFIRM_ORIGIN) {
+export function shortConfirmUrl(code, origin = publicAppOrigin()) {
   const base = origin.endsWith('/') ? origin : `${origin}/`;
   const url = new URL('c/', base);
   url.searchParams.set('k', code);
@@ -32,7 +33,7 @@ export function shortConfirmUrl(code, origin = CONFIRM_ORIGIN) {
 }
 
 export function confirmTarget({ m, p, t, href = '' } = {}) {
-  const url = new URL('confirmar.html', href || `${CONFIRM_ORIGIN}/`);
+  const url = new URL('confirmar.html', href || `${publicAppOrigin()}/`);
   url.searchParams.set('m', m || '');
   url.searchParams.set('p', p || '');
   url.searchParams.set('t', t || '');
