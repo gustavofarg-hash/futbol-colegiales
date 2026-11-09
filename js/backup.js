@@ -1,3 +1,6 @@
+import { normalizePhone } from './phone.js';
+import { sha256Hex } from './privacy.js';
+
 // Backup de Mis Partidos. JSON para bajar, compartir o volver a cargar.
 // No hay subcolecciones en la app: todo está en estas colecciones.
 // El archivo igual acepta `subcollections` por si un backup futuro las trae.
@@ -274,6 +277,217 @@ export function backupSurfaceMessage(error, fallback) {
 }
 
 /** Vuelve a armar un Timestamp si el que escribe conoce la clase. */
+// Campos que guardan un uid, o una lista de uids. '*' se conserva.
+// invitedBy es el id del jugador anfitrión, no un uid: no entra.
+const TRIAL_UID_FIELDS = new Set([
+  'uid', 'createdByUid', 'addedByUid', 'signedUpWith', 'phoneOwnerUid', 'ownerUid',
+  'organizerUid', 'actorUid', 'authorUid', 'toUid', 'fromUid',
+]);
+const TRIAL_UID_LISTS = new Set(['viewers', 'adders', 'editors', 'holders', 'readers']);
+
+function isUidToken(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9]{6,128}$/.test(value);
+}
+
+function rememberUid(set, value, target) {
+  if (!isUidToken(value) || value === target) return;
+  set.add(value);
+}
+
+function collectTrialUids(backup, target) {
+  const found = new Set();
+  for (const id of Object.keys(backup.collections?.users || {})) rememberUid(found, id, target);
+  const walk = (value, key) => {
+    if (Array.isArray(value)) {
+      if (TRIAL_UID_LISTS.has(key)) {
+        for (const item of value) {
+          if (typeof item === 'string') rememberUid(found, item, target);
+          else walk(item, key);
+        }
+        return;
+      }
+      for (const item of value) walk(item, '');
+      return;
+    }
+    if (!isPlainObject(value)) return;
+    for (const [itemKey, item] of Object.entries(value)) {
+      if (TRIAL_UID_FIELDS.has(itemKey) && typeof item === 'string') rememberUid(found, item, target);
+      else walk(item, itemKey);
+    }
+  };
+  for (const docs of Object.values(backup.collections || {})) walk(docs, '');
+  walk(backup.subcollections, '');
+  return found;
+}
+
+function mapTrialUid(value, target) {
+  if (typeof value !== 'string' || value === '' || value === '*') return value;
+  return target;
+}
+
+function mapTrialList(list, target) {
+  const out = [];
+  for (const item of list) {
+    if (typeof item !== 'string') {
+      out.push(mapTrialValue(item, '', target));
+      continue;
+    }
+    const next = mapTrialUid(item, target);
+    if (next === '' || !out.includes(next)) out.push(next);
+  }
+  return out;
+}
+
+function mapTrialValue(value, key, target) {
+  if (Array.isArray(value)) {
+    if (TRIAL_UID_LISTS.has(key)) return mapTrialList(value, target);
+    return value.map((item) => mapTrialValue(item, '', target));
+  }
+  if (!isPlainObject(value)) return value;
+  const out = {};
+  for (const [itemKey, item] of Object.entries(value)) {
+    if (TRIAL_UID_FIELDS.has(itemKey) && (typeof item === 'string' || item == null)) out[itemKey] = mapTrialUid(item, target);
+    else out[itemKey] = mapTrialValue(item, itemKey, target);
+  }
+  return out;
+}
+
+function remapTrialDocId(collection, id, uids, target) {
+  if (collection === 'users') {
+    if (!id || id === target || id.includes('@')) return id;
+    return isUidToken(id) ? target : id;
+  }
+  if (!id || !uids.size) return id;
+  if (uids.has(id)) return target;
+  let changed = false;
+  const next = id.split('_').map((part) => {
+    if (uids.has(part)) { changed = true; return target; }
+    return part;
+  });
+  return changed ? next.join('_') : id;
+}
+
+function trialPhoneKey(doc, phone) {
+  if (typeof doc.phoneKey === 'string' && /^[0-9a-f]{64}$/.test(doc.phoneKey)) return doc.phoneKey;
+  return sha256Hex(String(phone));
+}
+
+// La regla de alta no acepta el teléfono dentro del jugador. En la prueba se
+// pasa al contacto, que es donde la app lo lee, y el documento queda en blanco.
+function parkTrialPhones(collections) {
+  const jobs = [
+    ['players', 'playerContacts', true],
+    ['roster', 'rosterContacts', false],
+  ];
+  for (const [kind, contactName, withViewers] of jobs) {
+    const docs = collections[kind];
+    if (!isPlainObject(docs)) continue;
+    const contacts = isPlainObject(collections[contactName]) ? collections[contactName] : {};
+    for (const [id, doc] of Object.entries(docs)) {
+      if (!isPlainObject(doc) || typeof doc.phone !== 'string' || doc.phone === '') continue;
+      const parsed = normalizePhone(doc.phone);
+      const phone = parsed.ok ? parsed.wa : doc.phone;
+      const current = isPlainObject(contacts[id]) ? contacts[id] : {};
+      if (!current.phone) {
+        const next = {
+          ...current,
+          phone,
+          ownerUid: current.ownerUid || doc.phoneOwnerUid || doc.addedByUid || doc.createdByUid || '',
+          visibleToAll: current.visibleToAll === true,
+          phoneKey: current.phoneKey || trialPhoneKey(doc, phone),
+        };
+        if (withViewers) next.viewers = current.viewers || (Array.isArray(doc.viewers) ? doc.viewers.slice() : ['*']);
+        contacts[id] = next;
+      }
+      doc.phone = '';
+      doc.hasPhone = true;
+    }
+    collections[contactName] = contacts;
+  }
+}
+
+function alignTrialAccess(collections) {
+  const matches = collections.matches;
+  if (!isPlainObject(matches)) return;
+  const copyList = (doc, match, key) => {
+    if (Array.isArray(match[key])) doc[key] = match[key].slice();
+  };
+  if (isPlainObject(collections.players)) {
+    for (const doc of Object.values(collections.players)) {
+      if (!isPlainObject(doc)) continue;
+      const match = matches[doc.matchId];
+      if (!isPlainObject(match)) continue;
+      copyList(doc, match, 'viewers');
+      copyList(doc, match, 'adders');
+      if (typeof doc.invitedBy === 'string' && doc.invitedBy && !Object.prototype.hasOwnProperty.call(collections.players, doc.invitedBy)) {
+        delete doc.invitedBy;
+        delete doc.invitedByName;
+      }
+    }
+  }
+  if (isPlainObject(collections.confirmations)) {
+    for (const doc of Object.values(collections.confirmations)) {
+      if (!isPlainObject(doc)) continue;
+      const match = matches[doc.matchId];
+      if (isPlainObject(match)) copyList(doc, match, 'viewers');
+    }
+  }
+}
+
+/**
+ * En la versión de prueba, todo uid del backup pasa a ser el admin logueado.
+ * Así las reglas (isAdder, ownerUid, listados por viewers) lo aceptan.
+ * Fuera de /prueba/ no se llama. '*' queda. Los id de jugador (invitedBy) quedan.
+ */
+export function remapTrialBackup(backup, uid) {
+  const target = String(uid || '').trim();
+  if (!target || !isPlainObject(backup?.collections)) return backup;
+  const draft = structuredClone(backup);
+  parkTrialPhones(draft.collections);
+  const found = collectTrialUids(draft, target);
+  const collections = {};
+  for (const [name, docs] of Object.entries(draft.collections)) {
+    const next = {};
+    if (!isPlainObject(docs)) { collections[name] = docs; continue; }
+    for (const [id, doc] of Object.entries(docs)) {
+      next[remapTrialDocId(name, id, found, target)] = mapTrialValue(doc, '', target);
+    }
+    collections[name] = next;
+  }
+  alignTrialAccess(collections);
+  const subcollections = {};
+  if (isPlainObject(draft.subcollections)) {
+    for (const [path, doc] of Object.entries(draft.subcollections)) {
+      const segments = String(path).split('/');
+      const mapped = segments.map((part, index) => (index % 2 === 1 ? remapTrialDocId(segments[index - 1] || '', part, found, target) : part));
+      subcollections[mapped.join('/')] = mapTrialValue(doc, '', target);
+    }
+  }
+  return { ...draft, collections, subcollections };
+}
+
+/** Los anfitriones se escriben antes que sus invitados. invitedBy apunta al id del jugador. */
+export function hostsBeforeGuests(ops) {
+  const slots = [];
+  const players = [];
+  ops.forEach((op, index) => {
+    if (op?.kind === 'set' && Array.isArray(op.segments) && op.segments.length === 2 && op.segments[0] === 'players') {
+      slots.push(index);
+      players.push(op);
+    }
+  });
+  if (players.length < 2) return ops;
+  const ids = new Set(players.map((op) => op.segments[1]));
+  const ranked = players.map((op, index) => {
+    const host = op.data?.invitedBy;
+    return { op, index, guest: typeof host === 'string' && ids.has(host) ? 1 : 0 };
+  });
+  ranked.sort((a, b) => a.guest - b.guest || a.index - b.index);
+  const next = ops.slice();
+  slots.forEach((at, index) => { next[at] = ranked[index].op; });
+  return next;
+}
+
 export function reviveValue(value, Timestamp) {
   if (Array.isArray(value)) return value.map((item) => reviveValue(item, Timestamp));
   if (isPlainObject(value) && value.__type === 'timestamp' && Number.isFinite(value.seconds)) {
