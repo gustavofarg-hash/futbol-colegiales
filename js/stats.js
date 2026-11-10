@@ -221,11 +221,36 @@ export function organizerDayShare({ matches, players, staff, uid, name, who } = 
   return roundARS(row?.entitled || 0);
 }
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Fechas con un documento de compensación. El partido terminado, solo, no alcanza. */
+export function compensationDoneDates(compensations) {
+  const dates = new Set();
+  for (const row of compensations || []) {
+    const date = String(row?.date || row?.id || '');
+    if (ISO_DAY.test(date)) dates.add(date);
+  }
+  return dates;
+}
+
+/**
+ * Día: del 1 de este mes hasta el último día con cálculo guardado, inclusive.
+ * Solo entran los días que tienen documento. Hoy sin documento no aparece.
+ * Un día de un mes anterior tampoco, aunque tenga cálculo.
+ */
+export function currentMonthDiaDates({ today, done } = {}) {
+  if (!ISO_DAY.test(today || '')) return [];
+  const set = done instanceof Set ? done : compensationDoneDates(done);
+  const monthStart = `${today.slice(0, 7)}-01`;
+  return [...set].filter((date) => date >= monthStart && date <= today).sort((a, b) => b.localeCompare(a));
+}
+
 /**
  * Lo que le corresponde al organizador en cada mes (o año).
  * Cada día usa organizerDayShare, o sea el mismo cálculo de la hoja.
  * Un día con varios partidos entra una sola vez. Uno con un solo
  * organizador suma lo que esa función le asigna.
+ * Mes y Año no recortan por el cálculo guardado: suman los días que hay.
  */
 export function organizerShareByPeriod({ matches, players, staff, uid, name, who, grain = 'month' } = {}) {
   const byDay = new Map();
