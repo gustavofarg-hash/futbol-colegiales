@@ -3570,7 +3570,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v143');
+  assert.equal(version, 'f7c-v144');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4175,13 +4175,28 @@ test('Jugador cuenta solo lo que se anotó con el organizador logueado', () => {
   assert.equal(nov.matches, 1);
   assert.equal(nov.paid, 6000);
   assert.equal(oct.matches, 2);
-  assert.equal(oct.paid, 5000 + 4000);
+  assert.equal(oct.paid, 5000 + 8000);
   assert.equal(oct.label, 'Oct 2026');
-  const cents = playerOrganizerMonths({
-    person: { id: 'otra', name: 'Otra' },
-    players, matches: visible, staff, who: gus,
+  const toOther = playerOrganizerMonths({
+    person,
+    players: [row('z', 'eq', { cash: 5000, cashTo: 'Martín', signedUpWith: 'gus', signedUpWithName: 'Gustavo' })],
+    matches: [{ id: 'eq', date: '2026-11-08', adders: ['*'], splitMode: 'equal', price: 5000 }],
+    who: gus,
   });
-  assert.equal(cents[0].paid, 50.01);
+  assert.equal(toOther[0].matches, 1);
+  assert.equal(toOther[0].paid, 5000);
+  const seven = playerOrganizerMonths({
+    person,
+    players: [1, 2, 3, 4, 5, 6, 7].map((n) => row(`n${n}`, `m${n}`, {
+      cash: 5000, cashTo: n % 2 ? 'Martín' : 'Gustavo', signedUpWith: 'gus', signedUpWithName: 'Gustavo',
+    })),
+    matches: [1, 2, 3, 4, 5, 6, 7].map((n) => ({
+      id: `m${n}`, date: '2026-11-08', adders: ['*'], splitMode: 'equal', price: 5000,
+    })),
+    who: gus,
+  });
+  assert.equal(seven[0].matches, 7);
+  assert.equal(seven[0].paid, 35000);
 });
 
 test('Día lista el mes en curso hasta el último cálculo guardado', () => {
