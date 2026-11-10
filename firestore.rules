@@ -1133,6 +1133,33 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Estimación del tope diario. Cada teléfono suma con increment.
+    // El id es el día del Pacífico (en noviembre, las 05:00 de Buenos Aires).
+    // Cualquier sesión puede sumar. Solo el admin lee. Un salto de más de
+    // 100.000 en un pedido se rechaza, para que nadie fije el contador a mano.
+    function usageBump(field) {
+      return request.resource.data[field] is int
+          && request.resource.data[field] >= 0
+          && request.resource.data[field] <= 100000000
+          && (
+            resource == null
+              ? request.resource.data[field] <= 100000
+              : request.resource.data[field] >= resource.data.get(field, 0)
+                && request.resource.data[field] <= resource.data.get(field, 0) + 100000
+          );
+    }
+    match /usage/{day} {
+      allow read: if isAdmin();
+      allow create, update: if signedIn()
+          && day.matches('^\\d{4}-\\d{2}-\\d{2}$')
+          && request.resource.data.keys().hasOnly(['reads', 'writes', 'deletes', 'updatedAt'])
+          && request.resource.data.updatedAt is number
+          && usageBump('reads')
+          && usageBump('writes')
+          && usageBump('deletes');
+      allow delete: if isAdmin();
+    }
+
     match /log/{entryId} {
       allow read: if isActiveStaff() && canReadLog(resource.data);
       allow create: if isActiveStaff() && validLog(request.resource.data) && entryId.size() > 0 && entryId.size() <= 80;

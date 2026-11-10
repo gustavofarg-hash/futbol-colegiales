@@ -207,6 +207,12 @@ h2.section:first-child { margin-top: 4px; }
 .count.full .num { color: var(--green); }
 .bar { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; margin-top: 4px; }
 .bar > i { display: block; height: 100%; background: var(--green-2); border-radius: 99px; }
+.usage-meter, #usage-meter { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
+.usage-row { display: flex; flex-direction: column; gap: 4px; font-size: 0.8125rem; font-weight: 700; }
+.usage-bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.usage-bar > i { display: block; height: 100%; width: 0; background: var(--green-2); border-radius: 99px; }
+.usage-row.warn .usage-bar > i { background: #e6a100; }
+.usage-row.hot .usage-bar > i { background: #d0122d; }
 
 .later-toggle {
   display: flex; align-items: center; justify-content: center;

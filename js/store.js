@@ -55,7 +55,8 @@
 //    independiente de los goles de cada jugador.
 //  matches.cancelled (opcional, bool), cancelledAt, cancelledBy
 //  matches.notes (texto libre, hasta 2000). Distinto de note (la nota corta de la tarjeta).
-//  matches.playerCount (int). Lo actualiza el cliente al anotar o quitar.
+//  matches.playerCount (int). Lo actualiza el cliente solo al anotar o quitar
+//    ESE partido. No se reescribe al abrir: ese barrido gastaba las escrituras.
 //    La regla de borrado lo exige en 0. Si falta, se toma 0.
 //  playerContacts/{playerId}
 //    phone, ownerUid, visibleToAll (default false), phoneKey, viewers
@@ -86,6 +87,7 @@
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
+import { USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, UsageMeter } from './usage.js';
 import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { creditDocId, nextCredit } from './credit.js';
@@ -1633,7 +1635,6 @@ export class FirebaseStore {
     this._buckets = { matches: {}, players: {}, confirmations: {} };
     this._contactBuckets = { playerOwner: [], playerShared: [], rosterOwner: [], rosterShared: [], rosterReaders: [] };
     this._backfilled = new Set();
-    this._countTried = new Set();
     this._migrated = new Set();
     this._migrating = false;
     this._contactsLive = false;
@@ -1641,6 +1642,9 @@ export class FirebaseStore {
     this._shortCodes = new Map();
     this._historyFilter = null;
     this._queryDay = '';
+    this._datedCutoff = '';
+    this._datedUnindexed = false;
+    this._compUnscoped = false;
     this._named = {};
     this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
     this._noteMoves = new Set();
@@ -1674,6 +1678,7 @@ export class FirebaseStore {
       opened.push(match);
       this._buckets.matches.opened = opened;
       this._rebuild('matches');
+      this._widenDated(match.date);
       return 'ok';
     } catch (e) {
       if (e?.code === 'permission-denied' || e?.code === 'permission_denied') return 'denied';
@@ -1957,9 +1962,11 @@ export class FirebaseStore {
   }
   async init(onError) {
     const ready = await initFirebase();
-    this.fs = ready.fs;
+    this.usageMeter = new UsageMeter();
+    this.fs = meterFirestore(ready.fs, this.usageMeter, () => this._armUsageFlush());
     this.db = ready.db;
     this.app = ready.app;
+    this._bindUsageFlush();
     this._onError = onError;
     this.serverOk = false;
     this._deniedRetries = 0;
@@ -2061,6 +2068,7 @@ export class FirebaseStore {
       this.state.historyError = '';
       this._buckets.matches.history = this._takeMatchSnap(snap);
       this._rebuild('matches');
+      this._widenFromMatches(this._buckets.matches.history);
       this._backfillMatches(snap.docs);
     }, (e) => {
       if (e?.code === 'failed-precondition') {
@@ -2118,34 +2126,133 @@ export class FirebaseStore {
     const priority = kind === 'matches' ? ['opened', 'history', 'upcoming'] : ['broad', 'narrow'];
     this.state[kind] = mergeDocsById(this._buckets[kind] || {}, priority);
     this._emit();
-    if (kind === 'matches' || kind === 'players') this._reconcilePlayerCounts();
     if (kind === 'players') this._migrateContacts();
   }
-  _reconcilePlayerCounts() {
-    if (!this.fs || !this.actor?.uid || this._counting) return;
-    const byMatch = new Map();
-    for (const player of this.state.players) {
-      if (!player.matchId) continue;
-      byMatch.set(player.matchId, (byMatch.get(player.matchId) || 0) + 1);
+  _widenFromMatches(matches) {
+    let min = '';
+    for (const match of matches || []) {
+      if (match?.date && (!min || match.date < min)) min = match.date;
     }
-    const fixes = [];
-    for (const match of this.state.matches) {
-      if (!canAdd(match, this.actor.uid)) continue;
-      const n = byMatch.get(match.id) || 0;
-      if (match.playerCount === n) continue;
-      const key = `${match.id}:${n}`;
-      if (this._countTried.has(key)) continue;
-      fixes.push([match.id, n, key]);
-      if (fixes.length >= 400) break;
+    if (min) this._widenDated(min);
+  }
+  _widenDated(date) {
+    if (!this.fs || !/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return;
+    if (this._datedCutoff && date >= this._datedCutoff) return;
+    this._datedCutoff = date;
+    this._listenDated('players', 'matchDate');
+    this._listenDated('confirmations', 'date');
+    this._listenCompensations();
+  }
+  _listenDated(kind, field) {
+    const { collection, query, where, onSnapshot } = this.fs;
+    const accessIds = [EVERYONE];
+    if (this.actor?.uid) accessIds.unshift(this.actor.uid);
+    const cutoff = this._datedCutoff;
+    const unindexed = this._datedUnindexed === true;
+    const constraints = [where('viewers', 'array-contains-any', accessIds)];
+    if (!unindexed && cutoff) constraints.push(where(field, '>=', cutoff));
+    const q = query(collection(this.db, kind), ...constraints);
+    const un = onSnapshot(q, (snap) => {
+      this._noteSnap(snap);
+      if (kind === 'players') {
+        const meta = snap.metadata;
+        if (meta?.fromCache !== true && meta?.hasPendingWrites !== true) this.state.playersReady = true;
+      }
+      if (!this._buckets[kind]) this._buckets[kind] = {};
+      this._buckets[kind].narrow = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this._buckets[kind].broad = [];
+      this._rebuild(kind);
+    }, (e) => {
+      if (!unindexed && e?.code === 'failed-precondition') {
+        if (this._datedUnindexed) return;
+        this._datedUnindexed = true;
+        this._listenDated('players', 'matchDate');
+        this._listenDated('confirmations', 'date');
+        return;
+      }
+      this._onListenError(e);
+    });
+    this._swap(kind, un);
+  }
+  _listenUsage() {
+    if (!this.fs || this.actor?.role !== 'admin') {
+      this.state.usage = null;
+      this._swap('usage', null);
+      return;
     }
-    if (!fixes.length) return;
-    for (const item of fixes) this._countTried.add(item[2]);
-    this._counting = true;
-    const { doc, writeBatch } = this.fs;
-    const batch = writeBatch(this.db);
-    const now = Date.now();
-    for (const [id, n] of fixes) batch.update(doc(this.db, 'matches', id), { playerCount: n, updatedAt: now });
-    batch.commit().catch((e) => console.error(e)).finally(() => { this._counting = false; });
+    const { doc, onSnapshot } = this.fs;
+    const day = quotaDay();
+    const un = onSnapshot(doc(this.db, 'usage', day), (snap) => {
+      const data = snap.exists() ? snap.data() : {};
+      this.state.usage = { day, reads: data.reads || 0, writes: data.writes || 0, deletes: data.deletes || 0 };
+      this._emit();
+    }, () => {
+      this.state.usage = { day, reads: 0, writes: 0, deletes: 0 };
+      this._emit();
+    });
+    this._swap('usage', un);
+  }
+  _bindUsageFlush() {
+    if (this._usageBound || typeof document === 'undefined') return;
+    this._usageBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') this._flushUsage();
+    });
+    window.addEventListener('pagehide', () => { this._flushUsage(); });
+  }
+  _armUsageFlush() {
+    if (this._usageTimer || typeof window === 'undefined') return;
+    this._usageTimer = setTimeout(() => {
+      this._usageTimer = 0;
+      this._flushUsage();
+    }, USAGE_FLUSH_MS);
+  }
+  async _flushUsage() {
+    if (this._usageTimer) {
+      clearTimeout(this._usageTimer);
+      this._usageTimer = 0;
+    }
+    if (!this.fs || !this.db || !this.usageMeter || this._usageFlushing) return;
+    this._usageFlushing = true;
+    const batch = this.usageMeter.takePending();
+    if (!batch) {
+      this._usageFlushing = false;
+      return;
+    }
+    try {
+      const { doc, setDoc, increment } = this.fs;
+      await setDoc(doc(this.db, 'usage', quotaDay()), {
+        reads: increment(batch.reads || 0),
+        writes: increment(batch.writes || 0),
+        deletes: increment(batch.deletes || 0),
+        updatedAt: Date.now(),
+      }, { merge: true });
+    } catch (error) {
+      this.usageMeter.restore(batch);
+      console.error(error);
+    } finally {
+      this._usageFlushing = false;
+    }
+  }
+  _listenCompensations() {
+    const { collection, query, where, onSnapshot } = this.fs;
+    const cutoff = this._compUnscoped ? '' : this._datedCutoff;
+    const ref = cutoff
+      ? query(collection(this.db, 'compensations'), where('date', '>=', cutoff))
+      : collection(this.db, 'compensations');
+    const un = onSnapshot(ref, (snap) => {
+      this.state.compensations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this._emit();
+    }, (e) => {
+      if (cutoff && e?.code === 'failed-precondition' && !this._compUnscoped) {
+        this._compUnscoped = true;
+        this._listenCompensations();
+        return;
+      }
+      this.state.compensations = [];
+      this._emit();
+    });
+    this._swap('compensations', un);
   }
   async _backfillMatches(docs) {
     const { doc, updateDoc } = this.fs;
@@ -2206,42 +2313,16 @@ export class FirebaseStore {
     };
     const accessIds = [EVERYONE];
     if (uid) accessIds.unshift(uid);
-    const take = (snap) => snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const legacyDenied = (kind) => (e) => {
-      if (e?.code === 'permission-denied') {
-        this._buckets[kind].broad = [];
-        this._rebuild(kind);
-        return;
-      }
-      this._fail(e);
-    };
     this._listenUpcoming();
     this._listenHistory();
     this._listenLog();
-    watch(collection(this.db, 'compensations'), null, (snap) => {
-      this.state.compensations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      this._emit();
-    }, () => {
-      this.state.compensations = [];
-      this._emit();
-    });
-    const playersReady = (snap) => {
-      const meta = snap.metadata;
-      if (meta?.fromCache !== true && meta?.hasPendingWrites !== true) this.state.playersReady = true;
-    };
-    watch(collection(this.db, 'players'), null, (snap) => {
-      this._noteSnap(snap);
-      playersReady(snap);
-      this._buckets.players.broad = take(snap);
-      this._rebuild('players');
-      this._backfillPlayers(snap.docs);
-    }, legacyDenied('players'));
-    watch(query(collection(this.db, 'players'), where('viewers', 'array-contains-any', accessIds)), null, (snap) => {
-      this._noteSnap(snap);
-      playersReady(snap);
-      this._buckets.players.narrow = take(snap);
-      this._rebuild('players');
-    });
+    // Jugadores, confirmaciones y compensaciones: solo esta ventana, no toda
+    // la historia. Sin el índice compuesto se escucha como antes.
+    if (!this._datedCutoff) this._datedCutoff = recentCutoff(this._queryDay || todayISO());
+    this._listenDated('players', 'matchDate');
+    this._listenDated('confirmations', 'date');
+    this._listenCompensations();
+    this._listenUsage();
     watch(collection(this.db, 'rosterSuspensions'), null, (snap) => {
       this.state.suspensions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
@@ -2290,15 +2371,6 @@ export class FirebaseStore {
         this._emit();
       });
     }
-    watch(collection(this.db, 'confirmations'), null, (snap) => {
-      this._buckets.confirmations.broad = take(snap);
-      this._rebuild('confirmations');
-      this._backfillConfirmations(snap.docs);
-    }, legacyDenied('confirmations'));
-    watch(query(collection(this.db, 'confirmations'), where('viewers', 'array-contains-any', accessIds)), null, (snap) => {
-      this._buckets.confirmations.narrow = take(snap);
-      this._rebuild('confirmations');
-    });
     watch(collection(this.db, 'organizers'), null, (snap) => {
       this.state.organizers = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.organizersError = null;
