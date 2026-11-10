@@ -14,7 +14,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
+import { countedGoals, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
 import { planRows } from '../js/settle.js';
@@ -3569,7 +3569,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v134');
+  assert.equal(version, 'f7c-v136');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4020,4 +4020,117 @@ test('la compensación reparte el día y cuenta lo pendiente de confirmar', () =
   assert.equal(summed.transfers[0].amount, 9000);
   const skipped = dayCompensation([{ ...match, cancelled: true }], players, staff);
   assert.equal(skipped.rows.length, 0);
+});
+
+test('el mes suma lo que le corresponde cada día al organizador', () => {
+  const staff = [{ uid: 'gus', name: 'Gustavo', active: true }, { uid: 'mar', name: 'Martín', active: true }];
+  const matches = [
+    { id: 'a', date: '2026-11-03', adders: ['*'], splitMode: 'equal' },
+    { id: 'b', date: '2026-11-10', adders: ['gus'], splitMode: 'equal' },
+    { id: 'x', date: '2026-11-10', adders: ['*'], splitMode: 'equal', cancelled: true },
+    { id: 'c', date: '2026-12-01', adders: ['*'], splitMode: 'equal' },
+  ];
+  const players = [
+    { id: 'p1', matchId: 'a', waiting: false, paid: true, split: true, cash: 10000, cashTo: 'Gustavo' },
+    { id: 'p2', matchId: 'b', waiting: false, paid: true, split: true, cash: 8000, cashTo: 'Gustavo' },
+    { id: 'p4', matchId: 'x', waiting: false, paid: true, split: true, cash: 90000, cashTo: 'Gustavo' },
+    { id: 'p3', matchId: 'c', waiting: false, paid: true, split: true, cash: 4000, cashTo: 'Martín' },
+  ];
+  const daily = (date, uid) => {
+    const day = dayCompensation(matches.filter((item) => item.date === date), players, staff);
+    return day.rows.find((row) => row.uid === uid)?.entitled || 0;
+  };
+  const shares = organizerShareByPeriod({ matches, players, staff, uid: 'gus', grain: 'month' });
+  const dayOf = (date) => organizerDayShare({
+    matches: matches.filter((item) => item.date === date),
+    players,
+    staff,
+    uid: 'gus',
+  });
+  assert.equal(daily('2026-11-03', 'gus'), 5000);
+  assert.equal(daily('2026-11-10', 'gus'), 8000);
+  assert.equal(dayOf('2026-11-03'), daily('2026-11-03', 'gus'));
+  assert.equal(dayOf('2026-11-10'), daily('2026-11-10', 'gus'));
+  assert.equal(shares.get('2026-11'), dayOf('2026-11-03') + dayOf('2026-11-10'));
+  assert.equal(shares.get('2026-12'), dayOf('2026-12-01'));
+  const years = organizerShareByPeriod({ matches, players, staff, uid: 'gus', grain: 'year' });
+  const yearFromDays = dayOf('2026-11-03') + dayOf('2026-11-10') + dayOf('2026-12-01');
+  const yearFromMonths = shares.get('2026-11') + shares.get('2026-12');
+  assert.equal(years.get('2026'), yearFromDays);
+  assert.equal(years.get('2026'), yearFromMonths);
+  const martin = organizerShareByPeriod({ matches, players, staff, uid: 'mar', grain: 'month' });
+  assert.equal(martin.get('2026-11'), daily('2026-11-03', 'mar') + daily('2026-11-10', 'mar'));
+  assert.equal(daily('2026-11-10', 'mar'), 0);
+  const sameDay = [
+    { id: 'd1', date: '2026-11-03', adders: ['*'], splitMode: 'equal' },
+    { id: 'd2', date: '2026-11-03', adders: ['*'], splitMode: 'equal' },
+  ];
+  const people = [
+    { id: 'q1', matchId: 'd1', waiting: false, paid: true, split: true, cash: 10000, cashTo: 'Gustavo' },
+    { id: 'q2', matchId: 'd2', waiting: false, paid: true, split: true, cash: 6000, cashTo: 'Gustavo' },
+  ];
+  const together = dayCompensation(sameDay, people, staff).rows.find((row) => row.uid === 'gus').entitled;
+  assert.equal(organizerDayShare({ matches: sameDay, players: people, staff, uid: 'gus' }), together);
+  assert.equal(organizerShareByPeriod({ matches: sameDay, players: people, staff, uid: 'gus' }).get('2026-11'), together);
+});
+
+test('te correspondió: solo el total, partes iguales o lo que anotó', () => {
+  const staff = [{ uid: 'gus', name: 'Gustavo', active: true }, { uid: 'mar', name: 'Martín', active: true }];
+  const paid = (id, matchId, cash, cashTo, signed) => ({
+    id, matchId, waiting: false, paid: true, split: true, cash, cashTo, transfer: 0, fromCredit: 0,
+    ...(signed ? { signedUpWith: signed.uid, signedUpWithName: signed.name } : {}),
+  });
+  const share = (matches, players) => organizerDayShare({
+    matches, players, staff, uid: 'gus', name: 'Gustavo',
+  });
+  const collectedSum = (matches, players) => dayCompensation(matches, players, staff).rows
+    .reduce((sum, row) => sum + row.collected, 0);
+
+  const soloMatch = [{ id: 'solo', date: '2026-11-01', adders: ['gus'], splitMode: 'equal' }];
+  const soloPlayers = [
+    paid('s1', 'solo', 5000, 'Gustavo'),
+    paid('s2', 'solo', 3000, 'Martín'),
+  ];
+  const solo = share(soloMatch, soloPlayers);
+  const soloSheet = dayCompensation(soloMatch, soloPlayers, staff).rows.find((row) => row.uid === 'gus');
+  assert.equal(solo, 8000);
+  assert.equal(solo, collectedSum(soloMatch, soloPlayers));
+  assert.equal(soloSheet.collected, 5000);
+  assert.notEqual(solo, soloSheet.collected);
+
+  const equalMatch = [{ id: 'eq', date: '2026-11-02', adders: ['*'], splitMode: 'equal' }];
+  const equalPlayers = [
+    paid('e1', 'eq', 10000, 'Gustavo'),
+    paid('e2', 'eq', 6000, 'Martín'),
+  ];
+  const equalDay = dayCompensation(equalMatch, equalPlayers, staff);
+  const equal = share(equalMatch, equalPlayers);
+  assert.equal(equalDay.rows.find((row) => row.uid === 'gus').entitled, 8000);
+  assert.equal(equal, 8000);
+  assert.equal(collectedSum(equalMatch, equalPlayers), 16000);
+  assert.notEqual(equal, 16000);
+  assert.notEqual(equal, equalDay.rows.find((row) => row.uid === 'gus').collected);
+
+  const signedMatch = [{ id: 'sig', date: '2026-11-03', adders: ['*'], splitMode: 'signed' }];
+  const signedPlayers = [
+    paid('g1', 'sig', 4000, 'Martín', { uid: 'gus', name: 'Gustavo' }),
+    paid('m1', 'sig', 7000, 'Gustavo', { uid: 'mar', name: 'Martín' }),
+    paid('m2', 'sig', 5000, 'Martín', { uid: 'mar', name: 'Martín' }),
+  ];
+  const signedDay = dayCompensation(signedMatch, signedPlayers, staff);
+  const signed = share(signedMatch, signedPlayers);
+  assert.equal(signedDay.rows.find((row) => row.uid === 'gus').entitled, 4000);
+  assert.equal(signed, 4000);
+  assert.equal(collectedSum(signedMatch, signedPlayers), 16000);
+  assert.notEqual(signed, 16000);
+  assert.notEqual(signed, signedDay.rows.find((row) => row.uid === 'gus').collected);
+
+  const month = organizerShareByPeriod({
+    matches: [...soloMatch, ...equalMatch, ...signedMatch],
+    players: [...soloPlayers, ...equalPlayers, ...signedPlayers],
+    staff,
+    uid: 'gus',
+    name: 'Gustavo',
+  });
+  assert.equal(month.get('2026-11'), solo + equal + signed);
 });
