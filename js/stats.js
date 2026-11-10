@@ -3,8 +3,8 @@
 import { dayCompensation, matchAdders, matchCompensation } from './compensate.js';
 import { monthKeyOf, monthLabel } from './ledger.js';
 import { sameOrganizer, UNSPECIFIED } from './organizers.js';
-import { awaitingItems, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
-import { priceOfMatch, promoForPlayer } from './prices.js';
+import { isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
+import { MAX_PRICE, priceOfMatch, promoForPlayer } from './prices.js';
 import { personKey, playerMatchesPerson } from './roster.js';
 
 const METHOD_LABEL = {
@@ -252,22 +252,27 @@ export function signupOrganizerUid(player) {
   return String(player?.addedByUid || '').trim();
 }
 
-function paidAmount(player) {
+/** Lo que tenía que pagar en ese partido: la promo del día, si entra, o el precio del partido. Sin precio, 0. */
+function amountDue(player, { players, matches, prices }) {
   if (!player || player.waiting === true || isFreePlay(player)) return 0;
-  const parts = paymentParts(player);
-  const awaiting = awaitingItems(player).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  return roundARS((parts.received || 0) + (parts.pending || 0) + awaiting);
+  const match = (matches || []).find((item) => item.id === player.matchId);
+  if (!match || match.cancelled === true) return 0;
+  const promo = promoForPlayer({ player, players, matches, prices });
+  if (promo && Number.isFinite(Number(promo.share))) return roundARS(Number(promo.share));
+  const n = Number(match.price);
+  if (Number.isInteger(n) && n >= 0 && n <= MAX_PRICE) return n;
+  return 0;
 }
 
 /**
  * Mes a mes, solo las veces que esta persona se anotó con el organizador
  * logueado. La espera y un partido cancelado no entran. Un partido que no
  * está en la lista tampoco: es uno que no puede ver.
- * La plata es el pago entero de esa anotación, aunque se lo haya dado a
- * otro organizador. No se parte entre quienes organizan ni según quién cobró.
- * Si no hay pago cargado, suma 0.
+ * La plata es lo que tenía que pagar en cada una de esas anotaciones
+ * (el precio de ese partido, o su parte de la promo). No es lo cobrado
+ * y no se parte entre organizadores. Sin precio, suma 0.
  */
-export function playerOrganizerMonths({ person, players, matches, who } = {}) {
+export function playerOrganizerMonths({ person, players, matches, prices, who } = {}) {
   const uid = String(who?.uid || '').trim();
   if (!person || !uid) return [];
   const visible = (matches || []).filter((match) => match?.id && ISO_DAY.test(match.date || ''));
@@ -282,7 +287,7 @@ export function playerOrganizerMonths({ person, players, matches, who } = {}) {
     if (!key) continue;
     const row = months.get(key) || { key, label: monthLabel(key), matches: 0, paid: 0 };
     row.matches += 1;
-    row.paid = roundARS(row.paid + paidAmount(player));
+    row.paid = roundARS(row.paid + amountDue(player, { players, matches: visible, prices }));
     months.set(key, row);
   }
   return [...months.values()].sort((a, b) => b.key.localeCompare(a.key));
