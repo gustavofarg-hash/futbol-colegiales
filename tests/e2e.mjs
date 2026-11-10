@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v147');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v148');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -7102,6 +7102,10 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     const save = (date) => app.store.saveCompensation(date, { date, rows: [], transfers: [], fingerprint: 'e2e-dia', computedAt: Date.now() });
     await save('2026-10-07');
     await save('2026-09-28');
+    await save('2026-10-02');
+    const other = { solo: true, viewers: ['martin'], viewerNames: ['Martín'], adders: ['martin'], adderNames: ['Martín'], limits: [], createdByUid: 'martin' };
+    await app.store.addMatch({ date: '2026-10-04', time: '19:00', capacity: 14, note: 'Dia de Martín', access: other }, 'Martín');
+    await save('2026-10-04');
   });
   await page.evaluate(() => { location.hash = '#/estadisticas/dia'; });
   await page.waitForSelector('#stats-days [data-date="2026-10-07"]');
@@ -7112,6 +7116,9 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const listed = dayRows.map((row) => row.date);
   check('Hoy sin cálculo no está en Día', listed.includes('2026-10-19') === false, listed.join(','));
   check('Un día de septiembre no está en Día', listed.includes('2026-09-28') === false && listed.every((date) => date.startsWith('2026-10') && date <= '2026-10-19'), listed.join(','));
+  check('Un día sin partidos no está en Día', listed.includes('2026-10-02') === false, listed.join(','));
+  check('Un día solo de otro organizador no está en Día', listed.includes('2026-10-04') === false, listed.join(','));
+  check('Un día que organicé sigue en Día', listed.includes('2026-10-07') === true, listed.join(','));
   const parseARS = (text) => {
     const found = String(text).match(/Te correspondió:\s*(-?\$[\d.]+(?:,\d+)?)/);
     if (!found) return null;
