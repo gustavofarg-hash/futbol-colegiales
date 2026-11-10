@@ -1179,6 +1179,8 @@ html.dark .owe-box { background: #3d1822; color: #ffb4c2; }
 html:root .actionbar {
   background: var(--card); border-top: 0;
   box-shadow: 0 -8px 24px rgba(16, 32, 70, .08);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  pointer-events: auto;
 }
 html:root .actionbar .btn { border-radius: 999px; min-height: 52px; font-weight: 700; }
 html:root #btn-import {

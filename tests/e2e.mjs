@@ -138,7 +138,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v133');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v134');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -3259,8 +3259,9 @@ await page.waitForSelector('.match-card');
 // PWA
 const manifest = await page.evaluate(async () => (await fetch('manifest.webmanifest')).json());
 check('Manifest válido con íconos 192/512 + maskable', manifest.icons.length === 3 && manifest.display === 'standalone' && manifest.name === 'Mis Partidos' && manifest.short_name === 'Mis Partidos');
-const sw = await page.evaluate(async () => { const r = await navigator.serviceWorker.ready; return !!r.active; });
-check('Service worker activo', sw);
+const sw = await page.evaluate(async () => { const r = await navigator.serviceWorker.ready; return { active: !!r.active, updateViaCache: r.updateViaCache }; });
+check('Service worker activo', sw.active === true);
+check('El service worker no usa la caché HTTP para actualizarse', sw.updateViaCache === 'none', sw.updateViaCache);
 for (const ic of manifest.icons) {
   const st = await page.evaluate(async (u) => (await fetch(u)).status, ic.src);
   check(`Ícono ${ic.src} accesible`, st === 200);
@@ -5891,6 +5892,29 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('#player-link');
   check('Si no se puede copiar, el enlace se puede seleccionar', (await page.inputValue('#player-link')) === expected);
   await page.click('#sheet [data-close]');
+  await page.evaluate(() => {
+    window.__copied = '';
+    navigator.clipboard.writeText = (text) => { window.__copied = text; return Promise.resolve(); };
+  });
+  let playerSpoo = 0;
+  const stopPlayerShort = await routeShorten(async (route) => {
+    playerSpoo += 1;
+    const body = route.request().postDataJSON();
+    if (!String(body?.long_url || '').includes('#/jugador/')) { await route.abort(); return; }
+    await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ short_url: 'https://spoo.me/Player1' }) });
+  }, (route) => route.abort());
+  await page.click('.slot:has-text("Enlace Díaz") .more-btn');
+  await page.waitForSelector('#pm-share');
+  await page.evaluate(() => { window.__copied = ''; });
+  await page.click('#pm-share');
+  await page.waitForFunction(() => window.__copied === 'https://spoo.me/Player1');
+  check('El ícono al lado del nombre copia el link de spoo.me', playerSpoo === 1, `llamadas=${playerSpoo}`);
+  await page.evaluate(() => { window.__copied = ''; });
+  await page.click('#pm-share');
+  await page.waitForFunction(() => window.__copied === 'https://spoo.me/Player1');
+  check('Compartir otra vez no vuelve a llamar a spoo.me', playerSpoo === 1, String(playerSpoo));
+  await page.click('#sheet [data-close]');
+  await stopPlayerShort();
   await page.click('#btn-settings');
   await page.click('#set-logout');
   await page.waitForSelector('#login-form');
@@ -6172,6 +6196,43 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('.slot:has-text("Anula Díaz") .more-btn');
   await page.waitForSelector('#menu-pay');
   check('Vuelve a figurar sin pago', (await page.locator('#menu-pay').innerText()).includes('No pagó') && await page.locator('#menu-payments .pay-x').count() === 0);
+  await page.click('#sheet [data-close]');
+  await page.click('.slot:has-text("Anula Díaz") .pay-btn');
+  await page.waitForSelector('#pay-form [name=pending]');
+  await page.fill('#pay-form [name=pending]', '1500');
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForFunction(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && Number(p.pendingTransfer) === 1500));
+  await page.click('.slot:has-text("Anula Díaz") .pay-btn');
+  await page.waitForSelector('#pay-recorded .pay-pending-row .pay-x');
+  await page.evaluate(() => {
+    const app = window.__app;
+    const stale = app.players.find((p) => p.name === 'Anula Díaz');
+    const frozen = { ...stale };
+    const original = app.store.setPayment.bind(app.store);
+    app.store.setPayment = async (...args) => {
+      const result = await original(...args);
+      const index = app.players.findIndex((p) => p.id === frozen.id);
+      if (index >= 0) app.players[index] = frozen;
+      return result;
+    };
+    window.__restorePay = () => { app.store.setPayment = original; app.store._emit(); };
+  });
+  await page.click('#pay-recorded .pay-pending-row .pay-x');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => !document.querySelector('#pay-recorded .pay-pending-row') && !document.querySelector('#pay-pending-now'));
+  check('Anular Transfiere después saca la fila y el pendiente', await page.locator('#pay-pending-now').count() === 0 && await page.locator('#pay-recorded .pay-pending-row').count() === 0);
+  const pendingGone = await page.evaluate(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Anula Díaz');
+    return { pending: row?.pendingTransfer ?? null, paid: row?.paid === true };
+  });
+  check('El pendiente queda anulado en los datos', pendingGone.pending == null && pendingGone.paid === false, JSON.stringify(pendingGone));
+  await page.evaluate(() => window.__restorePay?.());
+  await page.click('#sheet [data-close]');
+  await page.click('.slot:has-text("Anula Díaz") .pay-btn');
+  await page.waitForSelector('#pay-form');
+  check('Al reabrir el pago la fila de Transfiere después no vuelve', await page.locator('#pay-recorded .pay-pending-row').count() === 0 && await page.locator('#pay-pending-now').count() === 0);
+  await page.click('#sheet [data-close]');
 }
 
 {
@@ -6734,6 +6795,37 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForFunction(rowInView, 'Visible Largo');
   const longSeen = await page.evaluate(rowInView, 'Visible Largo');
   check('En 390x640 el jugador agregado queda a la vista y no lo tapa la barra', longSeen === true);
+  check('Esa pantalla no es la versión de prueba', await page.evaluate(() => document.documentElement.classList.contains('trial') === false));
+  await page.evaluate(() => {
+    document.scrollingElement.scrollTop = 0;
+    window.__app.viewStamp = 'forzar-snapshot';
+    window.__app.store._emit();
+  });
+  await page.waitForFunction(rowInView, 'Visible Largo');
+  check('Después de un redibujado el agregado sigue a la vista', await page.evaluate(rowInView, 'Visible Largo') === true);
+  const fullId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-12-15', time: '22:10', capacity: 14, note: 'Lista llena' }, app.who);
+    const match = app.matches.find((item) => item.id === id);
+    for (let i = 1; i <= 14; i++) await app.store.addPlayer(match, { name: `Titular ${i}` }, app.who);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, fullId);
+  await page.waitForSelector('#slots .name:text-is("Titular 14")');
+  await page.evaluate(() => { document.scrollingElement.scrollTop = 0; });
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#player-name');
+  await page.fill('#player-name', 'Visible Espera Larga');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const row = document.querySelector('#wait-list .just-added');
+    if (!row || !row.textContent.includes('Visible Espera Larga')) return false;
+    const box = row.getBoundingClientRect();
+    const top = (document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? 0) + 1;
+    const action = document.querySelector('.actionbar')?.getBoundingClientRect().top ?? window.innerHeight;
+    return box.height > 20 && box.top >= top - 1 && box.bottom <= action - 1;
+  });
+  check('En una lista larga, el que va a la espera queda a la vista', await page.locator('#slots .just-added').count() === 0 && await page.locator('#wait-list .name:text-is("Visible Espera Larga")').count() === 1);
   const desk = await verAgregado(1280, 800, '19:20', 'Visible Escritorio');
   check('En escritorio el jugador agregado queda visible y resaltado', desk.last && desk.cls, JSON.stringify(desk));
   await page.setViewportSize({ width: 390, height: 844 });
@@ -6763,6 +6855,77 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   });
   check('Si no hay cupo, la fila nueva de la espera queda visible y resaltada', await page.locator('#slots .just-added').count() === 0 && await page.locator('#wait-list .just-added').count() === 1);
   await page.setViewportSize({ width: 390, height: 844 });
+
+  const mixId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-10', time: '16:30', capacity: 14, note: 'Alta limpia' }, app.who);
+    const match = app.matches.find((item) => item.id === id);
+    await app.store.addPlayer(match, { name: 'Luciano Faidutti' }, app.who);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, mixId);
+  await page.waitForSelector('#slots .name:text-is("Luciano Faidutti")');
+  await page.locator('#slots .slot', { hasText: 'Luciano Faidutti' }).locator('.more-btn').click();
+  await page.click('#pm-edit');
+  await page.waitForSelector('#player-form[data-mode="edit"]');
+  const edited = await page.evaluate(() => ({
+    name: document.querySelector('#player-name').value,
+    edit: document.querySelector('#player-form').dataset.editId || '',
+  }));
+  check('Editar abre la ficha de Luciano', edited.name === 'Luciano Faidutti' && edited.edit.length > 0, JSON.stringify(edited));
+  await page.click('#player-form [data-close]');
+  await page.waitForFunction(() => !document.getElementById('sheet')?.open);
+  const ghost = await page.evaluate(() => {
+    const who = document.querySelector('#slots .who');
+    const box = document.querySelector('#btn-add-player').getBoundingClientRect();
+    who.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }));
+    const form = document.querySelector('#player-form');
+    const sheet = document.getElementById('sheet');
+    return {
+      mode: form?.dataset.mode || '',
+      edit: form?.dataset.editId || '',
+      title: (sheet?.open ? sheet.querySelector('h3')?.textContent : '') || '',
+    };
+  });
+  check('Un toque en Agregar que cae sobre la fila no edita a ese jugador', ghost.mode !== 'edit' && ghost.edit === '' && !ghost.title.includes('Luciano'), JSON.stringify(ghost));
+  if (await page.locator('#sheet[open]').count()) await page.click('#sheet [data-close]');
+  await page.waitForFunction(() => !document.getElementById('sheet')?.open);
+  await page.click('#btn-add-player');
+  await page.waitForSelector('#player-form[data-mode="add"]');
+  const opened = await page.evaluate(() => {
+    const form = document.querySelector('#player-form');
+    return {
+      title: form.querySelector('h3').textContent,
+      name: form.name.value,
+      edit: form.dataset.editId || '',
+      mode: form.dataset.mode,
+      tentative: !!form.querySelector('#player-tentative'),
+    };
+  });
+  check('Agregar jugador abre un alta vacía, sin el jugador editado', opened.title === 'Agregar jugador' && opened.name === '' && opened.edit === '' && opened.mode === 'add' && opened.tentative, JSON.stringify(opened));
+  await page.fill('#player-name', 'Santiago Hoyos');
+  await page.check('#player-tentative');
+  await page.click('#player-form button[type=submit]');
+  await page.waitForSelector('#slots .name:text-is("Santiago Hoyos")');
+  const afterAdd = await page.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    return Object.values(db.players)
+      .filter((p) => p.name === 'Luciano Faidutti' || p.name === 'Santiago Hoyos')
+      .map((p) => ({ name: p.name, tentative: p.tentative === true }));
+  });
+  const luciano = afterAdd.find((p) => p.name === 'Luciano Faidutti');
+  const santiago = afterAdd.find((p) => p.name === 'Santiago Hoyos');
+  check('Santiago queda a confirmar y Luciano sigue como estaba', !!santiago && santiago.tentative && !!luciano && !luciano.tentative, JSON.stringify(afterAdd));
+  await page.locator('#slots button[data-free]').first().click();
+  await page.waitForSelector('#player-form[data-mode="add"]');
+  const freeOpen = await page.evaluate(() => ({
+    mode: document.querySelector('#player-form').dataset.mode,
+    edit: document.querySelector('#player-form').dataset.editId || '',
+    name: document.querySelector('#player-name').value,
+    title: document.querySelector('#player-form h3').textContent,
+  }));
+  check('Lugar libre también abre un alta vacía', freeOpen.mode === 'add' && freeOpen.edit === '' && freeOpen.name === '' && freeOpen.title === 'Agregar jugador', JSON.stringify(freeOpen));
+  await page.click('#player-form [data-close]');
 }
 
 const fresh = await ctx.newPage();
