@@ -15,7 +15,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { countedGoals, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from '../js/stats.js';
+import { compensationDoneDates, countedGoals, currentMonthDiaDates, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
 import { planRows } from '../js/settle.js';
@@ -3570,7 +3570,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v137');
+  assert.equal(version, 'f7c-v138');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4134,6 +4134,21 @@ test('te correspondió: solo el total, partes iguales o lo que anotó', () => {
     name: 'Gustavo',
   });
   assert.equal(month.get('2026-11'), solo + equal + signed);
+});
+
+test('Día lista el mes en curso hasta el último cálculo guardado', () => {
+  const today = '2026-10-19';
+  const done = compensationDoneDates([
+    { date: '2026-09-28' },
+    { id: '2026-10-05' },
+    { date: '2026-10-19' },
+    { date: '2026-10-20' },
+  ]);
+  assert.deepEqual(currentMonthDiaDates({ today, done }), ['2026-10-19', '2026-10-05']);
+  const withoutToday = compensationDoneDates([{ date: '2026-10-05' }, { date: '2026-09-02' }]);
+  assert.equal(currentMonthDiaDates({ today, done: withoutToday }).includes('2026-10-19'), false);
+  assert.deepEqual(currentMonthDiaDates({ today, done: withoutToday }), ['2026-10-05']);
+  assert.deepEqual(currentMonthDiaDates({ today, done: compensationDoneDates([{ date: '2026-09-28' }]) }), []);
 });
 
 test('al abrir no se reescriben los contadores y el límite diario se avisa', async () => {
