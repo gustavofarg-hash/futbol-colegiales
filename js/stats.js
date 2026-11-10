@@ -179,6 +179,11 @@ function activeDayMatches(matches) {
   return (matches || []).filter((match) => match && match.cancelled !== true);
 }
 
+/** Esta persona organiza el partido: puede anotar, igual que en la compensación. */
+function organizesMatch(match, staff, who) {
+  return matchAdders(match, staff).some((adder) => isThisOrganizer(adder, who));
+}
+
 /** Organizadores del día: quienes pueden anotar en algún partido activo. */
 function dayOrganizers(matches, staff) {
   const map = new Map();
@@ -244,6 +249,25 @@ export function currentMonthDiaDates({ today, done } = {}) {
   const set = done instanceof Set ? done : compensationDoneDates(done);
   const monthStart = `${today.slice(0, 7)}-01`;
   return [...set].filter((date) => date >= monthStart && date <= today).sort((a, b) => b.localeCompare(a));
+}
+
+/**
+ * Día, para quien está logueado: la ventana de currentMonthDiaDates,
+ * y solo un día en el que organiza al menos un partido.
+ * Un día de otro organizador, o un cálculo sin partidos, no entra.
+ */
+export function diaDatesForOrganizer({ today, done, matches, staff, who } = {}) {
+  const person = who && typeof who === 'object' ? who : { uid: '', name: '' };
+  const byDay = new Map();
+  for (const match of matches || []) {
+    const date = String(match?.date || '');
+    if (!ISO_DAY.test(date)) continue;
+    if (!byDay.has(date)) byDay.set(date, []);
+    byDay.get(date).push(match);
+  }
+  return currentMonthDiaDates({ today, done }).filter((date) => (
+    (byDay.get(date) || []).some((match) => organizesMatch(match, staff, person))
+  ));
 }
 
 /** Con quién se anotó. Si no hay uid, vale quien lo agregó. */
