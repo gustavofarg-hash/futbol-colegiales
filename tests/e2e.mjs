@@ -138,7 +138,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v131');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v132');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -684,6 +684,66 @@ check('Copiar lista como texto', clip.includes('Jueves 22/10 · 21:00 hs') && cl
 await page.click('.slot:has-text("Juan Pérez") .pay-btn');
 await page.waitForSelector('#pay-form');
 check('El pago abre directo en los montos', (await page.locator('#pay-form [data-paid]').count()) === 0 && await page.isVisible('#pay-details') && await page.isVisible('#pay-free') && await page.isVisible('#pay-form [name=pending]'));
+const payWho = await page.evaluate(() => {
+  const card = document.querySelector('#pay-who');
+  const when = document.querySelector('#pay-when');
+  const name = document.querySelector('#pay-name');
+  const title = document.querySelector('#pay-form h3');
+  const sheet = document.querySelector('.sheet-body');
+  const scroll = document.querySelector('#pay-scroll');
+  const root = document.documentElement;
+  const wasDark = root.classList.contains('dark');
+  const font = root.style.fontSize;
+  const measure = () => {
+    const cardStyle = getComputedStyle(card);
+    const nameStyle = getComputedStyle(name);
+    const whenStyle = getComputedStyle(when);
+    return {
+      namePx: parseFloat(nameStyle.fontSize),
+      titlePx: parseFloat(getComputedStyle(title).fontSize),
+      whenPx: parseFloat(whenStyle.fontSize),
+      whenWeight: Number(whenStyle.fontWeight),
+      nameWeight: Number(nameStyle.fontWeight),
+      nameColor: nameStyle.color,
+      whenColor: whenStyle.color,
+      text: getComputedStyle(root).getPropertyValue('--text').trim(),
+      cardBg: cardStyle.backgroundColor,
+      sheetBg: getComputedStyle(sheet).backgroundColor,
+      radius: parseFloat(cardStyle.borderTopLeftRadius),
+    };
+  };
+  root.classList.remove('dark');
+  const light = measure();
+  root.classList.add('dark');
+  const dark = measure();
+  root.classList.toggle('dark', wasDark);
+  const before = parseFloat(getComputedStyle(name).fontSize);
+  root.style.fontSize = '24px';
+  const grown = parseFloat(getComputedStyle(name).fontSize);
+  root.style.fontSize = font;
+  const original = name.textContent;
+  name.textContent = 'Nombre Larguísimo de un Jugador que Tiene que Bajar de Renglón sin Romper la Hoja de Pago';
+  const line = parseFloat(getComputedStyle(name).lineHeight) || parseFloat(getComputedStyle(name).fontSize) * 1.15;
+  const wrapped = name.getBoundingClientRect().height > line * 1.45
+    && card.scrollWidth <= card.clientWidth + 1
+    && scroll.scrollWidth <= scroll.clientWidth + 1;
+  name.textContent = original;
+  const rgb = (hex) => {
+    const n = hex.replace('#', '');
+    const v = n.length === 3 ? n.split('').map((c) => c + c).join('') : n;
+    return `rgb(${parseInt(v.slice(0, 2), 16)}, ${parseInt(v.slice(2, 4), 16)}, ${parseInt(v.slice(4, 6), 16)})`;
+  };
+  return {
+    when: when.textContent,
+    name: name.textContent,
+    dateFirst: !!(when.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING),
+    wrapped,
+    grown: grown > before,
+    light: { ...light, nameOnText: light.nameColor === rgb(light.text), whenOnText: light.whenColor === rgb(light.text) },
+    dark: { ...dark, nameOnText: dark.nameColor === rgb(dark.text), whenOnText: dark.whenColor === rgb(dark.text) },
+  };
+});
+check('La hoja de pago destaca la fecha y, más grande, el nombre', payWho.dateFirst && payWho.when === 'Jueves 22/10 · 21:00 hs' && payWho.name === 'Juan Pérez' && payWho.wrapped && payWho.grown && payWho.light.namePx > payWho.light.titlePx && payWho.light.whenPx >= 18 && payWho.light.whenWeight >= 700 && payWho.light.nameWeight >= 700 && payWho.light.nameOnText && payWho.light.whenOnText && payWho.light.cardBg !== payWho.light.sheetBg && payWho.light.radius >= 16 && payWho.dark.namePx > payWho.dark.titlePx && payWho.dark.nameOnText && payWho.dark.whenOnText && payWho.dark.cardBg !== payWho.dark.sheetBg, JSON.stringify(payWho));
 check('El efectivo arranca vacío', await page.$eval('#pay-form [name=cash]', (el) => el.value === ''));
 await page.locator('#pay-form [name=cash]').click();
 check('Al tocar el efectivo se completa con el precio de Ajustes', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '5000'));
@@ -1557,6 +1617,31 @@ await page.click('#tab-proximos');
 await page.click('.match-card[data-date="2026-10-19"]');
 await page.click('.slot:has-text("Ana Hoy") .pay-btn');
 await page.waitForSelector('#pay-receive-row');
+const pendingLook = await page.evaluate(() => {
+  const row = document.querySelector('#pay-recorded li.pay-pending-row');
+  const root = document.documentElement;
+  const wasDark = root.classList.contains('dark');
+  const read = () => {
+    const box = getComputedStyle(row);
+    const text = getComputedStyle(row.querySelector('span'));
+    return { bg: box.backgroundColor, color: text.color, weight: Number(text.fontWeight), radius: parseFloat(box.borderTopLeftRadius) };
+  };
+  root.classList.remove('dark');
+  const light = read();
+  root.classList.add('dark');
+  const dark = read();
+  root.classList.toggle('dark', wasDark);
+  const amount = (row.innerText.match(/Transfiere después \$\d[\d.]*/) || [])[0] || '';
+  const copies = [...document.querySelectorAll('#pay-form .pay-pending, #pay-recorded li')].filter((el) => el.innerText.includes(amount)).length;
+  return {
+    text: row.innerText.replace(/\s+/g, ' ').trim(),
+    x: row.querySelector('.pay-x')?.getAttribute('aria-label') || '',
+    pill: document.querySelector('#pay-pending-now') != null,
+    copies,
+    light, dark,
+  };
+});
+check('Transfiere después queda una sola vez, en la fila amarilla con la X', pendingLook.copies === 1 && !pendingLook.pill && pendingLook.text.includes('Transfiere después $1.500') && pendingLook.text.includes('Gustavo') && pendingLook.x.startsWith('Anular') && pendingLook.light.bg === 'rgb(255, 246, 216)' && pendingLook.light.color === 'rgb(107, 82, 0)' && pendingLook.light.weight >= 700 && pendingLook.light.radius >= 12 && pendingLook.dark.bg === 'rgb(58, 49, 24)' && pendingLook.dark.color === 'rgb(246, 226, 162)', JSON.stringify(pendingLook));
 const anaWhy = (await page.locator('#pay-remind-why').innerText()).trim();
 check('Sin el WhatsApp de Ana el recordatorio no abre el chat',
   await page.locator('#btn-pending-remind').isDisabled() && (await page.getAttribute('#btn-pending-remind', 'href')) == null && anaWhy === 'El WhatsApp de este jugador es privado',
@@ -4011,7 +4096,7 @@ await page.click('.slot:has-text("Debe Varios") .who');
 await page.waitForSelector('#profile #debt-list button.debt-jump');
 await page.click('#profile #debt-list button.debt-jump:has-text("20/10/2026")');
 await page.waitForSelector('#pay-form');
-check('Desde la ficha, la deuda abre el pago de ese partido', (await page.locator('#pay-form h3').innerText()) === 'Pago' && (await page.locator('#pay-form .hint').first().innerText()).includes('20/10') && await page.locator('#pm-pay').count() === 0);
+check('Desde la ficha, la deuda abre el pago de ese partido', (await page.locator('#pay-form h3').innerText()) === 'Pago' && (await page.locator('#pay-when').innerText()).includes('20/10') && (await page.locator('#pay-name').innerText()) === 'Debe Varios' && await page.locator('#pm-pay').count() === 0);
 await page.click('#pay-back');
 await page.waitForSelector('#profile #debt-total');
 check('Cancelar desde la ficha vuelve a la ficha', await page.locator('dialog.sheet[open]').count() === 0 && (await page.locator('#debt-total').innerText()).includes('$5.000'));

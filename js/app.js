@@ -44,7 +44,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v131';
+const APP_VERSION = 'f7c-v132';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -4975,7 +4975,8 @@ function recordedPaymentList(player, listId) {
     const x = canAnnulPayment(player, share)
       ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">✕</button>`
       : '';
-    return `<li><span>${esc(label)}</span>${x}</li>`;
+    const pendingClass = share.kind === 'pending' ? ' class="pay-pending-row"' : '';
+    return `<li${pendingClass}><span>${esc(label)}</span>${x}</li>`;
   }).join('')}</ul>`;
 }
 
@@ -5139,7 +5140,11 @@ function pendingTransferReminderRow(m, p, pending) {
   const remind = phone && !hidden
     ? `<a class="btn pay-remind" id="btn-pending-remind" href="${esc(waHref(phone, text))}" target="_blank" rel="noopener">${ICON.wa}<span>Enviar recordatorio</span></a>`
     : `<button type="button" class="btn pay-remind" id="btn-pending-remind" disabled>${ICON.wa}<span>Enviar recordatorio</span></button>`;
-  return `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(pending))}</p>
+  const shownInRow = paymentShares(p).some((share) => share.kind === 'pending' && share.amount > 0);
+  const pill = shownInRow
+    ? ''
+    : `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(pending))}</p>`;
+  return `${pill}
       <div class="pay-receive-row" id="pay-receive-row">
         <button type="button" class="btn" id="btn-receive-pending">Marcar transferencia como cobrada</button>
         ${remind}
@@ -5190,7 +5195,10 @@ function openPaymentForm(m, p, opts = {}) {
     <form id="pay-form" novalidate>
       <div id="pay-scroll">
       <h3>Pago</h3>
-      <p class="hint">${esc(p.name)} · ${esc(fmtWhen(m))}</p>
+      <div class="pay-who" id="pay-who">
+        <p class="pay-when" id="pay-when">${esc(fmtWhen(m))}</p>
+        <p class="pay-name" id="pay-name">${esc(p.name)}</p>
+      </div>
       ${recordedPaymentList(p, 'pay-recorded')}
       <div id="pay-promo">${promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : ''}</div>
       ${parts.pending > 0 ? pendingTransferReminderRow(m, p, parts.pending) : ''}
