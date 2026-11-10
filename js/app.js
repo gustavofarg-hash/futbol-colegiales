@@ -45,7 +45,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v135';
+const APP_VERSION = 'f7c-v136';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3820,11 +3820,13 @@ function statsPlayerBody(id) {
 }
 
 function dayShare(date, dayMatches) {
+  const me = actor();
   return organizerDayShare({
     matches: dayMatches,
     players: app.players,
     staff: staffUsers(app.users),
-    uid: actor().uid,
+    uid: me.uid,
+    name: me.name,
   });
 }
 function statsDayBody(id) {
@@ -3868,11 +3870,13 @@ function entitledLabel(amount) {
   return `Te correspondió: ${formatARS(amount || 0)}`;
 }
 function periodShares(grain) {
+  const me = actor();
   return organizerShareByPeriod({
     matches: knownMatches(),
     players: app.players,
     staff: staffUsers(app.users),
-    uid: actor().uid,
+    uid: me.uid,
+    name: me.name,
     grain,
   });
 }
