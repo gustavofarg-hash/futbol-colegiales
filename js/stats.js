@@ -1,8 +1,8 @@
 // Totales para la pestaña Estadísticas. Puro: no lee Firebase.
 // Un partido cancelado no suma plata ni cupo. La espera no debe.
-import { dayCompensation } from './compensate.js';
+import { dayCompensation, matchAdders, matchCompensation } from './compensate.js';
 import { monthKeyOf, monthLabel } from './ledger.js';
-import { UNSPECIFIED } from './organizers.js';
+import { sameOrganizer, UNSPECIFIED } from './organizers.js';
 import { isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { priceOfMatch, promoForPlayer } from './prices.js';
 import { personKey } from './roster.js';
@@ -166,12 +166,59 @@ export function periodBuckets({ matches, players, prices, grain = 'month' } = {}
     }));
 }
 
-/** Lo que le corresponde ese día. Es el «le corresponden» de dayCompensation. */
-export function organizerDayShare({ matches, players, staff, uid } = {}) {
-  const id = String(uid || '').trim();
+function isThisOrganizer(person, who) {
+  if (!person) return false;
+  const id = String(who?.uid || '').trim();
+  const name = String(who?.name || '').trim();
+  if (id && person.uid === id) return true;
+  return !!name && sameOrganizer(person.name, name);
+}
+
+function activeDayMatches(matches) {
+  return (matches || []).filter((match) => match && match.cancelled !== true);
+}
+
+/** Organizadores del día: quienes pueden anotar en algún partido activo. */
+function dayOrganizers(matches, staff) {
+  const map = new Map();
+  for (const match of activeDayMatches(matches)) {
+    for (const person of matchAdders(match, staff)) {
+      if (person?.uid) map.set(person.uid, person);
+    }
+  }
+  return [...map.values()];
+}
+
+/** Lo cobrado del día, el total que usa el cálculo (incluye pendiente). */
+function dayCollected(matches, players, staff) {
+  let total = 0;
+  for (const match of activeDayMatches(matches)) {
+    total = roundARS(total + matchCompensation(match, players, staff).total);
+  }
+  return total;
+}
+
+/**
+ * Lo que le corresponde a esta persona en el día.
+ * Un solo organizador: todo lo cobrado.
+ * Más de uno: su fila de dayCompensation («le corresponden»),
+ * según el modo de cada partido (partes iguales o lo que anotó).
+ * No es la suma de lo que cobraron todos.
+ */
+export function organizerDayShare({ matches, players, staff, uid, name, who } = {}) {
+  const person = who && typeof who === 'object' ? who : { uid: uid || '', name: name || '' };
+  const organizers = dayOrganizers(matches, staff);
+  if (organizers.length <= 1) {
+    const only = organizers[0];
+    if (!isThisOrganizer(only, person)) return 0;
+    return dayCollected(matches, players, staff);
+  }
   const calc = dayCompensation(matches || [], players, staff);
-  const row = id ? calc.rows.find((item) => item.uid === id) : null;
-  return row ? roundARS(row.entitled) : 0;
+  const id = String(person.uid || '').trim();
+  const row = (id && calc.rows.find((item) => item.uid === id))
+    || calc.rows.find((item) => isThisOrganizer(item, person))
+    || null;
+  return roundARS(row?.entitled || 0);
 }
 
 /**
@@ -180,7 +227,7 @@ export function organizerDayShare({ matches, players, staff, uid } = {}) {
  * Un día con varios partidos entra una sola vez. Uno con un solo
  * organizador suma lo que esa función le asigna.
  */
-export function organizerShareByPeriod({ matches, players, staff, uid, grain = 'month' } = {}) {
+export function organizerShareByPeriod({ matches, players, staff, uid, name, who, grain = 'month' } = {}) {
   const byDay = new Map();
   for (const match of matches || []) {
     if (!match?.id || !/^\d{4}-\d{2}-\d{2}$/.test(match.date || '')) continue;
@@ -191,7 +238,7 @@ export function organizerShareByPeriod({ matches, players, staff, uid, grain = '
   for (const [date, dayMatches] of byDay) {
     const key = grain === 'year' ? date.slice(0, 4) : monthKeyOf(date);
     if (!key) continue;
-    const share = organizerDayShare({ matches: dayMatches, players, staff, uid });
+    const share = organizerDayShare({ matches: dayMatches, players, staff, uid, name, who });
     totals.set(key, roundARS((totals.get(key) || 0) + share));
   }
   return totals;
