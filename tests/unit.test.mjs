@@ -14,7 +14,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { countedGoals, matchTake, periodBuckets } from '../js/stats.js';
+import { countedGoals, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
 import { planRows } from '../js/settle.js';
@@ -3569,7 +3569,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v134');
+  assert.equal(version, 'f7c-v135');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4020,4 +4020,56 @@ test('la compensación reparte el día y cuenta lo pendiente de confirmar', () =
   assert.equal(summed.transfers[0].amount, 9000);
   const skipped = dayCompensation([{ ...match, cancelled: true }], players, staff);
   assert.equal(skipped.rows.length, 0);
+});
+
+test('el mes suma lo que le corresponde cada día al organizador', () => {
+  const staff = [{ uid: 'gus', name: 'Gustavo', active: true }, { uid: 'mar', name: 'Martín', active: true }];
+  const matches = [
+    { id: 'a', date: '2026-11-03', adders: ['*'], splitMode: 'equal' },
+    { id: 'b', date: '2026-11-10', adders: ['gus'], splitMode: 'equal' },
+    { id: 'x', date: '2026-11-10', adders: ['*'], splitMode: 'equal', cancelled: true },
+    { id: 'c', date: '2026-12-01', adders: ['*'], splitMode: 'equal' },
+  ];
+  const players = [
+    { id: 'p1', matchId: 'a', waiting: false, paid: true, split: true, cash: 10000, cashTo: 'Gustavo' },
+    { id: 'p2', matchId: 'b', waiting: false, paid: true, split: true, cash: 8000, cashTo: 'Gustavo' },
+    { id: 'p4', matchId: 'x', waiting: false, paid: true, split: true, cash: 90000, cashTo: 'Gustavo' },
+    { id: 'p3', matchId: 'c', waiting: false, paid: true, split: true, cash: 4000, cashTo: 'Martín' },
+  ];
+  const daily = (date, uid) => {
+    const day = dayCompensation(matches.filter((item) => item.date === date), players, staff);
+    return day.rows.find((row) => row.uid === uid)?.entitled || 0;
+  };
+  const shares = organizerShareByPeriod({ matches, players, staff, uid: 'gus', grain: 'month' });
+  const dayOf = (date) => organizerDayShare({
+    matches: matches.filter((item) => item.date === date),
+    players,
+    staff,
+    uid: 'gus',
+  });
+  assert.equal(daily('2026-11-03', 'gus'), 5000);
+  assert.equal(daily('2026-11-10', 'gus'), 8000);
+  assert.equal(dayOf('2026-11-03'), daily('2026-11-03', 'gus'));
+  assert.equal(dayOf('2026-11-10'), daily('2026-11-10', 'gus'));
+  assert.equal(shares.get('2026-11'), dayOf('2026-11-03') + dayOf('2026-11-10'));
+  assert.equal(shares.get('2026-12'), dayOf('2026-12-01'));
+  const years = organizerShareByPeriod({ matches, players, staff, uid: 'gus', grain: 'year' });
+  const yearFromDays = dayOf('2026-11-03') + dayOf('2026-11-10') + dayOf('2026-12-01');
+  const yearFromMonths = shares.get('2026-11') + shares.get('2026-12');
+  assert.equal(years.get('2026'), yearFromDays);
+  assert.equal(years.get('2026'), yearFromMonths);
+  const martin = organizerShareByPeriod({ matches, players, staff, uid: 'mar', grain: 'month' });
+  assert.equal(martin.get('2026-11'), daily('2026-11-03', 'mar') + daily('2026-11-10', 'mar'));
+  assert.equal(daily('2026-11-10', 'mar'), 0);
+  const sameDay = [
+    { id: 'd1', date: '2026-11-03', adders: ['*'], splitMode: 'equal' },
+    { id: 'd2', date: '2026-11-03', adders: ['*'], splitMode: 'equal' },
+  ];
+  const people = [
+    { id: 'q1', matchId: 'd1', waiting: false, paid: true, split: true, cash: 10000, cashTo: 'Gustavo' },
+    { id: 'q2', matchId: 'd2', waiting: false, paid: true, split: true, cash: 6000, cashTo: 'Gustavo' },
+  ];
+  const together = dayCompensation(sameDay, people, staff).rows.find((row) => row.uid === 'gus').entitled;
+  assert.equal(organizerDayShare({ matches: sameDay, players: people, staff, uid: 'gus' }), together);
+  assert.equal(organizerShareByPeriod({ matches: sameDay, players: people, staff, uid: 'gus' }).get('2026-11'), together);
 });

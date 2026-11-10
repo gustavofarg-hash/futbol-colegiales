@@ -1,6 +1,9 @@
 // Prueba end-to-end en modo demo con Playwright (Chromium headless, 390x844).
 // Uso: node tests/e2e.mjs [baseUrl]   (requiere `npm i playwright` en algún lado accesible)
 import { createRequire } from 'node:module';
+import { dayCompensation } from '../js/compensate.js';
+import { organizerDayShare, organizerShareByPeriod } from '../js/stats.js';
+import { formatARS } from '../js/payments.js';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_PATH || 'playwright');
 
@@ -138,7 +141,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v134');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v135');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -1546,12 +1549,13 @@ await page.waitForFunction(() => {
   return by.includes('Martín: $4.500') && signed.includes('Anotó Martín: 1 vez') && !signed.includes('Gustavo') && !by.includes('Gustavo');
 });
 check('El filtro de Estadísticas deja el cobro y las anotaciones de Martín', (await page.textContent('#ledger-months')).includes('Oct 2026: $4.500'));
-await page.click('#stats-mode a[href="#/estadisticas/partido"]');
-await page.waitForSelector('#stats-matches');
-await page.locator('#stats-matches .who').first().click();
+await page.click('#stats-mode a[href="#/estadisticas/dia"]');
+await page.waitForSelector('#stats-days');
+check('La vista se llama Día', (await page.locator('#stats-mode a[aria-current="page"]').innerText()).trim() === 'Día');
+await page.locator('#stats-days .who').first().click();
 await page.waitForSelector('#stats-collected');
 const matchStats = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
-check('Por partido muestra asistencia y cobrado', matchStats.includes('En la lista:') && matchStats.includes('No juega:') && matchStats.includes('Cobrado') && matchStats.includes('Por medio') && matchStats.includes('Por organizador'), matchStats.slice(0, 240));
+check('Por día muestra lo que correspondió y la asistencia de cada partido', matchStats.includes('Te correspondió:') && matchStats.includes('En la lista:') && matchStats.includes('No juega:') && matchStats.includes('Cobrado') && matchStats.includes('Por medio') && matchStats.includes('Por organizador'), matchStats.slice(0, 280));
 await page.click('#stats-mode a[href="#/estadisticas/mes"]');
 await page.waitForSelector('#stats-periods');
 await page.locator('#stats-periods .who').first().click();
@@ -6926,6 +6930,142 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   }));
   check('Lugar libre también abre un alta vacía', freeOpen.mode === 'add' && freeOpen.edit === '' && freeOpen.name === '' && freeOpen.title === 'Agregar jugador', JSON.stringify(freeOpen));
   await page.click('#player-form [data-close]');
+}
+
+{
+  const built = await page.evaluate(async () => {
+    const app = window.__app;
+    const uid = app.uid;
+    const name = app.who;
+    const access = { viewers: ['*'], adders: ['*'], viewerNames: [], adderNames: [], limits: [], createdByUid: uid, solo: false };
+    const solo = { ...access, adders: [uid], adderNames: [name] };
+    const openId = await app.store.addMatch({ date: '2027-01-07', time: '18:00', capacity: 14, splitMode: 'equal', access, note: 'Mes compartido' }, name);
+    const openId2 = await app.store.addMatch({ date: '2027-01-07', time: '21:00', capacity: 14, splitMode: 'equal', access, note: 'Mes compartido 2' }, name);
+    const soloId = await app.store.addMatch({ date: '2027-01-14', time: '16:30', capacity: 14, splitMode: 'equal', access: solo, note: 'Mes solo' }, name);
+    const cancelledId = await app.store.addMatch({ date: '2027-01-14', time: '20:00', capacity: 14, splitMode: 'equal', access, note: 'Mes cancelado' }, name);
+    await app.store.updateMatch(cancelledId, { cancelled: true }, name);
+    const decId = await app.store.addMatch({ date: '2027-02-02', time: '19:00', capacity: 14, splitMode: 'equal', access, note: 'Mes febrero' }, name);
+    const pay = { paid: true, split: true, freePlay: false, cash: 0, transfer: 0, pendingTransfer: 0, fromCredit: 0 };
+    const addPaid = async (matchId, playerName, cash, cashTo) => {
+      const id = await app.store.addPlayer(app.matches.find((item) => item.id === matchId), { name: playerName }, name);
+      await app.store.setPayment(id, { ...pay, cash, cashTo }, name);
+    };
+    await addPaid(openId, 'Mes Ana', 10000, name);
+    await addPaid(openId2, 'Mes Eva', 6000, name);
+    await addPaid(soloId, 'Mes Beto', 8000, name);
+    await addPaid(decId, 'Mes Dano', 4000, 'Martín');
+    const staff = (app.users || []).filter((user) => user.active !== false && (user.role === 'admin' || user.role === 'organizer'));
+    return {
+      uid,
+      staff,
+      matches: app.matches.filter((item) => ['2027-01-07', '2027-01-14', '2027-02-02'].includes(item.date) && String(item.note || '').startsWith('Mes')),
+      players: app.players.filter((item) => ['Mes Ana', 'Mes Eva', 'Mes Beto', 'Mes Dano'].includes(item.name)),
+    };
+  });
+  const daily = (date) => organizerDayShare({
+    matches: built.matches.filter((item) => item.date === date),
+    players: built.players,
+    staff: built.staff,
+    uid: built.uid,
+  });
+  const sameCalc = dayCompensation(built.matches.filter((item) => item.date === '2027-01-07'), built.players, built.staff)
+    .rows.find((row) => row.uid === built.uid)?.entitled || 0;
+  const shares = organizerShareByPeriod({ matches: built.matches, players: built.players, staff: built.staff, uid: built.uid, grain: 'month' });
+  const years = organizerShareByPeriod({ matches: built.matches, players: built.players, staff: built.staff, uid: built.uid, grain: 'year' });
+  const january = daily('2027-01-07') + daily('2027-01-14');
+  check('El mes suma los días, y dos partidos del mismo día cuentan una vez', shares.get('2027-01') === january && daily('2027-01-07') === sameCalc && daily('2027-01-14') === 8000 && built.matches.filter((item) => item.date === '2027-01-07' && item.cancelled !== true).length === 2, `ene=${shares.get('2027-01')} dia7=${daily('2027-01-07')} dia14=${daily('2027-01-14')}`);
+  await page.evaluate(() => { location.hash = '#/estadisticas/dia'; });
+  await page.waitForSelector('#stats-days');
+  const dayRows = await page.$$eval('#stats-days [data-date]', (els) => els.map((el) => ({
+    date: el.dataset.date,
+    text: el.innerText.replace(/\s+/g, ' '),
+  })));
+  const parseARS = (text) => {
+    const found = String(text).match(/Te correspondió:\s*(-?\$[\d.]+(?:,\d+)?)/);
+    if (!found) return null;
+    const raw = found[1];
+    const neg = raw.startsWith('-');
+    const n = Number(raw.replace('-', '').replace('$', '').replace(/\./g, '').replace(',', '.'));
+    return neg ? -n : n;
+  };
+  const janDays = dayRows.filter((row) => row.date.startsWith('2027-01'));
+  const janFromDays = janDays.reduce((sum, row) => sum + parseARS(row.text), 0);
+  const grouped = dayRows.filter((row) => row.date === '2027-01-07');
+  check('Día agrupa los dos partidos del 07/01 y muestra lo que correspondió', grouped.length === 1 && grouped[0].text.includes('2 partidos') && grouped[0].text.includes(`Te correspondió: ${formatARS(daily('2027-01-07'))}`), JSON.stringify(grouped));
+  await page.locator('#stats-days [data-date="2027-01-07"] a').click();
+  await page.waitForSelector('#stats-day');
+  const dayOpen = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
+  check('El día abierto lista los dos horarios y el mismo total', (await page.locator('#stats-entitled').innerText()) === `Te correspondió: ${formatARS(daily('2027-01-07'))}` && dayOpen.includes('18:00') && dayOpen.includes('21:00') && (await page.locator('.stats-day-match').count()) === 2, dayOpen.slice(0, 240));
+  await page.evaluate(() => { location.hash = '#/estadisticas/dia'; });
+  await page.waitForSelector('#stats-days');
+  await page.locator('#stats-days [data-date="2027-01-07"]').scrollIntoViewIfNeeded();
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.dataset.theme = 'light';
+  });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v135-dia-claro.png' });
+  await page.evaluate(() => {
+    document.documentElement.classList.add('dark');
+    document.documentElement.dataset.theme = 'dark';
+  });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v135-dia-oscuro.png' });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.dataset.theme = 'light';
+  });
+  await page.evaluate(() => { location.hash = '#/estadisticas/mes'; });
+  await page.waitForSelector('#stats-periods');
+  const novRow = page.locator('#stats-periods .slot', { hasText: 'Ene 2027' });
+  const label = `Te correspondió: ${formatARS(january)}`;
+  const sameMoney = (a, b) => Math.round(a * 100) === Math.round(b * 100);
+  check('Mes muestra lo que le correspondió en enero y es la suma de los días', (await novRow.innerText()).includes(label) && sameMoney(parseARS(await novRow.innerText()), janFromDays), await novRow.innerText());
+  await novRow.locator('a').click();
+  await page.waitForSelector('#stats-entitled');
+  check('El mes abierto repite el mismo total', (await page.locator('#stats-entitled').innerText()) === label);
+  await page.evaluate(() => { location.hash = '#/estadisticas/mes'; });
+  await page.waitForSelector('#stats-periods .stats-entitled');
+  await page.locator('#stats-periods .slot', { hasText: 'Ene 2027' }).scrollIntoViewIfNeeded();
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.dataset.theme = 'light';
+  });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v135-mes-claro.png' });
+  await page.evaluate(() => {
+    document.documentElement.classList.add('dark');
+    document.documentElement.dataset.theme = 'dark';
+  });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v135-mes-oscuro.png' });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.dataset.theme = 'light';
+  });
+  const monthRows = await page.$$eval('#stats-periods [data-period]', (els) => els.map((el) => ({
+    period: el.dataset.period,
+    text: el.innerText.replace(/\s+/g, ' '),
+  })));
+  const yearFromMonths = monthRows.filter((row) => row.period.startsWith('2027-')).reduce((sum, row) => sum + parseARS(row.text), 0);
+  const yearFromDays = dayRows.filter((row) => row.date.startsWith('2027-')).reduce((sum, row) => sum + parseARS(row.text), 0);
+  await page.evaluate(() => { location.hash = '#/estadisticas/anio'; });
+  await page.waitForSelector('#stats-periods [data-period="2027"]');
+  const yearRow = page.locator('#stats-periods [data-period="2027"]');
+  const yearLabel = `Te correspondió: ${formatARS(years.get('2027'))}`;
+  const yearShown = (await yearRow.innerText()).replace(/\s+/g, ' ');
+  check('Año es la suma de los meses y de los días', yearShown.includes(yearLabel) && sameMoney(parseARS(yearShown), yearFromMonths) && sameMoney(yearFromMonths, yearFromDays), JSON.stringify({ yearLabel, yearShown, yearFromMonths, yearFromDays, calc: years.get('2027') }));
+  await yearRow.scrollIntoViewIfNeeded();
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.dataset.theme = 'light';
+  });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v135-anio-claro.png' });
+  await page.evaluate(() => {
+    document.documentElement.classList.add('dark');
+    document.documentElement.dataset.theme = 'dark';
+  });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v135-anio-oscuro.png' });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.dataset.theme = 'light';
+  });
 }
 
 const fresh = await ctx.newPage();

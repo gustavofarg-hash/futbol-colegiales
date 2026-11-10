@@ -1,5 +1,6 @@
 // Totales para la pestaña Estadísticas. Puro: no lee Firebase.
 // Un partido cancelado no suma plata ni cupo. La espera no debe.
+import { dayCompensation } from './compensate.js';
 import { monthKeyOf, monthLabel } from './ledger.js';
 import { UNSPECIFIED } from './organizers.js';
 import { isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
@@ -163,4 +164,35 @@ export function periodBuckets({ matches, players, prices, grain = 'month' } = {}
       byMethod: methodRows(bucket.byMethod),
       byOrganizer: organizerRows(bucket.byOrganizer),
     }));
+}
+
+/** Lo que le corresponde ese día. Es el «le corresponden» de dayCompensation. */
+export function organizerDayShare({ matches, players, staff, uid } = {}) {
+  const id = String(uid || '').trim();
+  const calc = dayCompensation(matches || [], players, staff);
+  const row = id ? calc.rows.find((item) => item.uid === id) : null;
+  return row ? roundARS(row.entitled) : 0;
+}
+
+/**
+ * Lo que le corresponde al organizador en cada mes (o año).
+ * Cada día usa organizerDayShare, o sea el mismo cálculo de la hoja.
+ * Un día con varios partidos entra una sola vez. Uno con un solo
+ * organizador suma lo que esa función le asigna.
+ */
+export function organizerShareByPeriod({ matches, players, staff, uid, grain = 'month' } = {}) {
+  const byDay = new Map();
+  for (const match of matches || []) {
+    if (!match?.id || !/^\d{4}-\d{2}-\d{2}$/.test(match.date || '')) continue;
+    if (!byDay.has(match.date)) byDay.set(match.date, []);
+    byDay.get(match.date).push(match);
+  }
+  const totals = new Map();
+  for (const [date, dayMatches] of byDay) {
+    const key = grain === 'year' ? date.slice(0, 4) : monthKeyOf(date);
+    if (!key) continue;
+    const share = organizerDayShare({ matches: dayMatches, players, staff, uid });
+    totals.set(key, roundARS((totals.get(key) || 0) + share));
+  }
+  return totals;
 }

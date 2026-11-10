@@ -650,6 +650,11 @@ button.team-name {
 .chip { border-radius: 999px; padding: 8px 14px; min-height: 40px; }
 .chip.on { background: var(--green); border-color: var(--green); color: #fff; }
 .stat-summary { font-weight: 800; margin: 0 0 6px; }
+.stats-entitled {
+  display: block; margin: 8px 0 0; padding: 8px 12px; border-radius: 12px;
+  font-weight: 800; background: var(--lime, var(--green-soft)); color: var(--lime-ink, var(--text));
+}
+html.dark .stats-entitled { background: #243312; color: var(--lime, #c6f432); }
 .debt-total { color: var(--danger); font-weight: 800; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
 .credit-total { color: var(--green); font-weight: 800; margin: 0 0 4px; font-variant-numeric: tabular-nums; }
 .player-panel { margin: 0 0 8px; }
