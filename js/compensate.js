@@ -75,7 +75,7 @@ export function collectedSlices(player, staff) {
   return slices.filter((slice) => slice.amount > 0);
 }
 
-function splitEqual(total, people) {
+export function splitEqual(total, people) {
   const count = people.length;
   if (!count) return [];
   const cents = Math.round(roundARS(total) * 100);

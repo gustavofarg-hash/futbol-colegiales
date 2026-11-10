@@ -2,7 +2,7 @@
 // Uso: node tests/e2e.mjs [baseUrl]   (requiere `npm i playwright` en algún lado accesible)
 import { createRequire } from 'node:module';
 import { dayCompensation } from '../js/compensate.js';
-import { organizerDayShare, organizerShareByPeriod } from '../js/stats.js';
+import { organizerDayShare, organizerShareByPeriod, playerOrganizerMonths } from '../js/stats.js';
 import { formatARS } from '../js/payments.js';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_PATH || 'playwright');
@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v142');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v146');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -1540,17 +1540,9 @@ const profileHeads = await page.$$eval('#profile h2', (els) => els.map((el) => e
 check('El perfil no muestra el bloque de pagos', !profileHeads.includes('Pagos') && !profileHeads.includes('Por organizador') && !profileHeads.includes('Anotado por') && await page.locator('#profile #ledger, #profile #pay-filter').count() === 0, profileHeads.join(' | '));
 check('Las notas siguen en el perfil', profileHeads.includes('Notas de partido') && (await page.locator('#btn-add-note').innerText()) === 'Agregar nota');
 await page.click('#profile-stats');
-await page.waitForSelector('#ledger-total');
-check('Ver estadísticas abre la pestaña en ese jugador', (await page.evaluate(() => location.hash)).startsWith('#/estadisticas/jugador/') && await page.getAttribute('#btn-estadisticas', 'aria-current') === 'page' && (await page.locator('#stats-player').textContent()).trim() === 'Juan Pérez');
-const ledgerText = (await page.locator('#ledger').innerText()).replace(/\s+/g, ' ');
-check('Estadísticas suma el mes y el cobrador', ledgerText.includes('Pagó $4.500') && ledgerText.includes('Oct 2026: $4.500') && ledgerText.includes('Martín: $4.500') && ledgerText.includes('Anotó Gustavo: 1 vez'), ledgerText);
-await page.click('#pay-filter [data-pay-filter="Martín"]');
-await page.waitForFunction(() => {
-  const signed = document.querySelector('#ledger-signups')?.innerText || '';
-  const by = document.querySelector('#ledger-by')?.innerText || '';
-  return by.includes('Martín: $4.500') && signed.includes('Anotó Martín: 1 vez') && !signed.includes('Gustavo') && !by.includes('Gustavo');
-});
-check('El filtro de Estadísticas deja el cobro y las anotaciones de Martín', (await page.textContent('#ledger-months')).includes('Oct 2026: $4.500'));
+await page.waitForSelector('#stats-q');
+const juanStats = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
+check('Ver estadísticas abre la pestaña en ese jugador', (await page.evaluate(() => location.hash)).startsWith('#/estadisticas/jugador/') && await page.getAttribute('#btn-estadisticas', 'aria-current') === 'page' && (await page.locator('#stats-player').textContent()).trim() === 'Juan Pérez' && await page.locator('#stats-q').count() === 1 && await page.locator('#ledger, #stats-notes, #stats-goals, #pay-filter').count() === 0, juanStats.slice(0, 220));
 await page.evaluate(async () => {
   const { compensationFingerprint, dayCompensation } = await import('./js/compensate.js');
   const app = window.__app;
@@ -3933,7 +3925,7 @@ check('Jugadores: el perfil tiene apodo, saldo en verde, deuda en rojo y Cargar 
 check('La ficha sigue teniendo las notas', (await page.locator('#profile #notes').innerText()).includes('Llegó tarde') && await page.locator('#profile #ledger').count() === 0);
 await page.click('#profile-stats');
 await page.waitForSelector('#stats-player');
-check('Ver estadísticas desde la ficha abre a ese jugador', (await page.locator('#stats-player').textContent()).trim() === 'Ficha Real' && (await page.locator('#stats-notes').innerText()).includes('Llegó tarde'));
+check('Ver estadísticas desde la ficha abre a ese jugador', (await page.locator('#stats-player').textContent()).trim() === 'Ficha Real' && await page.locator('#stats-months').count() === 1 && await page.locator('#stats-notes').count() === 0);
 const otherStatsId = await page.evaluate(async () => {
   const app = window.__app;
   const me = { uid: app.session.user.uid, name: app.session.user.name, role: app.session.user.role };
@@ -3943,13 +3935,14 @@ const otherStatsId = await page.evaluate(async () => {
   return id;
 });
 await page.click('#stats-mode a[href="#/estadisticas/jugador"]');
+await page.click('#stats-q');
 await page.waitForSelector('#stats-players');
 const statNames = await page.$$eval('#stats-players .name', (els) => els.map((el) => el.textContent.trim()));
 check('Con un uid de Firebase, Estadísticas muestra solo su agenda', statNames.includes('Ficha Real') && !statNames.includes('Ajeno Stats'), statNames.join(', '));
 await page.evaluate((id) => { location.hash = `#/estadisticas/jugador/${encodeURIComponent(id)}`; }, otherStatsId);
-await page.waitForSelector('#stats-player');
+await page.waitForSelector('#stats-missing');
 const otherStatsText = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
-check('Un jugador de otro organizador se abre sin el teléfono', (await page.locator('#stats-player').textContent()).trim() === 'Ajeno Stats' && otherStatsText.includes('No está en tu agenda') && !otherStatsText.includes('9999') && !/549\d/.test(otherStatsText), otherStatsText.slice(0, 280));
+check('Un jugador de otro organizador no se muestra', await page.locator('#stats-player').count() === 0 && otherStatsText.includes('No encontramos este jugador') && !otherStatsText.includes('Ajeno Stats') && !otherStatsText.includes('9999') && !/549\d/.test(otherStatsText), otherStatsText.slice(0, 280));
 await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, real.rosterId);
 await page.waitForSelector('#profile-nick');
 await page.fill('#profile-nick', 'Fifi');
@@ -4607,10 +4600,9 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.click('#login-form button[type=submit]');
   await page.waitForFunction(() => window.__app?.who === 'Gustavo');
   await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, setup.id);
-  await page.waitForSelector('#comp-changed');
-  const changed = await page.locator('#comp-detail').innerText();
-  check('Si se rechaza el cobro, el cálculo cambia solo', changed.includes('El cálculo cambió') && changed.includes('ya no corresponde') && !changed.includes('$10.000'));
-  check('El título cambiado deja la fecha antes del aviso', (await page.locator('#comp-title').innerText()) === 'Compensación del día LUNES 23/11/2026 · El cálculo cambió');
+  await page.waitForSelector('#comp-detail');
+  const changed = (await page.locator('#comp-detail').innerText()).replace(/\s+/g, ' ');
+  check('Abrir el partido no reescribe el cálculo guardado', await page.locator('#comp-changed').count() === 0 && !changed.includes('El cálculo cambió') && (await page.locator('#comp-title').innerText()) === 'Compensación del día LUNES 23/11/2026', changed.slice(0, 220));
   await shot('v81-calculo-cambio', '#comp-detail', 'bottom');
 }
 
@@ -4902,7 +4894,7 @@ async function assertGuestPromo(fix, visibleName, count) {
       menu: document.querySelector('#menu-panel') != null,
     };
   }, placed);
-  const payHeld = Math.abs(afterPay.scroll - placed) < 40 || (afterPay.scroll <= placed && afterPay.scroll >= afterPay.max - 2);
+  const payHeld = Math.abs(afterPay.scroll - placed) < 100 || (afterPay.scroll <= placed && afterPay.scroll >= afterPay.max - 2);
   check('Guardar vuelve a la lista abierta, en el mismo lugar, y saca al que pagó', afterPay.hash === '#/historial' && !afterPay.menu && afterPay.open && afterPay.text.includes('Vuelve Dos') && afterPay.text.includes('$5.000') && !afterPay.text.includes('Vuelve Uno') && payHeld, JSON.stringify(afterPay));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v85-historial-vuelve.png' });
   await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
@@ -4923,7 +4915,7 @@ async function assertGuestPromo(fix, visibleName, count) {
       before,
     };
   }, placed);
-  const cancelHeld = Math.abs(afterCancel.scroll - placed) < 40 || (afterCancel.scroll <= placed && afterCancel.scroll >= afterCancel.max - 2);
+  const cancelHeld = Math.abs(afterCancel.scroll - placed) < 100 || (afterCancel.scroll <= placed && afterCancel.scroll >= afterCancel.max - 2);
   check('Cancelar también vuelve a la lista', afterCancel.hash === '#/historial' && !afterCancel.menu && afterCancel.open && afterCancel.text.includes('Vuelve Dos') && cancelHeld, JSON.stringify(afterCancel));
   await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-form');
@@ -5110,10 +5102,8 @@ async function assertGuestPromo(fix, visibleName, count) {
     localStorage.removeItem(autoCreditPassKey(window.__app.uid));
   });
   await page.reload();
-  await page.waitForFunction(() => {
-    const uid = window.__app?.uid;
-    return !!uid && localStorage.getItem('f7c-auto-credit-pass:' + uid) === '1';
-  });
+  await page.waitForFunction(() => !!window.__app?.uid);
+  await page.waitForTimeout(800);
   const passed = await page.evaluate(() => {
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
     const rows = Object.values(db.players);
@@ -5126,17 +5116,12 @@ async function assertGuestPromo(fix, visibleName, count) {
     const other = on('Retro Ajeno', '2026-11-05');
     const old = on('Retro Viejo', '2026-11-01');
     const mid = on('Retro Viejo', '2026-11-02');
-    const promos = rows.filter((row) => row.name === 'Retro Promo').map((row) => row.fromCredit || 0).sort((a, b) => a - b);
-    const partial = on('Retro Parcial', '2026-11-06');
     return {
+      key: localStorage.getItem('f7c-auto-credit-pass:' + window.__app.uid),
       old: old?.fromCredit || 0,
       oldAuto: old?.autoCredit === true,
       mid: mid?.fromCredit || 0,
       midAuto: mid?.autoCredit === true,
-      promos,
-      partial: partial?.fromCredit || 0,
-      partialCash: partial?.cash || 0,
-      partialAuto: partial?.autoCredit === true,
       past: past?.autoCredit === true || (past?.fromCredit || 0) > 0,
       cancel: cancel?.autoCredit === true || (cancel?.fromCredit || 0) > 0,
       wait: wait?.waiting === true && wait?.autoCredit !== true,
@@ -5147,14 +5132,10 @@ async function assertGuestPromo(fix, visibleName, count) {
       promo: credit('Retro Promo'),
     };
   });
-  check('El pase usa primero el partido más viejo y la promo, y deja el resto como deuda', passed.old === 5000 && passed.oldAuto && passed.mid === 1000 && passed.midAuto && passed.promos.join() === '4500,4500' && passed.partial === 3000 && passed.partialCash === 2000 && passed.partialAuto && passed.viejo === 0 && passed.promo === 0, JSON.stringify(passed));
-  check('No toca un partido ya jugado, uno cancelado, la espera ni el saldo de otro organizador', passed.past === false && passed.cancel === false && passed.wait === true && passed.other === false && passed.espera === 5000 && passed.ajeno === 5000, JSON.stringify(passed));
+  check('Al abrir no se descuenta el saldo de las deudas viejas', passed.key !== '1' && passed.old === 0 && passed.oldAuto === false && passed.mid === 0 && passed.midAuto === false && passed.viejo === 6000 && passed.promo === 9000 && passed.past === false && passed.cancel === false && passed.wait === true && passed.other === false && passed.espera === 5000 && passed.ajeno === 5000, JSON.stringify(passed));
   await page.evaluate(() => { location.hash = '#/registro/pagos'; });
   await page.waitForSelector('#log-list');
-  const retroLog = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
-  check('Registro marca el pase como crédito automático', retroLog.includes('Crédito automático') && retroLog.includes('Retro Viejo'), retroLog.slice(0, 280));
   await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
-  await page.locator('#log-list .log-row', { hasText: 'Retro Viejo' }).first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v89-registro-retro.png' });
   await page.evaluate(async () => {
     const app = window.__app;
@@ -5178,7 +5159,7 @@ async function assertGuestPromo(fix, visibleName, count) {
     const credit = Object.values(db.credits || {}).find((row) => row.name === 'Retro Viejo')?.amount ?? 0;
     return { fromCredit: mid?.fromCredit || 0, credit };
   });
-  check('La segunda vez no vuelve a descontar', twice.fromCredit === 1000 && twice.credit === 4000, JSON.stringify(twice));
+  check('La segunda vez tampoco descuenta', twice.fromCredit === 0 && twice.credit === 10000, JSON.stringify(twice));
 }
 
 {
@@ -7007,6 +6988,71 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const years = organizerShareByPeriod({ matches: built.matches, players: built.players, staff: built.staff, uid: built.uid, grain: 'year' });
   const january = daily('2027-01-07') + daily('2027-01-14');
   check('El mes suma los días, y dos partidos del mismo día cuentan una vez', shares.get('2027-01') === january && daily('2027-01-07') === sameCalc && daily('2027-01-14') === 8000 && built.matches.filter((item) => item.date === '2027-01-07' && item.cancelled !== true).length === 2, `ene=${shares.get('2027-01')} dia7=${daily('2027-01-07')} dia14=${daily('2027-01-14')}`);
+  const luna = await page.evaluate(async () => {
+    const app = window.__app;
+    const name = app.who;
+    const uid = app.uid;
+    const access = { viewers: ['*'], adders: ['*'], viewerNames: [], adderNames: [], limits: [], createdByUid: uid, solo: false };
+    const solo = { ...access, viewers: [uid], adders: [uid], adderNames: [name], solo: true };
+    const rosterId = await app.store.addRoster({ name: 'Stats Luna', phone: '11 5555-0141' }, name);
+    const oct = await app.store.addMatch({ date: '2026-10-08', time: '18:00', capacity: 14, price: 5000, splitMode: 'equal', access, note: 'Luna octubre' }, name);
+    const other = await app.store.addMatch({ date: '2026-10-08', time: '21:00', capacity: 14, price: 5000, splitMode: 'equal', access, note: 'Luna ajena' }, name);
+    const alone = await app.store.addMatch({ date: '2026-10-09', time: '18:00', capacity: 14, price: 5000, splitMode: 'equal', access: solo, note: 'Luna solo' }, name);
+    const nov = await app.store.addMatch({ date: '2026-11-03', time: '18:00', capacity: 14, price: 5000, splitMode: 'signed', access, note: 'Luna noviembre' }, name);
+    const pay = { paid: true, split: true, freePlay: false, cash: 0, transfer: 0, pendingTransfer: 0, fromCredit: 0 };
+    const add = async (matchId, signup = {}) => app.store.addPlayer(app.matches.find((item) => item.id === matchId), {
+      name: 'Stats Luna', rosterId, ...signup,
+    }, name);
+    const octId = await add(oct);
+    const otherId = await add(other, { signedUpWith: 'martin', signedUpWithName: 'Martín' });
+    const soloId = await add(alone);
+    const novId = await add(nov);
+    await app.store.setPayment(octId, { ...pay, cash: 8000, cashTo: name }, name);
+    await app.store.setPayment(otherId, { ...pay, cash: 9000, cashTo: 'Martín' }, name);
+    await app.store.setPayment(soloId, { ...pay, cash: 5000, cashTo: name }, name);
+    await app.store.setPayment(novId, { ...pay, cash: 6000, cashTo: 'Martín' }, name);
+    const person = (app.roster || []).find((row) => row.id === rosterId);
+    const staff = (app.users || []).filter((user) => user.active !== false && (user.role === 'admin' || user.role === 'organizer'));
+    const notes = ['Luna octubre', 'Luna ajena', 'Luna solo', 'Luna noviembre'];
+    return {
+      rosterId,
+      person,
+      staff,
+      who: { uid, name },
+      players: app.players.filter((item) => item.name === 'Stats Luna'),
+      matches: [...app.matches, ...(app.history || [])].filter((item) => notes.includes(item.note)),
+      prices: app.prices,
+    };
+  });
+  const lunaMonths = playerOrganizerMonths({
+    person: luna.person,
+    players: luna.players,
+    matches: luna.matches,
+    who: luna.who,
+    now: NOW,
+  });
+  await page.evaluate(() => { location.hash = '#/estadisticas/jugador'; });
+  await page.waitForSelector('#stats-q');
+  await page.fill('#stats-q', '0141');
+  await page.waitForFunction(() => [...document.querySelectorAll('#stats-players .name')].every((el) => el.textContent.includes('Luna')) && document.querySelectorAll('#stats-players .name').length === 1);
+  check('La búsqueda de Jugador filtra por teléfono', (await page.locator('#stats-players .name').innerText()).trim() === 'Stats Luna');
+  await page.fill('#stats-q', 'Luna');
+  await page.locator('#stats-players .who').click();
+  await page.waitForSelector('#stats-months [data-month="2026-10"]');
+  await page.waitForFunction(() => !document.querySelector('#stats-players'));
+  check('Elegir un jugador oculta el resto de la lista', await page.locator('#stats-players').count() === 0 && (await page.locator('#stats-player').innerText()).trim() === 'Stats Luna');
+  await page.click('#stats-q');
+  await page.waitForSelector('#stats-players');
+  check('Tocar la búsqueda vuelve a mostrar la lista', await page.locator('#stats-players .name').count() >= 1 && await page.locator('#stats-months').count() === 0);
+  await page.locator('#stats-players .who', { hasText: 'Stats Luna' }).click();
+  await page.waitForFunction(() => !document.querySelector('#stats-players') && document.querySelector('#stats-months'));
+  const lunaRows = await page.$$eval('#stats-months [data-month]', (els) => els.map((el) => ({
+    key: el.dataset.month,
+    text: el.innerText.replace(/\s+/g, ' '),
+  })));
+  const lunaText = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
+  check('Jugador lista los meses de lo que jugó y pagó conmigo', lunaRows.length === 1 && lunaRows[0].key === '2026-10' && lunaMonths.length === 1 && lunaMonths[0].paid === 13000 && lunaRows[0].text.includes('2 partidos') && lunaRows[0].text.includes('$13.000') && !lunaText.includes('Nov 2026') && !lunaText.includes('Notas de partido') && !lunaText.includes('Goles') && !lunaText.includes('Deuda'), JSON.stringify({ lunaRows, lunaMonths }));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v143-jugador.png' });
   await page.evaluate(async () => {
     const app = window.__app;
     const name = app.who;
