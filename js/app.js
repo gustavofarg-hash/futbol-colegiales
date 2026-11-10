@@ -38,13 +38,14 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
+import { tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v132';
+const APP_VERSION = 'f7c-v133';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2521,11 +2522,20 @@ function syncPayDock(metrics) {
     body.style.maxHeight = '';
   }
   const scroller = form.querySelector('#pay-scroll, #player-scroll');
+  const hits = form.querySelector('#roster-hits');
   const active = document.activeElement;
   if (search && scroller) {
     const label = form.querySelector('#roster-find')?.closest('label');
     if (label) scroller.scrollTop += label.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 2;
-  } else if (scroller && active && scroller.contains(active) && active !== scroller) {
+    if (hits) {
+      const fieldBottom = label ? label.getBoundingClientRect().bottom : body.getBoundingClientRect().top;
+      const room = Math.floor(body.getBoundingClientRect().bottom - fieldBottom - 8);
+      hits.style.maxHeight = `${Math.max(96, room)}px`;
+    }
+  } else if (hits) {
+    hits.style.maxHeight = '';
+  }
+  if (!search && scroller && active && scroller.contains(active) && active !== scroller) {
     const box = active.getBoundingClientRect();
     const view = scroller.getBoundingClientRect();
     if (box.bottom > view.bottom - 8) scroller.scrollTop += box.bottom - view.bottom + 16;
@@ -4819,10 +4829,76 @@ function openPlayerForm(m, p, opts = {}) {
         focusField(next);
       }
     };
-    // pointerdown corre antes del blur del buscador. En el celular ese blur
-    // cierra el teclado, mueve la hoja y se come el click: la elección ya quedó.
-    $('#roster-hits').addEventListener('pointerdown', chooseHit);
-    $('#roster-hits').addEventListener('click', chooseHit);
+    // El dedo sobre un resultado no elige al apoyar: si se mueve o la lista
+    // scrollea, es un desliz. El tap (soltar sin moverse) sí elige, también
+    // cuando el click se pierde porque el teclado se cierra.
+    const hitsEl = $('#roster-hits');
+    const playerScroll = $('#player-scroll');
+    let gesture = null;
+    let ignoreClick = false;
+    const stopWatch = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+    const onMove = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      if (Math.hypot(dx, dy) > 10) gesture.moved = true;
+    };
+    const onCancel = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      gesture = null;
+      ignoreClick = true;
+      stopWatch();
+    };
+    const onUp = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      const hitsScrolled = Math.abs(hitsEl.scrollTop - gesture.hitsTop) > 1 || gesture.hitsMoved === true;
+      const pageScrolled = playerScroll && Math.abs(playerScroll.scrollTop - gesture.pageTop) > 1;
+      const current = gesture;
+      gesture = null;
+      stopWatch();
+      const dragged = !tapChose({
+        dx,
+        dy,
+        scrolled: hitsScrolled || (Math.hypot(dx, dy) > 10 && pageScrolled),
+      });
+      if (dragged) { ignoreClick = true; return; }
+      ignoreClick = false;
+      const person = app.roster.find((row) => row.id === current.id);
+      if (person) selectPerson(person);
+    };
+    hitsEl.addEventListener('pointerdown', (event) => {
+      const btn = event.target.closest('[data-pick]');
+      if (!btn || btn.disabled) return;
+      if (event.isPrimary === false) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      stopWatch();
+      gesture = {
+        x: event.clientX,
+        y: event.clientY,
+        hitsTop: hitsEl.scrollTop,
+        pageTop: playerScroll ? playerScroll.scrollTop : 0,
+        pointerId: event.pointerId,
+        id: btn.dataset.pick,
+        moved: false,
+        hitsMoved: false,
+      };
+      ignoreClick = false;
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onCancel);
+    });
+    hitsEl.addEventListener('scroll', () => { if (gesture) gesture.hitsMoved = true; }, { passive: true });
+    hitsEl.addEventListener('click', (event) => {
+      if (ignoreClick) { ignoreClick = false; return; }
+      if (gesture) return;
+      chooseHit(event);
+    });
     setTimeout(() => {
       if (!form.isConnected) return;
       const active = document.activeElement;
