@@ -5,7 +5,7 @@ import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/par
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
-import { RECENT_LISTEN_DAYS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
+import { RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
 import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
@@ -3570,7 +3570,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v139');
+  assert.equal(version, 'f7c-v142');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4149,6 +4149,25 @@ test('Día lista el mes en curso hasta el último cálculo guardado', () => {
   assert.equal(currentMonthDiaDates({ today, done: withoutToday }).includes('2026-10-19'), false);
   assert.deepEqual(currentMonthDiaDates({ today, done: withoutToday }), ['2026-10-05']);
   assert.deepEqual(currentMonthDiaDates({ today, done: compensationDoneDates([{ date: '2026-09-28' }]) }), []);
+});
+
+test('el medidor no escribe seguido ni con la app oculta', () => {
+  assert.equal(USAGE_FLUSH_MS, 10 * 60 * 1000);
+  const now = 1_000_000;
+  assert.equal(usageFlushDecision({ reason: 'timer', hidden: false, hasDelta: false, now }), 'skip');
+  assert.equal(usageFlushDecision({ reason: 'timer', hidden: true, hasDelta: true, now }), 'skip');
+  assert.equal(usageFlushDecision({ reason: 'hide', hidden: true, hasDelta: false, now }), 'skip');
+  assert.equal(usageFlushDecision({ reason: 'hide', hidden: true, hasDelta: true, lastFlushAt: now - 1000, now }), 'flush');
+  assert.equal(usageFlushDecision({ reason: 'timer', hidden: false, hasDelta: true, lastFlushAt: now - 60_000, now }), 'wait');
+  assert.equal(usageFlushDecision({ reason: 'timer', hidden: false, hasDelta: true, lastFlushAt: now - USAGE_FLUSH_MS, now }), 'flush');
+  assert.equal(usageFlushDecision({ reason: 'timer', hidden: false, hasDelta: true, lastFlushAt: 0, now }), 'flush');
+  const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
+  assert.equal(app.includes('backfillConfirmTokens'), false);
+  assert.equal(app.includes('scheduleRetroactiveAutoCredit() {\n  // El pase de crédito'), true);
+  assert.match(store, /async _backfillMatches\(\) \{[\s\S]*?return;/);
+  assert.match(store, /async _migrateContacts\(\) \{[\s\S]*?return;/);
+  assert.equal(store.includes('this._migrated.delete(tag)'), false);
 });
 
 test('al abrir no se reescriben los contadores y el límite diario se avisa', async () => {
