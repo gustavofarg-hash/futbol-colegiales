@@ -991,6 +991,7 @@ html.anon-lock #view .loading { display: none; }
 
 .gate { max-width: 420px; margin: 40px auto; text-align: center; }
 .gate .ball { font-size: 3.375rem; }
+.gate .logo-mark { width: 4.75rem; height: 4.75rem; border-radius: 1.15rem; display: block; margin: 0 auto 2px; }
 .muted { color: var(--muted); }
 .small { font-size: 0.8125rem; }
 .center { text-align: center; }
@@ -1083,7 +1084,7 @@ html:root .topbar {
   padding: 8px 12px 2px;
 }
 html:root .brand img {
-  width: 42px; height: 42px; border-radius: 14px; background: transparent;
+  width: 42px; height: 42px; border-radius: 10px; background: transparent;
 }
 html:root .brand-title { color: #fff; font-size: 1.28rem; font-weight: 800; letter-spacing: -.03em; }
 html:root .brand-sub { color: rgba(255,255,255,.84); font-weight: 500; font-size: .78rem; }
