@@ -745,6 +745,38 @@ const payWho = await page.evaluate(() => {
 });
 check('La hoja de pago destaca la fecha y, más grande, el nombre', payWho.dateFirst && payWho.when === 'Jueves 22/10 · 21:00 hs' && payWho.name === 'Juan Pérez' && payWho.wrapped && payWho.grown && payWho.light.namePx > payWho.light.titlePx && payWho.light.whenPx >= 18 && payWho.light.whenWeight >= 700 && payWho.light.nameWeight >= 700 && payWho.light.nameOnText && payWho.light.whenOnText && payWho.light.cardBg !== payWho.light.sheetBg && payWho.light.radius >= 16 && payWho.dark.namePx > payWho.dark.titlePx && payWho.dark.nameOnText && payWho.dark.whenOnText && payWho.dark.cardBg !== payWho.dark.sheetBg, JSON.stringify(payWho));
 check('El efectivo arranca vacío', await page.$eval('#pay-form [name=cash]', (el) => el.value === ''));
+await page.locator('#pay-form [name=pending]').scrollIntoViewIfNeeded();
+const pendingBefore = await page.locator('#pay-form [name=pending]').boundingBox();
+await page.evaluate(() => {
+  window.__payMoves = 0;
+  const mark = () => { window.__payMoves += 1; };
+  window.addEventListener('pointermove', mark);
+});
+const swipeFrom = { x: pendingBefore.x + pendingBefore.width / 2, y: pendingBefore.y + pendingBefore.height / 2 };
+const swipeTo = { x: swipeFrom.x, y: swipeFrom.y - 70 };
+{
+  const cdp = await page.context().newCDPSession(page);
+  const point = (x, y) => ({ x: Math.round(x), y: Math.round(y), id: 1 });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(swipeFrom.x, swipeFrom.y)] });
+  for (let i = 1; i <= 8; i += 1) {
+    const y = swipeFrom.y + (swipeTo.y - swipeFrom.y) * (i / 8);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point(swipeFrom.x, y)] });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.detach();
+}
+await page.waitForTimeout(80);
+const afterSwipe = await page.evaluate(() => ({
+  value: document.querySelector('#pay-form [name=pending]').value,
+  moves: window.__payMoves || 0,
+}));
+check('Deslizar desde el monto no completa el precio', afterSwipe.value === '' && afterSwipe.moves > 0, JSON.stringify(afterSwipe));
+await page.evaluate(() => document.activeElement?.blur());
+const pendingTap = await page.locator('#pay-form [name=pending]').boundingBox();
+await page.touchscreen.tap(pendingTap.x + pendingTap.width / 2, pendingTap.y + pendingTap.height / 2);
+await page.waitForTimeout(80);
+check('Un tap en el monto sí completa el precio', await page.$eval('#pay-form [name=pending]', (el) => el.value.replace(/\./g, '') === '5000' && document.activeElement === el));
+await page.fill('#pay-form [name=pending]', '');
 await page.locator('#pay-form [name=cash]').click();
 check('Al tocar el efectivo se completa con el precio de Ajustes', await page.$eval('#pay-form [name=cash]', (el) => el.value.replace(/\./g, '') === '5000'));
 check('Tocar el monto no lo marca: el cursor queda al final', await page.$eval('#pay-form [name=cash]', (el) => el.selectionStart === el.value.length && el.selectionEnd === el.value.length && el.selectionStart > 0));
