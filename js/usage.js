@@ -187,6 +187,7 @@ export function writeFailureText(error) {
   if (code === 'resource-exhausted' || code === 'resource_exhausted' || /resource.exhausted/i.test(message)) {
     return 'No se pudo guardar: se alcanzó el límite diario de Firebase';
   }
+  if (code === 'deadline-exceeded') return 'No se pudo guardar: la base no respondió.';
   if (code === 'permission-denied' || code === 'permission_denied') {
     return 'No se pudo guardar: Firebase rechazó el permiso';
   }

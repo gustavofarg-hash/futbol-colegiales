@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v137');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v139');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -1551,6 +1551,23 @@ await page.waitForFunction(() => {
   return by.includes('Martín: $4.500') && signed.includes('Anotó Martín: 1 vez') && !signed.includes('Gustavo') && !by.includes('Gustavo');
 });
 check('El filtro de Estadísticas deja el cobro y las anotaciones de Martín', (await page.textContent('#ledger-months')).includes('Oct 2026: $4.500'));
+await page.evaluate(async () => {
+  const { compensationFingerprint, dayCompensation } = await import('./js/compensate.js');
+  const app = window.__app;
+  const date = '2026-10-15';
+  const matches = app.matches.filter((item) => item.date === date && item.cancelled !== true);
+  const players = app.players.filter((item) => matches.some((match) => match.id === item.matchId));
+  const staff = (app.users || []).filter((user) => user.active !== false && (user.role === 'admin' || user.role === 'organizer'));
+  const calc = dayCompensation(matches, players, staff);
+  await app.store.saveCompensation(date, {
+    date,
+    fingerprint: compensationFingerprint(matches, players, staff),
+    changed: false,
+    computedAt: Date.now(),
+    rows: calc.rows,
+    transfers: calc.transfers,
+  });
+});
 await page.click('#stats-mode a[href="#/estadisticas/dia"]');
 await page.waitForSelector('#stats-days');
 check('La vista se llama Día', (await page.locator('#stats-mode a[aria-current="page"]').innerText()).trim() === 'Día');
@@ -1558,6 +1575,12 @@ await page.locator('#stats-days .who').first().click();
 await page.waitForSelector('#stats-collected');
 const matchStats = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
 check('Por día muestra lo que correspondió y la asistencia de cada partido', matchStats.includes('Te correspondió:') && matchStats.includes('En la lista:') && matchStats.includes('No juega:') && matchStats.includes('Cobrado') && matchStats.includes('Por medio') && matchStats.includes('Por organizador'), matchStats.slice(0, 280));
+await page.evaluate(() => {
+  const store = window.__app.store;
+  const db = store._load();
+  if (db.compensations) delete db.compensations['2026-10-15'];
+  store._save(db);
+});
 await page.click('#stats-mode a[href="#/estadisticas/mes"]');
 await page.waitForSelector('#stats-periods');
 await page.locator('#stats-periods .who').first().click();
@@ -4867,16 +4890,20 @@ async function assertGuestPromo(fix, visibleName, count) {
   const afterPay = await page.evaluate((before) => {
     const item = document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])');
     const text = (item?.innerText || '').replace(/\s+/g, ' ');
+    const scroller = document.scrollingElement;
+    const max = Math.max(0, (scroller?.scrollHeight || 0) - (scroller?.clientHeight || 0));
     return {
       hash: location.hash,
-      scroll: document.scrollingElement?.scrollTop || 0,
+      scroll: scroller?.scrollTop || 0,
+      max,
       before,
       open: item?.querySelector('.owe-box')?.classList.contains('open') === true,
       text,
       menu: document.querySelector('#menu-panel') != null,
     };
   }, placed);
-  check('Guardar vuelve a la lista abierta, en el mismo lugar, y saca al que pagó', afterPay.hash === '#/historial' && !afterPay.menu && afterPay.open && afterPay.text.includes('Vuelve Dos') && afterPay.text.includes('$5.000') && !afterPay.text.includes('Vuelve Uno') && Math.abs(afterPay.scroll - placed) < 40, JSON.stringify(afterPay));
+  const payHeld = Math.abs(afterPay.scroll - placed) < 40 || (afterPay.scroll <= placed && afterPay.scroll >= afterPay.max - 2);
+  check('Guardar vuelve a la lista abierta, en el mismo lugar, y saca al que pagó', afterPay.hash === '#/historial' && !afterPay.menu && afterPay.open && afterPay.text.includes('Vuelve Dos') && afterPay.text.includes('$5.000') && !afterPay.text.includes('Vuelve Uno') && payHeld, JSON.stringify(afterPay));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v85-historial-vuelve.png' });
   await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-back');
@@ -4884,16 +4911,20 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
   const afterCancel = await page.evaluate((before) => {
     const item = document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])');
+    const scroller = document.scrollingElement;
+    const max = Math.max(0, (scroller?.scrollHeight || 0) - (scroller?.clientHeight || 0));
     return {
       hash: location.hash,
       open: item?.querySelector('.owe-box')?.classList.contains('open') === true,
       text: (item?.innerText || '').replace(/\s+/g, ' '),
       menu: document.querySelector('#menu-panel') != null,
-      scroll: document.scrollingElement?.scrollTop || 0,
+      scroll: scroller?.scrollTop || 0,
+      max,
       before,
     };
   }, placed);
-  check('Cancelar también vuelve a la lista', afterCancel.hash === '#/historial' && !afterCancel.menu && afterCancel.open && afterCancel.text.includes('Vuelve Dos') && Math.abs(afterCancel.scroll - placed) < 40, JSON.stringify(afterCancel));
+  const cancelHeld = Math.abs(afterCancel.scroll - placed) < 40 || (afterCancel.scroll <= placed && afterCancel.scroll >= afterCancel.max - 2);
+  check('Cancelar también vuelve a la lista', afterCancel.hash === '#/historial' && !afterCancel.menu && afterCancel.open && afterCancel.text.includes('Vuelve Dos') && cancelHeld, JSON.stringify(afterCancel));
   await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-form');
   await page.fill('#pay-form [name=cash]', '5000');
@@ -6976,12 +7007,31 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const years = organizerShareByPeriod({ matches: built.matches, players: built.players, staff: built.staff, uid: built.uid, grain: 'year' });
   const january = daily('2027-01-07') + daily('2027-01-14');
   check('El mes suma los días, y dos partidos del mismo día cuentan una vez', shares.get('2027-01') === january && daily('2027-01-07') === sameCalc && daily('2027-01-14') === 8000 && built.matches.filter((item) => item.date === '2027-01-07' && item.cancelled !== true).length === 2, `ene=${shares.get('2027-01')} dia7=${daily('2027-01-07')} dia14=${daily('2027-01-14')}`);
+  await page.evaluate(async () => {
+    const app = window.__app;
+    const name = app.who;
+    const uid = app.uid;
+    const access = { viewers: ['*'], adders: ['*'], viewerNames: [], adderNames: [], limits: [], createdByUid: uid, solo: false };
+    const a = await app.store.addMatch({ date: '2026-10-07', time: '18:00', capacity: 14, splitMode: 'equal', access, note: 'Dia octubre' }, name);
+    const b = await app.store.addMatch({ date: '2026-10-07', time: '21:00', capacity: 14, splitMode: 'equal', access, note: 'Dia octubre 2' }, name);
+    const pay = { paid: true, split: true, freePlay: false, cash: 0, transfer: 0, pendingTransfer: 0, fromCredit: 0 };
+    const idA = await app.store.addPlayer(app.matches.find((item) => item.id === a), { name: 'Dia Ana' }, name);
+    const idB = await app.store.addPlayer(app.matches.find((item) => item.id === b), { name: 'Dia Eva' }, name);
+    await app.store.setPayment(idA, { ...pay, cash: 10000, cashTo: name }, name);
+    await app.store.setPayment(idB, { ...pay, cash: 6000, cashTo: name }, name);
+    const save = (date) => app.store.saveCompensation(date, { date, rows: [], transfers: [], fingerprint: 'e2e-dia', computedAt: Date.now() });
+    await save('2026-10-07');
+    await save('2026-09-28');
+  });
   await page.evaluate(() => { location.hash = '#/estadisticas/dia'; });
-  await page.waitForSelector('#stats-days');
+  await page.waitForSelector('#stats-days [data-date="2026-10-07"]');
   const dayRows = await page.$$eval('#stats-days [data-date]', (els) => els.map((el) => ({
     date: el.dataset.date,
     text: el.innerText.replace(/\s+/g, ' '),
   })));
+  const listed = dayRows.map((row) => row.date);
+  check('Hoy sin cálculo no está en Día', listed.includes('2026-10-19') === false, listed.join(','));
+  check('Un día de septiembre no está en Día', listed.includes('2026-09-28') === false && listed.every((date) => date.startsWith('2026-10') && date <= '2026-10-19'), listed.join(','));
   const parseARS = (text) => {
     const found = String(text).match(/Te correspondió:\s*(-?\$[\d.]+(?:,\d+)?)/);
     if (!found) return null;
@@ -6990,17 +7040,34 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     const n = Number(raw.replace('-', '').replace('$', '').replace(/\./g, '').replace(',', '.'));
     return neg ? -n : n;
   };
-  const janDays = dayRows.filter((row) => row.date.startsWith('2027-01'));
-  const janFromDays = janDays.reduce((sum, row) => sum + parseARS(row.text), 0);
-  const grouped = dayRows.filter((row) => row.date === '2027-01-07');
-  check('Día agrupa los dos partidos del 07/01 y muestra lo que correspondió', grouped.length === 1 && grouped[0].text.includes('2 partidos') && grouped[0].text.includes(`Te correspondió: ${formatARS(daily('2027-01-07'))}`), JSON.stringify(grouped));
-  await page.locator('#stats-days [data-date="2027-01-07"] a').click();
+  const octShare = await page.evaluate(() => {
+    const app = window.__app;
+    const matches = app.matches.filter((item) => item.date === '2026-10-07' && String(item.note || '').startsWith('Dia octubre'));
+    const players = app.players.filter((item) => item.name === 'Dia Ana' || item.name === 'Dia Eva');
+    const staff = (app.users || []).filter((user) => user.active !== false && (user.role === 'admin' || user.role === 'organizer'));
+    return { uid: app.uid, staff, matches, players };
+  });
+  const octDaily = organizerDayShare({
+    matches: octShare.matches,
+    players: octShare.players,
+    staff: octShare.staff,
+    uid: octShare.uid,
+  });
+  const grouped = dayRows.filter((row) => row.date === '2026-10-07');
+  check('Día agrupa los dos partidos del 07/10 y muestra lo que correspondió', grouped.length === 1 && grouped[0].text.includes('2 partidos') && grouped[0].text.includes(`Te correspondió: ${formatARS(octDaily)}`), JSON.stringify(grouped));
+  await page.locator('#stats-days [data-date="2026-10-07"] a').click();
   await page.waitForSelector('#stats-day');
   const dayOpen = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
-  check('El día abierto lista los dos horarios y el mismo total', (await page.locator('#stats-entitled').innerText()) === `Te correspondió: ${formatARS(daily('2027-01-07'))}` && dayOpen.includes('18:00') && dayOpen.includes('21:00') && (await page.locator('.stats-day-match').count()) === 2, dayOpen.slice(0, 240));
+  check('El día abierto lista los dos horarios y el mismo total', (await page.locator('#stats-entitled').innerText()) === `Te correspondió: ${formatARS(octDaily)}` && dayOpen.includes('18:00') && dayOpen.includes('21:00') && (await page.locator('.stats-day-match').count()) === 2, dayOpen.slice(0, 240));
+  await page.evaluate(async () => {
+    await window.__app.store.saveCompensation('2026-10-19', {
+      date: '2026-10-19', rows: [], transfers: [], fingerprint: 'e2e-hoy', computedAt: Date.now(),
+    });
+  });
   await page.evaluate(() => { location.hash = '#/estadisticas/dia'; });
-  await page.waitForSelector('#stats-days');
-  await page.locator('#stats-days [data-date="2027-01-07"]').scrollIntoViewIfNeeded();
+  await page.waitForSelector('#stats-days [data-date="2026-10-19"]');
+  check('Hoy con el cálculo guardado entra en Día', await page.locator('#stats-days [data-date="2026-10-19"]').count() === 1);
+  await page.locator('#stats-days [data-date="2026-10-07"]').scrollIntoViewIfNeeded();
   await page.evaluate(() => {
     document.documentElement.classList.remove('dark');
     document.documentElement.dataset.theme = 'light';
@@ -7020,7 +7087,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const novRow = page.locator('#stats-periods .slot', { hasText: 'Ene 2027' });
   const label = `Te correspondió: ${formatARS(january)}`;
   const sameMoney = (a, b) => Math.round(a * 100) === Math.round(b * 100);
-  check('Mes muestra lo que le correspondió en enero y es la suma de los días', (await novRow.innerText()).includes(label) && sameMoney(parseARS(await novRow.innerText()), janFromDays), await novRow.innerText());
+  check('Mes muestra lo que le correspondió en enero y es la suma de los días', (await novRow.innerText()).includes(label), await novRow.innerText());
   await novRow.locator('a').click();
   await page.waitForSelector('#stats-entitled');
   check('El mes abierto repite el mismo total', (await page.locator('#stats-entitled').innerText()) === label);
@@ -7046,7 +7113,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     text: el.innerText.replace(/\s+/g, ' '),
   })));
   const yearFromMonths = monthRows.filter((row) => row.period.startsWith('2027-')).reduce((sum, row) => sum + parseARS(row.text), 0);
-  const yearFromDays = dayRows.filter((row) => row.date.startsWith('2027-')).reduce((sum, row) => sum + parseARS(row.text), 0);
+  const yearFromDays = years.get('2027');
   await page.evaluate(() => { location.hash = '#/estadisticas/anio'; });
   await page.waitForSelector('#stats-periods [data-period="2027"]');
   const yearRow = page.locator('#stats-periods [data-period="2027"]');

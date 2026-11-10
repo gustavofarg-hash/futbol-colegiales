@@ -26,7 +26,7 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
-import { countedGoals, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from './stats.js';
+import { compensationDoneDates, countedGoals, currentMonthDiaDates, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v137';
+const APP_VERSION = 'f7c-v139';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -185,8 +185,19 @@ function isPermissionDenied(error) {
   const code = error?.code || '';
   return code === 'permission-denied' || code === 'permission_denied';
 }
+function withWriteTimeout(promise, ms = 20000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(Object.assign(new Error('La base no respondió.'), { code: 'deadline-exceeded' }));
+    }, ms);
+    Promise.resolve(promise).then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
 function run(p, okMsg, deniedMsg) {
-  return Promise.resolve(p).then((value) => {
+  return withWriteTimeout(p).then((value) => {
     if (okMsg) toast(okMsg);
     return value;
   }).catch((e) => {
@@ -3858,10 +3869,13 @@ function statsDayBody(id) {
   for (const rows of byDay.values()) {
     rows.sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')) || String(a.id).localeCompare(String(b.id)));
   }
-  const dates = [...byDay.keys()].sort((a, b) => b.localeCompare(a));
+  const dates = currentMonthDiaDates({
+    today: todayISO(),
+    done: compensationDoneDates(app.compensations),
+  });
   if (!id) {
     const rows = dates.map((date) => {
-      const dayMatches = byDay.get(date);
+      const dayMatches = byDay.get(date) || [];
       const times = dayMatches.map((match) => match.time || '--:--').join(' · ');
       const count = dayMatches.length;
       const cancelled = dayMatches.filter((match) => match.cancelled === true).length;

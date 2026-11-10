@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
-import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById } from '../js/store.js';
+import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
 import { RECENT_LISTEN_DAYS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
 import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
@@ -15,7 +15,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { countedGoals, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from '../js/stats.js';
+import { compensationDoneDates, countedGoals, currentMonthDiaDates, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
 import { planRows } from '../js/settle.js';
@@ -3570,7 +3570,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v137');
+  assert.equal(version, 'f7c-v139');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4136,17 +4136,38 @@ test('te correspondió: solo el total, partes iguales o lo que anotó', () => {
   assert.equal(month.get('2026-11'), solo + equal + signed);
 });
 
+test('Día lista el mes en curso hasta el último cálculo guardado', () => {
+  const today = '2026-10-19';
+  const done = compensationDoneDates([
+    { date: '2026-09-28' },
+    { id: '2026-10-05' },
+    { date: '2026-10-19' },
+    { date: '2026-10-20' },
+  ]);
+  assert.deepEqual(currentMonthDiaDates({ today, done }), ['2026-10-19', '2026-10-05']);
+  const withoutToday = compensationDoneDates([{ date: '2026-10-05' }, { date: '2026-09-02' }]);
+  assert.equal(currentMonthDiaDates({ today, done: withoutToday }).includes('2026-10-19'), false);
+  assert.deepEqual(currentMonthDiaDates({ today, done: withoutToday }), ['2026-10-05']);
+  assert.deepEqual(currentMonthDiaDates({ today, done: compensationDoneDates([{ date: '2026-09-28' }]) }), []);
+});
+
 test('al abrir no se reescriben los contadores y el límite diario se avisa', async () => {
   assert.deepEqual(playerCountSweep(), []);
   assert.equal(RECENT_LISTEN_DAYS, 120);
   assert.equal(recentCutoff('2026-11-10'), '2026-07-13');
   assert.equal(writeFailureText({ code: 'resource-exhausted' }), 'No se pudo guardar: se alcanzó el límite diario de Firebase');
   assert.equal(writeFailureText({ code: 'permission-denied' }), 'No se pudo guardar: Firebase rechazó el permiso');
+  assert.equal(writeFailureText({ code: 'deadline-exceeded' }), 'No se pudo guardar: la base no respondió.');
+  assert.equal(nextPlayerCount(-1, 1), 0);
+  assert.equal(nextPlayerCount(-1, 0), 0);
+  assert.equal(nextPlayerCount(-1, 3), 2);
+  assert.equal(nextPlayerCount(1, 4), 5);
   const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   assert.equal(store.includes('_reconcilePlayerCounts'), false);
+  assert.equal(store.includes('fs.increment(delta)'), false);
   assert.equal(store.includes("where(field, '>=', cutoff)"), true);
-  assert.match(app, /return Promise\.resolve\(p\)\.then/);
+  assert.match(app, /withWriteTimeout\(p\)/);
   assert.match(app, /writeFailureText\(e\)/);
   assert.equal(quotaDay(new Date('2026-11-10T04:30:00-03:00')), '2026-11-09');
   assert.equal(quotaDay(new Date('2026-11-10T05:30:00-03:00')), '2026-11-10');
