@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v145');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v146');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -7028,9 +7028,8 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     person: luna.person,
     players: luna.players,
     matches: luna.matches,
-    prices: luna.prices,
-    staff: luna.staff,
     who: luna.who,
+    now: NOW,
   });
   await page.evaluate(() => { location.hash = '#/estadisticas/jugador'; });
   await page.waitForSelector('#stats-q');
@@ -7039,7 +7038,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   check('La búsqueda de Jugador filtra por teléfono', (await page.locator('#stats-players .name').innerText()).trim() === 'Stats Luna');
   await page.fill('#stats-q', 'Luna');
   await page.locator('#stats-players .who').click();
-  await page.waitForSelector('#stats-months [data-month="2026-11"]');
+  await page.waitForSelector('#stats-months [data-month="2026-10"]');
   await page.waitForFunction(() => !document.querySelector('#stats-players'));
   check('Elegir un jugador oculta el resto de la lista', await page.locator('#stats-players').count() === 0 && (await page.locator('#stats-player').innerText()).trim() === 'Stats Luna');
   await page.click('#stats-q');
@@ -7052,7 +7051,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     text: el.innerText.replace(/\s+/g, ' '),
   })));
   const lunaText = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
-  check('Jugador lista los meses de lo que se anotó conmigo', lunaRows.length === 2 && lunaRows.map((row) => row.key).join(',') === lunaMonths.map((row) => row.key).join(',') && lunaRows[0].text.includes('1 partido') && lunaRows[0].text.includes(formatARS(lunaMonths[0].paid)) && lunaRows[1].text.includes('2 partidos') && lunaRows[1].text.includes(formatARS(lunaMonths[1].paid)) && !lunaText.includes('Notas de partido') && !lunaText.includes('Goles') && !lunaText.includes('Deuda'), JSON.stringify({ lunaRows, lunaMonths }));
+  check('Jugador lista los meses de lo que jugó y pagó conmigo', lunaRows.length === 1 && lunaRows[0].key === '2026-10' && lunaMonths.length === 1 && lunaMonths[0].paid === 13000 && lunaRows[0].text.includes('2 partidos') && lunaRows[0].text.includes('$13.000') && !lunaText.includes('Nov 2026') && !lunaText.includes('Notas de partido') && !lunaText.includes('Goles') && !lunaText.includes('Deuda'), JSON.stringify({ lunaRows, lunaMonths }));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v143-jugador.png' });
   await page.evaluate(async () => {
     const app = window.__app;

@@ -4,7 +4,8 @@ import { dayCompensation, matchAdders, matchCompensation } from './compensate.js
 import { monthKeyOf, monthLabel } from './ledger.js';
 import { sameOrganizer, UNSPECIFIED } from './organizers.js';
 import { isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
-import { MAX_PRICE, priceOfMatch, promoForPlayer } from './prices.js';
+import { priceOfMatch, promoForPlayer } from './prices.js';
+import { matchAlreadyPlayed } from './profile.js';
 import { personKey, playerMatchesPerson } from './roster.js';
 
 const METHOD_LABEL = {
@@ -252,42 +253,37 @@ export function signupOrganizerUid(player) {
   return String(player?.addedByUid || '').trim();
 }
 
-/** Lo que tenía que pagar en ese partido: la promo del día, si entra, o el precio del partido. Sin precio, 0. */
-function amountDue(player, { players, matches, prices }) {
-  if (!player || player.waiting === true || isFreePlay(player)) return 0;
-  const match = (matches || []).find((item) => item.id === player.matchId);
-  if (!match || match.cancelled === true) return 0;
-  const promo = promoForPlayer({ player, players, matches, prices });
-  if (promo && Number.isFinite(Number(promo.share))) return roundARS(Number(promo.share));
-  const n = Number(match.price);
-  if (Number.isInteger(n) && n >= 0 && n <= MAX_PRICE) return n;
-  return 0;
+/** Lo cobrado de verdad: efectivo, transferencia y crédito. Transfiere después no entra. */
+function paidReceived(player) {
+  if (!player || isFreePlay(player)) return 0;
+  return roundARS(paymentParts(player).received || 0);
 }
 
 /**
- * Mes a mes, solo las veces que esta persona se anotó con el organizador
- * logueado. La espera y un partido cancelado no entran. Un partido que no
- * está en la lista tampoco: es uno que no puede ver.
- * La plata es lo que tenía que pagar en cada una de esas anotaciones
- * (el precio de ese partido, o su parte de la promo). No es lo cobrado
- * y no se parte entre organizadores. Sin precio, suma 0.
+ * Mes a mes, solo lo que esta persona jugó y pagó con el organizador logueado.
+ * Entra si se anotó con él, no está en la espera ni el partido está cancelado,
+ * el día ya pasó (el mismo corte que el historial), no está en «No juega»
+ * (confirmed === 'no') ni en «No jugó» (noPlay), y hay un pago cobrado mayor a 0.
+ * La plata es ese pago entero, aunque lo haya recibido otro. No se parte.
  */
-export function playerOrganizerMonths({ person, players, matches, prices, who } = {}) {
+export function playerOrganizerMonths({ person, players, matches, who, now = Date.now() } = {}) {
   const uid = String(who?.uid || '').trim();
   if (!person || !uid) return [];
   const visible = (matches || []).filter((match) => match?.id && ISO_DAY.test(match.date || ''));
   const months = new Map();
   for (const player of players || []) {
     if (!playerMatchesPerson(player, person)) continue;
-    if (player.waiting === true) continue;
+    if (player.waiting === true || player.noPlay === true || player.confirmed === 'no') continue;
     if (signupOrganizerUid(player) !== uid) continue;
     const match = visible.find((item) => item.id === player.matchId);
-    if (!match || match.cancelled === true) continue;
+    if (!match || match.cancelled === true || !matchAlreadyPlayed(match, now)) continue;
+    const paid = paidReceived(player);
+    if (!(paid > 0)) continue;
     const key = monthKeyOf(match.date);
     if (!key) continue;
     const row = months.get(key) || { key, label: monthLabel(key), matches: 0, paid: 0 };
     row.matches += 1;
-    row.paid = roundARS(row.paid + amountDue(player, { players, matches: visible, prices }));
+    row.paid = roundARS(row.paid + paid);
     months.set(key, row);
   }
   return [...months.values()].sort((a, b) => b.key.localeCompare(a.key));
