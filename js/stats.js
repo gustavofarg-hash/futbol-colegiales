@@ -1,6 +1,6 @@
 // Totales para la pestaña Estadísticas. Puro: no lee Firebase.
 // Un partido cancelado no suma plata ni cupo. La espera no debe.
-import { dayCompensation, matchAdders, matchCompensation, splitEqual, splitModeOf } from './compensate.js';
+import { dayCompensation, matchAdders, matchCompensation } from './compensate.js';
 import { monthKeyOf, monthLabel } from './ledger.js';
 import { sameOrganizer, UNSPECIFIED } from './organizers.js';
 import { awaitingItems, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
@@ -259,31 +259,18 @@ function paidAmount(player) {
   return roundARS((parts.received || 0) + (parts.pending || 0) + awaiting);
 }
 
-function equalShareOf(amount, adders, who) {
-  const ordered = [...(adders || [])].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es') || String(a.uid).localeCompare(String(b.uid)));
-  const mine = splitEqual(amount, ordered).find((row) => isThisOrganizer(row, who));
-  return roundARS(mine?.amount || 0);
-}
-
 /**
  * Mes a mes, solo las veces que esta persona se anotó con el organizador
  * logueado. La espera y un partido cancelado no entran. Un partido que no
  * está en la lista tampoco: es uno que no puede ver.
- * La plata de esas anotaciones es lo que le corresponde:
- * si ese día organiza solo, o el partido reparte «lo que anotó cada uno»,
- * el pago entero de esa anotación. En partes iguales, su parte de ese pago
- * entre quienes pueden anotar, con el mismo resto de centavos del cálculo.
+ * La plata es el pago entero de esa anotación, aunque se lo haya dado a
+ * otro organizador. No se parte entre quienes organizan ni según quién cobró.
+ * Si no hay pago cargado, suma 0.
  */
-export function playerOrganizerMonths({ person, players, matches, staff, who } = {}) {
-  const me = who && typeof who === 'object' ? who : {};
-  const uid = String(me.uid || '').trim();
+export function playerOrganizerMonths({ person, players, matches, who } = {}) {
+  const uid = String(who?.uid || '').trim();
   if (!person || !uid) return [];
   const visible = (matches || []).filter((match) => match?.id && ISO_DAY.test(match.date || ''));
-  const byDay = new Map();
-  for (const match of visible) {
-    if (!byDay.has(match.date)) byDay.set(match.date, []);
-    byDay.get(match.date).push(match);
-  }
   const months = new Map();
   for (const player of players || []) {
     if (!playerMatchesPerson(player, person)) continue;
@@ -291,17 +278,11 @@ export function playerOrganizerMonths({ person, players, matches, staff, who } =
     if (signupOrganizerUid(player) !== uid) continue;
     const match = visible.find((item) => item.id === player.matchId);
     if (!match || match.cancelled === true) continue;
-    const dayMatches = (byDay.get(match.date) || []).filter((item) => item.cancelled !== true);
-    const organizers = dayOrganizers(dayMatches, staff);
-    const solo = organizers.length <= 1 && isThisOrganizer(organizers[0], me);
-    const paid = solo || splitModeOf(match) === 'signed'
-      ? paidAmount(player)
-      : equalShareOf(paidAmount(player), matchAdders(match, staff), me);
     const key = monthKeyOf(match.date);
     if (!key) continue;
     const row = months.get(key) || { key, label: monthLabel(key), matches: 0, paid: 0 };
     row.matches += 1;
-    row.paid = roundARS(row.paid + paid);
+    row.paid = roundARS(row.paid + paidAmount(player));
     months.set(key, row);
   }
   return [...months.values()].sort((a, b) => b.key.localeCompare(a.key));
