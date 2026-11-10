@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v147** (10/11/2026): al anotar, la lista baja una sola vez hasta la fila nueva, en titulares o en la espera. Si se desplaza, se toca o se usa la rueda, ese seguimiento se corta y no vuelve a bajar en los redibujados. `firestore.rules` no cambió.
 **Actualizada para f7c-v146** (10/11/2026): en Estadísticas, el mes de un jugador cuenta solo los partidos ya jugados en los que se anotó con quien está logueado y hay un pago cobrado. Suma ese pago entero, aunque lo haya recibido otro. No entran la espera, un cancelado, un futuro, un «No juega», un «No jugó» ni un «Transfiere después» sin cobrar. `firestore.rules` no cambió.
 **Actualizada para f7c-v145** (10/11/2026): en Estadísticas, el mes de un jugador suma lo que tenía que pagar en cada partido en el que se anotó con quien está logueado: el precio de ese partido, o su parte si entra en la promo del día. No es lo cobrado y no se parte entre organizadores. Un partido sin precio suma 0. `firestore.rules` no cambió.
 **Actualizada para f7c-v144** (10/11/2026): en Estadísticas, el mes de un jugador suma el pago entero de cada partido en el que se anotó con quien está logueado, aunque la plata la haya recibido otro. No se parte entre organizadores. Si no hay pago cargado, suma 0. `firestore.rules` no cambió.
