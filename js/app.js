@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v139';
+const APP_VERSION = 'f7c-v142';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -469,6 +469,8 @@ function markAutoCreditPass(uid) {
 
 /** Una vez que el saldo y los jugadores ya se leyeron, espera un instante y aplica. */
 function scheduleRetroactiveAutoCredit() {
+  // El pase de crédito al abrir recorría deudas viejas y escribía una por jugador.
+  return;
   const uid = actor().uid;
   if (!uid || autoCreditPassTimer || autoCreditPassRunning || autoCreditPassDone(uid)) return;
   if (app.fromCache || app.creditsError || app.creditsReady !== true || app.playersReady !== true) return;
@@ -1612,25 +1614,9 @@ function compensationSaveError(error) {
   return detail ? `No se pudo guardar el cálculo. ${detail}` : 'No se pudo guardar el cálculo.';
 }
 function refreshCompensation(date) {
-  const saved = savedCompensation(date);
-  if (!saved || compBusy.has(date) || !app.store?.saveCompensation) return saved;
-  const { matches, players, staff, calc } = dayBundle(date);
-  const fingerprint = compensationFingerprint(matches, players, staff);
-  if (fingerprint === saved.fingerprint) return saved;
-  if (app.compHeld?.[date]) return saved;
-  const next = calc.missing.length
-    ? compensationDoc(date, { ...saved, fingerprint, changed: true, computedAt: Date.now() })
-    : compensationDoc(date, {
-      fingerprint,
-      changed: true,
-      computedAt: Date.now(),
-      rows: calc.rows,
-      transfers: reconcileTransfers(saved.transfers, calc.transfers),
-    });
-  compBusy.add(date);
-  holdCompensation(next);
-  Promise.resolve(app.store.saveCompensation(date, next)).catch(() => holdCompensation(next)).finally(() => compBusy.delete(date));
-  return next;
+  // Mostrar el cálculo guardado no escribe. Antes, cada render del historial
+  // lo volvía a guardar si el fingerprint no coincidía.
+  return savedCompensation(date);
 }
 function historyWithCompensation(matches) {
   const groups = [];
@@ -7476,7 +7462,6 @@ async function boot() {
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe
     if (!sheet.open || !sheet.querySelector('input, textarea, select')) render(); else pendingRender = true;
     fixOverflow();
-    backfillConfirmTokens();
     armReminderTimer();
   });
   render();
@@ -7490,7 +7475,6 @@ async function boot() {
 let reminderSeenAt = Date.now();
 let reminderTimer = 0;
 let reminderTimerAt = Infinity;
-const tokenPending = new Set();
 const clearingReservation = new Set();
 
 function releaseAnsweredReservations(players) {
@@ -7502,23 +7486,11 @@ function releaseAnsweredReservations(players) {
     if (!clearingReservation.has(p.id)) {
       clearingReservation.add(p.id);
       Promise.resolve(app.store.clearTentative(p.id)).catch((e) => {
-        clearingReservation.delete(p.id);
         console.error(e);
       });
     }
     return { ...p, tentative: null, tentativeAt: null };
   });
-}
-
-function backfillConfirmTokens() {
-  for (const p of app.players) {
-    if (tokenPending.has(p.id)) continue;
-    tokenPending.add(p.id);
-    Promise.resolve(app.store.ensureConfirmToken(p.id)).catch((e) => {
-      tokenPending.delete(p.id);
-      console.error(e);
-    });
-  }
 }
 
 function armReminderTimer() {
@@ -7630,6 +7602,7 @@ function fireReminderNotification(m) {
 }
 let pendingRender = false;
 let fixingOverflow = false;
+const overflowTried = new Set();
 async function fixOverflow() {
   if (fixingOverflow || !app.store) return;
   if (app.pendingWrites || app.fromCache) return;
@@ -7639,10 +7612,12 @@ async function fixOverflow() {
     const expected = Number.isInteger(m.playerCount) ? m.playerCount : all.length;
     patches.push(...overflowPatches(all, capOf(m), { expectedCount: expected }));
   }
-  if (!patches.length) return;
+  const fresh = patches.filter((patch) => !overflowTried.has(patch.id));
+  if (!fresh.length) return;
+  for (const patch of fresh) overflowTried.add(patch.id);
   fixingOverflow = true;
   try {
-    for (const patch of patches) await app.store.updatePlayer(patch.id, { waiting: true, waitOrder: patch.waitOrder, rosterAt: null });
+    for (const patch of fresh) await app.store.updatePlayer(patch.id, { waiting: true, waitOrder: patch.waitOrder, rosterAt: null });
   } catch (e) { console.error(e); }
   finally { fixingOverflow = false; }
 }
