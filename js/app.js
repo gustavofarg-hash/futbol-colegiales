@@ -38,13 +38,14 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
+import { tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v131';
+const APP_VERSION = 'f7c-v133';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2521,11 +2522,20 @@ function syncPayDock(metrics) {
     body.style.maxHeight = '';
   }
   const scroller = form.querySelector('#pay-scroll, #player-scroll');
+  const hits = form.querySelector('#roster-hits');
   const active = document.activeElement;
   if (search && scroller) {
     const label = form.querySelector('#roster-find')?.closest('label');
     if (label) scroller.scrollTop += label.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 2;
-  } else if (scroller && active && scroller.contains(active) && active !== scroller) {
+    if (hits) {
+      const fieldBottom = label ? label.getBoundingClientRect().bottom : body.getBoundingClientRect().top;
+      const room = Math.floor(body.getBoundingClientRect().bottom - fieldBottom - 8);
+      hits.style.maxHeight = `${Math.max(96, room)}px`;
+    }
+  } else if (hits) {
+    hits.style.maxHeight = '';
+  }
+  if (!search && scroller && active && scroller.contains(active) && active !== scroller) {
     const box = active.getBoundingClientRect();
     const view = scroller.getBoundingClientRect();
     if (box.bottom > view.bottom - 8) scroller.scrollTop += box.bottom - view.bottom + 16;
@@ -4819,10 +4829,76 @@ function openPlayerForm(m, p, opts = {}) {
         focusField(next);
       }
     };
-    // pointerdown corre antes del blur del buscador. En el celular ese blur
-    // cierra el teclado, mueve la hoja y se come el click: la elección ya quedó.
-    $('#roster-hits').addEventListener('pointerdown', chooseHit);
-    $('#roster-hits').addEventListener('click', chooseHit);
+    // El dedo sobre un resultado no elige al apoyar: si se mueve o la lista
+    // scrollea, es un desliz. El tap (soltar sin moverse) sí elige, también
+    // cuando el click se pierde porque el teclado se cierra.
+    const hitsEl = $('#roster-hits');
+    const playerScroll = $('#player-scroll');
+    let gesture = null;
+    let ignoreClick = false;
+    const stopWatch = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+    const onMove = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      if (Math.hypot(dx, dy) > 10) gesture.moved = true;
+    };
+    const onCancel = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      gesture = null;
+      ignoreClick = true;
+      stopWatch();
+    };
+    const onUp = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      const hitsScrolled = Math.abs(hitsEl.scrollTop - gesture.hitsTop) > 1 || gesture.hitsMoved === true;
+      const pageScrolled = playerScroll && Math.abs(playerScroll.scrollTop - gesture.pageTop) > 1;
+      const current = gesture;
+      gesture = null;
+      stopWatch();
+      const dragged = !tapChose({
+        dx,
+        dy,
+        scrolled: hitsScrolled || (Math.hypot(dx, dy) > 10 && pageScrolled),
+      });
+      if (dragged) { ignoreClick = true; return; }
+      ignoreClick = false;
+      const person = app.roster.find((row) => row.id === current.id);
+      if (person) selectPerson(person);
+    };
+    hitsEl.addEventListener('pointerdown', (event) => {
+      const btn = event.target.closest('[data-pick]');
+      if (!btn || btn.disabled) return;
+      if (event.isPrimary === false) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      stopWatch();
+      gesture = {
+        x: event.clientX,
+        y: event.clientY,
+        hitsTop: hitsEl.scrollTop,
+        pageTop: playerScroll ? playerScroll.scrollTop : 0,
+        pointerId: event.pointerId,
+        id: btn.dataset.pick,
+        moved: false,
+        hitsMoved: false,
+      };
+      ignoreClick = false;
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onCancel);
+    });
+    hitsEl.addEventListener('scroll', () => { if (gesture) gesture.hitsMoved = true; }, { passive: true });
+    hitsEl.addEventListener('click', (event) => {
+      if (ignoreClick) { ignoreClick = false; return; }
+      if (gesture) return;
+      chooseHit(event);
+    });
     setTimeout(() => {
       if (!form.isConnected) return;
       const active = document.activeElement;
@@ -4975,7 +5051,8 @@ function recordedPaymentList(player, listId) {
     const x = canAnnulPayment(player, share)
       ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">✕</button>`
       : '';
-    return `<li><span>${esc(label)}</span>${x}</li>`;
+    const pendingClass = share.kind === 'pending' ? ' class="pay-pending-row"' : '';
+    return `<li${pendingClass}><span>${esc(label)}</span>${x}</li>`;
   }).join('')}</ul>`;
 }
 
@@ -5139,7 +5216,11 @@ function pendingTransferReminderRow(m, p, pending) {
   const remind = phone && !hidden
     ? `<a class="btn pay-remind" id="btn-pending-remind" href="${esc(waHref(phone, text))}" target="_blank" rel="noopener">${ICON.wa}<span>Enviar recordatorio</span></a>`
     : `<button type="button" class="btn pay-remind" id="btn-pending-remind" disabled>${ICON.wa}<span>Enviar recordatorio</span></button>`;
-  return `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(pending))}</p>
+  const shownInRow = paymentShares(p).some((share) => share.kind === 'pending' && share.amount > 0);
+  const pill = shownInRow
+    ? ''
+    : `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(pending))}</p>`;
+  return `${pill}
       <div class="pay-receive-row" id="pay-receive-row">
         <button type="button" class="btn" id="btn-receive-pending">Marcar transferencia como cobrada</button>
         ${remind}
@@ -5190,7 +5271,10 @@ function openPaymentForm(m, p, opts = {}) {
     <form id="pay-form" novalidate>
       <div id="pay-scroll">
       <h3>Pago</h3>
-      <p class="hint">${esc(p.name)} · ${esc(fmtWhen(m))}</p>
+      <div class="pay-who" id="pay-who">
+        <p class="pay-when" id="pay-when">${esc(fmtWhen(m))}</p>
+        <p class="pay-name" id="pay-name">${esc(p.name)}</p>
+      </div>
       ${recordedPaymentList(p, 'pay-recorded')}
       <div id="pay-promo">${promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : ''}</div>
       ${parts.pending > 0 ? pendingTransferReminderRow(m, p, parts.pending) : ''}
@@ -5265,15 +5349,16 @@ function openPaymentForm(m, p, opts = {}) {
     const end = String(input.value || '').length;
     try { input.setSelectionRange(end, end); } catch { /* type=number no deja elegir rango; estos campos son type=text */ }
   };
-  // En el celular el toque suelta el dedo (pointerup) ANTES de enfocar el campo.
-  // v77 solo escribía el precio si pointerdown había marcado el toque y el foco
-  // llegaba con esa marca todavía prendida: en Android ya estaba apagada, el
-  // campo seguía vacío y el cursor quedaba al principio. Acá el precio se pone
-  // en el toque y otra vez en el foco, y el cursor se manda al final después
-  // de que el navegador lo deje al principio. No se marca el texto.
+  // El precio entra solo con un tap: apoyar y soltar sin arrastrar.
+  // En el celular el foco llega al apoyar el dedo, y si ahí se escribía el
+  // monto, deslizar la hoja desde el campo lo completaba. Se anota el punto
+  // en pointerdown y se descarta si el dedo se movió más de 10px o si la hoja
+  // scrolleó antes de soltar. El cursor se manda al final después del foco,
+  // porque el toque lo deja al principio. No se marca el texto.
   const bindAmountField = (input, { fillPrice = false, amountFor = null, onFilled = null } = {}) => {
     if (!input) return;
-    let fromTap = false;
+    let gesture = null;
+    let acceptFocus = false;
     let armClick = false;
     let pending = [];
     const drop = () => { for (const timer of pending) clearTimeout(timer); pending = []; };
@@ -5282,7 +5367,6 @@ function openPaymentForm(m, p, opts = {}) {
       drop();
       armClick = true;
       place();
-      // El toque del celular deja el cursor al principio después del foco.
       pending.push(setTimeout(place, 0));
       requestAnimationFrame(() => { if (pending.length) place(); });
       pending.push(setTimeout(place, 40));
@@ -5300,12 +5384,65 @@ function openPaymentForm(m, p, opts = {}) {
       }
       if (String(input.value || '').length) arm();
     };
-    input.addEventListener('pointerdown', () => { fromTap = document.activeElement !== input; });
-    input.addEventListener('pointerup', () => { if (fromTap) maybeFill(); });
-    input.addEventListener('touchend', () => { if (fromTap) maybeFill(); });
+    const scroller = () => document.querySelector('#pay-scroll');
+    const drifted = (event) => {
+      if (!gesture) return true;
+      const box = scroller();
+      const scrolled = box && Math.abs(box.scrollTop - gesture.scrollTop) > 1;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      return gesture.moved || scrolled || Math.hypot(dx, dy) > 10;
+    };
+    const stopWatch = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+    const onMove = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      if (drifted(event)) gesture.moved = true;
+    };
+    const onCancel = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      gesture = null;
+      acceptFocus = false;
+      stopWatch();
+    };
+    const onUp = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      const moved = drifted(event);
+      gesture = null;
+      stopWatch();
+      if (moved) { acceptFocus = false; return; }
+      acceptFocus = true;
+      if (document.activeElement === input) {
+        acceptFocus = false;
+        maybeFill();
+      }
+    };
+    input.addEventListener('pointerdown', (event) => {
+      if (event.isPrimary === false) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      if (document.activeElement === input) return;
+      stopWatch();
+      const box = scroller();
+      gesture = {
+        x: event.clientX,
+        y: event.clientY,
+        scrollTop: box ? box.scrollTop : 0,
+        pointerId: event.pointerId,
+        moved: false,
+      };
+      acceptFocus = false;
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onCancel);
+    });
+    scroller()?.addEventListener('scroll', () => { if (gesture) gesture.moved = true; }, { passive: true });
     input.addEventListener('focus', () => {
-      if (!fromTap) return;
-      fromTap = false;
+      if (gesture && !gesture.moved) return;
+      if (!acceptFocus) return;
+      acceptFocus = false;
       maybeFill();
     });
     input.addEventListener('click', () => {
