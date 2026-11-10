@@ -4,7 +4,8 @@ import { addDays } from './dates.js';
 export const QUOTA_READS = 50000;
 export const QUOTA_WRITES = 20000;
 export const QUOTA_DELETES = 20000;
-export const USAGE_FLUSH_MS = 3 * 60 * 1000;
+/** Como mucho un volcado por teléfono cada 10 minutos, y nunca con la app oculta. */
+export const USAGE_FLUSH_MS = 10 * 60 * 1000;
 export const USAGE_MAX_STEP = 100000;
 
 /**
@@ -63,6 +64,19 @@ export function usageTotals(doc) {
 export function usageSummary(doc) {
   const totals = usageTotals(doc);
   return `Hoy (se renueva a las 05:00): ${formatUsageCount(totals.reads)} lecturas de 50.000 · ${formatUsageCount(totals.writes)} escrituras de 20.000 · ${formatUsageCount(totals.deletes)} borrados de 20.000`;
+}
+
+/**
+ * Si el teléfono puede escribir usage/{day}.
+ * reason 'timer': el reloj de 10 minutos, solo con la app visible.
+ * reason 'hide': la app pasa a segundo plano; un último volcado si hay algo nuevo.
+ */
+export function usageFlushDecision({ reason, hidden, hasDelta, lastFlushAt = 0, now = 0 } = {}) {
+  if (!hasDelta) return 'skip';
+  if (reason === 'hide') return 'flush';
+  if (hidden) return 'skip';
+  if (lastFlushAt && now - lastFlushAt < USAGE_FLUSH_MS) return 'wait';
+  return 'flush';
 }
 
 export class UsageMeter {

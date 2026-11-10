@@ -87,7 +87,7 @@
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
-import { USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, UsageMeter } from './usage.js';
+import { USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, usageFlushDecision, UsageMeter } from './usage.js';
 import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { creditDocId, nextCredit } from './credit.js';
@@ -2202,19 +2202,41 @@ export class FirebaseStore {
   _bindUsageFlush() {
     if (this._usageBound || typeof document === 'undefined') return;
     this._usageBound = true;
+    this._usageLastFlushAt = 0;
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') this._flushUsage();
+      if (document.visibilityState === 'hidden') this._flushUsage('hide');
     });
-    window.addEventListener('pagehide', () => { this._flushUsage(); });
+    window.addEventListener('pagehide', () => { this._flushUsage('hide'); });
+  }
+  _usageHidden() {
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  }
+  _usageHasDelta() {
+    const pending = this.usageMeter?.pending;
+    return !!(pending && (pending.reads || pending.writes || pending.deletes));
   }
   _armUsageFlush() {
+    if (this._usageHidden()) return;
     if (this._usageTimer || typeof window === 'undefined') return;
     this._usageTimer = setTimeout(() => {
       this._usageTimer = 0;
-      this._flushUsage();
+      this._flushUsage('timer');
     }, USAGE_FLUSH_MS);
   }
-  async _flushUsage() {
+  async _flushUsage(reason = 'timer') {
+    const hiding = reason === 'hide';
+    const decision = usageFlushDecision({
+      reason: hiding ? 'hide' : 'timer',
+      hidden: hiding ? true : this._usageHidden(),
+      hasDelta: this._usageHasDelta(),
+      lastFlushAt: this._usageLastFlushAt || 0,
+      now: Date.now(),
+    });
+    if (decision === 'wait') {
+      this._armUsageFlush();
+      return;
+    }
+    if (decision !== 'flush') return;
     if (this._usageTimer) {
       clearTimeout(this._usageTimer);
       this._usageTimer = 0;
@@ -2234,6 +2256,7 @@ export class FirebaseStore {
         deletes: increment(batch.deletes || 0),
         updatedAt: Date.now(),
       }, { merge: true });
+      this._usageLastFlushAt = Date.now();
     } catch (error) {
       this.usageMeter.restore(batch);
       console.error(error);
@@ -2261,45 +2284,10 @@ export class FirebaseStore {
     });
     this._swap('compensations', un);
   }
-  async _backfillMatches(docs) {
-    const { doc, updateDoc } = this.fs;
-    for (const item of docs) {
-      const data = item.data();
-      if (Array.isArray(data.viewers) && data.viewers.length) continue;
-      const key = `m:${item.id}`;
-      if (this._backfilled.has(key)) continue;
-      this._backfilled.add(key);
-      try { await updateDoc(doc(this.db, 'matches', item.id), { viewers: [EVERYONE], adders: [EVERYONE], solo: false }); }
-      catch (e) { this._backfilled.delete(key); console.error(e); }
-    }
-  }
-  async _backfillPlayers(docs) {
-    const { doc, updateDoc } = this.fs;
-    for (const item of docs) {
-      const data = item.data();
-      if (Array.isArray(data.viewers) && data.viewers.length) continue;
-      const key = `p:${item.id}`;
-      if (this._backfilled.has(key)) continue;
-      this._backfilled.add(key);
-      const match = this.state.matches.find((row) => row.id === data.matchId);
-      if (!match) { this._backfilled.delete(key); continue; }
-      try { await updateDoc(doc(this.db, 'players', item.id), playerAccess(match)); }
-      catch (e) { this._backfilled.delete(key); console.error(e); }
-    }
-  }
-  async _backfillConfirmations(docs) {
-    const { doc, updateDoc } = this.fs;
-    for (const item of docs) {
-      const data = item.data();
-      if (Array.isArray(data.viewers) && data.viewers.length) continue;
-      const key = `c:${item.id}`;
-      if (this._backfilled.has(key)) continue;
-      this._backfilled.add(key);
-      const match = this.state.matches.find((row) => row.id === data.matchId);
-      if (!match) { this._backfilled.delete(key); continue; }
-      try { await updateDoc(doc(this.db, 'confirmations', item.id), { viewers: playerAccess(match).viewers }); }
-      catch (e) { this._backfilled.delete(key); console.error(e); }
-    }
+  async _backfillMatches() {
+    // No reescribe viewers al recibir un snapshot. Eso era una escritura por
+    // partido viejo en cada apertura, y si fallaba se reintentaba en el siguiente.
+    return;
   }
   _listen() {
     this._stop();
@@ -2715,7 +2703,6 @@ export class FirebaseStore {
         await setDoc(doc(this.db, 'rosterNotes', key), { ownerUid: uid, rosterId: person.id, notes: notes.slice(0, 20) });
         await updateDoc(doc(this.db, 'roster', person.id), { notes: deleteField(), updatedAt: Date.now() });
       } catch (e) {
-        this._noteMoves.delete(key);
         if (e?.code !== 'permission-denied') console.error(e);
       }
     }
@@ -2746,52 +2733,9 @@ export class FirebaseStore {
     return { cleared: true, phoneKey: body.phoneKey, ownerUid, visibleToAll: body.visibleToAll };
   }
   async _migrateContacts() {
-    if (!this.fs || !this.actor?.uid || this._migrating) return;
-    const jobs = [];
-    for (const player of this.state.players || []) {
-      if (!String(player.phone || '').trim() || this._migrated.has(`p:${player.id}`)) continue;
-      const owner = this._ownerUidFor(player, 'players');
-      if (!owner) continue;
-      const match = this.state.matches.find((item) => item.id === player.matchId);
-      const can = player.addedByUid === this.actor.uid || sameOrganizer(player.addedBy, this.actor.name) || (match && canAdd(match, this.actor.uid));
-      if (!can) continue;
-      jobs.push(['players', player, owner]);
-    }
-    for (const person of this.state.roster || []) {
-      if (!String(person.phone || '').trim() || this._migrated.has(`r:${person.id}`)) continue;
-      const owner = this._ownerUidFor(person, 'roster');
-      if (!owner) continue;
-      jobs.push(['roster', person, owner]);
-    }
-    if (!jobs.length) return;
-    this._migrating = true;
-    try {
-      for (const [kind, entity, owner] of jobs) {
-        const tag = `${kind === 'players' ? 'p' : 'r'}:${entity.id}`;
-        this._migrated.add(tag);
-        try {
-          const wrote = await this._writeContactDoc(kind, entity.id, entity.phone, entity, { migrating: true, ownerUid: owner });
-          if (!wrote.cleared) { this._migrated.delete(tag); continue; }
-          const { doc, updateDoc, deleteField } = this.fs;
-          const col = kind === 'players' ? 'players' : 'roster';
-          await updateDoc(doc(this.db, col, entity.id), {
-            phone: deleteField(),
-            phoneKey: wrote.phoneKey,
-            hasPhone: true,
-            phoneOwnerUid: owner,
-            phoneShared: false,
-            updatedAt: Date.now(),
-          });
-          this._contactsLive = true;
-        } catch (e) {
-          this._migrated.delete(tag);
-          if (e?.code === 'permission-denied') { this._contactsLive = false; return; }
-          console.error(e);
-        }
-      }
-    } finally {
-      this._migrating = false;
-    }
+    // La mudanza del teléfono se hacía sola al escuchar jugadores. Cada ficha
+    // eran dos escrituras, y un fallo la repetía en el snapshot siguiente.
+    return;
   }
   async addPlayer(match, data, who, opts = {}) {
     const { collection, addDoc, doc, updateDoc, deleteField } = this.fs; const now = Date.now();
@@ -3209,11 +3153,13 @@ export class FirebaseStore {
   async ensureConfirmToken(id) {
     const p = this.state.players.find((x) => x.id === id);
     if (!p) throw new Error('Jugador inexistente');
-    const token = p.confirmToken || newConfirmToken();
-    if (!p.confirmToken) await this.updatePlayer(id, { confirmToken: token });
+    // Si el token ya está, no se reescribe la ficha. Reescribirla en cada
+    // apertura era una escritura por jugador, aunque el documento no cambiara.
+    if (p.confirmToken) return p.confirmToken;
+    const token = newConfirmToken();
+    await this.updatePlayer(id, { confirmToken: token });
     const fresh = this.state.players.find((x) => x.id === id) || p;
     const match = this.state.matches.find((item) => item.id === fresh.matchId);
-    // Aunque el token ya exista: crea la ficha si falta y no toca la respuesta.
     await this._writeConfirmation(token, id, { ...fresh, confirmToken: token }, match);
     await this.ensureShortLink(id, { matchId: fresh.matchId, confirmToken: token, shortCode: fresh.shortCode });
     return token;
@@ -3362,13 +3308,9 @@ export class FirebaseStore {
           const redirect = await getDoc(doc(this.db, 'rosterRedirects', intoId));
           intoId = redirect.exists() ? String(redirect.data()?.intoId || '') : '';
         }
-        if (!intoId || !rosterIds.has(intoId)) {
-          this._noteMoves.delete(mark);
-          continue;
-        }
+        if (!intoId || !rosterIds.has(intoId)) continue;
         await this._moveOwnNotes(fromId, intoId);
       } catch (e) {
-        this._noteMoves.delete(mark);
         if (e?.code !== 'permission-denied') console.error(e);
       }
     }

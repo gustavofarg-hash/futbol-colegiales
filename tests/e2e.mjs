@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v141');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v143');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -3935,6 +3935,7 @@ const otherStatsId = await page.evaluate(async () => {
   return id;
 });
 await page.click('#stats-mode a[href="#/estadisticas/jugador"]');
+await page.click('#stats-q');
 await page.waitForSelector('#stats-players');
 const statNames = await page.$$eval('#stats-players .name', (els) => els.map((el) => el.textContent.trim()));
 check('Con un uid de Firebase, Estadísticas muestra solo su agenda', statNames.includes('Ficha Real') && !statNames.includes('Ajeno Stats'), statNames.join(', '));
@@ -4599,10 +4600,9 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.click('#login-form button[type=submit]');
   await page.waitForFunction(() => window.__app?.who === 'Gustavo');
   await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, setup.id);
-  await page.waitForSelector('#comp-changed');
-  const changed = await page.locator('#comp-detail').innerText();
-  check('Si se rechaza el cobro, el cálculo cambia solo', changed.includes('El cálculo cambió') && changed.includes('ya no corresponde') && !changed.includes('$10.000'));
-  check('El título cambiado deja la fecha antes del aviso', (await page.locator('#comp-title').innerText()) === 'Compensación del día LUNES 23/11/2026 · El cálculo cambió');
+  await page.waitForSelector('#comp-detail');
+  const changed = (await page.locator('#comp-detail').innerText()).replace(/\s+/g, ' ');
+  check('Abrir el partido no reescribe el cálculo guardado', await page.locator('#comp-changed').count() === 0 && !changed.includes('El cálculo cambió') && (await page.locator('#comp-title').innerText()) === 'Compensación del día LUNES 23/11/2026', changed.slice(0, 220));
   await shot('v81-calculo-cambio', '#comp-detail', 'bottom');
 }
 
@@ -5102,10 +5102,8 @@ async function assertGuestPromo(fix, visibleName, count) {
     localStorage.removeItem(autoCreditPassKey(window.__app.uid));
   });
   await page.reload();
-  await page.waitForFunction(() => {
-    const uid = window.__app?.uid;
-    return !!uid && localStorage.getItem('f7c-auto-credit-pass:' + uid) === '1';
-  });
+  await page.waitForFunction(() => !!window.__app?.uid);
+  await page.waitForTimeout(800);
   const passed = await page.evaluate(() => {
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
     const rows = Object.values(db.players);
@@ -5118,17 +5116,12 @@ async function assertGuestPromo(fix, visibleName, count) {
     const other = on('Retro Ajeno', '2026-11-05');
     const old = on('Retro Viejo', '2026-11-01');
     const mid = on('Retro Viejo', '2026-11-02');
-    const promos = rows.filter((row) => row.name === 'Retro Promo').map((row) => row.fromCredit || 0).sort((a, b) => a - b);
-    const partial = on('Retro Parcial', '2026-11-06');
     return {
+      key: localStorage.getItem('f7c-auto-credit-pass:' + window.__app.uid),
       old: old?.fromCredit || 0,
       oldAuto: old?.autoCredit === true,
       mid: mid?.fromCredit || 0,
       midAuto: mid?.autoCredit === true,
-      promos,
-      partial: partial?.fromCredit || 0,
-      partialCash: partial?.cash || 0,
-      partialAuto: partial?.autoCredit === true,
       past: past?.autoCredit === true || (past?.fromCredit || 0) > 0,
       cancel: cancel?.autoCredit === true || (cancel?.fromCredit || 0) > 0,
       wait: wait?.waiting === true && wait?.autoCredit !== true,
@@ -5139,14 +5132,10 @@ async function assertGuestPromo(fix, visibleName, count) {
       promo: credit('Retro Promo'),
     };
   });
-  check('El pase usa primero el partido más viejo y la promo, y deja el resto como deuda', passed.old === 5000 && passed.oldAuto && passed.mid === 1000 && passed.midAuto && passed.promos.join() === '4500,4500' && passed.partial === 3000 && passed.partialCash === 2000 && passed.partialAuto && passed.viejo === 0 && passed.promo === 0, JSON.stringify(passed));
-  check('No toca un partido ya jugado, uno cancelado, la espera ni el saldo de otro organizador', passed.past === false && passed.cancel === false && passed.wait === true && passed.other === false && passed.espera === 5000 && passed.ajeno === 5000, JSON.stringify(passed));
+  check('Al abrir no se descuenta el saldo de las deudas viejas', passed.key !== '1' && passed.old === 0 && passed.oldAuto === false && passed.mid === 0 && passed.midAuto === false && passed.viejo === 6000 && passed.promo === 9000 && passed.past === false && passed.cancel === false && passed.wait === true && passed.other === false && passed.espera === 5000 && passed.ajeno === 5000, JSON.stringify(passed));
   await page.evaluate(() => { location.hash = '#/registro/pagos'; });
   await page.waitForSelector('#log-list');
-  const retroLog = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
-  check('Registro marca el pase como crédito automático', retroLog.includes('Crédito automático') && retroLog.includes('Retro Viejo'), retroLog.slice(0, 280));
   await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
-  await page.locator('#log-list .log-row', { hasText: 'Retro Viejo' }).first().scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v89-registro-retro.png' });
   await page.evaluate(async () => {
     const app = window.__app;
@@ -5170,7 +5159,7 @@ async function assertGuestPromo(fix, visibleName, count) {
     const credit = Object.values(db.credits || {}).find((row) => row.name === 'Retro Viejo')?.amount ?? 0;
     return { fromCredit: mid?.fromCredit || 0, credit };
   });
-  check('La segunda vez no vuelve a descontar', twice.fromCredit === 1000 && twice.credit === 4000, JSON.stringify(twice));
+  check('La segunda vez tampoco descuenta', twice.fromCredit === 0 && twice.credit === 10000, JSON.stringify(twice));
 }
 
 {
@@ -7049,13 +7038,20 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.fill('#stats-q', 'Luna');
   await page.locator('#stats-players .who').click();
   await page.waitForSelector('#stats-months [data-month="2026-11"]');
+  await page.waitForFunction(() => !document.querySelector('#stats-players'));
+  check('Elegir un jugador oculta el resto de la lista', await page.locator('#stats-players').count() === 0 && (await page.locator('#stats-player').innerText()).trim() === 'Stats Luna');
+  await page.click('#stats-q');
+  await page.waitForSelector('#stats-players');
+  check('Tocar la búsqueda vuelve a mostrar la lista', await page.locator('#stats-players .name').count() >= 1 && await page.locator('#stats-months').count() === 0);
+  await page.locator('#stats-players .who', { hasText: 'Stats Luna' }).click();
+  await page.waitForFunction(() => !document.querySelector('#stats-players') && document.querySelector('#stats-months'));
   const lunaRows = await page.$$eval('#stats-months [data-month]', (els) => els.map((el) => ({
     key: el.dataset.month,
     text: el.innerText.replace(/\s+/g, ' '),
   })));
   const lunaText = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
   check('Jugador lista los meses de lo que se anotó conmigo', lunaRows.length === 2 && lunaRows.map((row) => row.key).join(',') === lunaMonths.map((row) => row.key).join(',') && lunaRows[0].text.includes('1 partido') && lunaRows[0].text.includes(formatARS(lunaMonths[0].paid)) && lunaRows[1].text.includes('2 partidos') && lunaRows[1].text.includes(formatARS(lunaMonths[1].paid)) && !lunaText.includes('Notas de partido') && !lunaText.includes('Goles') && !lunaText.includes('Deuda'), JSON.stringify({ lunaRows, lunaMonths }));
-  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v141-jugador.png' });
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v143-jugador.png' });
   await page.evaluate(async () => {
     const app = window.__app;
     const name = app.who;
