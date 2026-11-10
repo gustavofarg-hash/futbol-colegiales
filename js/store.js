@@ -553,14 +553,21 @@ function presentRows(rows, contacts, uid) {
   return rows.map(([id, entity]) => attachPhone({ id, ...entity }, contacts?.[id], uid));
 }
 
-/** Suma o resta el contador. Si todavía no es un entero, escribe el total. */
-function countPatch(fs, match, delta, localCount) {
-  const current = match?.playerCount;
-  const fallback = Math.max(0, (Number(localCount) || 0) + delta);
-  if (typeof current === 'number' && Number.isInteger(current) && current + delta >= 0 && typeof fs?.increment === 'function') {
-    return { playerCount: fs.increment(delta) };
-  }
-  return { playerCount: fallback };
+/**
+ * Contador que se escribe en el partido. Nunca usa increment:
+ * si el servidor tiene 0 y el teléfono manda increment(-1), las reglas
+ * ven -1 y rechazan el lote entero, también el borrado del jugador.
+ * El valor guardado puede estar viejo. Se toma la cantidad cargada y se
+ * deja en 0 como mínimo. Solo se escribe en el partido que se toca.
+ */
+export function nextPlayerCount(delta, localCount) {
+  const next = (Number(localCount) || 0) + (Number(delta) || 0);
+  if (!Number.isFinite(next)) return 0;
+  return Math.max(0, Math.trunc(next));
+}
+
+function countPatch(_fs, _match, delta, localCount) {
+  return { playerCount: nextPlayerCount(delta, localCount) };
 }
 
 function actorRecord(user) {
@@ -3234,11 +3241,6 @@ export class FirebaseStore {
       batch.delete(doc(this.db, 'players', id));
       if (player?.confirmToken) batch.delete(doc(this.db, 'confirmations', player.confirmToken));
       if (withLink) batch.delete(doc(this.db, 'links', player.shortCode));
-      if (match) {
-        const patch = { ...countPatch(this.fs, match, -1, localCount), updatedAt: Date.now() };
-        if (nextTeams.changed) patch.teams = nextTeams.teams;
-        batch.update(doc(this.db, 'matches', match.id), patch);
-      }
       if (this._contactsLive) batch.delete(doc(this.db, 'playerContacts', id));
       await batch.commit();
     };
@@ -3250,6 +3252,11 @@ export class FirebaseStore {
       this._linksLive = false;
       await commit(false);
     }
+    if (!match) return;
+    const { updateDoc } = this.fs;
+    const patch = { ...countPatch(this.fs, match, -1, localCount), updatedAt: Date.now() };
+    if (nextTeams.changed) patch.teams = nextTeams.teams;
+    await updateDoc(doc(this.db, 'matches', match.id), patch);
   }
   _rosterDup(phone, id) {
     const key = phoneKey(canonicalWa(phone));

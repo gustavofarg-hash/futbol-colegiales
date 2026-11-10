@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v138');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v139');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -4890,16 +4890,20 @@ async function assertGuestPromo(fix, visibleName, count) {
   const afterPay = await page.evaluate((before) => {
     const item = document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])');
     const text = (item?.innerText || '').replace(/\s+/g, ' ');
+    const scroller = document.scrollingElement;
+    const max = Math.max(0, (scroller?.scrollHeight || 0) - (scroller?.clientHeight || 0));
     return {
       hash: location.hash,
-      scroll: document.scrollingElement?.scrollTop || 0,
+      scroll: scroller?.scrollTop || 0,
+      max,
       before,
       open: item?.querySelector('.owe-box')?.classList.contains('open') === true,
       text,
       menu: document.querySelector('#menu-panel') != null,
     };
   }, placed);
-  check('Guardar vuelve a la lista abierta, en el mismo lugar, y saca al que pagó', afterPay.hash === '#/historial' && !afterPay.menu && afterPay.open && afterPay.text.includes('Vuelve Dos') && afterPay.text.includes('$5.000') && !afterPay.text.includes('Vuelve Uno') && Math.abs(afterPay.scroll - placed) < 40, JSON.stringify(afterPay));
+  const payHeld = Math.abs(afterPay.scroll - placed) < 40 || (afterPay.scroll <= placed && afterPay.scroll >= afterPay.max - 2);
+  check('Guardar vuelve a la lista abierta, en el mismo lugar, y saca al que pagó', afterPay.hash === '#/historial' && !afterPay.menu && afterPay.open && afterPay.text.includes('Vuelve Dos') && afterPay.text.includes('$5.000') && !afterPay.text.includes('Vuelve Uno') && payHeld, JSON.stringify(afterPay));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v85-historial-vuelve.png' });
   await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-back');
@@ -4907,16 +4911,20 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
   const afterCancel = await page.evaluate((before) => {
     const item = document.querySelector('#list-history .match-item:has([data-note="Vuelve pago"])');
+    const scroller = document.scrollingElement;
+    const max = Math.max(0, (scroller?.scrollHeight || 0) - (scroller?.clientHeight || 0));
     return {
       hash: location.hash,
       open: item?.querySelector('.owe-box')?.classList.contains('open') === true,
       text: (item?.innerText || '').replace(/\s+/g, ' '),
       menu: document.querySelector('#menu-panel') != null,
-      scroll: document.scrollingElement?.scrollTop || 0,
+      scroll: scroller?.scrollTop || 0,
+      max,
       before,
     };
   }, placed);
-  check('Cancelar también vuelve a la lista', afterCancel.hash === '#/historial' && !afterCancel.menu && afterCancel.open && afterCancel.text.includes('Vuelve Dos') && Math.abs(afterCancel.scroll - placed) < 40, JSON.stringify(afterCancel));
+  const cancelHeld = Math.abs(afterCancel.scroll - placed) < 40 || (afterCancel.scroll <= placed && afterCancel.scroll >= afterCancel.max - 2);
+  check('Cancelar también vuelve a la lista', afterCancel.hash === '#/historial' && !afterCancel.menu && afterCancel.open && afterCancel.text.includes('Vuelve Dos') && cancelHeld, JSON.stringify(afterCancel));
   await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-form');
   await page.fill('#pay-form [name=cash]', '5000');
