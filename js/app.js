@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v138';
+const APP_VERSION = 'f7c-v139';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -185,8 +185,19 @@ function isPermissionDenied(error) {
   const code = error?.code || '';
   return code === 'permission-denied' || code === 'permission_denied';
 }
+function withWriteTimeout(promise, ms = 20000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(Object.assign(new Error('La base no respondió.'), { code: 'deadline-exceeded' }));
+    }, ms);
+    Promise.resolve(promise).then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
 function run(p, okMsg, deniedMsg) {
-  return Promise.resolve(p).then((value) => {
+  return withWriteTimeout(p).then((value) => {
     if (okMsg) toast(okMsg);
     return value;
   }).catch((e) => {
