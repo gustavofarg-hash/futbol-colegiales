@@ -138,7 +138,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v132');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v133');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -5494,6 +5494,64 @@ async function assertGuestPromo(fix, visibleName, count) {
   });
   const keyboardOpen = lifted.search === true && keyboard.dockDisplay === 'none' && keyboard.visibleHits >= 2 && keyboard.fieldTop >= keyboard.tabBottom - 2 && keyboard.firstTop >= keyboard.fieldBottom - 4 && keyboard.firstBottom <= keyboard.bodyBottom + 1 && keyboard.bodyBottom <= 460 && Number.parseFloat(keyboard.maxHeight) <= 460;
   check('Con el teclado abierto, Buscar guardados muestra resultados y esconde Cancelar y Agregar', lifted.inset > 200 && keyboardOpen, JSON.stringify({ lifted, keyboard }));
+  const beforeSwipe = await page.evaluate(() => ({
+    hits: document.querySelector('#roster-hits')?.scrollTop || 0,
+    page: document.querySelector('#player-scroll')?.scrollTop || 0,
+  }));
+  await page.evaluate(() => {
+    window.__hitMoves = 0;
+    window.addEventListener('pointermove', () => { window.__hitMoves += 1; });
+  });
+  const swipeHit = await page.locator('#roster-hits .roster-hit').nth(1).boundingBox();
+  const from = { x: swipeHit.x + swipeHit.width / 2, y: swipeHit.y + Math.min(18, swipeHit.height / 2) };
+  {
+    const cdp = await page.context().newCDPSession(page);
+    const point = (x, y) => ({ x: Math.round(x), y: Math.round(y), id: 1 });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point(from.x, from.y)] });
+    for (let i = 1; i <= 8; i += 1) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point(from.x, from.y - 90 * (i / 8))] });
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
+  }
+  await page.waitForTimeout(80);
+  const afterSwipe = await page.evaluate((before) => ({
+    name: document.querySelector('#player-name')?.value || '',
+    pick: document.querySelector('#player-form')?.dataset.rosterPick || '',
+    hits: document.querySelectorAll('#roster-hits .roster-hit').length,
+    moves: window.__hitMoves || 0,
+    hitsScroll: document.querySelector('#roster-hits')?.scrollTop || 0,
+    pageScroll: document.querySelector('#player-scroll')?.scrollTop || 0,
+    before,
+    max: document.querySelector('#roster-hits')?.style.maxHeight || '',
+    pan: getComputedStyle(document.querySelector('#roster-hits')).touchAction,
+  }), beforeSwipe);
+  const listMoved = afterSwipe.hitsScroll > beforeSwipe.hits + 1 || Math.abs(afterSwipe.pageScroll - beforeSwipe.page) > 1;
+  check('Deslizar un resultado no lo elige y la lista se mueve', !afterSwipe.name && !afterSwipe.pick && afterSwipe.hits === 8 && afterSwipe.moves > 0 && listMoved && Number.parseFloat(afterSwipe.max) >= 96 && afterSwipe.pan.includes('pan-y'), JSON.stringify(afterSwipe));
+  await page.screenshot({ path: '/opt/cursor/artifacts/buscar-scroll.png', clip: { x: 0, y: 0, width: 390, height: 450 } });
+  const visibleHit = await page.evaluate(() => {
+    const list = document.querySelector('#roster-hits');
+    const box = list.getBoundingClientRect();
+    const hit = [...list.querySelectorAll('.roster-hit')].find((el) => {
+      const row = el.getBoundingClientRect();
+      return row.top >= box.top - 1 && row.bottom <= box.bottom + 1 && row.height > 20;
+    });
+    if (!hit) return null;
+    const row = hit.getBoundingClientRect();
+    return {
+      x: row.left + 16,
+      y: (Math.max(row.top, box.top) + Math.min(row.bottom, box.bottom)) / 2,
+      name: hit.querySelector('b')?.textContent || '',
+    };
+  });
+  await page.touchscreen.tap(visibleHit.x, visibleHit.y);
+  await page.waitForTimeout(80);
+  const tapped = await page.evaluate(() => ({
+    name: document.querySelector('#player-name')?.value || '',
+    pick: document.querySelector('#player-form')?.dataset.rosterPick || '',
+    hits: document.querySelectorAll('#roster-hits .roster-hit').length,
+  }));
+  check('Un tap en el resultado sí lo elige', tapped.name.startsWith('Lista Larga') && !!tapped.pick && tapped.hits === 1, JSON.stringify({ tapped, visibleHit }));
   await page.waitForTimeout(250);
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v93-buscar-teclado.png', clip: { x: 0, y: 0, width: 390, height: 450 } });
   const blurred = await page.evaluate(() => {

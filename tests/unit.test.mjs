@@ -23,6 +23,7 @@ import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableL
 import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
+import { tapChose } from '../js/tap.js';
 import { addDays, attendanceWhen, clockTime, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
@@ -3568,7 +3569,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v132');
+  assert.equal(version, 'f7c-v133');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3577,6 +3578,16 @@ test('el error del backup nombra la colección y el documento', () => {
   assert.match(app, /id="app-version">Versión \$\{APP_VERSION\}/);
   assert.equal(app.includes('Crear cuenta de administrador'), false);
   assert.match(readFileSync(new URL('../js/auth.js', import.meta.url), 'utf8'), /async registerAdmin\(/);
+});
+
+test('un tap elige y un desliz no', () => {
+  assert.equal(tapChose({ dx: 0, dy: 0 }), true);
+  assert.equal(tapChose({ dx: 9, dy: 0 }), true);
+  assert.equal(tapChose({ dx: 6, dy: 8 }), true);
+  assert.equal(tapChose({ dx: 11, dy: 0 }), false);
+  assert.equal(tapChose({ dx: 8, dy: 8 }), false);
+  assert.equal(tapChose({ dx: 0, dy: 0, scrolled: true }), false);
+  assert.equal(tapChose({ dx: 4, dy: 3, scrolled: true }), false);
 });
 
 test('un aviso es de otro organizador y solo si podés ver el partido', () => {
