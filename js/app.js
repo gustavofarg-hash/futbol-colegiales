@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v141';
+const APP_VERSION = 'f7c-v143';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -468,6 +468,8 @@ function markAutoCreditPass(uid) {
 
 /** Una vez que el saldo y los jugadores ya se leyeron, espera un instante y aplica. */
 function scheduleRetroactiveAutoCredit() {
+  // El pase de crédito al abrir recorría deudas viejas y escribía una por jugador.
+  return;
   const uid = actor().uid;
   if (!uid || autoCreditPassTimer || autoCreditPassRunning || autoCreditPassDone(uid)) return;
   if (app.fromCache || app.creditsError || app.creditsReady !== true || app.playersReady !== true) return;
@@ -1586,25 +1588,9 @@ function compensationSaveError(error) {
   return detail ? `No se pudo guardar el cálculo. ${detail}` : 'No se pudo guardar el cálculo.';
 }
 function refreshCompensation(date) {
-  const saved = savedCompensation(date);
-  if (!saved || compBusy.has(date) || !app.store?.saveCompensation) return saved;
-  const { matches, players, staff, calc } = dayBundle(date);
-  const fingerprint = compensationFingerprint(matches, players, staff);
-  if (fingerprint === saved.fingerprint) return saved;
-  if (app.compHeld?.[date]) return saved;
-  const next = calc.missing.length
-    ? compensationDoc(date, { ...saved, fingerprint, changed: true, computedAt: Date.now() })
-    : compensationDoc(date, {
-      fingerprint,
-      changed: true,
-      computedAt: Date.now(),
-      rows: calc.rows,
-      transfers: reconcileTransfers(saved.transfers, calc.transfers),
-    });
-  compBusy.add(date);
-  holdCompensation(next);
-  Promise.resolve(app.store.saveCompensation(date, next)).catch(() => holdCompensation(next)).finally(() => compBusy.delete(date));
-  return next;
+  // Mostrar el cálculo guardado no escribe. Antes, cada render del historial
+  // lo volvía a guardar si el fingerprint no coincidía.
+  return savedCompensation(date);
 }
 function historyWithCompensation(matches) {
   const groups = [];
@@ -3716,12 +3702,27 @@ function renderStats(r) {
   if (!replaceView(`<div id="stats-view">${seg}${body}</div>`)) return;
   const input = $('#stats-q');
   if (input) {
-    input.addEventListener('input', () => render());
+    input.addEventListener('focus', () => {
+      if (app.statsBrowse) return;
+      app.statsBrowse = true;
+      render();
+    });
+    input.addEventListener('input', () => {
+      app.statsBrowse = true;
+      render();
+    });
     if (searchFocused) {
       input.focus({ preventScroll: true });
       try { input.setSelectionRange(selStart, selEnd); } catch { /* el navegador puede rechazar el rango */ }
     }
   }
+  const list = $('#stats-players');
+  if (list) list.addEventListener('click', (event) => {
+    const link = event.target.closest('a[href]');
+    if (!link) return;
+    app.statsBrowse = false;
+    if (link.getAttribute('href') === location.hash) render();
+  });
 }
 
 function statsRosterPerson(id) {
@@ -3735,14 +3736,11 @@ function statsRosterPerson(id) {
 
 function statsPlayerBody(id) {
   const q = $('#stats-q')?.value || '';
+  const browsing = app.statsBrowse === true;
   const mine = rosterForOrganizer(app.roster, staffActor());
-  const people = searchRoster(mine, q);
-  const person = id ? statsRosterPerson(id) : null;
-  const rows = people.map((item) => `<li class="slot"><a class="who" href="${statsHash('jugador', item.id)}"${item.id === id ? ' aria-current="true"' : ''}><div class="name${suspendedClass(item)}">${esc(item.name)}</div></a></li>`).join('');
-  const list = people.length
-    ? `<ul class="slots" id="stats-players">${rows}</ul>`
-    : `<p class="empty-wait" id="stats-players">${q ? 'Nadie coincide con esa búsqueda.' : 'No hay jugadores en tu agenda.'}</p>`;
-  const missing = id && !person
+  const requested = id ? statsRosterPerson(id) : null;
+  const person = requested && !browsing ? requested : null;
+  const missing = id && !requested
     ? `<div class="empty" id="stats-missing"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p></div>`
     : '';
   let months = '';
@@ -3763,9 +3761,21 @@ function statsPlayerBody(id) {
       <h2 class="section${suspendedClass(person)}" id="stats-player">${esc(person.name)}</h2>
       <ul class="slots" id="stats-months">${monthRows || '<li class="empty-wait">No se anotó con vos.</li>'}</ul>`;
   }
+  let list = '';
+  if (!person) {
+    if (!browsing && !q) {
+      list = '<p class="empty-wait" id="stats-hint">Buscá por nombre o teléfono.</p>';
+    } else {
+      const people = searchRoster(mine, q);
+      const rows = people.map((item) => `<li class="slot"><a class="who" href="${statsHash('jugador', item.id)}"><div class="name${suspendedClass(item)}">${esc(item.name)}</div></a></li>`).join('');
+      list = people.length
+        ? `<ul class="slots" id="stats-players">${rows}</ul>`
+        : `<p class="empty-wait" id="stats-players">${q ? 'Nadie coincide con esa búsqueda.' : 'No hay jugadores en tu agenda.'}</p>`;
+    }
+  }
   return `
     <h2 class="section">Por jugador</h2>
-    <label class="field roster-search"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
+    <label class="field roster-search stats-search"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${missing}
     ${months}
     ${list}`;
@@ -7160,7 +7170,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v140" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v143" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7197,7 +7207,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v140" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v143" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -7398,7 +7408,6 @@ async function boot() {
     // no redibujar debajo de un formulario abierto para no perder lo que se escribe
     if (!sheet.open || !sheet.querySelector('input, textarea, select')) render(); else pendingRender = true;
     fixOverflow();
-    backfillConfirmTokens();
     armReminderTimer();
   });
   render();
@@ -7412,7 +7421,6 @@ async function boot() {
 let reminderSeenAt = Date.now();
 let reminderTimer = 0;
 let reminderTimerAt = Infinity;
-const tokenPending = new Set();
 const clearingReservation = new Set();
 
 function releaseAnsweredReservations(players) {
@@ -7424,23 +7432,11 @@ function releaseAnsweredReservations(players) {
     if (!clearingReservation.has(p.id)) {
       clearingReservation.add(p.id);
       Promise.resolve(app.store.clearTentative(p.id)).catch((e) => {
-        clearingReservation.delete(p.id);
         console.error(e);
       });
     }
     return { ...p, tentative: null, tentativeAt: null };
   });
-}
-
-function backfillConfirmTokens() {
-  for (const p of app.players) {
-    if (tokenPending.has(p.id)) continue;
-    tokenPending.add(p.id);
-    Promise.resolve(app.store.ensureConfirmToken(p.id)).catch((e) => {
-      tokenPending.delete(p.id);
-      console.error(e);
-    });
-  }
 }
 
 function armReminderTimer() {
@@ -7552,6 +7548,7 @@ function fireReminderNotification(m) {
 }
 let pendingRender = false;
 let fixingOverflow = false;
+const overflowTried = new Set();
 async function fixOverflow() {
   if (fixingOverflow || !app.store) return;
   if (app.pendingWrites || app.fromCache) return;
@@ -7561,10 +7558,12 @@ async function fixOverflow() {
     const expected = Number.isInteger(m.playerCount) ? m.playerCount : all.length;
     patches.push(...overflowPatches(all, capOf(m), { expectedCount: expected }));
   }
-  if (!patches.length) return;
+  const fresh = patches.filter((patch) => !overflowTried.has(patch.id));
+  if (!fresh.length) return;
+  for (const patch of fresh) overflowTried.add(patch.id);
   fixingOverflow = true;
   try {
-    for (const patch of patches) await app.store.updatePlayer(patch.id, { waiting: true, waitOrder: patch.waitOrder, rosterAt: null });
+    for (const patch of fresh) await app.store.updatePlayer(patch.id, { waiting: true, waitOrder: patch.waitOrder, rosterAt: null });
   } catch (e) { console.error(e); }
   finally { fixingOverflow = false; }
 }
