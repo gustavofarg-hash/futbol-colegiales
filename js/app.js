@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v146';
+const APP_VERSION = 'f7c-v147';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1071,12 +1071,13 @@ function render() {
   else renderHome();
   paintActivity();
   requestAnimationFrame(placeBars);
-  if (app.revealPlayerId) settleRevealedPlayer();
-  const revealingHere = !!(app.revealPlayerId && addedPlayerRow(app.revealPlayerId));
+  if (app.revealPlayerId && !app.revealShown) settleRevealedPlayer();
+  const revealingHere = !!(app.revealPlayerId && !app.revealShown && addedPlayerRow(app.revealPlayerId));
   if (same && y > 0 && !revealingHere) {
     const top = y;
     requestAnimationFrame(() => {
-      if (app.revealPlayerId) return;
+      if (app.revealUserMoved) return;
+      if (app.revealPlayerId && !app.revealShown) return;
       if ((document.scrollingElement?.scrollTop || 0) !== top) document.scrollingElement.scrollTop = top;
     });
   }
@@ -1093,6 +1094,10 @@ function addedPlayerRow(id) {
 // snapshot posterior reemplaza el DOM. Se marca el partido antes de escribir
 // y se sigue la fila nueva en cada redibujado.
 function startReveal(matchId) {
+  clearTimeout(app.revealTimer);
+  stopRevealFollow();
+  app.revealUserMoved = false;
+  app.revealShown = false;
   app.revealWatch = {
     matchId,
     before: new Set((app.players || []).filter((p) => p.matchId === matchId).map((p) => p.id)),
@@ -1124,7 +1129,7 @@ function revealScrollDelta(row) {
   const stackBottom = document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? viewTop;
   const topLimit = Math.max(stackBottom, viewTop) + 8;
   const actionTop = document.querySelector('#view .actionbar')?.getBoundingClientRect().top;
-  const bottomLimit = Math.min(actionTop > topLimit ? actionTop : viewBottom, viewBottom) - 8;
+  let bottomLimit = Math.min(actionTop > topLimit ? actionTop : viewBottom, viewBottom) - 8;
   const box = row.getBoundingClientRect();
   if (box.height <= 0) return 0;
   if (!(bottomLimit > topLimit)) bottomLimit = viewBottom - 8;
@@ -1134,52 +1139,67 @@ function revealScrollDelta(row) {
   return 0;
 }
 
-/** Baja hasta el jugador recién anotado y lo marca un momento.
- *  En el teléfono el teclado se cierra después del toque y mueve la pantalla:
- *  el scroll suave se pierde y hay que volver a medirlo cuando el alto ya quedó. */
+/** Baja una sola vez hasta el jugador recién anotado. */
 function revealAddedPlayer() {
   const id = app.revealPlayerId;
-  if (!id) return false;
+  if (!id || app.revealShown) return false;
   const row = addedPlayerRow(id);
   if (!row) return false;
   if (!row.classList.contains('just-added')) row.classList.add('just-added');
   const scroller = document.scrollingElement || document.documentElement;
   const delta = revealScrollDelta(row);
-  if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+  app.revealAdjusting = true;
+  try {
+    if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+  } finally {
+    app.revealAdjusting = false;
+  }
   return true;
 }
 
+function stopRevealFollow() {
+  (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
+  app.revealKicks = [];
+  app.revealShown = true;
+  app.revealWatch = null;
+}
+
 function settleRevealedPlayer() {
-  if (!app.revealPlayerId) return;
-  revealAddedPlayer();
-  requestAnimationFrame(() => {
-    if (!app.revealPlayerId) return;
-    requestAnimationFrame(() => { if (app.revealPlayerId) revealAddedPlayer(); });
-  });
+  if (!app.revealPlayerId || app.revealShown) return;
+  if (!revealAddedPlayer()) return;
+  stopRevealFollow();
 }
 
 function armRevealWatch(id) {
   clearTimeout(app.revealTimer);
   (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
-  const kicks = [60, 180, 400, 700, 1100, 1600, 2200, 3000, 4000, 5200, 6500, 7800];
-  app.revealKicks = kicks.map((ms) => setTimeout(() => {
-    if (app.revealPlayerId === id) settleRevealedPlayer();
+  const poll = [0, 50, 150, 400];
+  app.revealKicks = poll.map((ms) => setTimeout(() => {
+    if (app.revealShown || app.revealPlayerId !== id) return;
+    settleRevealedPlayer();
   }, ms));
   app.revealTimer = setTimeout(() => {
+    if (app.revealPlayerId !== id) return;
     (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
     app.revealKicks = [];
-    if (app.revealPlayerId === id) app.revealPlayerId = '';
-    if (app.revealWatch?.matchId) app.revealWatch = null;
-  }, 8000);
+    app.revealShown = true;
+    app.revealWatch = null;
+    app.revealPlayerId = '';
+  }, 2500);
 }
 
 function watchRevealViewport() {
-  const kick = () => { if (app.revealPlayerId) settleRevealedPlayer(); };
-  window.addEventListener('resize', kick);
-  const vv = window.visualViewport;
-  if (!vv) return;
-  vv.addEventListener('resize', kick);
-  vv.addEventListener('scroll', kick);
+  const cancel = () => {
+    if (app.revealAdjusting) return;
+    app.revealUserMoved = true;
+    if (!app.revealPlayerId && !(app.revealKicks || []).length) return;
+    stopRevealFollow();
+  };
+  window.addEventListener('scroll', cancel, { passive: true });
+  document.addEventListener('scroll', cancel, { capture: true, passive: true });
+  window.addEventListener('wheel', cancel, { passive: true });
+  window.addEventListener('touchstart', cancel, { passive: true });
+  window.addEventListener('pointerdown', cancel, { passive: true });
 }
 
 function placeOf(match) {
@@ -7169,7 +7189,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v146" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v147" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7206,7 +7226,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v146" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v147" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
