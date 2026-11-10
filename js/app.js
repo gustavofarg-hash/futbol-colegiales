@@ -2,6 +2,7 @@ import { ACCESS_CODE, VENUE } from '../config.js';
 import * as appConfig from '../config.js';
 import { DRIVE_FOLDER, driveClientId, loadGis, requestDriveToken, shareableBackupName, uploadBackupToDrive } from './drive.js';
 import { createStore } from './store.js';
+import { usageLevel, usageSummary, usageTotals, writeFailureText } from './usage.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
@@ -45,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v136';
+const APP_VERSION = 'f7c-v137';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -176,22 +177,25 @@ $('#toast')?.addEventListener('click', () => {
 function showError(msg) {
   const b = $('#error-banner'); b.textContent = msg; b.hidden = !msg;
 }
-// Las escrituras a Firestore resuelven cuando el servidor confirma; con caché
-// offline la UI no espera: se cierra el formulario y se avisa si falla.
+// El aviso de éxito espera a que el servidor confirme. Si Firebase rechaza
+// (límite diario o reglas), no se dice que se guardó: el aviso es el error
+// y el snapshot devuelve la lista a lo que quedó en el servidor.
 const RULES_MSG = 'Firebase rechazó el acceso. Hay que actualizar las reglas de Firestore (publicar firestore.rules).';
 function isPermissionDenied(error) {
   const code = error?.code || '';
   return code === 'permission-denied' || code === 'permission_denied';
 }
 function run(p, okMsg, deniedMsg) {
-  if (okMsg) toast(okMsg);
-  return Promise.resolve(p).catch((e) => {
+  return Promise.resolve(p).then((value) => {
+    if (okMsg) toast(okMsg);
+    return value;
+  }).catch((e) => {
     console.error(e);
     if (e?.code === 'already-in-match') toast(e.message || ALREADY_IN_MATCH);
     else if (e?.code === 'suspended') askNotice(e.message || SUSPENDED_TEXT);
     else if (e?.paymentWrite) toast(paymentFailureText(e, e.playerId), 4500);
     else if (deniedMsg && isPermissionDenied(e)) toast(deniedMsg);
-    else toast('No se pudo guardar: ' + (e.code || e.message || e));
+    else toast(writeFailureText(e), 4500);
   });
 }
 /** Un Guardar: los pagos y el saldo, y el recuerdo para poder anularlo entero. */
@@ -2686,6 +2690,20 @@ function bindExternalShortClicks() {
 }
 
 /* Ajustes */
+function usageMeterHtml(doc) {
+  const totals = usageTotals(doc);
+  const rows = [
+    ['Lecturas', totals.reads, 50000],
+    ['Escrituras', totals.writes, 20000],
+    ['Borrados', totals.deletes, 20000],
+  ];
+  const bars = rows.map(([label, used, limit]) => {
+    const level = usageLevel(used, limit);
+    const width = Math.max(0, Math.min(100, limit ? Math.round((used / limit) * 100) : 0));
+    return `<div class="usage-row ${level}"><span>${esc(label)}</span><div class="usage-bar"><i style="width:${width}%"></i></div></div>`;
+  }).join('');
+  return `<section id="usage-meter"><p class="hint">Estimación. Cada teléfono suma lo que contó hoy; puede ir unos minutos atrás.</p><p id="usage-line">${esc(usageSummary(doc))}</p>${bars}</section>`;
+}
 function openSettings() {
   if (!app.session?.user) return;
   const demo = app.session?.mode !== 'firebase';
@@ -2693,6 +2711,7 @@ function openSettings() {
     <h3>Ajustes</h3>
     ${demo ? '<p class="hint">Modo demo: los datos se guardan solo en este dispositivo.</p>' : ''}
     <p class="hint" id="set-who">Entraste como ${esc(app.who || '—')} · ${app.role === 'admin' ? 'administrador' : 'organizador'}.</p>
+    ${app.role === 'admin' ? usageMeterHtml(app.usage) : ''}
     <form id="price-form" novalidate>
       <p class="hint">Precios. Los ven todos al toque.</p>
       ${app.pricesError ? `<p class="hint">${esc(app.pricesError)}</p>` : ''}
@@ -7418,6 +7437,11 @@ async function boot() {
     app.creditsReady = view.creditsReady === true;
     app.playersReady = view.playersReady === true;
     app.compensations = mergeHeldCompensations(view.compensations || []);
+    app.usage = view.usage || null;
+    if (app.role === 'admin' && $('#usage-meter')) {
+      const next = usageMeterHtml(app.usage);
+      $('#usage-meter').outerHTML = next;
+    }
     app.log = view.log || [];
     app.logError = view.logError || '';
     if (rosterError && rosterError !== app.rosterError) showError(rosterError);

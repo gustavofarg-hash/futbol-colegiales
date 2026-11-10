@@ -5,6 +5,7 @@ import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/par
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById } from '../js/store.js';
+import { RECENT_LISTEN_DAYS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
 import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
@@ -3569,7 +3570,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v136');
+  assert.equal(version, 'f7c-v137');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4133,4 +4134,47 @@ test('te correspondió: solo el total, partes iguales o lo que anotó', () => {
     name: 'Gustavo',
   });
   assert.equal(month.get('2026-11'), solo + equal + signed);
+});
+
+test('al abrir no se reescriben los contadores y el límite diario se avisa', async () => {
+  assert.deepEqual(playerCountSweep(), []);
+  assert.equal(RECENT_LISTEN_DAYS, 120);
+  assert.equal(recentCutoff('2026-11-10'), '2026-07-13');
+  assert.equal(writeFailureText({ code: 'resource-exhausted' }), 'No se pudo guardar: se alcanzó el límite diario de Firebase');
+  assert.equal(writeFailureText({ code: 'permission-denied' }), 'No se pudo guardar: Firebase rechazó el permiso');
+  const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
+  const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  assert.equal(store.includes('_reconcilePlayerCounts'), false);
+  assert.equal(store.includes("where(field, '>=', cutoff)"), true);
+  assert.match(app, /return Promise\.resolve\(p\)\.then/);
+  assert.match(app, /writeFailureText\(e\)/);
+  assert.equal(quotaDay(new Date('2026-11-10T04:30:00-03:00')), '2026-11-09');
+  assert.equal(quotaDay(new Date('2026-11-10T05:30:00-03:00')), '2026-11-10');
+  assert.equal(usageLevel(35000, 50000), 'warn');
+  assert.equal(usageLevel(45000, 50000), 'hot');
+  assert.equal(usageLevel(1000, 50000), 'ok');
+  assert.match(usageSummary({ reads: 1200, writes: 40, deletes: 2 }), /Hoy \(se renueva a las 05:00\): 1\.200 lecturas de 50\.000 · 40 escrituras de 20\.000 · 2 borrados de 20\.000/);
+  const meter = new UsageMeter();
+  const fake = {
+    onSnapshot: (_ref, next) => { next({ metadata: { fromCache: true }, docChanges: () => [{}, {}] }); return () => {}; },
+    getDocs: async () => ({ metadata: { fromCache: false }, docChanges: () => [1, 2, 3, 4] }),
+    getDoc: async () => ({ exists: () => false, metadata: { fromCache: false } }),
+    setDoc: async () => {},
+    updateDoc: async () => {},
+    addDoc: async () => {},
+    deleteDoc: async () => {},
+    writeBatch: () => ({ set() {}, update() {}, delete() {}, async commit() {} }),
+  };
+  const wrapped = meterFirestore(fake, meter);
+  wrapped.onSnapshot({}, () => {});
+  assert.equal(meter.pending.reads, 0);
+  await wrapped.getDocs({});
+  assert.equal(meter.pending.reads, 4);
+  await wrapped.setDoc({ path: 'usage/2026-11-10' }, {});
+  await wrapped.setDoc({ path: 'matches/x' }, {});
+  assert.equal(meter.pending.writes, 1);
+  const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
+  assert.match(rules, /match \/usage\/\{day\}/);
+  assert.match(rules, /allow read: if isAdmin\(\);/);
+  assert.match(rules, /allow create, update: if signedIn\(\)/);
 });
