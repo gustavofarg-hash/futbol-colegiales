@@ -15,7 +15,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { compensationDoneDates, countedGoals, currentMonthDiaDates, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from '../js/stats.js';
+import { compensationDoneDates, countedGoals, currentMonthDiaDates, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
 import { planRows } from '../js/settle.js';
@@ -3570,7 +3570,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v140');
+  assert.equal(version, 'f7c-v141');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4134,6 +4134,54 @@ test('te correspondió: solo el total, partes iguales o lo que anotó', () => {
     name: 'Gustavo',
   });
   assert.equal(month.get('2026-11'), solo + equal + signed);
+});
+
+test('Jugador cuenta solo lo que se anotó con el organizador logueado', () => {
+  const staff = [
+    { uid: 'gus', name: 'Gustavo', role: 'admin', active: true },
+    { uid: 'mar', name: 'Martín', role: 'organizer', active: true },
+  ];
+  const person = { id: 'luna', name: 'Luna' };
+  const gus = { uid: 'gus', name: 'Gustavo' };
+  const row = (id, matchId, extra) => ({
+    id, matchId, rosterId: 'luna', name: 'Luna', waiting: false,
+    paid: true, split: true, cash: 0, transfer: 0, fromCredit: 0, ...extra,
+  });
+  assert.equal(signupOrganizerUid({ signedUpWith: 'mar', addedByUid: 'gus' }), 'mar');
+  assert.equal(signupOrganizerUid({ addedByUid: 'gus' }), 'gus');
+  const matches = [
+    { id: 'solo', date: '2026-10-09', adders: ['gus'], splitMode: 'equal' },
+    { id: 'eq', date: '2026-10-08', adders: ['*'], splitMode: 'equal' },
+    { id: 'sig', date: '2026-11-03', adders: ['*'], splitMode: 'signed' },
+    { id: 'wait', date: '2026-11-03', adders: ['*'], splitMode: 'signed' },
+    { id: 'off', date: '2026-12-01', adders: ['gus'], splitMode: 'equal', cancelled: true },
+    { id: 'hidden', date: '2026-12-02', adders: ['gus'], splitMode: 'equal' },
+  ];
+  const players = [
+    row('a', 'solo', { cash: 5000, cashTo: 'Gustavo', addedByUid: 'gus' }),
+    row('b', 'eq', { cash: 8000, cashTo: 'Gustavo', signedUpWith: 'gus', signedUpWithName: 'Gustavo' }),
+    row('c', 'eq', { cash: 9000, cashTo: 'Martín', signedUpWith: 'mar', signedUpWithName: 'Martín', addedByUid: 'gus' }),
+    row('d', 'sig', { cash: 6000, cashTo: 'Martín', signedUpWith: 'gus', signedUpWithName: 'Gustavo' }),
+    row('e', 'wait', { cash: 1000, waiting: true, signedUpWith: 'gus', signedUpWithName: 'Gustavo' }),
+    row('f', 'off', { cash: 7000, signedUpWith: 'gus', signedUpWithName: 'Gustavo' }),
+    row('g', 'hidden', { cash: 3000, signedUpWith: 'gus', signedUpWithName: 'Gustavo' }),
+    row('h', 'eq', { cash: 100.01, cashTo: 'Gustavo', signedUpWith: 'gus', signedUpWithName: 'Gustavo', rosterId: 'otra', name: 'Otra' }),
+  ];
+  const visible = matches.filter((match) => match.id !== 'hidden');
+  const months = playerOrganizerMonths({ person, players, matches: visible, staff, who: gus });
+  assert.deepEqual(months.map((item) => item.key), ['2026-11', '2026-10']);
+  const nov = months.find((item) => item.key === '2026-11');
+  const oct = months.find((item) => item.key === '2026-10');
+  assert.equal(nov.matches, 1);
+  assert.equal(nov.paid, 6000);
+  assert.equal(oct.matches, 2);
+  assert.equal(oct.paid, 5000 + 4000);
+  assert.equal(oct.label, 'Oct 2026');
+  const cents = playerOrganizerMonths({
+    person: { id: 'otra', name: 'Otra' },
+    players, matches: visible, staff, who: gus,
+  });
+  assert.equal(cents[0].paid, 50.01);
 });
 
 test('Día lista el mes en curso hasta el último cálculo guardado', () => {

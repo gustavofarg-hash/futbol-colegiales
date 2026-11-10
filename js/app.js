@@ -23,10 +23,10 @@ import { activityNoticeText, activityNotices } from './notify.js';
 import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
-import { UNSPECIFIED, organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
+import { organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
-import { amountOwed, hasUnspecified, mineSummary, organizerMatchDebt, owesOrganizer, paymentLedger, playerDebt, signupLedger } from './ledger.js';
-import { compensationDoneDates, countedGoals, currentMonthDiaDates, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets } from './stats.js';
+import { amountOwed, mineSummary, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
+import { compensationDoneDates, currentMonthDiaDates, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets, playerOrganizerMonths } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v140';
+const APP_VERSION = 'f7c-v141';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -126,7 +126,6 @@ const app = {
   users: [],
   role: '',
   session: null,
-  payFilter: '',
   signupDraft: null,
   who: '',
   loaded: false,
@@ -846,31 +845,6 @@ function overpayText(rows) {
 function promoBadge(player) {
   const promo = promoOf(player);
   return promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : '';
-}
-function payFilterChips(person) {
-  const names = payOrganizerNames();
-  const showBlank = hasUnspecified({
-    players: app.players,
-    phone: person?.phone || null,
-    rosterId: person?.id || null,
-    name: person?.name || null,
-  });
-  const items = [{ value: '', label: 'Todos' }, ...names.map((name) => ({ value: name, label: name }))];
-  if (showBlank) items.push({ value: UNSPECIFIED, label: UNSPECIFIED });
-  return `<div class="chips" id="pay-filter">${items.map((item) => `<button type="button" class="btn chip ${app.payFilter === item.value ? 'on' : ''}" data-pay-filter="${esc(item.value)}">${esc(item.label)}</button>`).join('')}</div>`;
-}
-function bindPayFilter(root) {
-  const box = $('#pay-filter', root || document);
-  if (!box) return;
-  box.onclick = (e) => {
-    const btn = e.target.closest('[data-pay-filter]');
-    if (!btn || btn.dataset.payFilter === app.payFilter) return;
-    app.payFilter = btn.dataset.payFilter || '';
-    render();
-  };
-}
-function timesLabel(count) {
-  return `${count} ${count === 1 ? 'vez' : 'veces'}`;
 }
 function sortedMatches() {
   return [...app.matches].sort((a, b) => (a.startsAt ?? toEpoch(a.date, a.time)) - (b.startsAt ?? toEpoch(b.date, b.time)));
@@ -3697,58 +3671,6 @@ function profileMoney(person) {
     ${panel.statsButton}` };
 }
 
-function ledgerSection(person) {
-  const organizer = app.payFilter || null;
-  const who = rosterIdentity(person);
-  const money = paymentLedger({ ...who, players: app.players, matches: app.matches, organizer, credits: app.credits, creditKeys: creditKeysOf(null, person) });
-  const signups = signupLedger({ ...who, players: app.players, organizer });
-  const parts = { cash: 0, transfer: 0, pending: 0 };
-  const shareOk = (name) => {
-    const label = String(name || '').trim() || UNSPECIFIED;
-    if (!organizer) return true;
-    if (organizer === UNSPECIFIED) return label === UNSPECIFIED;
-    return sameOrganizer(label, organizer);
-  };
-  for (const player of app.players) {
-    if (!playerMatchesPerson(player, person)) continue;
-    for (const share of paymentShares(player)) {
-      if (!shareOk(share.name)) continue;
-      if (share.kind === 'pending') parts.pending += share.amount;
-      else if (share.kind === 'cash') parts.cash += share.amount;
-      else if (share.kind === 'transfer') parts.transfer += share.amount;
-    }
-  }
-  const partBits = [];
-  if (parts.cash > 0) partBits.push(`Efectivo ${formatARS(parts.cash)}`);
-  if (parts.transfer > 0) partBits.push(`Transferencia ${formatARS(parts.transfer)}`);
-  const partsLine = partBits.length ? `<p class="hint" id="ledger-parts">${esc(partBits.join(' · '))}</p>` : '';
-  const pendingLine = parts.pending > 0
-    ? `<p class="pay-pending" id="ledger-pending">Transfiere después ${esc(formatARS(parts.pending))}</p>`
-    : '';
-  const months = money.months.length
-    ? `<ul class="ledger-list" id="ledger-months">${money.months.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>`
-    : '<p class="hint" id="ledger-months">Sin pagos en este filtro.</p>';
-  const by = money.byOrganizer.length
-    ? `<ul class="ledger-list" id="ledger-by">${money.byOrganizer.map((row) => `<li>${esc(row.name)}: ${esc(formatARS(row.amount))}</li>`).join('')}</ul>`
-    : '<p class="hint" id="ledger-by">Nadie cobró en este filtro.</p>';
-  const signed = signups.byOrganizer.length
-    ? `<ul class="ledger-list" id="ledger-signups">${signups.byOrganizer.map((row) => `<li>Anotó ${esc(row.name)}: ${timesLabel(row.count)}</li>`).join('')}</ul>`
-    : '<p class="hint" id="ledger-signups">Sin anotaciones en este filtro.</p>';
-  return `
-    <section class="profile-block" id="ledger">
-      <h2>Pagos</h2>
-      ${payFilterChips(person)}
-      <p class="stat-summary" id="ledger-total">${esc(money.totalText)}</p>
-      ${partsLine}
-      ${pendingLine}
-      ${months}
-      <h2>Por organizador</h2>
-      ${by}
-      <h2>Anotado por</h2>
-      ${signed}
-    </section>`;
-}
-
 const STATS_MODES = [
   { id: 'jugador', label: 'Jugador' },
   { id: 'dia', label: 'Día' },
@@ -3782,71 +3704,71 @@ function takeSummary(take) {
 
 function renderStats(r) {
   const mode = STATS_MODES.some((item) => item.id === r.mode) ? r.mode : 'jugador';
+  const prev = $('#stats-q');
+  const searchFocused = !!(prev && document.activeElement === prev);
+  const selStart = searchFocused ? prev.selectionStart : 0;
+  const selEnd = searchFocused ? prev.selectionEnd : 0;
   const seg = `<div class="seg stats-seg" id="stats-mode">${STATS_MODES.map((item) => `<a class="btn ${item.id === mode ? 'primary' : ''}" href="${statsHash(item.id)}"${item.id === mode ? ' aria-current="page"' : ''}>${item.label}</a>`).join('')}</div>`;
   let body = '';
   if (mode === 'jugador') body = statsPlayerBody(r.id);
   else if (mode === 'dia') body = statsDayBody(r.id);
   else body = statsPeriodBody(mode === 'anio' ? 'year' : 'month', r.id);
   if (!replaceView(`<div id="stats-view">${seg}${body}</div>`)) return;
-  bindPayFilter($('#stats-view'));
+  const input = $('#stats-q');
+  if (input) {
+    input.addEventListener('input', () => render());
+    if (searchFocused) {
+      input.focus({ preventScroll: true });
+      try { input.setSelectionRange(selStart, selEnd); } catch { /* el navegador puede rechazar el rango */ }
+    }
+  }
+}
+
+function statsRosterPerson(id) {
+  const person = (app.roster || []).find((row) => row.id === id);
+  if (!person) return null;
+  if (rosterHeldBy(person, staffActor())) return person;
+  const visible = new Set(knownMatches().map((match) => match.id));
+  const seen = (app.players || []).some((player) => playerMatchesPerson(player, person) && visible.has(player.matchId));
+  return seen ? person : null;
 }
 
 function statsPlayerBody(id) {
-  const mine = rosterForOrganizer(app.roster, staffActor())
-    .slice()
-    .sort((a, b) => foldText(a.name).localeCompare(foldText(b.name), 'es') || String(a.id).localeCompare(String(b.id)));
-  if (!id) {
-    const rows = mine.map((person) => `<li class="slot"><a class="who" href="${statsHash('jugador', person.id)}"><div class="name${suspendedClass(person)}">${esc(person.name)}</div></a></li>`).join('');
-    return `<h2 class="section">Por jugador</h2><p class="hint">Solo los jugadores de tu agenda.</p><ul class="slots" id="stats-players">${rows || '<li class="empty-wait">No hay jugadores en tu agenda.</li>'}</ul>`;
+  const q = $('#stats-q')?.value || '';
+  const mine = rosterForOrganizer(app.roster, staffActor());
+  const people = searchRoster(mine, q);
+  const person = id ? statsRosterPerson(id) : null;
+  const rows = people.map((item) => `<li class="slot"><a class="who" href="${statsHash('jugador', item.id)}"${item.id === id ? ' aria-current="true"' : ''}><div class="name${suspendedClass(item)}">${esc(item.name)}</div></a></li>`).join('');
+  const list = people.length
+    ? `<ul class="slots" id="stats-players">${rows}</ul>`
+    : `<p class="empty-wait" id="stats-players">${q ? 'Nadie coincide con esa búsqueda.' : 'No hay jugadores en tu agenda.'}</p>`;
+  const missing = id && !person
+    ? `<div class="empty" id="stats-missing"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p></div>`
+    : '';
+  let months = '';
+  if (person) {
+    const me = actor();
+    const built = playerOrganizerMonths({
+      person,
+      players: app.players,
+      matches: knownMatches(),
+      staff: staffUsers(app.users),
+      who: { uid: me.uid, name: me.name },
+    });
+    const monthRows = built.map((row) => {
+      const count = `${row.matches} ${row.matches === 1 ? 'partido' : 'partidos'}`;
+      return `<li class="slot" data-month="${esc(row.key)}"><div class="who"><div class="name">${esc(row.label)}</div><div class="sub"><span>${count}</span><span>${esc(formatARS(row.paid))}</span></div></div></li>`;
+    }).join('');
+    months = `
+      <h2 class="section${suspendedClass(person)}" id="stats-player">${esc(person.name)}</h2>
+      <ul class="slots" id="stats-months">${monthRows || '<li class="empty-wait">No se anotó con vos.</li>'}</ul>`;
   }
-  const person = app.roster.find((row) => row.id === id);
-  if (!person) {
-    return `<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p><a class="btn" href="${statsHash('jugador')}">Volver a la lista</a></p></div>`;
-  }
-  const who = rosterIdentity(person);
-  const matches = knownMatches();
-  const played = playerStats({ ...who, players: app.players, matches });
-  const record = playerRecord({ ...who, players: app.players, matches });
-  const appearances = app.players.filter((player) => playerMatchesPerson(player, person));
-  const goals = countedGoals(appearances);
-  const main = appearances.filter((player) => player.waiting !== true).length;
-  const waiting = appearances.length - main;
-  const noShows = appearances.filter((player) => player.confirmed === 'no').length;
-  const debt = playerDebt({ person, players: app.players, matches, prices: livePrices(), organizer: staffActor() });
-  let creditHtml = '';
-  try {
-    const mine = staffActor();
-    const rows = creditPanelRows(app.credits, creditKeysOf(null, person), mine)
-      .filter((row) => !mine.uid || row.organizerUid === mine.uid);
-    creditHtml = rows.filter((row) => row.amount > 0).map((row) => `<p class="credit-total">${esc(creditAvailableLine(row))}</p>`).join('');
-  } catch (error) { console.error(error); }
-  const inMine = mine.some((row) => row.id === person.id);
-  const notes = sortedNotes((app.rosterNotes && app.rosterNotes[person.id]) || []);
-  const notesHtml = notes.length
-    ? notes.map((note) => `<article class="pnote"><div class="when">${esc(noteWhen(note, matches) || 'Partido')}</div><p>${esc(note.text)}</p></article>`).join('')
-    : '<p class="empty-wait">Sin notas.</p>';
-  const playedText = played.played ? `Jugó ${played.played} ${played.played === 1 ? 'vez' : 'veces'}` : 'Todavía no jugó';
   return `
-    <p class="hint"><a href="${statsHash('jugador')}">Todos los jugadores</a></p>
-    <h2 class="section${suspendedClass(person)}" id="stats-player">${esc(person.name)}</h2>
-    ${inMine ? '' : '<p class="hint">No está en tu agenda. Los números salen de los partidos que podés ver.</p>'}
-    <section class="profile-block">
-      <h2>Partidos</h2>
-      <p class="stat-summary" id="stats-played">${esc(playedText)}</p>
-      <p class="hint" id="stats-attendance">En la lista: ${main} · En espera: ${waiting} · No juega: ${noShows}</p>
-      <p class="hint" id="stats-goals">${goals.tracked ? `Goles: ${goals.goals}` : 'Sin goles cargados'}</p>
-      ${record.confirmText ? `<p class="hint">${esc(record.confirmText)}</p>` : ''}
-    </section>
-    <section class="profile-block" id="stats-balance">
-      <h2>Deuda y crédito</h2>
-      ${creditHtml || `<p class="hint">${esc(staffActor().name ? `Sin crédito con ${staffActor().name}.` : 'Sin crédito.')}</p>`}
-      ${debt.total > 0 ? `<p class="debt-total">${esc(debt.text)}</p><ul class="ledger-list">${debt.rows.map((row) => `<li>${esc(row.text)}</li>`).join('')}</ul>` : '<p class="hint">Sin deuda.</p>'}
-    </section>
-    <section class="profile-block" id="stats-notes">
-      <h2>Notas de partido</h2>
-      ${notesHtml}
-    </section>
-    ${ledgerSection(person)}`;
+    <h2 class="section">Por jugador</h2>
+    <label class="field roster-search"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
+    ${missing}
+    ${months}
+    ${list}`;
 }
 
 function dayShare(date, dayMatches) {
