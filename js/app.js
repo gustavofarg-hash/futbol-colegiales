@@ -45,7 +45,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v133';
+const APP_VERSION = 'f7c-v134';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1067,6 +1067,7 @@ function render() {
   paintTabs(r);
   if (r.name !== 'profile') app.signupDraft = null;
   if (!app.loaded) return;
+  claimReveal();
   if (r.name === 'match') renderMatch(r.id);
   else if (r.name === 'teams') renderTeams(r.id);
   else if (r.name === 'history') renderHistory();
@@ -1079,7 +1080,8 @@ function render() {
   paintActivity();
   requestAnimationFrame(placeBars);
   if (app.revealPlayerId) settleRevealedPlayer();
-  if (same && y > 0) {
+  const revealingHere = !!(app.revealPlayerId && addedPlayerRow(app.revealPlayerId));
+  if (same && y > 0 && !revealingHere) {
     const top = y;
     requestAnimationFrame(() => {
       if (app.revealPlayerId) return;
@@ -1091,7 +1093,35 @@ function render() {
 function addedPlayerRow(id) {
   const safe = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(String(id || '')) : String(id || '');
   if (!safe) return null;
-  return document.querySelector(`#slots [data-player="${safe}"]`) || document.querySelector(`#wait-list [data-player="${safe}"]`);
+  return document.querySelector(`#view [data-player="${safe}"]`);
+}
+
+// En producción el alta escribe varios documentos. El snapshot pinta la fila
+// antes de que addPlayer termine, a veces en el medio o en la espera, y un
+// snapshot posterior reemplaza el DOM. Se marca el partido antes de escribir
+// y se sigue la fila nueva en cada redibujado.
+function startReveal(matchId) {
+  app.revealWatch = {
+    matchId,
+    before: new Set((app.players || []).filter((p) => p.matchId === matchId).map((p) => p.id)),
+    until: Date.now() + 8000,
+  };
+  app.revealPlayerId = '';
+}
+function claimReveal() {
+  const watch = app.revealWatch;
+  if (!watch) return;
+  if (Date.now() > watch.until) {
+    app.revealWatch = null;
+    app.revealPlayerId = '';
+    return;
+  }
+  if (app.revealPlayerId && (app.players || []).some((p) => p.id === app.revealPlayerId)) return;
+  const added = (app.players || []).filter((p) => p.matchId === watch.matchId && !watch.before.has(p.id));
+  const host = added.find((p) => !p.invitedBy) || added[0];
+  if (!host?.id) return;
+  app.revealPlayerId = host.id;
+  armRevealWatch(host.id);
 }
 
 /** Cuánto hay que mover el scroll para que la fila se vea entera, entre el encabezado y la barra de abajo. */
@@ -1104,7 +1134,8 @@ function revealScrollDelta(row) {
   const actionTop = document.querySelector('#view .actionbar')?.getBoundingClientRect().top;
   const bottomLimit = Math.min(actionTop > topLimit ? actionTop : viewBottom, viewBottom) - 8;
   const box = row.getBoundingClientRect();
-  if (box.height <= 0 || bottomLimit <= topLimit) return 0;
+  if (box.height <= 0) return 0;
+  if (!(bottomLimit > topLimit)) bottomLimit = viewBottom - 8;
   if (box.height > bottomLimit - topLimit) return box.top - topLimit;
   if (box.bottom > bottomLimit) return box.bottom - bottomLimit;
   if (box.top < topLimit) return box.top - topLimit;
@@ -1138,7 +1169,7 @@ function settleRevealedPlayer() {
 function armRevealWatch(id) {
   clearTimeout(app.revealTimer);
   (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
-  const kicks = [60, 180, 400, 700, 1100, 1500];
+  const kicks = [60, 180, 400, 700, 1100, 1600, 2200, 3000, 4000, 5200, 6500, 7800];
   app.revealKicks = kicks.map((ms) => setTimeout(() => {
     if (app.revealPlayerId === id) settleRevealedPlayer();
   }, ms));
@@ -1146,7 +1177,8 @@ function armRevealWatch(id) {
     (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
     app.revealKicks = [];
     if (app.revealPlayerId === id) app.revealPlayerId = '';
-  }, 2600);
+    if (app.revealWatch?.matchId) app.revealWatch = null;
+  }, 8000);
 }
 
 function watchRevealViewport() {
@@ -1877,7 +1909,7 @@ function renderMatch(id) {
     if (!p) {
       slots.push(readOnly || block
         ? `<li><div class="slot free"><span class="n">${i + 1}</span><span>Lugar libre</span></div></li>`
-        : `<li><button class="slot free" data-free="${i}"><span class="n">${i + 1}</span><span>Lugar libre · tocá para anotar</span></button></li>`);
+        : `<li><button type="button" class="slot free" data-free="${i}"><span class="n">${i + 1}</span><span>Lugar libre · tocá para anotar</span></button></li>`);
       continue;
     }
     const payText = paymentStatusText(p);
@@ -1946,16 +1978,24 @@ function renderMatch(id) {
     ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
     ${showMatchCompensation(m) ? matchCompensationHtml(m.date) : ''}
     <div class="actionbar"><div class="actionbar-inner match-actions">
-      <button class="btn share-btn" id="btn-share" aria-label="Compartir lista">${ICON.share}</button>
-      ${readOnly ? '' : `<button class="btn add-choice" id="btn-add-wait" ${block ? 'disabled' : ''}>${block ? esc(block) : 'Anotar en lista de espera'}</button>
-      <button class="btn primary add-choice" id="btn-add-player" ${block ? 'disabled' : ''}>${block ? esc(block) : `${ICON.plus}Agregar jugador`}</button>`}
+      <button type="button" class="btn share-btn" id="btn-share" aria-label="Compartir lista">${ICON.share}</button>
+      ${readOnly ? '' : `<button type="button" class="btn add-choice" id="btn-add-wait" ${block ? 'disabled' : ''}>${block ? esc(block) : 'Anotar en lista de espera'}</button>
+      <button type="button" class="btn primary add-choice" id="btn-add-player" ${block ? 'disabled' : ''}>${block ? esc(block) : `${ICON.plus}Agregar jugador`}</button>`}
     </div></div>`)) return;
 
   if ($('#btn-remind')) $('#btn-remind').onclick = () => openReminders(m);
   bindReminderBanners();
   bindCompensation($('#view'));
-  if ($('#btn-add-player')) $('#btn-add-player').onclick = () => { if (!block) openPlayerForm(m); };
-  if ($('#btn-add-wait')) $('#btn-add-wait').onclick = () => { if (!block) openPlayerForm(m, null, { waiting: true }); };
+  if ($('#btn-add-player')) $('#btn-add-player').onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!block) openAddPlayer(m);
+  };
+  if ($('#btn-add-wait')) $('#btn-add-wait').onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!block) openAddPlayer(m, { waiting: true });
+  };
   const onRow = (e) => {
     const spot = e.target.closest('[data-confirm-spot]');
     if (spot) {
@@ -1968,6 +2008,7 @@ function renderMatch(id) {
   };
   const noPlayList = $('#no-play-list');
   if (noPlayList) noPlayList.onclick = (e) => {
+    if (claimActionBarTap(e, m)) return;
     const back = e.target.closest('[data-no-play-back]');
     if (back) return restoreNoPlay(m, app.players.find((p) => p.id === back.dataset.noPlayBack));
     const menu = e.target.closest('[data-menu]');
@@ -1976,6 +2017,7 @@ function renderMatch(id) {
     if (whoBtn) return openPlayerProfile(app.players.find((p) => p.id === whoBtn.dataset.profile), m.id);
   };
   $('#wait-list').onclick = (e) => {
+    if (claimActionBarTap(e, m)) return;
     onRow(e);
     const up = e.target.closest('[data-wait-up]');
     if (up) return moveWait(m.id, up.dataset.waitUp, -1, up.disabled);
@@ -1987,11 +2029,12 @@ function renderMatch(id) {
     if (who) return openPlayerProfile(app.players.find((p) => p.id === who.dataset.profile), m.id);
   };
   $('#slots').onclick = (e) => {
+    if (claimActionBarTap(e, m)) return;
     onRow(e);
     const pay = e.target.closest('[data-pay]');
     if (pay) return openPaymentForm(m, app.players.find((p) => p.id === pay.dataset.pay));
     const free = e.target.closest('[data-free]');
-    if (free) return openPlayerForm(m);
+    if (free) return openAddPlayer(m);
     const menu = e.target.closest('[data-menu]');
     if (menu) return openPlayerMenu(m, app.players.find((p) => p.id === menu.dataset.menu));
     const who = e.target.closest('[data-profile]');
@@ -2422,14 +2465,28 @@ function shareRosterId(player) {
 function playerShareButton(id) {
   return `<button type="button" class="icon-btn player-share" id="${id}" aria-label="Copiar enlace">${ICON.shareNodes}</button>`;
 }
+const playerShortJobs = new Map();
+function resolvePlayerShort(longUrl) {
+  const pending = playerShortJobs.get(longUrl);
+  if (pending) return pending;
+  const job = (async () => {
+    const got = await shortenExternal(longUrl);
+    return got?.shortUrl || '';
+  })();
+  playerShortJobs.set(longUrl, job);
+  job.then((url) => { if (!url) playerShortJobs.delete(longUrl); }, () => playerShortJobs.delete(longUrl));
+  return job;
+}
 async function copyPlayerLink(rosterId) {
   const url = playerLink(rosterId);
   if (!url) {
     openSheet(`<h3>Enlace</h3><p>Este jugador todavía no está en Jugadores.</p><div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
     return;
   }
-  if (await copyText(url)) { toast('Enlace copiado'); return; }
-  openSheet(`<h3>Enlace</h3><p class="hint">No se pudo copiar. Seleccioná el enlace.</p><label class="field"><input id="player-link" readonly value="${esc(url)}"></label><div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
+  const short = await resolvePlayerShort(url);
+  const shareUrl = short || url;
+  if (await copyText(shareUrl)) { toast('Enlace copiado'); return; }
+  openSheet(`<h3>Enlace</h3><p class="hint">No se pudo copiar. Seleccioná el enlace.</p><label class="field"><input id="player-link" readonly value="${esc(shareUrl)}"></label><div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
   const input = $('#player-link');
   if (input) input.focus();
 }
@@ -3543,17 +3600,19 @@ const noteId = () => Date.now().toString(36) + Math.random().toString(36).slice(
 app.profileMatchId = null;
 app.wantPhoneForm = false;
 
-async function ensureRoster({ name, phone, rosterId, phoneKey: key, phoneShared }) {
+async function ensureRoster({ name, phone, rosterId, phoneKey: key, phoneShared, strictName = false }) {
   const cleanName = String(name || '').trim();
+  const sameName = (person) => foldText(person?.name) === foldText(cleanName);
   if (rosterId && app.roster.some((person) => person.id === rosterId)) return rosterId;
   const wa = canonicalPhone(phone);
   const ident = key || (wa ? phoneIdentity({ phone: wa }) : '');
   if (wa) {
-    const found = rosterByPhone(app.roster, wa);
-    if (found) return found.id;
+    const found = app.roster.find((person) => rosterByPhone([person], wa));
+    if (found && (!strictName || sameName(found))) return found.id;
+    if (found && strictName) return app.store.addRoster({ name: cleanName }, app.who);
   }
   if (ident) {
-    const found = rosterByIdentity(app.roster, ident);
+    const found = app.roster.find((person) => phoneIdentity(person) === ident && (!strictName || sameName(person)));
     if (found) return found.id;
     if (!wa) return rosterId || '';
   } else if (cleanName && !isAutoGuestName(cleanName)) {
@@ -4386,8 +4445,8 @@ function openNoteForm(person, note, player) {
   };
 }
 
-async function linkedRosterId({ name, phone, rosterId, phoneKey: key, phoneShared }) {
-  try { return await ensureRoster({ name, phone, rosterId, phoneKey: key || (phone ? phoneIdentity({ phone }) : ''), phoneShared }); }
+async function linkedRosterId({ name, phone, rosterId, phoneKey: key, phoneShared, strictName = false }) {
+  try { return await ensureRoster({ name, phone, rosterId, phoneKey: key || (phone ? phoneIdentity({ phone }) : ''), phoneShared, strictName }); }
   catch (error) {
     if (error?.code === 'roster-duplicate') return rosterByPhone(app.roster, phone)?.id || rosterByIdentity(app.roster, phoneIdentity({ phone }))?.id || rosterId || '';
     if (isRosterDenied(error)) showError(`${ROSTER_DENIED_WRITE} El partido igual quedó anotado.`);
@@ -4506,12 +4565,14 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], opts
     : (place.wait && place.main ? `${lead} anotado · ${place.wait} en espera` : place.main ? `${lead} anotado` : `${lead} quedó en la lista de espera`);
   closeSheet();
   run((async () => {
+    if (opts.reveal === true) startReveal(m.id);
     let hostId = host?.id || '';
     let hostName = host?.name || '';
     let offset = 0;
     if (!host?.id) {
-      const id = await linkedRosterId({ name: host.name, phone: host.phone, rosterId: host.rosterId, phoneKey: host.phoneKey, phoneShared: share && !known });
+      const id = await linkedRosterId({ name: host.name, phone: host.phone, rosterId: host.rosterId, phoneKey: host.phoneKey, phoneShared: share && !known, strictName: !host.rosterId });
       let saved = id ? app.roster.find((person) => person.id === id) : null;
+      if (saved && foldText(saved.name) !== foldText(host.name)) saved = null;
       if (share && saved && saved.phoneShared !== true && saved.phoneOwnerUid === actor().uid) {
         try { await app.store.setPhoneShared({ rosterId: id }, true); } catch { /* el dueño lo cambia desde el perfil */ }
         saved = app.roster.find((person) => person.id === id) || saved;
@@ -4684,7 +4745,39 @@ function rosterAlreadySaved(name, phone) {
   return app.roster.find((person) => !phoneIdentity(person) && foldText(person.name) === clean) || null;
 }
 
+function tapLandsOnActionBar(event) {
+  const bar = document.querySelector('#view .actionbar');
+  if (!bar || !event) return false;
+  const target = event.target;
+  if (target && target.nodeType === 1 && bar.contains(target)) return true;
+  const x = Number(event.clientX);
+  const y = Number(event.clientY);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || (x === 0 && y === 0)) return false;
+  const rect = bar.getBoundingClientRect();
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+/** El toque cayó en la barra fija. No abre al jugador que quedó debajo. */
+function claimActionBarTap(event, match) {
+  if (!tapLandsOnActionBar(event)) return false;
+  const x = Number(event.clientX);
+  const y = Number(event.clientY);
+  const stack = Number.isFinite(x) && Number.isFinite(y) && document.elementsFromPoint
+    ? document.elementsFromPoint(x, y)
+    : [];
+  if (!addBlock(match)) {
+    if (stack.some((el) => el.id === 'btn-add-player')) openAddPlayer(match);
+    else if (stack.some((el) => el.id === 'btn-add-wait')) openAddPlayer(match, { waiting: true });
+  }
+  return true;
+}
+
+function openAddPlayer(match, { waiting = false } = {}) {
+  openPlayerForm(match, null, { add: true, waiting: waiting === true });
+}
+
 function openPlayerForm(m, p, opts = {}) {
+  if (opts.add === true) p = null;
   if (!p) {
     const blocked = addBlock(m);
     if (blocked) { toast(blocked); return; }
@@ -4702,7 +4795,7 @@ function openPlayerForm(m, p, opts = {}) {
   const nickEditable = !!p && canWritePlayer(p, actorWithRole());
   const nickBefore = p ? nickOf(p, app.roster) : '';
   openSheet(`
-    <form id="player-form" novalidate>
+    <form id="player-form" novalidate data-mode="${p ? 'edit' : 'add'}"${p?.id ? ` data-edit-id="${esc(p.id)}"` : ''}>
       <h3>${editingFriend ? 'Editar invitado' : p ? 'Editar jugador' : asWait ? 'Anotar en lista de espera' : 'Agregar jugador'}</h3>
       <div id="player-scroll">
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
@@ -4740,6 +4833,7 @@ function openPlayerForm(m, p, opts = {}) {
     if (save && (canChangeSignup || nickEditable)) save.disabled = false;
     form.onsubmit = (e) => {
       e.preventDefault();
+      if (form.dataset.mode !== 'edit' || !p || form.dataset.editId !== p.id) return;
       const signup = canChangeSignup ? readSignup(form) : {};
       const nick = nickEditable && form.shortName ? cleanShortName(form.shortName.value) : nickBefore;
       const nickChanged = nick !== nickBefore;
@@ -4781,6 +4875,7 @@ function openPlayerForm(m, p, opts = {}) {
         return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${on ? ' on' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${on ? ' aria-pressed="true"' : ''}${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
       }).join('');
     };
+    let pickedPhone = '';
     const selectPerson = (person) => {
       if (!person) return;
       pickedId = person.id;
@@ -4788,8 +4883,10 @@ function openPlayerForm(m, p, opts = {}) {
       queryAtPick = find.value.trim();
       form.dataset.rosterPick = person.id;
       form.name.value = person.name;
+      pickedPhone = '';
       if (form.phone && person.phone && !phoneHidden(person)) {
-        form.phone.value = displayFromWa(person.phone);
+        pickedPhone = displayFromWa(person.phone);
+        form.phone.value = pickedPhone;
         form.phone.dispatchEvent(new Event('input', { bubbles: true }));
       }
       const share = $('#wa-share');
@@ -4810,7 +4907,12 @@ function openPlayerForm(m, p, opts = {}) {
     form.name.addEventListener('input', () => {
       const person = pickedId ? app.roster.find((r) => r.id === pickedId) : null;
       if (person && foldText(person.name) !== foldText(form.name.value)) {
+        if (form.phone && pickedPhone && form.phone.value.trim() === pickedPhone) {
+          form.phone.value = '';
+          form.phone.dispatchEvent(new Event('input', { bubbles: true }));
+        }
         pickedId = '';
+        pickedPhone = '';
         collapseHits = false;
         delete form.dataset.rosterPick;
         paint();
@@ -4868,7 +4970,8 @@ function openPlayerForm(m, p, opts = {}) {
         scrolled: hitsScrolled || (Math.hypot(dx, dy) > 10 && pageScrolled),
       });
       if (dragged) { ignoreClick = true; return; }
-      ignoreClick = false;
+      // El click que sigue al tap no puede elegir otra fila si la lista se movió.
+      ignoreClick = true;
       const person = app.roster.find((row) => row.id === current.id);
       if (person) selectPerson(person);
     };
@@ -4909,6 +5012,7 @@ function openPlayerForm(m, p, opts = {}) {
   if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [] });
   form.onsubmit = async (e) => {
     e.preventDefault();
+    if (form.dataset.mode !== 'edit' || !p || form.dataset.editId !== p.id) p = null;
     const name = form.name.value.trim();
     const phoneRaw = form.phone ? form.phone.value.trim() : null;
     if (!name) { $('#pf-err').textContent = 'Poné el nombre.'; return; }
@@ -5130,8 +5234,15 @@ async function finishAnnul(moves, writes, logs, batchId) {
   return true;
 }
 
-function reopenAfterAnnul(player) {
-  const updated = app.players.find((item) => item.id === player.id) || player;
+function playerWithPayment(player, input) {
+  if (!input) return player;
+  const rec = paymentRecord(input, app.who);
+  if (!rec.ok) return player;
+  return { ...player, ...rec.patch, id: player.id };
+}
+function reopenAfterAnnul(player, input) {
+  const base = app.players.find((item) => item.id === player.id) || player;
+  const updated = playerWithPayment(base, input);
   const matchNow = knownMatches().find((item) => item.id === updated.matchId);
   if ($('#pay-form') && matchNow) openPaymentForm(matchNow, updated);
   else if (matchNow) openPlayerMenu(matchNow, updated);
@@ -5160,7 +5271,7 @@ async function annulRecordedPayment(player, share) {
     }
     const logs = again.payments.flatMap((row) => annulLogLines(row.before, row.after).map((entry) => ({ playerId: row.id, entry })));
     const ok = await finishAnnul(again.credits, again.payments, logs, batch.id);
-    if (ok) reopenAfterAnnul(fresh);
+    if (ok) reopenAfterAnnul(fresh, again.payments.find((row) => row.id === fresh.id)?.input);
     return;
   }
   if (!(await askConfirm('¿Anular este pago?', { danger: true, okText: 'Anular' }))) return;
@@ -5198,7 +5309,7 @@ async function annulRecordedPayment(player, share) {
     });
   }
   const ok = await finishAnnul(moves, [{ id: current.id, input }], logs, '');
-  if (ok) reopenAfterAnnul(current);
+  if (ok) reopenAfterAnnul(current, input);
 }
 
 function snapshotAfterFallback(player, input) {
@@ -5275,9 +5386,8 @@ function openPaymentForm(m, p, opts = {}) {
         <p class="pay-when" id="pay-when">${esc(fmtWhen(m))}</p>
         <p class="pay-name" id="pay-name">${esc(p.name)}</p>
       </div>
-      ${recordedPaymentList(p, 'pay-recorded')}
+      <div id="pay-status"></div>
       <div id="pay-promo">${promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : ''}</div>
-      ${parts.pending > 0 ? pendingTransferReminderRow(m, p, parts.pending) : ''}
       ${receivedNote}
       <label class="checkline" id="free-play-line"><input type="checkbox" id="pay-free" name="freePlay"${isFreePlay(p) ? ' checked' : ''}><span>Juega gratis</span></label>
       <div id="pay-details">
@@ -5319,7 +5429,27 @@ function openPaymentForm(m, p, opts = {}) {
     </form>`);
   sheet.querySelector('.sheet-body')?.classList.add('pay-sheet');
   bindPayDock();
-  bindAnnulList($('#pay-recorded'), p);
+  const paintStatus = (player) => {
+    const slot = $('#pay-status');
+    if (!slot || !player) return;
+    const stored = app.players.find((item) => item.id === player.id);
+    const fresh = stored && (Number(stored.paidUpdatedAt) || 0) > (Number(player.paidUpdatedAt) || 0) ? stored : player;
+    const pending = paymentParts(fresh).pending;
+    slot.innerHTML = `${recordedPaymentList(fresh, 'pay-recorded')}${pending > 0 ? pendingTransferReminderRow(m, fresh, pending) : ''}`;
+    bindAnnulList($('#pay-recorded'), fresh);
+    const receive = $('#btn-receive-pending');
+    if (receive) receive.onclick = () => {
+      const job = Promise.resolve(app.store.markTransferReceived(fresh.id, app.who)).catch((error) => {
+        const fail = error instanceof Error ? error : new Error(String(error?.message || error));
+        fail.playerId = fresh.id;
+        fail.paymentWrite = true;
+        if (error?.code) fail.code = error.code;
+        throw fail;
+      });
+      leave(run(job, 'Transferencia marcada como cobrada'));
+    };
+  };
+  paintStatus(p);
   const form = $('#pay-form');
   const payBack = $('#pay-back');
   if (payBack && back) payBack.onclick = () => back();
@@ -5340,6 +5470,7 @@ function openPaymentForm(m, p, opts = {}) {
   paintPrices();
   app.refreshPaySheet = () => {
     if (!$('#pay-form')) return;
+    paintStatus(p);
     paintSelect(form.cashTo, form.cashTo.value);
     paintSelect(form.transferTo, form.transferTo.value);
     paintSelect(form.pendingTo, form.pendingTo.value);
@@ -5663,17 +5794,6 @@ function openPaymentForm(m, p, opts = {}) {
   }
   paintPromoSplit();
   paintOverpay();
-  const receive = $('#btn-receive-pending');
-  if (receive) receive.onclick = () => {
-    const job = Promise.resolve(app.store.markTransferReceived(p.id, app.who)).catch((error) => {
-      const fail = error instanceof Error ? error : new Error(String(error?.message || error));
-      fail.playerId = p.id;
-      fail.paymentWrite = true;
-      if (error?.code) fail.code = error.code;
-      throw fail;
-    });
-    leave(run(job, 'Transferencia marcada como cobrada'));
-  };
   const freeBox = $('#pay-free');
   const paintFree = () => {
     const on = freeBox?.checked === true;
@@ -7028,7 +7148,7 @@ function openFriendForm(m, host) {
     const also = sameDay.filter((row) => !row.blocked && picked.has(row.match.id));
     // Los nombres salen de este partido; en los otros van los mismos (mismo anfitrión + nombre = misma persona).
     const resolved = resolveFriendNames(rows, friendNamesOf(m.id, host.id));
-    const result = await addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also });
+    const result = await addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also, reveal: true });
     if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#friend-err').textContent = result;
   };
 }
@@ -7173,7 +7293,13 @@ async function boot() {
   $('#brand').onclick = () => { if (!app.session?.user) return; location.hash = '#/'; };
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+      const refresh = () => { reg.update().catch(() => {}); };
+      refresh();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') refresh();
+      });
+    }).catch((e) => console.warn('SW', e));
   }
 
   if (isPlayerDeepLink(location.hash)) {
