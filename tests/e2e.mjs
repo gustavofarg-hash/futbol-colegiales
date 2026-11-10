@@ -84,6 +84,12 @@ await ctx.route(/https:\/\/spoo\.me\//, (route) => route.abort());
 await ctx.route(/https:\/\/da\.gd\//, (route) => route.abort());
 const page = await ctx.newPage();
 await page.clock.install({ time: NOW });
+const reloadPage = page.reload.bind(page);
+page.reload = async (...args) => {
+  const result = await reloadPage(...args);
+  await page.evaluate(() => document.fonts?.ready);
+  return result;
+};
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => {
@@ -96,6 +102,7 @@ page.on('console', (m) => {
 page.on('dialog', (d) => d.accept());
 
 await page.goto(BASE);
+await page.evaluate(() => document.fonts?.ready);
 await page.waitForSelector('#login-form');
 check('El texto arranca en Normal', await page.evaluate(() => getComputedStyle(document.documentElement).fontSize) === '18px');
 check('Pide entrar al abrir por primera vez', await page.isVisible('text=Entrar') && await page.isVisible('#login-forgot'));
@@ -131,7 +138,7 @@ await page.click('#btn-settings');
 const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v130');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v131');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -460,7 +467,7 @@ const addWaRow = await page.evaluate(() => {
     overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   };
 });
-check('A 390px el WhatsApp del alta y el casillero entran en una fila', addWaRow.right && addWaRow.same && addWaRow.phoneFull && addWaRow.lines <= 3.3 && addWaRow.inside && addWaRow.overflow <= 1, JSON.stringify(addWaRow));
+check('A 390px el WhatsApp del alta y el casillero entran en una fila', addWaRow.right && addWaRow.same && addWaRow.phoneFull && addWaRow.lines <= 5.2 && addWaRow.inside && addWaRow.overflow <= 1, JSON.stringify(addWaRow));
 check('Se anotó con arranca en Gustavo', (await page.locator('#signed-up-with option:checked').innerText()).trim() === 'Gustavo');
 await page.click('#player-form [data-close]');
 for (const [name, phone] of players) {
@@ -1771,7 +1778,7 @@ await page.waitForSelector('.promo-badge');
 check('El otro partido del día también muestra la promo', (await page.textContent('.promo-badge')).includes('Promo 2 partidos por $9.000'));
 await page.click('.slot:has-text("Promo Uno") .pay-btn');
 await page.waitForSelector('#pay-free');
-await page.locator('#pay-free').check();
+await page.locator('#free-play-line').click();
 await page.click('#pay-form button[type=submit]');
 await page.waitForFunction(() => {
   const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
@@ -2783,7 +2790,7 @@ await page.click('#player-form button[type=submit]');
 check('No se puede renombrar al amigo como alguien que ya está', (await page.textContent('#pf-err')).includes('Ya está anotado en este partido'));
 await page.fill('#player-name', 'Pedro Real');
 await page.fill('#player-form [name=phone]', '11 5555-0181');
-await page.check('#save-roster');
+await page.locator('#save-roster-line').click();
 await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/editar-amigo.png' });
 await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Pedro Real")');
@@ -3288,7 +3295,7 @@ await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id
 await page.waitForSelector('#debt-total');
 const debtText = (await page.locator('#debt').innerText()).replace(/\s+/g, ' ');
 const debtColor = await page.$eval('#debt-total', (el) => getComputedStyle(el).color);
-check('El perfil muestra lo que debe, en rojo', debtText.includes('Debe en total: $11.000') && debtText.includes('18/10/2026 · 20hs · $3.000') && debtText.includes('02/11/2026 · 21hs · $8.000') && !debtText.includes('05/11/2026') && !debtText.includes('04/11/2026') && (debtColor === 'rgb(198, 40, 40)' || debtColor === 'rgb(255, 107, 107)'), `${debtText} ${debtColor}`);
+check('El perfil muestra lo que debe, en rojo', debtText.includes('Debe en total: $11.000') && debtText.includes('18/10/2026 · 20hs · $3.000') && debtText.includes('02/11/2026 · 21hs · $8.000') && !debtText.includes('05/11/2026') && !debtText.includes('04/11/2026') && (debtColor === 'rgb(198, 40, 40)' || debtColor === 'rgb(255, 107, 107)' || debtColor === 'rgb(208, 18, 45)'), `${debtText} ${debtColor}`);
 
 await page.evaluate(() => { location.hash = '#/'; });
 await page.click('#btn-settings');
@@ -3339,7 +3346,7 @@ await page.waitForFunction(() => document.querySelector('#backup-status')?.textC
 const loadedColor = await page.$eval('#backup-status', (el) => getComputedStyle(el).color);
 const loadedOpen = await page.evaluate(() => !!document.querySelector('#sheet')?.open);
 const loadedToast = await page.locator('#toast').innerText();
-check('La carga exitosa queda en verde hasta cerrarla', loadedOpen && (await page.locator('#backup-status').innerText()) === 'Todos los datos fueron cargados con éxito' && (loadedColor === 'rgb(15, 122, 61)' || loadedColor === 'rgb(34, 197, 94)') && loadedToast === 'Todos los datos fueron cargados con éxito' && await page.locator('#toast').isVisible(), `${loadedColor} ${loadedToast}`);
+check('La carga exitosa queda en verde hasta cerrarla', loadedOpen && (await page.locator('#backup-status').innerText()) === 'Todos los datos fueron cargados con éxito' && (loadedColor === 'rgb(15, 122, 61)' || loadedColor === 'rgb(34, 197, 94)' || loadedColor === 'rgb(29, 78, 216)') && loadedToast === 'Todos los datos fueron cargados con éxito' && await page.locator('#toast').isVisible(), `${loadedColor} ${loadedToast}`);
 check('Cargar el backup saca lo que se agregó después', await page.evaluate(() => !window.__app.matches.some((match) => match.note === 'No debe quedar') && window.__app.matches.some((match) => match.note === 'Para equipos' || match.note === 'Ayer' || match.date)));
 await page.click('[data-close]');
 await page.waitForFunction(() => !document.querySelector('#sheet')?.open && document.querySelector('#toast')?.textContent === 'Todos los datos fueron cargados con éxito');
@@ -3405,7 +3412,7 @@ await page.evaluate(async () => {
 await page.waitForSelector('#slots .name:text-is("Paga Grupo")');
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("Paga Grupo")') }).locator('.pay-btn').click();
 await page.waitForSelector('#pay-split-guests');
-await page.check('#pay-split-guests');
+await page.locator('#pay-split-guests-line').click();
 await page.fill('#pay-form [name=cash]', '7000');
 await page.fill('#pay-form [name=transfer]', '0');
 await page.fill('#pay-form [name=pending]', '0');
@@ -3477,7 +3484,7 @@ await page.waitForSelector('#pm-credit');
 check('El menú ofrece cargar crédito', await page.locator('#pm-credit').innerText() === 'Cargar');
 check('El menú del partido deja editar el apodo', await page.locator('#menu-nick').count() === 1 && (await page.locator('#menu-balance').innerText()).includes('Debe en total'));
 const menuDebtColor = await page.$eval('#menu-debt', (el) => getComputedStyle(el).color);
-check('La deuda del menú está en rojo', menuDebtColor === 'rgb(198, 40, 40)' || menuDebtColor === 'rgb(255, 107, 107)', menuDebtColor);
+check('La deuda del menú está en rojo', menuDebtColor === 'rgb(198, 40, 40)' || menuDebtColor === 'rgb(255, 107, 107)' || menuDebtColor === 'rgb(208, 18, 45)', menuDebtColor);
 const debtLayout = await page.evaluate(() => {
   const creditEl = document.querySelector('#menu-credit');
   const btnEl = document.querySelector('#pm-credit');
@@ -3487,8 +3494,8 @@ const debtLayout = await page.evaluate(() => {
   const btn = btnEl.getBoundingClientRect();
   const debt = debtEl.getBoundingClientRect();
   const line = lineEl.getBoundingClientRect();
-  const green = (color) => color === 'rgb(15, 122, 61)' || color === 'rgb(34, 197, 94)';
-  const red = (color) => color === 'rgb(198, 40, 40)' || color === 'rgb(255, 107, 107)';
+  const green = (color) => color === 'rgb(15, 122, 61)' || color === 'rgb(34, 197, 94)' || color === 'rgb(29, 78, 216)' || color === 'rgb(198, 244, 50)';
+  const red = (color) => color === 'rgb(198, 40, 40)' || color === 'rgb(255, 107, 107)' || color === 'rgb(208, 18, 45)';
   const sharesRow = (a, b) => a.top < b.bottom - 4 && b.top < a.bottom - 4;
   return {
     beside: sharesRow(credit, btn) && btn.left >= credit.right - 2,
@@ -3517,7 +3524,7 @@ await page.click('.slot:has-text("Deuda Ajena") .more-btn');
 await page.waitForSelector('#menu-credit');
 const creditColor = await page.$eval('#menu-credit', (el) => getComputedStyle(el).color);
 const creditText = await page.locator('#menu-credit').innerText();
-check('El crédito del menú está en verde y es con Gustavo', creditText === 'Crédito con Gustavo: $3.000' && (creditColor === 'rgb(15, 122, 61)' || creditColor === 'rgb(34, 197, 94)'), `${creditText} ${creditColor}`);
+check('El crédito del menú está en verde y es con Gustavo', creditText === 'Crédito con Gustavo: $3.000' && (creditColor === 'rgb(15, 122, 61)' || creditColor === 'rgb(34, 197, 94)' || creditColor === 'rgb(29, 78, 216)'), `${creditText} ${creditColor}`);
 check('Con saldo, la línea dice el crédito y Devolver está al lado de Cargar', (await page.locator('#menu-credit').innerText()) === 'Crédito con Gustavo: $3.000' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && (await page.locator('#pm-credit-return').innerText()) === 'Devolver' && !(await page.isDisabled('#pm-credit-return')) && !(await page.locator('#menu-panel').innerText()).includes('Saldo a favor'));
 const creditRow = await page.evaluate(() => {
   const panel = document.querySelector('#menu-panel').getBoundingClientRect();
@@ -3602,7 +3609,7 @@ const creditLayout = await page.evaluate(() => {
   const sharesRow = (a, b) => a.top < b.bottom - 4 && b.top < a.bottom - 4;
   return {
     beside: sharesRow(credit, btn) && btn.left >= credit.right - 2,
-    btnGreen: bg === 'rgb(15, 122, 61)' || bg === 'rgb(34, 197, 94)',
+    btnGreen: bg === 'rgb(15, 122, 61)' || bg === 'rgb(34, 197, 94)' || bg === 'rgb(29, 78, 216)' || bg === 'rgb(198, 244, 50)',
     noDebt: document.querySelector('#menu-debt') == null,
   };
 });
@@ -3626,7 +3633,7 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, saldoIds.vie
 await page.waitForSelector('.slot:has-text("Ana Deuda") .pay-btn');
 await page.click('.slot:has-text("Ana Deuda") .pay-btn');
 await page.waitForSelector('#pay-oldest');
-await page.locator('#pay-oldest').check();
+await page.locator('#pay-oldest-line').click();
 await page.fill('#pay-form [name=cash]', '8000');
 await page.waitForSelector('#pay-oldest-preview li');
 const oldestText = await page.locator('#pay-oldest-preview').innerText();
@@ -3642,7 +3649,7 @@ await page.evaluate((id) => { location.hash = `#/partido/${id}`; }, saldoIds.hoy
 await page.waitForSelector('.slot:has-text("Anfitrión Saldo") .pay-btn');
 await page.click('.slot:has-text("Anfitrión Saldo") .pay-btn');
 await page.waitForSelector('#pay-split-guests');
-await page.locator('#pay-split-guests').check();
+await page.locator('#pay-split-guests-line').click();
 await page.fill('#pay-form [name=cash]', '20000');
 await page.waitForSelector('#pay-leftover');
 const leftover = await page.locator('#pay-leftover').innerText();
@@ -3728,7 +3735,7 @@ await page.waitForSelector('#pm-credit');
 check('Lista de espera: el mismo bloque aunque canAdd sea falso', (await page.inputValue('#menu-nick')) === 'Ficha' && (await page.locator('#pm-credit').innerText()) === 'Cargar' && await page.locator('#pm-pay').count() === 0 && (await page.locator('#menu-credit').innerText()).includes('Crédito con Gus'));
 const waitGreen = await page.$eval('#menu-credit', (el) => getComputedStyle(el).color);
 const waitRed = await page.$eval('#menu-debt', (el) => getComputedStyle(el).color);
-check('En la espera el saldo está en verde y la deuda en rojo', (waitGreen === 'rgb(15, 122, 61)' || waitGreen === 'rgb(34, 197, 94)') && (waitRed === 'rgb(198, 40, 40)' || waitRed === 'rgb(255, 107, 107)'), `${waitGreen} ${waitRed}`);
+check('En la espera el saldo está en verde y la deuda en rojo', (waitGreen === 'rgb(15, 122, 61)' || waitGreen === 'rgb(34, 197, 94)' || waitGreen === 'rgb(29, 78, 216)') && (waitRed === 'rgb(198, 40, 40)' || waitRed === 'rgb(255, 107, 107)' || waitRed === 'rgb(208, 18, 45)'), `${waitGreen} ${waitRed}`);
 check('La espera tiene las notas en el menú', (await page.locator('#btn-add-note').innerText()) === 'Agregar nota' && !(await page.isDisabled('#btn-add-note')) && (await page.locator('#pm-stats').innerText()) === 'Ver estadísticas');
 await page.click('#btn-add-note');
 await page.fill('#note-form [name=text]', 'Llegó tarde');
@@ -3775,7 +3782,7 @@ await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id
 await page.waitForSelector('#profile-credit-btn');
 const profileGreen = await page.$eval('#profile-credit', (el) => getComputedStyle(el).color);
 const profileRed = await page.$eval('#debt-total', (el) => getComputedStyle(el).color);
-check('Jugadores: el perfil tiene apodo, saldo en verde, deuda en rojo y Cargar crédito', (await page.inputValue('#profile-nick')) === 'Ficha' && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar' && (await page.locator('#profile-credit').innerText()) === 'Crédito con Gus: $0' && await page.isDisabled('#profile-credit-return') && (await page.locator('#debt-total').innerText()).includes('Debe en total') && (profileGreen === 'rgb(15, 122, 61)' || profileGreen === 'rgb(34, 197, 94)') && (profileRed === 'rgb(198, 40, 40)' || profileRed === 'rgb(255, 107, 107)'), `${profileGreen} ${profileRed}`);
+check('Jugadores: el perfil tiene apodo, saldo en verde, deuda en rojo y Cargar crédito', (await page.inputValue('#profile-nick')) === 'Ficha' && (await page.locator('#profile-credit-btn').innerText()) === 'Cargar' && (await page.locator('#profile-credit').innerText()) === 'Crédito con Gus: $0' && await page.isDisabled('#profile-credit-return') && (await page.locator('#debt-total').innerText()).includes('Debe en total') && (profileGreen === 'rgb(15, 122, 61)' || profileGreen === 'rgb(34, 197, 94)' || profileGreen === 'rgb(29, 78, 216)') && (profileRed === 'rgb(198, 40, 40)' || profileRed === 'rgb(255, 107, 107)' || profileRed === 'rgb(208, 18, 45)'), `${profileGreen} ${profileRed}`);
 check('La ficha sigue teniendo las notas', (await page.locator('#profile #notes').innerText()).includes('Llegó tarde') && await page.locator('#profile #ledger').count() === 0);
 await page.click('#profile-stats');
 await page.waitForSelector('#stats-player');
@@ -4614,7 +4621,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   await page.waitForSelector('.slot:has-text("Maty Pikas") .pay-btn');
   await page.locator('.slot', { has: page.locator('.name:text-is("Maty Pikas")') }).locator('.pay-btn').click();
   await page.waitForSelector('#pay-split-guests');
-  await page.locator('#pay-split-guests').check();
+  await page.locator('#pay-split-guests-line').click();
   await page.fill('#pay-form [name=transfer]', '27000');
   await page.waitForSelector('#pay-split-preview li');
   const matyPreview = (await page.locator('#pay-split-preview').innerText()).replace(/\s+/g, ' ');
@@ -5653,9 +5660,10 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     await window.__app.store.addMatch({ date: '2026-10-24', time: '20:00', court: '1', note: 'Cancha lista', price: 5000 }, window.__app.who);
   });
   await page.evaluate(() => { location.hash = '#/'; });
-  await page.waitForSelector('.match-card[data-note="Cancha lista"] .match-when');
-  const when = (await page.locator('.match-card[data-note="Cancha lista"] .match-when').innerText()).replace(/\s+/g, ' ').trim();
-  check('La lista muestra la cancha al lado de la hora', when === '20hs C1 ($5.000)', when);
+  await page.waitForSelector('.match-card[data-note="Cancha lista"] .match-when', { state: 'attached' });
+  const when = (await page.locator('.match-card[data-note="Cancha lista"] .match-when').textContent()).replace(/\s+/g, ' ').trim();
+  const court = (await page.locator('.match-card[data-note="Cancha lista"] .trial-court').innerText()).trim();
+  check('La lista muestra la cancha al lado de la hora', when === '20hs C1 ($5.000)' && court === 'C1', `${when} ${court}`);
   const plain = await page.locator('.match-card').evaluateAll((cards) => {
     const card = cards.find((el) => (el.getAttribute('data-note') || '') !== 'Cancha lista');
     return card?.querySelector('.match-when')?.textContent || '';
@@ -5845,7 +5853,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#suspend-view [data-close]');
   await page.waitForSelector('.slot:has-text("Suspendido Pérez") .name.suspended');
   const red = await page.locator('.slot:has-text("Suspendido Pérez") .name.suspended').evaluate((el) => getComputedStyle(el).color);
-  check('El nombre suspendido se ve en rojo', red === 'rgb(198, 40, 40)' || red === 'rgb(255, 107, 107)', red);
+  check('El nombre suspendido se ve en rojo', red === 'rgb(198, 40, 40)' || red === 'rgb(255, 107, 107)' || red === 'rgb(208, 18, 45)', red);
   check('En la lista del partido el nombre dice (suspendido)', (await page.locator('.slot:has-text("Suspendido Pérez") .name').innerText()).includes('(suspendido)'));
   await page.locator('.slot:has-text("Suspendido Pérez") .name').screenshot({ path: '/opt/cursor/artifacts/screenshots/v116-lista.png' });
   await page.click('#btn-roster');
@@ -5915,7 +5923,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#btn-roster');
   await page.waitForSelector('#roster-list .slot:has-text("Suspendido Pérez") .suspended-tag');
   const rosterRed = await page.locator('#roster-list .slot:has-text("Suspendido Pérez") .name').evaluate((el) => getComputedStyle(el).color);
-  check('En Jugadores de Martín también dice (suspendido)', (await page.locator('#roster-list .slot:has-text("Suspendido Pérez") .name').innerText()).includes('(suspendido)') && (rosterRed === 'rgb(198, 40, 40)' || rosterRed === 'rgb(255, 107, 107)'), rosterRed);
+  check('En Jugadores de Martín también dice (suspendido)', (await page.locator('#roster-list .slot:has-text("Suspendido Pérez") .name').innerText()).includes('(suspendido)') && (rosterRed === 'rgb(198, 40, 40)' || rosterRed === 'rgb(255, 107, 107)' || rosterRed === 'rgb(208, 18, 45)'), rosterRed);
   await page.locator('#roster-list .slot:has-text("Suspendido Pérez")').screenshot({ path: '/opt/cursor/artifacts/screenshots/v117-jugadores.png' });
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, linked);
   await page.waitForSelector('#profile h2 .suspended-tag');

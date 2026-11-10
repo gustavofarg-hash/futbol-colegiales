@@ -44,7 +44,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v130';
+const APP_VERSION = 'f7c-v131';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2639,13 +2639,13 @@ function openSettings() {
         ${TEXT_SIZES.map((step, i) => `<option value="${i}"${i === readTextSize() ? ' selected' : ''}>${esc(step.label)}</option>`).join('')}
       </select>
     </label>
-    ${isTrialPage() ? `<label class="field" id="theme-field"><span>Tema</span>
+    <label class="field" id="theme-field"><span>Tema</span>
       <select id="set-theme" aria-label="Tema">
         <option value="light"${readTheme() === 'light' ? ' selected' : ''}>Claro</option>
         <option value="dark"${readTheme() === 'dark' ? ' selected' : ''}>Oscuro</option>
         <option value="auto"${readTheme() === 'auto' ? ' selected' : ''}>Automático según el sistema</option>
       </select>
-    </label>` : ''}
+    </label>
     <div class="menu" id="set-sections">
       <button type="button" class="btn" id="set-share-app">Compartir app</button>
       <button type="button" class="btn" id="set-venues">Sedes</button>
@@ -6977,7 +6977,8 @@ function showAnonymousDenial() {
 
 async function boot() {
   watchRevealViewport();
-  if (isTrialPage()) { applyTheme(); watchTheme(); }
+  applyTheme();
+  watchTheme();
   clearWaChoice();
   clearMineFilter();
   $('#venue-name').textContent = 'Agenda de partidos';

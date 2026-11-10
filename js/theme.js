@@ -17,7 +17,6 @@ export function themeIsDark(value = readTheme()) {
 
 export function applyTheme(value = readTheme()) {
   const root = document.documentElement;
-  if (!root.classList.contains('trial')) return value;
   const dark = themeIsDark(value);
   root.dataset.theme = value;
   root.classList.toggle('dark', dark);
