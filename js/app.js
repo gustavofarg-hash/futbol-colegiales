@@ -5,7 +5,7 @@ import { createStore } from './store.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import {
-  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
+  todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, clockTime, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
@@ -29,21 +29,22 @@ import { countedGoals, matchTake, periodBuckets } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
-import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
+import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
+import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, parseBackup } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v128';
+const APP_VERSION = 'f7c-v131';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1076,12 +1077,84 @@ function render() {
   else renderHome();
   paintActivity();
   requestAnimationFrame(placeBars);
+  if (app.revealPlayerId) settleRevealedPlayer();
   if (same && y > 0) {
     const top = y;
     requestAnimationFrame(() => {
+      if (app.revealPlayerId) return;
       if ((document.scrollingElement?.scrollTop || 0) !== top) document.scrollingElement.scrollTop = top;
     });
   }
+}
+
+function addedPlayerRow(id) {
+  const safe = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(String(id || '')) : String(id || '');
+  if (!safe) return null;
+  return document.querySelector(`#slots [data-player="${safe}"]`) || document.querySelector(`#wait-list [data-player="${safe}"]`);
+}
+
+/** Cuánto hay que mover el scroll para que la fila se vea entera, entre el encabezado y la barra de abajo. */
+function revealScrollDelta(row) {
+  const vv = window.visualViewport;
+  const viewTop = vv ? vv.offsetTop : 0;
+  const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  const stackBottom = document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? viewTop;
+  const topLimit = Math.max(stackBottom, viewTop) + 8;
+  const actionTop = document.querySelector('#view .actionbar')?.getBoundingClientRect().top;
+  const bottomLimit = Math.min(actionTop > topLimit ? actionTop : viewBottom, viewBottom) - 8;
+  const box = row.getBoundingClientRect();
+  if (box.height <= 0 || bottomLimit <= topLimit) return 0;
+  if (box.height > bottomLimit - topLimit) return box.top - topLimit;
+  if (box.bottom > bottomLimit) return box.bottom - bottomLimit;
+  if (box.top < topLimit) return box.top - topLimit;
+  return 0;
+}
+
+/** Baja hasta el jugador recién anotado y lo marca un momento.
+ *  En el teléfono el teclado se cierra después del toque y mueve la pantalla:
+ *  el scroll suave se pierde y hay que volver a medirlo cuando el alto ya quedó. */
+function revealAddedPlayer() {
+  const id = app.revealPlayerId;
+  if (!id) return false;
+  const row = addedPlayerRow(id);
+  if (!row) return false;
+  if (!row.classList.contains('just-added')) row.classList.add('just-added');
+  const scroller = document.scrollingElement || document.documentElement;
+  const delta = revealScrollDelta(row);
+  if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+  return true;
+}
+
+function settleRevealedPlayer() {
+  if (!app.revealPlayerId) return;
+  revealAddedPlayer();
+  requestAnimationFrame(() => {
+    if (!app.revealPlayerId) return;
+    requestAnimationFrame(() => { if (app.revealPlayerId) revealAddedPlayer(); });
+  });
+}
+
+function armRevealWatch(id) {
+  clearTimeout(app.revealTimer);
+  (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
+  const kicks = [60, 180, 400, 700, 1100, 1500];
+  app.revealKicks = kicks.map((ms) => setTimeout(() => {
+    if (app.revealPlayerId === id) settleRevealedPlayer();
+  }, ms));
+  app.revealTimer = setTimeout(() => {
+    (app.revealKicks || []).forEach((timer) => clearTimeout(timer));
+    app.revealKicks = [];
+    if (app.revealPlayerId === id) app.revealPlayerId = '';
+  }, 2600);
+}
+
+function watchRevealViewport() {
+  const kick = () => { if (app.revealPlayerId) settleRevealedPlayer(); };
+  window.addEventListener('resize', kick);
+  const vv = window.visualViewport;
+  if (!vv) return;
+  vv.addEventListener('resize', kick);
+  vv.addEventListener('scroll', kick);
 }
 
 function placeOf(match) {
@@ -1115,7 +1188,7 @@ function oweBox(m) {
   }).join('');
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
-      <span>Faltan pagar (que anoté yo): ${esc(formatARS(debt.total))}</span>
+      <span>Faltan pagar (que anoté yo): <b>${esc(formatARS(debt.total))}</b></span>
       <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <ul class="owe-list"${open ? '' : ' hidden'}>${rows}</ul>
@@ -1135,15 +1208,21 @@ function matchCard(m, opts = {}) {
   const note = history || !m.note ? '' : `<div class="match-note">${esc(m.note)}</div>`;
   const waiting = history || !waitingOf(m.id).length ? '' : `<div class="match-note">${waitingOf(m.id).length} en espera</div>`;
   const debt = history || rel === 'Hoy' ? oweBox(m) : '';
+  const clock = clockTime(m.time) || hour.replace(/hs$/, '');
+  const spots = Math.max(0, Math.min(Number(cap) || 0, 24));
+  const filled = Math.max(0, Math.min(n, spots));
+  const dots = spots ? `<span class="trial-only trial-dots" aria-hidden="true">${Array.from({ length: spots }, (_, i) => `<i class="${i < filled ? 'on' : ''}"></i>`).join('')}</span>` : '';
   return `
   <li class="match-item"><a class="match-card" href="#/partido/${encodeURIComponent(m.id)}" data-id="${esc(m.id)}" data-date="${esc(m.date)}" data-note="${esc(m.note || '')}">
     <div class="datebox"><div class="dw">${DIAS_CORTOS[weekdayOf(m.date)]}</div><div class="dd">${d}</div><div class="dm">${MESES_CORTOS[mo - 1]}</div></div>
     <div class="match-info">
       ${history ? `<div class="match-day">${esc(numericDate(m.date))}</div>` : `<div class="match-weekday">${esc(weekdayDate(m.date))}</div>`}
-      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(when)}</span></div>
+      <div class="match-time">${rel ? `<span class="badge">${rel}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-when">${esc(when)}</span><span class="trial-only trial-break"></span><span class="trial-only trial-clock">${esc(clock)}</span>${court ? `<span class="trial-only trial-court">${esc(court)}</span>` : ''}<span class="trial-only trial-price">${esc(price)}</span></div>
       <div class="match-note" data-venue>${esc(placeOf(m))}</div>
       ${note}
       ${waiting}
+      <span class="trial-only trial-enrolled">Jugadores anotados</span>
+      ${dots}
     </div>
     <div class="count ${n >= cap ? 'full' : ''}" aria-label="${n} de ${cap} anotados">
       <div class="num">${n}<small>/${cap}</small></div>
@@ -1168,7 +1247,7 @@ function renderHome() {
     ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
     ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
     <div class="actionbar"><div class="actionbar-inner">
-      <button class="btn" id="btn-import">${ICON.paste}Importar desde texto</button>
+      <button class="btn" id="btn-import">${ICON.paste}Importar texto</button>
       <button class="btn primary" id="btn-add-match">${ICON.plus}Agregar partido</button>
     </div></div>`)) return;
   $('#btn-add-match').onclick = () => openMatchForm();
@@ -1802,7 +1881,7 @@ function renderMatch(id) {
     }
     const payText = paymentStatusText(p);
     slots.push(`
-      <li class="slot ${i >= cap ? 'extra' : ''}${inviteClass(p)}" data-player="${esc(p.id)}">
+      <li class="slot ${i >= cap ? 'extra' : ''}${inviteClass(p)}${app.revealPlayerId === p.id ? ' just-added' : ''}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
           ${nameRow(p)}
@@ -2004,7 +2083,7 @@ function waitingSection(m, full, readOnly) {
     const first = idx <= 0;
     const last = idx === allWait.length - 1;
     return `
-      <li class="slot wait${inviteClass(p)}" data-player="${esc(p.id)}">
+      <li class="slot wait${inviteClass(p)}${app.revealPlayerId === p.id ? ' just-added' : ''}" data-player="${esc(p.id)}">
         <div class="arrows">
           <button type="button" class="arrow-btn" data-wait-up="${esc(p.id)}" ${first ? 'disabled' : ''} aria-label="Subir prioridad de ${esc(p.name)}">↑</button>
           <button type="button" class="arrow-btn" data-wait-down="${esc(p.id)}" ${last ? 'disabled' : ''} aria-label="Bajar prioridad de ${esc(p.name)}">↓</button>
@@ -2031,7 +2110,7 @@ function noPlaySection(m, readOnly) {
   if (!rows.length) return '';
   const full = playersOf(m.id).length >= capOf(m);
   const items = rows.map((p, i) => `
-      <li class="slot wait${inviteClass(p)}" data-player="${esc(p.id)}">
+      <li class="slot wait${inviteClass(p)}${app.revealPlayerId === p.id ? ' just-added' : ''}" data-player="${esc(p.id)}">
         <span class="n">${i + 1}</span>
         <button type="button" class="who" data-profile="${esc(p.id)}">
           ${nameRow(p)}
@@ -2560,6 +2639,13 @@ function openSettings() {
         ${TEXT_SIZES.map((step, i) => `<option value="${i}"${i === readTextSize() ? ' selected' : ''}>${esc(step.label)}</option>`).join('')}
       </select>
     </label>
+    <label class="field" id="theme-field"><span>Tema</span>
+      <select id="set-theme" aria-label="Tema">
+        <option value="light"${readTheme() === 'light' ? ' selected' : ''}>Claro</option>
+        <option value="dark"${readTheme() === 'dark' ? ' selected' : ''}>Oscuro</option>
+        <option value="auto"${readTheme() === 'auto' ? ' selected' : ''}>Automático según el sistema</option>
+      </select>
+    </label>
     <div class="menu" id="set-sections">
       <button type="button" class="btn" id="set-share-app">Compartir app</button>
       <button type="button" class="btn" id="set-venues">Sedes</button>
@@ -2595,6 +2681,8 @@ function openSettings() {
   };
   const sizePick = $('#set-text-size');
   if (sizePick) sizePick.onchange = () => { saveTextSize(Number(sizePick.value)); syncTextSize(); };
+  const themePick = $('#set-theme');
+  if (themePick) themePick.onchange = () => { saveTheme(themePick.value); requestAnimationFrame(placeBars); };
   const venuesBtn = $('#set-venues');
   if (venuesBtn) venuesBtn.onclick = () => openVenues();
   const shareAppBtn = $('#set-share-app');
@@ -2727,10 +2815,92 @@ function openRestore() {
     <p class="err" id="backup-err"></p>
     <div class="menu">
       <button type="button" class="btn danger" id="backup-apply" disabled>Reemplazar los datos actuales</button>
+      <button type="button" class="btn" id="backup-continue" hidden>Continuar la carga</button>
       <button type="button" class="btn ghost" data-close>Cerrar</button>
     </div>`);
   const fileInput = $('#backup-file');
   const apply = $('#backup-apply');
+  const resumeBtn = $('#backup-continue');
+  let resumeId = '';
+  let resumeDone = null;
+  let waking = false;
+  let wakeLock = null;
+  const holdScreen = async () => {
+    try {
+      if (navigator.wakeLock?.request) wakeLock = await navigator.wakeLock.request('screen');
+    } catch { /* el navegador no deja mantener la pantalla */ }
+  };
+  const onVisible = () => { if (waking && document.visibilityState === 'visible') holdScreen(); };
+  const startLoad = (continuing) => {
+    if (!parsed?.ok) return;
+    apply.disabled = true;
+    if (resumeBtn) resumeBtn.disabled = true;
+    fileInput.disabled = true;
+    const status = $('#backup-status');
+    status.className = 'backup-status';
+    status.textContent = backupProgressText(0, 0);
+    $('#backup-err').textContent = '';
+    const payload = parsed.backup;
+    const trial = isTrialPage();
+    if (!continuing) clearTrialResume();
+    const doneKeys = continuing && resumeDone ? new Set(resumeDone) : new Set();
+    let shown = doneKeys.size;
+    if (trial) {
+      waking = true;
+      holdScreen();
+      document.addEventListener('visibilitychange', onVisible);
+    }
+    const finishWake = () => {
+      waking = false;
+      document.removeEventListener('visibilitychange', onVisible);
+      try { wakeLock?.release(); } catch { /* ya se soltó */ }
+      wakeLock = null;
+    };
+    app.store.importDatabase(payload, ({ done, total }) => {
+      if (!status.isConnected || status.classList.contains('backup-ok')) return;
+      shown = Math.max(shown, done);
+      status.textContent = backupProgressText(shown, total);
+    }, trial ? {
+      skipKeys: doneKeys,
+      onDone: (key) => {
+        doneKeys.add(key);
+        if (doneKeys.size % 25 === 0) writeTrialResume(resumeId, doneKeys);
+      },
+    } : undefined).then((summary) => {
+      finishWake();
+      const partial = trialBackupResultText(summary?.failures);
+      if (partial) {
+        if (trial) writeTrialResume(resumeId, doneKeys);
+        status.className = 'backup-status';
+        status.textContent = '';
+        const err = $('#backup-err');
+        err.style.whiteSpace = 'pre-line';
+        err.textContent = partial;
+        apply.disabled = false;
+        fileInput.disabled = false;
+        if (resumeBtn) resumeBtn.disabled = false;
+        toast(partial, 7000);
+        return;
+      }
+      if (trial) clearTrialResume();
+      status.className = 'backup-status backup-ok';
+      status.textContent = BACKUP_LOADED_OK;
+      apply.hidden = true;
+      if (resumeBtn) resumeBtn.hidden = true;
+      toast(BACKUP_LOADED_OK, 0);
+    }).catch((error) => {
+      finishWake();
+      if (trial) writeTrialResume(resumeId, doneKeys);
+      apply.disabled = false;
+      if (resumeBtn) resumeBtn.disabled = false;
+      fileInput.disabled = false;
+      status.textContent = '';
+      status.className = 'backup-status';
+      const msg = backupSurfaceMessage(error, 'No se pudo cargar el backup.');
+      $('#backup-err').textContent = msg;
+      toast(msg, 7000);
+    });
+  };
   fileInput.onchange = () => {
     const file = fileInput.files?.[0];
     parsed = null;
@@ -2746,39 +2916,21 @@ function openRestore() {
       const result = parseBackup(String(reader.result || ''));
       if (!result.ok) { $('#backup-err').textContent = result.error; return; }
       parsed = result;
+      parsed.rawText = String(reader.result || '');
       $('#backup-summary').innerHTML = backupSummaryHtml(result.summary);
       apply.disabled = false;
+      resumeId = isTrialPage() ? trialResumeId(parsed.rawText) : '';
+      resumeDone = resumeId ? readTrialResume(resumeId) : null;
+      if (resumeBtn) {
+        resumeBtn.hidden = !(resumeDone && resumeDone.size);
+        resumeBtn.textContent = resumeDone?.size ? `Continuar la carga (${resumeDone.size} ya hechos)` : 'Continuar la carga';
+      }
     };
     reader.onerror = () => { $('#backup-err').textContent = 'No se pudo leer el archivo.'; };
     reader.readAsText(file);
   };
-  apply.onclick = () => {
-    if (!parsed?.ok) return;
-    apply.disabled = true;
-    fileInput.disabled = true;
-    const status = $('#backup-status');
-    status.className = 'backup-status';
-    status.textContent = backupProgressText(0, 0);
-    $('#backup-err').textContent = '';
-    const payload = parsed.backup;
-    app.store.importDatabase(payload, ({ done, total }) => {
-      if (!status.isConnected || status.classList.contains('backup-ok')) return;
-      status.textContent = backupProgressText(done, total);
-    }).then(() => {
-      status.className = 'backup-status backup-ok';
-      status.textContent = BACKUP_LOADED_OK;
-      apply.hidden = true;
-      toast(BACKUP_LOADED_OK, 0);
-    }).catch((error) => {
-      apply.disabled = false;
-      fileInput.disabled = false;
-      status.textContent = '';
-      status.className = 'backup-status';
-      const msg = backupSurfaceMessage(error, 'No se pudo cargar el backup.');
-      $('#backup-err').textContent = msg;
-      toast(msg, 7000);
-    });
-  };
+  apply.onclick = () => startLoad(false);
+  if (resumeBtn) resumeBtn.onclick = () => startLoad(true);
 }
 
 function openBackup() {
@@ -3053,7 +3205,8 @@ function openImportPreview(text, found) {
   });
   openSheet(`
     <h3>Vista previa</h3>
-    ${items.length ? `<p class="hint">Encontramos ${items.length} partido${items.length > 1 ? 's' : ''}. Revisá fecha y hora, y destildá los que no quieras importar.</p>` :
+    ${items.length ? `<p class="hint">Encontramos ${items.length} partido${items.length > 1 ? 's' : ''}. Revisá fecha y hora, y destildá los que no quieras importar.</p>
+    <label class="checkline" id="imp-solo-line"><input type="checkbox" id="imp-solo" checked> Solo yo: nadie más lo ve, tampoco el admin</label>` :
       '<p class="hint">No encontramos fechas ni horarios en el texto. Probá con algo como “jueves 22/10 21hs”.</p>'}
     <ul class="preview" id="imp-list">${items.map((it, i) => `
       <li class="${it.on ? '' : 'off'}" data-i="${i}">
@@ -3088,8 +3241,9 @@ function openImportPreview(text, found) {
     const sel = items.filter((i) => i.on && i.date && i.time);
     if (!sel.length) return;
     if (sel.some((item) => splitNear([{ date: item.date }]).later.length)) rememberLater(true);
+    const access = importAccess(actor(), $('#imp-solo')?.checked !== false);
     closeSheet();
-    run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, perTeam: 7, venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }), venueName: venueLabel({ venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }) }, app.venues), access: publicAccess(actor()) })), app.who),
+    run(app.store.addMatches(sel.map((s) => ({ date: s.date, time: s.time, note: '', source: 'texto', sourceText: s.source, perTeam: 7, venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }), venueName: venueLabel({ venueId: defaultVenueId(app.venues, { unreadable: !!app.venuesError }) }, app.venues), access })), app.who),
       `${sel.length} partido${sel.length > 1 ? 's' : ''} importado${sel.length > 1 ? 's' : ''}`);
   };
 }
@@ -4300,7 +4454,8 @@ function focusField(el) {
 }
 
 /** El grupo entra junto: quien invita primero, después los amigos, en ese orden. */
-async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { resolved = null, also = [] } = {}) {
+async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], opts = {}) {
+  const { resolved = null, also = [] } = opts;
   if (!host?.id && playerBlockedOn(m, host)) return SUSPENDED_TEXT;
   const blocked = addBlock(m);
   if (blocked) { toast(blocked); return false; }
@@ -4366,6 +4521,7 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { re
       if (!waiting) await applyAutoCredit(hostId);
       hostName = host.name;
       offset = 1;
+      if (opts.reveal === true) app.revealPlayerId = hostId;
     }
     for (const friend of friends) {
       const waiting = offset >= place.main;
@@ -4383,6 +4539,11 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], { re
     if (also.length) {
       const notes = await addGuestsToSameDay(also, friends, signup, m);
       if (notes.length) toast(notes.join(' · '), 4500);
+    }
+    if (opts.reveal === true && app.revealPlayerId) {
+      const shown = app.revealPlayerId;
+      settleRevealedPlayer();
+      armRevealWatch(shown);
     }
   })(), msg);
   return true;
@@ -4774,7 +4935,7 @@ function openPlayerForm(m, p, opts = {}) {
           phoneShared: $('#wa-share')?.checked === true,
         }
       : { name, phone, phoneShared: $('#wa-share')?.checked === true };
-    const result = await addSignedPlayer(m, host, asWait, !!$('#player-tentative')?.checked, friendRowValues());
+    const result = await addSignedPlayer(m, host, asWait, !!$('#player-tentative')?.checked, friendRowValues(), { reveal: true });
     if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#pf-err').textContent = result;
   };
 }
@@ -6815,6 +6976,9 @@ function showAnonymousDenial() {
 }
 
 async function boot() {
+  watchRevealViewport();
+  applyTheme();
+  watchTheme();
   clearWaChoice();
   clearMineFilter();
   $('#venue-name').textContent = 'Agenda de partidos';

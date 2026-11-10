@@ -84,7 +84,7 @@
 // matchId determinístico: "YYYY-MM-DD_HHMM" (si ya existe se agrega un sufijo),
 // así un importador puede hacer upsert sin duplicar.
 import { ORGANIZERS, firebaseConfig } from '../config.js';
-import { blocksProductionFirebase } from './trial.js';
+import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
 import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
@@ -107,7 +107,7 @@ import { canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer, editLo
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
-import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, backupReadError, backupWriteError, buildBackup, parseBackup, plainValue, requireAdmin, reviveValue } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, firestoreRestFields, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialMockToken, trialOpKey, trialPlayerPlan, trialShouldReplace } from './backup.js';
 import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 
 function reportBackupProgress(onProgress, done, total) {
@@ -1557,10 +1557,11 @@ class LocalStore {
     if (Object.keys(parsed.backup.subcollections).length) {
       throw Object.assign(new Error('Este backup tiene subcolecciones y la demo no las puede guardar.'), { code: 'invalid-backup' });
     }
-    const total = backupDocCount(parsed.backup);
+    const backup = isTrialPage() ? remapTrialBackup(parsed.backup, this.actor?.uid || '') : parsed.backup;
+    const total = backupDocCount(backup);
     reportBackupProgress(onProgress, 0, total);
     const db = this._load();
-    const docs = parsed.backup.collections;
+    const docs = backup.collections;
     db.matches = structuredClone(docs.matches);
     db.players = structuredClone(docs.players);
     db.roster = structuredClone(docs.roster);
@@ -1692,34 +1693,85 @@ export class FirebaseStore {
     for (const name of BACKUP_COLLECTIONS) collections[name] = await this._readCollection(name);
     return buildBackup(collections, opts.when);
   }
-  async importDatabase(payload, onProgress) {
+  async importDatabase(payload, onProgress, options = {}) {
     requireAdmin(this.actor);
     const parsed = parseBackup(payload);
     if (!parsed.ok) throw Object.assign(new Error(parsed.error), { code: 'invalid-backup' });
     const keepUser = this.actor?.uid || '';
     if (!keepUser) throw Object.assign(new Error('No hay sesión de administrador.'), { code: 'admin-only' });
+    const trial = isTrialPage();
+    const backup = trial ? remapTrialBackup(parsed.backup, keepUser) : parsed.backup;
     reportBackupProgress(onProgress, 0, 0);
     const Timestamp = this.fs.Timestamp;
     const ops = [];
+    const skipped = [];
+    let trialPlayers = null;
     for (const name of BACKUP_COLLECTIONS) {
       const current = await this._readCollection(name);
-      const next = parsed.backup.collections[name] || {};
-      for (const id of Object.keys(current)) {
+      const next = backup.collections[name] || {};
+      const ids = trial ? new Set([...Object.keys(current), ...Object.keys(next)]) : new Set(Object.keys(current));
+      for (const id of ids) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
+        if (trial) {
+          // Solo se borra lo que la lectura encontró. Borrar un id que no está
+          // gasta la cuota de Spark y no cambia nada. Si el set choca con un
+          // documento oculto (uid de producción), se borra y se reintenta esa vez.
+          if (!Object.prototype.hasOwnProperty.call(current, id)) continue;
+          if (name === 'users' && current[id]?.role !== 'organizer') continue;
+          if (name === 'settings' && id !== 'prices') continue;
+          ops.push({ kind: 'delete', phase: 0, segments: [name, id] });
+          continue;
+        }
+        if (!Object.prototype.hasOwnProperty.call(current, id)) continue;
         if (name === 'log' || !Object.prototype.hasOwnProperty.call(next, id)) ops.push({ kind: 'delete', segments: [name, id] });
+      }
+      if (trial && name === 'players') {
+        trialPlayers = trialPlayerPlan(next, backup.collections.matches || {});
+        skipped.push(...trialPlayers.skipped);
+        for (const row of trialPlayers.creates) ops.push({ kind: 'set', phase: 2, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        for (const row of trialPlayers.invitePatches) ops.push({ kind: 'set', merge: true, phase: 3, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        for (const row of trialPlayers.moneyPatches) ops.push({ kind: 'set', merge: true, phase: 4, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        for (const row of trialPlayers.goalPatches) ops.push({ kind: 'set', merge: true, phase: 5, segments: ['players', row.id], data: reviveValue(row.data, Timestamp) });
+        continue;
+      }
+      if (trial && name === 'playerContacts' && trialPlayers) {
+        const saved = new Map(trialPlayers.creates.map((row) => [row.id, row.data]));
+        for (const [id, data] of Object.entries(next)) {
+          if (!saved.has(id)) {
+            skipped.push({ path: `playerContacts/${id}`, reason: 'el jugador no se guardó' });
+            continue;
+          }
+          const copy = { ...data };
+          const player = saved.get(id);
+          if (Array.isArray(player.viewers)) copy.viewers = player.viewers.slice();
+          ops.push({ kind: 'set', phase: 3, segments: [name, id], data: reviveValue(copy, Timestamp) });
+        }
+        continue;
       }
       for (const [id, data] of Object.entries(next)) {
         if (isOwnUserDoc([name, id], keepUser)) continue;
-        ops.push({ kind: 'set', segments: [name, id], data: reviveValue(data, Timestamp) });
+        const revived = reviveValue(data, Timestamp);
+        if (trial && name === 'links') {
+          const stages = trialLinkStages(revived);
+          stages.forEach((stage, index) => ops.push({ kind: 'set', phase: index === 0 ? 1 : 3, segments: [name, id], data: stage }));
+          continue;
+        }
+        ops.push({ kind: 'set', phase: trial ? 1 : 0, segments: [name, id], data: revived });
       }
     }
-    for (const [path, data] of Object.entries(parsed.backup.subcollections || {})) {
+    for (const [path, data] of Object.entries(backup.subcollections || {})) {
       const segments = path.split('/');
       if (isOwnUserDoc(segments, keepUser)) continue;
-      ops.push({ kind: 'set', segments, data: reviveValue(data, Timestamp) });
+      ops.push({ kind: 'set', phase: trial ? 1 : 0, segments, data: reviveValue(data, Timestamp) });
     }
-    await this._commitOps(ops, onProgress);
-    return parsed.summary;
+    const failures = await this._commitOps(trial ? hostsBeforeGuests(ops) : ops, onProgress, trial ? {
+      parallel: TRIAL_WRITE_PARALLEL,
+      skip: options.skipKeys,
+      onDone: options.onDone,
+    } : null);
+    const writes = ops.filter((op) => op.kind === 'set').length;
+    const deletes = ops.filter((op) => op.kind === 'delete').length;
+    return { ...parsed.summary, failures: skipped.concat(failures), ops: trial ? { writes, deletes } : undefined };
   }
   async resetDatabase() {
     requireAdmin(this.actor);
@@ -1738,31 +1790,159 @@ export class FirebaseStore {
     }
     await this._commitOps(ops);
   }
-  async _commitOps(ops, onProgress) {
+  _firestoreWire() {
+    const delegate = this.db?._delegate || this.db;
+    const settings = delegate?._settings || {};
+    const databaseId = delegate?._databaseId || {};
+    const projectId = databaseId.projectId || this.app?.options?.projectId || '';
+    const database = databaseId.database || '(default)';
+    const host = settings.host || 'firestore.googleapis.com';
+    if (!projectId || !host) throw new Error('No se pudo conectar con Firebase para la carga.');
+    return {
+      projectId,
+      database,
+      host,
+      ssl: settings.ssl !== false,
+      mock: delegate?._emulatorOptions?.mockUserToken || settings.emulatorOptions?.mockUserToken || null,
+      apiKey: this.app?.options?.apiKey || '',
+    };
+  }
+  async _trialToken(wire) {
+    if (typeof wire.mock === 'string' && wire.mock) return wire.mock;
+    if (wire.mock && typeof wire.mock === 'object') return trialMockToken(wire.mock, wire.projectId);
+    const { getAuth } = await import(`${FB}/firebase-auth.js`);
+    const user = getAuth(this.app).currentUser;
+    if (!user) throw new Error('No hay sesión de administrador.');
+    return user.getIdToken();
+  }
+  async _commitRest(op, wire, token) {
+    const plain = `projects/${wire.projectId}/databases/${wire.database}/documents/${op.segments.join('/')}`;
+    let write;
+    if (op.kind === 'delete') write = { delete: plain };
+    else {
+      const fields = firestoreRestFields(op.data);
+      write = { update: { name: plain, fields } };
+      if (op.merge) write.updateMask = { fieldPaths: Object.keys(fields) };
+    }
+    const root = `${wire.ssl ? 'https' : 'http'}://${wire.host}/v1/${['projects', wire.projectId, 'databases', wire.database].map(encodeURIComponent).join('/')}/documents:commit`;
+    const url = wire.apiKey ? `${root}?key=${encodeURIComponent(wire.apiKey)}` : root;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+        Authorization: `Bearer ${token}`,
+        'google-cloud-resource-prefix': `projects/${wire.projectId}/databases/${wire.database}`,
+        'x-goog-request-params': `project_id=${encodeURIComponent(wire.projectId)}&database_id=${encodeURIComponent(wire.database)}`,
+      },
+      body: JSON.stringify({ writes: [write] }),
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined,
+    });
+    if (response.ok) return;
+    let body = null;
+    try { body = await response.json(); } catch { body = null; }
+    if (Array.isArray(body)) body = body[0];
+    const message = body?.error?.message || response.statusText || 'Firebase rechazó el permiso';
+    const code = response.status === 403 ? 'permission-denied'
+      : response.status === 401 ? 'unauthenticated'
+      : response.status === 429 ? 'resource-exhausted'
+      : 'unknown';
+    throw Object.assign(new Error(message), { code, status: response.status, path: op.segments.join('/') });
+  }
+  async _commitOne(op) {
+    const { writeBatch, doc } = this.fs;
+    const batch = writeBatch(this.db);
+    const ref = doc(this.db, ...op.segments);
+    if (op.kind === 'delete') batch.delete(ref);
+    else if (op.merge) batch.set(ref, op.data, { merge: true });
+    else batch.set(ref, op.data);
+    await batch.commit();
+  }
+  async _commitOps(ops, onProgress, trialOpts = null) {
     const { writeBatch, doc } = this.fs;
     const uid = this.actor?.uid || '';
-    const size = BACKUP_WRITE_BATCH;
-    const work = ops.filter((op) => !isOwnUserDoc(op.segments, uid));
+    const keepGoing = !!trialOpts;
+    let work = ops.filter((op) => !isOwnUserDoc(op.segments, uid));
+    if (trialOpts?.skip?.size) work = work.filter((op) => !trialOpts.skip.has(trialOpKey(op)));
     const total = work.length;
-    reportBackupProgress(onProgress, 0, total);
-    let done = 0;
-    for (let i = 0; i < work.length; i += size) {
-      const slice = work.slice(i, i + size);
-      if (!slice.length) continue;
+    const failures = [];
+    let done = trialOpts?.skip?.size || 0;
+    const reportTotal = total + (trialOpts?.skip?.size || 0);
+    reportBackupProgress(onProgress, done, reportTotal);
+    const note = (op, saved) => {
+      done += 1;
+      if (saved && trialOpts?.onDone) trialOpts.onDone(trialOpKey(op));
+      reportBackupProgress(onProgress, done, reportTotal);
+    };
+    const fail = (op, error) => failures.push({
+      path: Array.isArray(op?.segments) ? op.segments.join('/') : 'documento',
+      reason: /1000 expressions/i.test(String(error?.message || ''))
+        ? 'la regla de Firebase es demasiado larga'
+        : 'Firebase rechazó el permiso',
+    });
+    const wire = keepGoing ? this._firestoreWire() : null;
+    const token = keepGoing ? await this._trialToken(wire) : '';
+    const send = (op) => (keepGoing ? this._commitRest(op, wire, token) : this._commitOne(op));
+    const runOne = async (op) => {
       try {
-        const batch = writeBatch(this.db);
-        for (const op of slice) {
-          const ref = doc(this.db, ...op.segments);
-          if (op.kind === 'delete') batch.delete(ref);
-          else batch.set(ref, op.data);
-        }
-        await batch.commit();
+        await send(op);
+        note(op, true);
+        return;
       } catch (error) {
-        throw error?.path ? error : backupWriteError(slice[0], error);
+        // Una sola vez, y solo si el documento ya estaba. Sin espera: si la
+        // regla no se puede evaluar, reintentar tarda y vuelve a fallar.
+        if (keepGoing && trialShouldReplace(error) && op.kind === 'set' && !op.merge) {
+          try {
+            await send({ kind: 'delete', segments: op.segments });
+            await send(op);
+            note(op, true);
+            return;
+          } catch (again) {
+            fail(op, again);
+            note(op, false);
+            return;
+          }
+        }
+        if (!keepGoing) throw error?.path ? error : backupWriteError(op, error);
+        fail(op, error);
+        note(op, false);
       }
-      done += slice.length;
-      reportBackupProgress(onProgress, done, total);
+    };
+    if (!keepGoing) {
+      const size = BACKUP_WRITE_BATCH;
+      for (let i = 0; i < work.length; i += size) {
+        const slice = work.slice(i, i + size);
+        if (!slice.length) continue;
+        try {
+          const batch = writeBatch(this.db);
+          for (const op of slice) {
+            const ref = doc(this.db, ...op.segments);
+            if (op.kind === 'delete') batch.delete(ref);
+            else if (op.merge) batch.set(ref, op.data, { merge: true });
+            else batch.set(ref, op.data);
+          }
+          await batch.commit();
+        } catch (error) {
+          throw error?.path ? error : backupWriteError(slice[0], error);
+        }
+        done += slice.length;
+        reportBackupProgress(onProgress, done, reportTotal);
+      }
+      return failures;
     }
+    const phases = [...new Set(work.map((op) => op.phase || 0))].sort((a, b) => a - b);
+    const limit = Math.max(1, TRIAL_WRITE_PARALLEL);
+    for (const phase of phases) {
+      const group = work.filter((op) => (op.phase || 0) === phase);
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(limit, group.length) }, async () => {
+        while (cursor < group.length) {
+          const op = group[cursor++];
+          await runOne(op);
+        }
+      });
+      await Promise.all(workers);
+    }
+    return failures;
   }
   async _readCollection(name) {
     const { collection, getDocs } = this.fs;

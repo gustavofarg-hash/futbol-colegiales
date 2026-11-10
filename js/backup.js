@@ -1,3 +1,6 @@
+import { normalizePhone } from './phone.js';
+import { sha256Hex } from './privacy.js';
+
 // Backup de Mis Partidos. JSON para bajar, compartir o volver a cargar.
 // No hay subcolecciones en la app: todo está en estas colecciones.
 // El archivo igual acepta `subcollections` por si un backup futuro las trae.
@@ -10,6 +13,8 @@ export const BACKUP_ZONE = 'America/Buenos_Aires';
 // pasar de 20 lecturas o de 1000 expresiones. El mensaje es el de permisos.
 // El emulador no aplica ese tope, por eso allá un lote de 400 parece andar.
 export const BACKUP_WRITE_BATCH = 1;
+/** Escrituras a la vez en /prueba/. Cada una es un pedido aparte: el canal único del SDK, si una se atrasa, frena el resto hasta un minuto. */
+export const TRIAL_WRITE_PARALLEL = 24;
 export const BACKUP_LOADED_OK = 'Todos los datos fueron cargados con éxito';
 
 /** Texto del avance. Con total 0 todavía no se sabe cuántos documentos van. */
@@ -274,6 +279,464 @@ export function backupSurfaceMessage(error, fallback) {
 }
 
 /** Vuelve a armar un Timestamp si el que escribe conoce la clase. */
+// Campos que guardan un uid, o una lista de uids. '*' se conserva.
+// invitedBy es el id del jugador anfitrión, no un uid: no entra.
+const TRIAL_UID_FIELDS = new Set([
+  'uid', 'createdByUid', 'addedByUid', 'signedUpWith', 'phoneOwnerUid', 'ownerUid',
+  'organizerUid', 'actorUid', 'authorUid', 'toUid', 'fromUid',
+]);
+const TRIAL_UID_LISTS = new Set(['viewers', 'adders', 'editors', 'holders', 'readers']);
+
+function isUidToken(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9]{6,128}$/.test(value);
+}
+
+function rememberUid(set, value, target) {
+  if (!isUidToken(value) || value === target) return;
+  set.add(value);
+}
+
+function collectTrialUids(backup, target) {
+  const found = new Set();
+  for (const id of Object.keys(backup.collections?.users || {})) rememberUid(found, id, target);
+  const walk = (value, key) => {
+    if (Array.isArray(value)) {
+      if (TRIAL_UID_LISTS.has(key)) {
+        for (const item of value) {
+          if (typeof item === 'string') rememberUid(found, item, target);
+          else walk(item, key);
+        }
+        return;
+      }
+      for (const item of value) walk(item, '');
+      return;
+    }
+    if (!isPlainObject(value)) return;
+    for (const [itemKey, item] of Object.entries(value)) {
+      if (TRIAL_UID_FIELDS.has(itemKey) && typeof item === 'string') rememberUid(found, item, target);
+      else walk(item, itemKey);
+    }
+  };
+  for (const docs of Object.values(backup.collections || {})) walk(docs, '');
+  walk(backup.subcollections, '');
+  return found;
+}
+
+function mapTrialUid(value, target) {
+  if (typeof value !== 'string' || value === '' || value === '*') return value;
+  return target;
+}
+
+function mapTrialList(list, target) {
+  const out = [];
+  for (const item of list) {
+    if (typeof item !== 'string') {
+      out.push(mapTrialValue(item, '', target));
+      continue;
+    }
+    const next = mapTrialUid(item, target);
+    if (next === '' || !out.includes(next)) out.push(next);
+  }
+  return out;
+}
+
+function mapTrialValue(value, key, target) {
+  if (Array.isArray(value)) {
+    if (TRIAL_UID_LISTS.has(key)) return mapTrialList(value, target);
+    return value.map((item) => mapTrialValue(item, '', target));
+  }
+  if (!isPlainObject(value)) return value;
+  const out = {};
+  for (const [itemKey, item] of Object.entries(value)) {
+    if (TRIAL_UID_FIELDS.has(itemKey) && (typeof item === 'string' || item == null)) out[itemKey] = mapTrialUid(item, target);
+    else out[itemKey] = mapTrialValue(item, itemKey, target);
+  }
+  return out;
+}
+
+function remapTrialDocId(collection, id, uids, target) {
+  if (collection === 'users') {
+    if (!id || id === target || id.includes('@')) return id;
+    return isUidToken(id) ? target : id;
+  }
+  if (!id || !uids.size) return id;
+  if (uids.has(id)) return target;
+  let changed = false;
+  const next = id.split('_').map((part) => {
+    if (uids.has(part)) { changed = true; return target; }
+    return part;
+  });
+  return changed ? next.join('_') : id;
+}
+
+function trialPhoneKey(doc, phone) {
+  if (typeof doc.phoneKey === 'string' && /^[0-9a-f]{64}$/.test(doc.phoneKey)) return doc.phoneKey;
+  return sha256Hex(String(phone));
+}
+
+// La regla de alta no acepta el teléfono dentro del jugador. En la prueba se
+// pasa al contacto, que es donde la app lo lee, y el documento queda en blanco.
+function parkTrialPhones(collections) {
+  const jobs = [
+    ['players', 'playerContacts', true],
+    ['roster', 'rosterContacts', false],
+  ];
+  for (const [kind, contactName, withViewers] of jobs) {
+    const docs = collections[kind];
+    if (!isPlainObject(docs)) continue;
+    const contacts = isPlainObject(collections[contactName]) ? collections[contactName] : {};
+    for (const [id, doc] of Object.entries(docs)) {
+      if (!isPlainObject(doc) || typeof doc.phone !== 'string' || doc.phone === '') continue;
+      const parsed = normalizePhone(doc.phone);
+      const phone = parsed.ok ? parsed.wa : doc.phone;
+      const current = isPlainObject(contacts[id]) ? contacts[id] : {};
+      if (!current.phone) {
+        const next = {
+          ...current,
+          phone,
+          ownerUid: current.ownerUid || doc.phoneOwnerUid || doc.addedByUid || doc.createdByUid || '',
+          visibleToAll: current.visibleToAll === true,
+          phoneKey: current.phoneKey || trialPhoneKey(doc, phone),
+        };
+        if (withViewers) next.viewers = current.viewers || (Array.isArray(doc.viewers) ? doc.viewers.slice() : ['*']);
+        contacts[id] = next;
+      }
+      doc.phone = '';
+      doc.hasPhone = true;
+    }
+    collections[contactName] = contacts;
+  }
+}
+
+function alignTrialAccess(collections) {
+  const matches = collections.matches;
+  if (!isPlainObject(matches)) return;
+  const copyList = (doc, match, key) => {
+    if (Array.isArray(match[key])) doc[key] = match[key].slice();
+  };
+  if (isPlainObject(collections.players)) {
+    for (const doc of Object.values(collections.players)) {
+      if (!isPlainObject(doc)) continue;
+      const match = matches[doc.matchId];
+      if (!isPlainObject(match)) continue;
+      copyList(doc, match, 'viewers');
+      copyList(doc, match, 'adders');
+      if (typeof doc.invitedBy === 'string' && doc.invitedBy && !Object.prototype.hasOwnProperty.call(collections.players, doc.invitedBy)) {
+        delete doc.invitedBy;
+        delete doc.invitedByName;
+      }
+    }
+  }
+  if (isPlainObject(collections.confirmations)) {
+    for (const doc of Object.values(collections.confirmations)) {
+      if (!isPlainObject(doc)) continue;
+      const match = matches[doc.matchId];
+      if (isPlainObject(match)) copyList(doc, match, 'viewers');
+    }
+  }
+}
+
+/**
+ * En la versión de prueba, todo uid del backup pasa a ser el admin logueado.
+ * Así las reglas (isAdder, ownerUid, listados por viewers) lo aceptan.
+ * Fuera de /prueba/ no se llama. '*' queda. Los id de jugador (invitedBy) quedan.
+ */
+export function remapTrialBackup(backup, uid) {
+  const target = String(uid || '').trim();
+  if (!target || !isPlainObject(backup?.collections)) return backup;
+  const draft = structuredClone(backup);
+  parkTrialPhones(draft.collections);
+  const found = collectTrialUids(draft, target);
+  const collections = {};
+  for (const [name, docs] of Object.entries(draft.collections)) {
+    const next = {};
+    if (!isPlainObject(docs)) { collections[name] = docs; continue; }
+    for (const [id, doc] of Object.entries(docs)) {
+      next[remapTrialDocId(name, id, found, target)] = mapTrialValue(doc, '', target);
+    }
+    collections[name] = next;
+  }
+  alignTrialAccess(collections);
+  const subcollections = {};
+  if (isPlainObject(draft.subcollections)) {
+    for (const [path, doc] of Object.entries(draft.subcollections)) {
+      const segments = String(path).split('/');
+      const mapped = segments.map((part, index) => (index % 2 === 1 ? remapTrialDocId(segments[index - 1] || '', part, found, target) : part));
+      subcollections[mapped.join('/')] = mapTrialValue(doc, '', target);
+    }
+  }
+  return { ...draft, collections, subcollections };
+}
+
+function clipText(value, max) {
+  const text = String(value ?? '').trim().replace(/\s+/g, ' ');
+  return text ? text.slice(0, max) : '';
+}
+
+function finiteNumber(value, min, max) {
+  if (value == null || value === '') return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) return undefined;
+  return n;
+}
+
+function wholeNumber(value, min, max) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < min || n > max) return undefined;
+  return n;
+}
+
+/** La alta del jugador evalúa el documento entero. Con pago e invitado pasa el tope y Firebase lo niega. */
+export function trialPlayerPlan(players, matches) {
+  const docs = isPlainObject(players) ? players : {};
+  const games = isPlainObject(matches) ? matches : {};
+  const skipped = [];
+  const creates = [];
+  const invitePatches = [];
+  const moneyPatches = [];
+  const goalPatches = [];
+  for (const [id, raw] of Object.entries(docs)) {
+    if (!isPlainObject(raw)) {
+      skipped.push({ path: `players/${id}`, reason: 'el documento no es válido' });
+      continue;
+    }
+    const match = games[raw.matchId];
+    if (!isPlainObject(match)) {
+      skipped.push({ path: `players/${id}`, reason: 'el partido no está en el backup' });
+      continue;
+    }
+    const create = {
+      matchId: String(raw.matchId),
+      name: clipText(raw.name, 60) || 'Sin nombre',
+      phone: '',
+    };
+    if (typeof raw.matchDate === 'string' && raw.matchDate) create.matchDate = raw.matchDate.slice(0, 10);
+    if (Array.isArray(match.viewers)) create.viewers = match.viewers.slice();
+    if (Array.isArray(match.adders)) create.adders = match.adders.slice();
+    if (typeof raw.addedBy === 'string' && clipText(raw.addedBy, 40)) create.addedBy = clipText(raw.addedBy, 40);
+    if (typeof raw.addedByUid === 'string' && raw.addedByUid && raw.addedByUid.length <= 128) create.addedByUid = raw.addedByUid;
+    if (typeof raw.signedUpWith === 'string' && raw.signedUpWith.trim() && raw.signedUpWith.trim().length <= 128) create.signedUpWith = raw.signedUpWith.trim();
+    if (clipText(raw.signedUpWithName, 40)) create.signedUpWithName = clipText(raw.signedUpWithName, 40);
+    for (const key of ['createdAt', 'updatedAt', 'rosterAt', 'tentativeAt', 'confirmedAt', 'reminderSentAt']) {
+      if (typeof raw[key] === 'number' && Number.isFinite(raw[key])) create[key] = raw[key];
+    }
+    if (typeof raw.hasPhone === 'boolean') create.hasPhone = raw.hasPhone;
+    if (typeof raw.phoneShared === 'boolean') create.phoneShared = raw.phoneShared;
+    if (typeof raw.phoneKey === 'string' && (raw.phoneKey === '' || /^[0-9a-f]{64}$/.test(raw.phoneKey))) create.phoneKey = raw.phoneKey;
+    if (typeof raw.phoneOwnerUid === 'string' && raw.phoneOwnerUid.length <= 128) create.phoneOwnerUid = raw.phoneOwnerUid;
+    if (typeof raw.waiting === 'boolean') create.waiting = raw.waiting;
+    if (typeof raw.noPlay === 'boolean') create.noPlay = raw.noPlay;
+    if (typeof raw.tentative === 'boolean') create.tentative = raw.tentative;
+    const waitOrder = finiteNumber(raw.waitOrder, 0, 1000000);
+    if (waitOrder !== undefined) create.waitOrder = waitOrder;
+    if (typeof raw.confirmToken === 'string' && raw.confirmToken.length >= 16 && raw.confirmToken.length <= 80) create.confirmToken = raw.confirmToken;
+    if (raw.confirmed === 'si' || raw.confirmed === 'no') create.confirmed = raw.confirmed;
+    if (typeof raw.shortCode === 'string' && /^[0-9A-Za-z]{8}$/.test(raw.shortCode)) create.shortCode = raw.shortCode;
+    if (typeof raw.shortName === 'string' && raw.shortName.slice(0, 40)) create.shortName = raw.shortName.slice(0, 40);
+    if (typeof raw.rosterId === 'string' && raw.rosterId && raw.rosterId.length <= 200) create.rosterId = raw.rosterId;
+    creates.push({ id, data: create });
+
+    const hostId = String(raw.invitedBy || '').trim();
+    const host = hostId ? docs[hostId] : null;
+    const hostIsMain = host && !String(host.invitedBy || '').trim() && games[host.matchId] && host.matchId === raw.matchId;
+    if (hostIsMain) {
+      const patch = { invitedBy: hostId.slice(0, 128), updatedAt: Date.now() };
+      const hostName = clipText(raw.invitedByName || host.name, 60);
+      if (hostName) patch.invitedByName = hostName;
+      invitePatches.push({ id, data: patch });
+    }
+
+    const money = {};
+    if (typeof raw.paid === 'boolean') money.paid = raw.paid;
+    const amount = finiteNumber(raw.amount, 0, 1000000000);
+    if (amount !== undefined) money.amount = amount;
+    if (raw.method === 'efectivo' || raw.method === 'transferencia' || raw.method === 'credito') money.method = raw.method;
+    for (const key of ['cash', 'transfer', 'pendingTransfer', 'fromCredit']) {
+      const n = finiteNumber(raw[key], 0, 1000000000);
+      if (n !== undefined) money[key] = n;
+    }
+    if (typeof raw.freePlay === 'boolean') money.freePlay = raw.freePlay;
+    if (typeof raw.autoCredit === 'boolean') money.autoCredit = raw.autoCredit;
+    for (const key of ['paidUpdatedBy', 'receivedBy', 'transferReceivedBy', 'cashTo', 'transferTo', 'pendingTo', 'creditTo']) {
+      const text = clipText(raw[key], key === 'paidUpdatedBy' || key === 'creditTo' ? 40 : 40);
+      if (text) money[key] = text;
+    }
+    if (typeof raw.paidUpdatedAt === 'number') money.paidUpdatedAt = raw.paidUpdatedAt;
+    if (typeof raw.transferReceivedAt === 'number') money.transferReceivedAt = raw.transferReceivedAt;
+    if (Object.keys(money).length) {
+      money.updatedAt = Date.now();
+      moneyPatches.push({ id, data: money });
+    }
+
+    const goals = {};
+    const goalCount = wholeNumber(raw.goals, 0, 99);
+    if (goalCount !== undefined) goals.goals = goalCount;
+    if (typeof raw.inGoal === 'boolean') goals.inGoal = raw.inGoal;
+    if (typeof raw.inGoalAt === 'number' && Number.isFinite(raw.inGoalAt)) goals.inGoalAt = raw.inGoalAt;
+    if (Object.keys(goals).length) {
+      goals.updatedAt = Date.now();
+      goalPatches.push({ id, data: goals });
+    }
+  }
+  return { skipped, creates, invitePatches, moneyPatches, goalPatches };
+}
+
+export const TRIAL_RESUME_KEY = 'f7c-backup-resume';
+
+export function trialResumeId(text) {
+  return sha256Hex(String(text || ''));
+}
+
+export function readTrialResume(id) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TRIAL_RESUME_KEY) || 'null');
+    if (!saved || saved.id !== id || !Array.isArray(saved.done)) return null;
+    return new Set(saved.done);
+  } catch {
+    return null;
+  }
+}
+
+export function writeTrialResume(id, done) {
+  try {
+    localStorage.setItem(TRIAL_RESUME_KEY, JSON.stringify({ id, done: [...done] }));
+  } catch { /* el navegador no deja guardar */ }
+}
+
+export function clearTrialResume() {
+  try { localStorage.removeItem(TRIAL_RESUME_KEY); } catch { /* modo privado */ }
+}
+
+export function trialOpKey(op) {
+  const path = Array.isArray(op?.segments) ? op.segments.join('/') : '';
+  return `${op?.phase || 0}|${op?.kind || ''}|${op?.merge ? 'm' : 's'}|${path}`;
+}
+
+/**
+ * Un documento que ya estaba se niega como update. Se borra y se escribe una vez.
+ * Si la regla no se puede evaluar (tope de 1000), no se reintenta: tarda y vuelve a fallar.
+ */
+export function trialShouldReplace(error) {
+  const message = String(error?.message || '');
+  if (/1000 expressions/i.test(message)) return false;
+  if (!isFirebasePermissionDenied(error)) return false;
+  return /for 'update'|for "update"/.test(message);
+}
+
+function restBase64Url(text) {
+  const bytes = new TextEncoder().encode(String(text));
+  let bin = '';
+  for (const byte of bytes) bin += String.fromCharCode(byte);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Token del emulador. En el navegador la carga usa el token real de la sesión. */
+export function trialMockToken(claims, projectId) {
+  const project = projectId || 'demo-project';
+  const iat = Number(claims?.iat) || 0;
+  const sub = claims?.sub || claims?.user_id || '';
+  const header = restBase64Url(JSON.stringify({ alg: 'none', type: 'JWT' }));
+  const payload = restBase64Url(JSON.stringify({
+    iss: `https://securetoken.google.com/${project}`,
+    aud: project,
+    iat,
+    exp: iat + 3600,
+    auth_time: iat,
+    sub,
+    user_id: sub,
+    firebase: { sign_in_provider: 'custom', identities: {} },
+    ...claims,
+  }));
+  return `${header}.${payload}.`;
+}
+
+function restTimestamp(value) {
+  if (value instanceof Date) return value.toISOString();
+  const seconds = Number(value.seconds) || 0;
+  const nanos = Number(value.nanoseconds) || 0;
+  return new Date(seconds * 1000 + Math.floor(nanos / 1e6)).toISOString();
+}
+
+export function firestoreRestValue(value) {
+  if (value == null) return { nullValue: null };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number') {
+    if (Number.isInteger(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER) return { integerValue: String(value) };
+    return { doubleValue: value };
+  }
+  if (typeof value === 'string') return { stringValue: value };
+  if (value instanceof Date || (typeof value.toDate === 'function' && Number.isFinite(Number(value.seconds)))) {
+    return { timestampValue: restTimestamp(value) };
+  }
+  if (Array.isArray(value)) return { arrayValue: { values: value.map((item) => firestoreRestValue(item)) } };
+  if (isPlainObject(value)) {
+    const fields = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (item === undefined) continue;
+      fields[key] = firestoreRestValue(item);
+    }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(value) };
+}
+
+export function firestoreRestFields(data) {
+  const fields = {};
+  if (!isPlainObject(data)) return fields;
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined) continue;
+    fields[key] = firestoreRestValue(value);
+  }
+  return fields;
+}
+
+export function trialBackupResultText(failures) {
+  const list = Array.isArray(failures) ? failures.filter((item) => item?.path) : [];
+  if (!list.length) return '';
+  const shown = list.slice(0, 8);
+  const lines = shown.map((item) => `${item.path}: ${item.reason || 'Firebase rechazó el permiso'}`);
+  const extra = list.length > shown.length ? `\ny ${list.length - shown.length} más` : '';
+  return `Se cargó el resto. No se pudieron guardar ${list.length}:\n${lines.join('\n')}${extra}`;
+}
+
+/**
+ * Un link con acortador no se puede crear de una: la regla solo acepta m, p y t.
+ * Primero eso, y después el acortador si tiene la forma que la regla permite.
+ */
+export function trialLinkStages(data) {
+  const base = { m: data?.m, p: data?.p, t: data?.t };
+  const provider = data?.shortProvider;
+  const url = data?.shortUrl;
+  const spoo = provider === 'spoo' && typeof url === 'string' && /^https:\/\/spoo\.me\/[A-Za-z0-9_]+$/.test(url);
+  const dagd = provider === 'dagd' && typeof url === 'string' && /^https:\/\/da\.gd\/[A-Za-z0-9_]+$/.test(url);
+  if ((spoo || dagd) && typeof data.shortAt === 'number') {
+    return [base, { ...base, shortAt: data.shortAt, shortProvider: provider, shortUrl: url }];
+  }
+  return [base];
+}
+
+/** Los anfitriones se escriben antes que sus invitados. invitedBy apunta al id del jugador. */
+export function hostsBeforeGuests(ops) {
+  const slots = [];
+  const players = [];
+  ops.forEach((op, index) => {
+    if (op?.kind === 'set' && !op.merge && Array.isArray(op.segments) && op.segments.length === 2 && op.segments[0] === 'players') {
+      slots.push(index);
+      players.push(op);
+    }
+  });
+  if (players.length < 2) return ops;
+  const ids = new Set(players.map((op) => op.segments[1]));
+  const ranked = players.map((op, index) => {
+    const host = op.data?.invitedBy;
+    return { op, index, guest: typeof host === 'string' && ids.has(host) ? 1 : 0 };
+  });
+  ranked.sort((a, b) => a.guest - b.guest || a.index - b.index);
+  const next = ops.slice();
+  slots.forEach((at, index) => { next[at] = ranked[index].op; });
+  return next;
+}
+
 export function reviveValue(value, Timestamp) {
   if (Array.isArray(value)) return value.map((item) => reviveValue(item, Timestamp));
   if (isPlainObject(value) && value.__type === 'timestamp' && Number.isFinite(value.seconds)) {

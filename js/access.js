@@ -148,6 +148,12 @@ export function publicAccess(creator) {
   });
 }
 
+/** Importar texto: por defecto solo quien importa. Si destilda Solo yo, queda abierto. */
+export function importAccess(creator, solo = true) {
+  if (solo === false) return publicAccess(creator);
+  return buildAccess({ solo: true, creator });
+}
+
 export function accessPatch(access) {
   if (!access) return {};
   return {

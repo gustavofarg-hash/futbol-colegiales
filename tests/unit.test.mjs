@@ -5,7 +5,8 @@ import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/par
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById } from '../js/store.js';
-import { firebaseConfig as trialConfig } from '../config.prueba.js';
+import { firebaseConfig as productionConfig } from '../config.js';
+import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone } from '../js/roster.js';
@@ -32,7 +33,7 @@ import {
 import { confirmTarget, isShortCode, newShortCode, shortConfirmUrl } from '../js/short.js';
 import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, indexFromStored, readTextSize, stepTextSize, textSizeIndex } from '../js/text-size.js';
-import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, compensationApplies, isRestricted, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from '../js/access.js';
+import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, compensationApplies, importAccess, isRestricted, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from '../js/access.js';
 import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, nextInGoalAt, normalizeScore, normalizeTeams, orderByGoal, orderTeamsByGoal, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
 import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, playerLink } from '../js/share.js';
 import {
@@ -52,11 +53,22 @@ test('la versión de prueba no usa el Firebase de producción', () => {
   assert.equal(isTrialPath('/futbol-colegiales/prueba'), true);
   assert.equal(publicAppOriginFrom('/futbol-colegiales/', 'https://gustavofarg-hash.github.io'), 'https://gustavofarg-hash.github.io/futbol-colegiales');
   assert.equal(publicAppOriginFrom('/futbol-colegiales/prueba/c/', 'https://gustavofarg-hash.github.io'), 'https://gustavofarg-hash.github.io/futbol-colegiales/prueba');
-  assert.equal(isFirebaseConfigured(trialConfig), false);
-  assert.notEqual(trialConfig.projectId, PRODUCTION_PROJECT_ID);
+  assert.equal(trialConfig.projectId, 'mis-partidos-prueba');
+  assert.equal(isFirebaseConfigured(trialConfig), true);
+  assert.equal(productionConfig.projectId, PRODUCTION_PROJECT_ID);
+  assert.notEqual(trialConfig.projectId, productionConfig.projectId);
+  assert.notEqual(trialConfig.apiKey, productionConfig.apiKey);
+  assert.equal(trialAdminEmail, 'gustavof.arg@gmail.com');
+  assert.equal(trialDriveClientId, '');
   assert.equal(blocksProductionFirebase('/futbol-colegiales/prueba/', PRODUCTION_PROJECT_ID), true);
+  assert.equal(blocksProductionFirebase('/futbol-colegiales/prueba/', trialConfig.projectId), false);
   assert.equal(blocksProductionFirebase('/futbol-colegiales/', PRODUCTION_PROJECT_ID), false);
-  assert.equal(blocksProductionFirebase('/futbol-colegiales/prueba/', 'mis-partidos-prueba'), false);
+  const storeSource = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
+  const appSource = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  assert.match(storeSource, /from '\.\.\/config\.js'/);
+  assert.match(appSource, /from '\.\.\/config\.js'/);
+  assert.equal(storeSource.includes('config.prueba'), false);
+  assert.equal(appSource.includes('config.prueba'), false);
   assert.equal(TRIAL_STORAGE_PREFIX, 'prueba:');
 });
 
@@ -2478,6 +2490,16 @@ test('permisos del partido: todos, solo yo, límite y sin excepción de admin', 
     { uid: 'gustavo', name: 'Gustavo', role: 'admin' },
     { uid: 'martin', name: 'Martín', role: 'organizer' },
   ];
+  const imported = importAccess({ uid: 'gustavo', name: 'Gustavo' });
+  assert.equal(imported.solo, true);
+  assert.deepEqual(imported.viewers, ['gustavo']);
+  assert.deepEqual(imported.adders, ['gustavo']);
+  assert.equal(imported.createdByUid, 'gustavo');
+  assert.equal(canView(imported, 'gustavo'), true);
+  assert.equal(canView(imported, 'martin'), false);
+  const importedOpen = importAccess({ uid: 'gustavo', name: 'Gustavo' }, false);
+  assert.deepEqual(importedOpen.viewers, ['*']);
+  assert.equal(canView(importedOpen, 'martin'), true);
   const open = publicAccess({ uid: 'gustavo', name: 'Gustavo' });
   assert.deepEqual(open.viewers, ['*']);
   assert.equal(isRestricted({ viewers: open.viewers }), false);
@@ -3546,7 +3568,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v128');
+  assert.equal(version, 'f7c-v131');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
