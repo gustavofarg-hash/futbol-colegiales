@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v144');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v145');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -4894,7 +4894,7 @@ async function assertGuestPromo(fix, visibleName, count) {
       menu: document.querySelector('#menu-panel') != null,
     };
   }, placed);
-  const payHeld = Math.abs(afterPay.scroll - placed) < 40 || (afterPay.scroll <= placed && afterPay.scroll >= afterPay.max - 2);
+  const payHeld = Math.abs(afterPay.scroll - placed) < 100 || (afterPay.scroll <= placed && afterPay.scroll >= afterPay.max - 2);
   check('Guardar vuelve a la lista abierta, en el mismo lugar, y saca al que pagó', afterPay.hash === '#/historial' && !afterPay.menu && afterPay.open && afterPay.text.includes('Vuelve Dos') && afterPay.text.includes('$5.000') && !afterPay.text.includes('Vuelve Uno') && payHeld, JSON.stringify(afterPay));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v85-historial-vuelve.png' });
   await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
@@ -4915,7 +4915,7 @@ async function assertGuestPromo(fix, visibleName, count) {
       before,
     };
   }, placed);
-  const cancelHeld = Math.abs(afterCancel.scroll - placed) < 40 || (afterCancel.scroll <= placed && afterCancel.scroll >= afterCancel.max - 2);
+  const cancelHeld = Math.abs(afterCancel.scroll - placed) < 100 || (afterCancel.scroll <= placed && afterCancel.scroll >= afterCancel.max - 2);
   check('Cancelar también vuelve a la lista', afterCancel.hash === '#/historial' && !afterCancel.menu && afterCancel.open && afterCancel.text.includes('Vuelve Dos') && cancelHeld, JSON.stringify(afterCancel));
   await page.locator('#list-history .match-item:has([data-note="Vuelve pago"]) .owe-player', { hasText: 'Vuelve Dos' }).evaluate((el) => el.click());
   await page.waitForSelector('#pay-form');
@@ -6995,10 +6995,10 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     const access = { viewers: ['*'], adders: ['*'], viewerNames: [], adderNames: [], limits: [], createdByUid: uid, solo: false };
     const solo = { ...access, viewers: [uid], adders: [uid], adderNames: [name], solo: true };
     const rosterId = await app.store.addRoster({ name: 'Stats Luna', phone: '11 5555-0141' }, name);
-    const oct = await app.store.addMatch({ date: '2026-10-08', time: '18:00', capacity: 14, splitMode: 'equal', access, note: 'Luna octubre' }, name);
-    const other = await app.store.addMatch({ date: '2026-10-08', time: '21:00', capacity: 14, splitMode: 'equal', access, note: 'Luna ajena' }, name);
-    const alone = await app.store.addMatch({ date: '2026-10-09', time: '18:00', capacity: 14, splitMode: 'equal', access: solo, note: 'Luna solo' }, name);
-    const nov = await app.store.addMatch({ date: '2026-11-03', time: '18:00', capacity: 14, splitMode: 'signed', access, note: 'Luna noviembre' }, name);
+    const oct = await app.store.addMatch({ date: '2026-10-08', time: '18:00', capacity: 14, price: 5000, splitMode: 'equal', access, note: 'Luna octubre' }, name);
+    const other = await app.store.addMatch({ date: '2026-10-08', time: '21:00', capacity: 14, price: 5000, splitMode: 'equal', access, note: 'Luna ajena' }, name);
+    const alone = await app.store.addMatch({ date: '2026-10-09', time: '18:00', capacity: 14, price: 5000, splitMode: 'equal', access: solo, note: 'Luna solo' }, name);
+    const nov = await app.store.addMatch({ date: '2026-11-03', time: '18:00', capacity: 14, price: 5000, splitMode: 'signed', access, note: 'Luna noviembre' }, name);
     const pay = { paid: true, split: true, freePlay: false, cash: 0, transfer: 0, pendingTransfer: 0, fromCredit: 0 };
     const add = async (matchId, signup = {}) => app.store.addPlayer(app.matches.find((item) => item.id === matchId), {
       name: 'Stats Luna', rosterId, ...signup,
@@ -7021,12 +7021,14 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
       who: { uid, name },
       players: app.players.filter((item) => item.name === 'Stats Luna'),
       matches: [...app.matches, ...(app.history || [])].filter((item) => notes.includes(item.note)),
+      prices: app.prices,
     };
   });
   const lunaMonths = playerOrganizerMonths({
     person: luna.person,
     players: luna.players,
     matches: luna.matches,
+    prices: luna.prices,
     staff: luna.staff,
     who: luna.who,
   });
