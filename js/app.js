@@ -5273,15 +5273,16 @@ function openPaymentForm(m, p, opts = {}) {
     const end = String(input.value || '').length;
     try { input.setSelectionRange(end, end); } catch { /* type=number no deja elegir rango; estos campos son type=text */ }
   };
-  // En el celular el toque suelta el dedo (pointerup) ANTES de enfocar el campo.
-  // v77 solo escribía el precio si pointerdown había marcado el toque y el foco
-  // llegaba con esa marca todavía prendida: en Android ya estaba apagada, el
-  // campo seguía vacío y el cursor quedaba al principio. Acá el precio se pone
-  // en el toque y otra vez en el foco, y el cursor se manda al final después
-  // de que el navegador lo deje al principio. No se marca el texto.
+  // El precio entra solo con un tap: apoyar y soltar sin arrastrar.
+  // En el celular el foco llega al apoyar el dedo, y si ahí se escribía el
+  // monto, deslizar la hoja desde el campo lo completaba. Se anota el punto
+  // en pointerdown y se descarta si el dedo se movió más de 10px o si la hoja
+  // scrolleó antes de soltar. El cursor se manda al final después del foco,
+  // porque el toque lo deja al principio. No se marca el texto.
   const bindAmountField = (input, { fillPrice = false, amountFor = null, onFilled = null } = {}) => {
     if (!input) return;
-    let fromTap = false;
+    let gesture = null;
+    let acceptFocus = false;
     let armClick = false;
     let pending = [];
     const drop = () => { for (const timer of pending) clearTimeout(timer); pending = []; };
@@ -5290,7 +5291,6 @@ function openPaymentForm(m, p, opts = {}) {
       drop();
       armClick = true;
       place();
-      // El toque del celular deja el cursor al principio después del foco.
       pending.push(setTimeout(place, 0));
       requestAnimationFrame(() => { if (pending.length) place(); });
       pending.push(setTimeout(place, 40));
@@ -5308,12 +5308,65 @@ function openPaymentForm(m, p, opts = {}) {
       }
       if (String(input.value || '').length) arm();
     };
-    input.addEventListener('pointerdown', () => { fromTap = document.activeElement !== input; });
-    input.addEventListener('pointerup', () => { if (fromTap) maybeFill(); });
-    input.addEventListener('touchend', () => { if (fromTap) maybeFill(); });
+    const scroller = () => document.querySelector('#pay-scroll');
+    const drifted = (event) => {
+      if (!gesture) return true;
+      const box = scroller();
+      const scrolled = box && Math.abs(box.scrollTop - gesture.scrollTop) > 1;
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      return gesture.moved || scrolled || Math.hypot(dx, dy) > 10;
+    };
+    const stopWatch = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+    const onMove = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      if (drifted(event)) gesture.moved = true;
+    };
+    const onCancel = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      gesture = null;
+      acceptFocus = false;
+      stopWatch();
+    };
+    const onUp = (event) => {
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      const moved = drifted(event);
+      gesture = null;
+      stopWatch();
+      if (moved) { acceptFocus = false; return; }
+      acceptFocus = true;
+      if (document.activeElement === input) {
+        acceptFocus = false;
+        maybeFill();
+      }
+    };
+    input.addEventListener('pointerdown', (event) => {
+      if (event.isPrimary === false) return;
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      if (document.activeElement === input) return;
+      stopWatch();
+      const box = scroller();
+      gesture = {
+        x: event.clientX,
+        y: event.clientY,
+        scrollTop: box ? box.scrollTop : 0,
+        pointerId: event.pointerId,
+        moved: false,
+      };
+      acceptFocus = false;
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onCancel);
+    });
+    scroller()?.addEventListener('scroll', () => { if (gesture) gesture.moved = true; }, { passive: true });
     input.addEventListener('focus', () => {
-      if (!fromTap) return;
-      fromTap = false;
+      if (gesture && !gesture.moved) return;
+      if (!acceptFocus) return;
+      acceptFocus = false;
       maybeFill();
     });
     input.addEventListener('click', () => {
