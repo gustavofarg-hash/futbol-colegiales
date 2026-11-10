@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v133';
+const VERSION = 'f7c-v134';
 const TRIAL = self.location.pathname.includes('/prueba/');
 const CACHE = (TRIAL ? 'prueba-' : '') + VERSION;
 const SHELL = [
@@ -14,7 +14,18 @@ function ownCache(key) {
 }
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // Pages manda max-age=600. addAll usaría esa caché HTTP y guardaría
+  // archivos viejos en la caché nueva. reload pide cada uno al servidor.
+  e.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await Promise.all(SHELL.map(async (path) => {
+      const url = new URL(path, self.location).href;
+      const res = await fetch(new Request(url, { cache: 'reload' }));
+      if (!res.ok) throw new Error(path);
+      await cache.put(url, res);
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {
@@ -50,11 +61,17 @@ self.addEventListener('fetch', (e) => {
     })));
     return;
   }
-  // App propia: red primero (para recibir actualizaciones), cache si no hay conexión
+  // App propia: revalida con el servidor (304 si no cambió). Sin red, la caché del SW.
+  const offline = () => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('index.html'));
   e.respondWith(
-    fetch(req).then((res) => {
-      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+    fetch(new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' })).then((res) => {
+      if (res.ok) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
+      }
+      if (res.status === 304) return offline();
       return res;
-    }).catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('index.html')))
+    }).catch(offline)
   );
 });
