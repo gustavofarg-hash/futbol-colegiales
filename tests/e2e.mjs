@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v161');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v162');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -6515,6 +6515,86 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   check('Anular el pendiente viejo se guarda y sale de la tarjeta', oldSaved.pending == null && !oldSaved.card.includes('Transfiere después'), JSON.stringify(oldSaved));
   if (await page.locator('#sheet[open]').count()) await page.locator('#sheet [data-close]').last().click();
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => document.documentElement.classList.remove('dark'));
+}
+
+{
+  const gusMatch = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-12', time: '21:00', price: 5000, note: 'Resumen Gus', capacity: 14 }, app.who);
+    const oldId = await app.store.addPlayer({ id }, { name: 'Cobro Viejo', phone: '5491166661313' }, app.who);
+    const pendingId = await app.store.addPlayer({ id }, { name: 'Invitado 4', phone: '' }, app.who);
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const stamp = (row, extra) => ({ ...row, paidUpdatedBy: 'Gus', ...extra });
+    db.players[oldId] = stamp(db.players[oldId], {
+      paid: true,
+      amount: 5000,
+      method: 'transferencia',
+      split: true,
+      cash: 0,
+      transfer: 5000,
+      transferTo: 'Gus',
+      pendingTransfer: null,
+      pendingTo: null,
+      receivedBy: 'Gus',
+      cashTo: null,
+      creditTo: null,
+      fromCredit: null,
+      transferParts: null,
+    });
+    db.players[pendingId] = stamp(db.players[pendingId], {
+      paid: false,
+      amount: null,
+      method: null,
+      split: true,
+      cash: null,
+      transfer: null,
+      transferTo: null,
+      pendingTransfer: 5000,
+      pendingTo: 'Gus',
+      receivedBy: null,
+      cashTo: null,
+      creditTo: null,
+      fromCredit: null,
+      transferParts: null,
+    });
+    localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+    app.store._emit();
+    return id;
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.evaluate((id) => {
+    document.documentElement.classList.add('dark');
+    location.hash = `#/partido/${encodeURIComponent(id)}`;
+  }, gusMatch);
+  await page.waitForSelector('.slot:has-text("Invitado 4") .pay-pending');
+  const before = (await page.locator('#mine-transfer').innerText()).replace(/\s+/g, ' ');
+  check('Una transferencia vieja a nombre de Gus ya suma en el resumen', before.includes('Me transfirieron: $5.000') && before.includes('1 jugador'), before);
+  await page.click('.slot:has-text("Invitado 4") .pay-btn');
+  await page.waitForSelector('#btn-receive-pending');
+  await page.click('#btn-receive-pending');
+  await page.waitForFunction(() => {
+    const line = document.querySelector('#mine-transfer')?.innerText.replace(/\s+/g, ' ') || '';
+    return line.includes('Me transfirieron: $10.000') && line.includes('2 jugadores');
+  });
+  const after = await page.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const row = Object.values(db.players).find((p) => p.name === 'Invitado 4');
+    const card = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Invitado 4'))?.innerText.replace(/\s+/g, ' ') || '';
+    const summary = ['#mine-cash', '#mine-transfer'].map((sel) => document.querySelector(sel)?.innerText.replace(/\s+/g, ' ') || '').join(' | ');
+    return {
+      transferTo: row?.transferTo || '',
+      pending: row?.pendingTransfer ?? null,
+      receivedBy: row?.receivedBy || '',
+      card,
+      summary,
+    };
+  });
+  check('Marcar el pendiente de Gus lo guarda como Gustavo y suma en Me transfirieron', after.transferTo === 'Gustavo' && after.receivedBy === 'Gustavo' && after.pending == null && after.card.includes('cobró Gustavo') && !after.card.includes('Transfiere después') && after.summary.includes('Me transfirieron: $10.000') && after.summary.includes('2 jugadores'), JSON.stringify(after));
+  if (await page.locator('#sheet[open]').count()) await page.locator('#sheet [data-close]').last().click();
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  await page.locator('.detail-head').screenshot({ path: '/opt/cursor/artifacts/screenshots/v162-resumen-gus.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => document.documentElement.classList.remove('dark'));
 }

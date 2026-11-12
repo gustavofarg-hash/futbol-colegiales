@@ -2,7 +2,7 @@
 // Un partido cancelado no suma plata ni cupo. La espera no debe.
 import { dayCompensation, matchAdders, matchCompensation } from './compensate.js';
 import { monthKeyOf, monthLabel } from './ledger.js';
-import { sameOrganizer, UNSPECIFIED } from './organizers.js';
+import { sameOrganizerIdentity, UNSPECIFIED } from './organizers.js';
 import { isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { priceOfMatch, promoForPlayer } from './prices.js';
 import { matchAlreadyPlayed } from './profile.js';
@@ -129,10 +129,10 @@ export function organizerViewTake({ match, players, matches, prices, who } = {})
   if (match?.cancelled !== true) {
     for (const player of rows) {
       const signed = signupOrganizerUid(player);
-      const mineSignup = (uid && signed === uid) || (!signed && name && sameOrganizer(player.addedBy, name));
+      const mineSignup = (uid && signed === uid) || (!signed && sameOrganizerIdentity(player.addedBy, who));
       if (mineSignup) expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
       for (const share of paymentShares(player)) {
-        if (!(share.amount > 0) || !sameOrganizer(share.name, name)) continue;
+        if (!(share.amount > 0) || !sameOrganizerIdentity(share.name, who)) continue;
         if (share.kind === 'pending') pending = roundARS(pending + share.amount);
         else {
           collected = roundARS(collected + share.amount);
@@ -214,10 +214,7 @@ export function periodBuckets({ matches, players, prices, grain = 'month', who, 
 
 function isThisOrganizer(person, who) {
   if (!person) return false;
-  const id = String(who?.uid || '').trim();
-  const name = String(who?.name || '').trim();
-  if (id && person.uid === id) return true;
-  return !!name && sameOrganizer(person.name, name);
+  return sameOrganizerIdentity(person, who);
 }
 
 function activeDayMatches(matches) {

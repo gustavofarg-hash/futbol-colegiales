@@ -22,7 +22,7 @@ import { activityNoticeText, activityNotices } from '../js/notify.js';
 import { planRows } from '../js/settle.js';
 import { dayCompensation, reconcileTransfers } from '../js/compensate.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditDocId, creditLine, creditLoadSummary, creditPanelRows, creditReturnPlan, nextCredit, retroactiveCreditIds } from '../js/credit.js';
-import { organizerChoices, organizerNames, organizerSlug, sameOrganizer } from '../js/organizers.js';
+import { canonicalOrganizerName, organizerChoices, organizerNames, organizerSlug, sameOrganizer, sameOrganizerIdentity } from '../js/organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { tapChose } from '../js/tap.js';
@@ -3571,7 +3571,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v161');
+  assert.equal(version, 'f7c-v162');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4284,6 +4284,58 @@ test('la ficha del partido cuenta solo lo que cobró quien está logueado', () =
   assert.equal(gus.cashPlayers, 1);
   assert.equal(gus.transfer, 8000);
   assert.equal(gus.transferPlayers, 2);
+});
+
+test('Gus cuenta como Gustavo en el resumen, las estadísticas y el cobro', () => {
+  assert.equal(sameOrganizerIdentity('Gus', { uid: 'gustavo', name: 'Gustavo' }), true);
+  assert.equal(sameOrganizerIdentity({ uid: 'gustavo', name: 'Otro' }, { uid: 'gustavo', name: 'Gustavo' }), true);
+  assert.equal(sameOrganizerIdentity('Martín', 'Gustavo'), false);
+  assert.equal(sameOrganizerIdentity('Gu', 'Gustavo'), false);
+  assert.equal(canonicalOrganizerName('Gus', [{ uid: 'gustavo', name: 'Gustavo' }, { uid: 'martin', name: 'Martín' }]), 'Gustavo');
+  assert.equal(canonicalOrganizerName('gustavo', [{ name: 'Gustavo' }]), 'Gustavo');
+  assert.equal(canonicalOrganizerName('Martín', 'Gustavo'), 'Martín');
+  assert.equal(canonicalOrganizerName('Gus', [{ name: 'Gustavo' }, { name: 'Gustavo López' }]), 'Gus');
+  const players = [
+    { id: 'a', matchId: 'm', name: 'Ana', signedUpWith: 'gustavo', paid: true, split: true, cash: 5000, cashTo: 'Gus' },
+    { id: 'b', matchId: 'm', name: 'Beto', addedBy: 'Gus', paid: true, split: true, transfer: 5000, transferTo: 'Gus', pendingTransfer: 1000, pendingTo: 'Gus' },
+    { id: 'c', matchId: 'm', name: 'Ciro', addedBy: 'Martín', paid: true, split: true, transfer: 9000, transferTo: 'Martín' },
+  ];
+  const who = { uid: 'gustavo', name: 'Gustavo' };
+  const mine = organizerReceipts(players, who);
+  assert.equal(mine.added, 2);
+  assert.equal(mine.cash, 5000);
+  assert.equal(mine.cashPlayers, 1);
+  assert.equal(mine.transfer, 5000);
+  assert.equal(mine.transferPlayers, 1);
+  const take = organizerViewTake({
+    match: { id: 'm', price: 5000 },
+    players,
+    matches: [{ id: 'm', price: 5000 }],
+    who,
+  });
+  assert.equal(take.collected, 10000);
+  assert.equal(take.pending, 1000);
+  assert.equal(mineSummary(players, 'Gustavo').amount, 10000);
+  assert.equal(mineSummary(players, 'Gustavo').pending, 1000);
+  assert.equal(mineSummary(players, 'Martín').amount, 9000);
+  const received = receivePendingTransfer({
+    paid: false,
+    split: true,
+    cash: 2000,
+    cashTo: 'Gus',
+    transfer: 0,
+    pendingTransfer: 3000,
+    pendingTo: 'Gus',
+    paidUpdatedBy: 'Gus',
+  }, 'Gustavo', 30);
+  assert.equal(received.ok, true);
+  assert.equal(received.patch.cashTo, 'Gustavo');
+  assert.equal(received.patch.transferTo, 'Gustavo');
+  assert.equal(received.patch.transfer, 3000);
+  assert.equal(received.patch.pendingTransfer, null);
+  assert.equal(received.patch.receivedBy, 'Gustavo');
+  assert.equal(received.patch.paidUpdatedBy, 'Gustavo');
+  assert.equal(paymentStatusText(received.patch), 'Pagó $5.000 · Efectivo $2.000 · Transferencia $3.000 · cobró Gustavo');
 });
 
 test('Estadísticas no suma la plata de otro organizador', () => {
