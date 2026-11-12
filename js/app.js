@@ -47,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v149';
+const APP_VERSION = 'f7c-v150';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1049,9 +1049,8 @@ function render() {
     document.documentElement.classList.remove('anon-lock');
     requestAnimationFrame(placeBars);
   }
-  const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
-  const brand = $('#venue-name');
-  if (brand) brand.textContent = shownVenue;
+  const hello = $('#hello-name');
+  if (hello) hello.textContent = givenName({ name: actor().name }) || actor().name || '';
   const key = `${r.name}:${r.mode || ''}:${r.section || ''}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
@@ -1859,6 +1858,7 @@ function usualSection(m) {
     matches: knownMatches(),
     players: app.players,
     today: todayISO(),
+    who: actor(),
   });
   if (!rows.length) return '';
   const items = rows.map((row) => {
@@ -1869,7 +1869,7 @@ function usualSection(m) {
     const times = `${row.count} ${row.count === 1 ? 'partido' : 'partidos'}`;
     return `<li class="slot usual-row" data-usual="${esc(row.key)}"><div class="who"><div class="name">${esc(row.name)}</div><div class="sub"><span>${esc(times)}</span></div></div>${wa}</li>`;
   }).join('');
-  return `<h2 class="section" id="usual-title">Suelen jugar este día y hora:</h2><ul class="slots" id="usual-list">${items}</ul>`;
+  return `<h2 class="section" id="usual-title">Suelen anotarse para jugar este día y hora:</h2><ul class="slots" id="usual-list">${items}</ul>`;
 }
 
 /** Próximos, o los últimos 7 días del historial. El más reciente primero en el pasado. */
@@ -1989,7 +1989,7 @@ function renderMatch(id) {
   if (!replaceView(`
     <section class="detail-head">
       ${title}
-      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-hour">${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</span></div>
+      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-hour">${esc(hour)} <span class="match-price-bit">(<span id="match-price">${esc(priceText)}</span>)</span></span></div>
       <p class="hint" id="match-place">${detailPlaceLine(m)}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
@@ -7251,7 +7251,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v149" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v150" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7288,7 +7288,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v149" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v150" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -7328,7 +7328,8 @@ async function boot() {
   watchTheme();
   clearWaChoice();
   clearMineFilter();
-  $('#venue-name').textContent = 'Agenda de partidos';
+  const hello = $('#hello-name');
+  if (hello) hello.textContent = '';
   $('#btn-back').onclick = () => {
     const r = route();
     if (r.name === 'teams') { location.hash = `#/partido/${encodeURIComponent(r.id)}`; return; }

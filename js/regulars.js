@@ -2,6 +2,7 @@
 // Solo mira los partidos y jugadores que ya están cargados.
 import { addDays, toISODate, weekdayOf } from './dates.js';
 import { personKey } from './roster.js';
+import { signupOrganizerUid } from './stats.js';
 
 function addMonths(iso, months) {
   const [y, m, d] = String(iso || '').split('-').map(Number);
@@ -16,17 +17,13 @@ function clock(time) {
   return text.length >= 5 ? text.slice(0, 5) : text;
 }
 
-function playedSlot(player) {
-  if (!player || player.waiting === true || player.noPlay === true || player.confirmed === 'no') return false;
-  return true;
-}
-
 /**
- * Jugadores que no están en este partido y que, en los últimos 3 meses,
- * jugaron otros partidos del mismo día de semana y la misma hora.
- * Orden: más veces primero. `sample` es la aparición más reciente, para el teléfono.
+ * Quienes se anotaron (titular o espera) con este organizador, el mismo día
+ * de la semana y la misma hora, en los últimos 3 meses. No entran los que ya
+ * están en este partido. Orden: más veces primero.
  */
-export function usualPlayers({ match, matches, players, today } = {}) {
+export function usualPlayers({ match, matches, players, today, who } = {}) {
+  const uid = String(who?.uid || '').trim();
   const date = String(match?.date || '');
   const time = clock(match?.time);
   const from = addMonths(today, -3);
@@ -46,7 +43,7 @@ export function usualPlayers({ match, matches, players, today } = {}) {
     if (other.date < from || other.date >= today) continue;
     if (weekdayOf(other.date) !== day || clock(other.time) !== time) continue;
     for (const player of players || []) {
-      if (player?.matchId !== other.id || !playedSlot(player)) continue;
+      if (player?.matchId !== other.id || !uid || signupOrganizerUid(player) !== uid) continue;
       const key = personKey(player, players);
       if (!key || here.has(key)) continue;
       const once = `${other.id}:${key}`;
