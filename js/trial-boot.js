@@ -37,6 +37,17 @@
   document.head.appendChild(font);
   if (!trial) return;
   document.addEventListener('DOMContentLoaded', function () {
+    var title = document.querySelector('.brand-title');
+    if (title && !title.querySelector('.trial-name')) {
+      title.textContent = '';
+      var name = document.createElement('span');
+      name.className = 'brand-name';
+      name.textContent = 'Mis Partidos';
+      var mark = document.createElement('span');
+      mark.className = 'trial-name';
+      mark.textContent = ' (PRUEBA)';
+      title.append(name, mark);
+    }
     var banner = document.getElementById('trial-banner');
     function fit() {
       if (!banner) return;
