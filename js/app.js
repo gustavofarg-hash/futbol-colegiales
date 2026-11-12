@@ -4189,6 +4189,7 @@ function renderProfile(id) {
         <h2 class="section${fichaSuspended(person)}">${fichaName(person, person.name)}</h2>
         ${playerShareButton('profile-share')}
       </div>
+      <section class="profile-block" id="profile-card">
       ${money.panel.nickHtml}
       ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" value="${esc(person.name)}"></label>` : ''}
       <div class="phone-row">
@@ -4201,6 +4202,7 @@ function renderProfile(id) {
         : phoneHidden(person)
           ? `<button type="button" class="btn profile-wa" id="profile-wa" disabled>${ICON.wa}${esc(PRIVATE_WA_TEXT)}</button>`
           : `<button type="button" class="btn profile-add-phone" id="profile-add-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
+      </section>
       ${partidosSection(person)}
       <section class="profile-block">
         <h2>Nivel de juego</h2>
