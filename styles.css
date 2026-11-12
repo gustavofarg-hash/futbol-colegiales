@@ -1100,8 +1100,12 @@ html.dark .topbar { background: #16357a; }
 html:root .brand img {
   width: 42px; height: 42px; border-radius: 10px; background: transparent;
 }
-html:root .brand-title { color: #fff; font-size: 1.28rem; font-weight: 800; letter-spacing: -.03em; }
-html:root .brand-sub { color: rgba(255,255,255,.84); font-weight: 500; font-size: .78rem; }
+html:root .brand-title {
+  color: #fff; font-size: clamp(1.15rem, 4.8vw, 1.45rem); font-weight: 800;
+  letter-spacing: -.03em; line-height: 1.05; max-width: 100%;
+}
+html:root .hello-name { color: var(--lime, #c6f432); }
+html:root .brand-sub { color: #fff; font-weight: 500; font-size: .82rem; opacity: 1; }
 html:root .text-step,
 html:root #btn-settings,
 html:root #btn-back {
