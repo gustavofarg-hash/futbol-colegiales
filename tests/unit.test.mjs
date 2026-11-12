@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, organizerReceipts, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
 import { RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
@@ -15,7 +15,8 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, in
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { compensationDoneDates, countedGoals, currentMonthDiaDates, diaDatesForOrganizer, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
+import { compensationDoneDates, countedGoals, currentMonthDiaDates, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
+import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
 import { planRows } from '../js/settle.js';
@@ -3570,7 +3571,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v148');
+  assert.equal(version, 'f7c-v149');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4262,6 +4263,80 @@ test('Día no muestra un día que no organizó quien está logueado', () => {
   });
   assert.equal(dayOf('2026-11-01'), 0);
   assert.equal(month.get('2026-11'), dayOf('2026-11-01') + dayOf('2026-11-03') + dayOf('2026-11-04'));
+});
+
+test('la ficha del partido cuenta solo lo que cobró quien está logueado', () => {
+  const who = { uid: 'mar', name: 'Martín' };
+  const players = [
+    { id: 'j', matchId: 'm', name: 'Juan', signedUpWith: 'mar', addedBy: 'Gustavo', paid: true, split: true, cash: 4500, cashTo: 'Martín', transfer: 0 },
+    { id: 'n', matchId: 'm', name: 'Nico', signedUpWith: 'mar', addedBy: 'Martín' },
+    { id: 'p', matchId: 'm', name: 'Pedro', signedUpWith: 'gus', addedBy: 'Gustavo', paid: true, split: true, transfer: 5000, transferTo: 'Gustavo' },
+    { id: 'a', matchId: 'm', name: 'Ana', signedUpWith: 'gus', paid: true, split: true, cash: 2000, cashTo: 'Gustavo', transfer: 3000, transferTo: 'Gustavo', pendingTransfer: 1500, pendingTo: 'Gustavo' },
+  ];
+  const mine = organizerReceipts(players, who);
+  assert.equal(mine.added, 2);
+  assert.equal(mine.cash, 4500);
+  assert.equal(mine.cashPlayers, 1);
+  assert.equal(mine.transfer, 0);
+  const gus = organizerReceipts(players, { uid: 'gus', name: 'Gustavo' });
+  assert.equal(gus.added, 2);
+  assert.equal(gus.cash, 2000);
+  assert.equal(gus.cashPlayers, 1);
+  assert.equal(gus.transfer, 8000);
+  assert.equal(gus.transferPlayers, 2);
+});
+
+test('Estadísticas no suma la plata de otro organizador', () => {
+  const staff = [
+    { uid: 'gus', name: 'Gustavo', active: true },
+    { uid: 'mar', name: 'Martín', active: true },
+  ];
+  const matches = [
+    { id: 'mio', date: '2026-10-15', adders: ['gus'], createdByUid: 'gus', price: 5000 },
+    { id: 'ajeno', date: '2026-10-16', adders: ['mar'], createdByUid: 'mar', price: 5000 },
+  ];
+  const players = [
+    { id: 'a', matchId: 'mio', name: 'Ana', signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'b', matchId: 'mio', name: 'Beto', signedUpWith: 'mar', paid: true, split: true, transfer: 3000, transferTo: 'Martín' },
+    { id: 'c', matchId: 'ajeno', name: 'Ciro', signedUpWith: 'mar', paid: true, split: true, cash: 9000, cashTo: 'Martín' },
+  ];
+  const gus = { uid: 'gus', name: 'Gustavo' };
+  const take = organizerViewTake({ match: matches[0], players, matches, who: gus });
+  assert.equal(take.collected, 5000);
+  assert.equal(take.byOrganizer.length, 0);
+  assert.equal(take.byMethod.some((row) => row.kind === 'transfer'), false);
+  const months = periodBuckets({ matches, players, grain: 'month', who: gus, staff });
+  const oct = months.find((row) => row.key === '2026-10');
+  assert.equal(oct.matches, 1);
+  assert.equal(oct.collected, 5000);
+  assert.equal(matchOrganizedBy(matches[1], staff, gus), false);
+});
+
+test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
+  const today = '2026-10-19';
+  const match = { id: 'hoy', date: '2026-10-22', time: '21:00' };
+  const matches = [
+    match,
+    { id: 't1', date: '2026-10-15', time: '21:00' },
+    { id: 't2', date: '2026-10-08', time: '21:00' },
+    { id: 't3', date: '2026-10-01', time: '21:00' },
+    { id: 'otra', date: '2026-10-15', time: '18:00' },
+    { id: 'viejo', date: '2026-07-16', time: '21:00' },
+    { id: 'espera', date: '2026-09-24', time: '21:00' },
+  ];
+  const players = [
+    { id: 'ana-hoy', matchId: 'hoy', name: 'Ana', phone: '5491111111111' },
+    { id: 'ana-1', matchId: 't1', name: 'Ana', phone: '5491111111111' },
+    { id: 'ana-2', matchId: 't2', name: 'Ana', phone: '5491111111111' },
+    { id: 'beto-1', matchId: 't1', name: 'Beto', phone: '5491122222222' },
+    { id: 'beto-2', matchId: 't3', name: 'Beto', phone: '5491122222222' },
+    { id: 'ciro', matchId: 'otra', name: 'Ciro', phone: '5491133333333' },
+    { id: 'viejo', matchId: 'viejo', name: 'Viejo', phone: '5491144444444' },
+    { id: 'luz', matchId: 'espera', name: 'Luz', waiting: true },
+    { id: 'no', matchId: 't2', name: 'No Va', confirmed: 'no' },
+  ];
+  const rows = usualPlayers({ match, matches, players, today });
+  assert.deepEqual(rows.map((row) => [row.name, row.count]), [['Beto', 2]]);
 });
 
 test('el medidor no escribe seguido ni con la app oculta', () => {

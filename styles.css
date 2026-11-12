@@ -269,6 +269,9 @@ h2.section:first-child { margin-top: 4px; }
 }
 .match-switch .chev { width: 18px; height: 18px; flex: none; }
 .detail-head .when { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 1.0625rem; color: var(--muted); margin-top: 2px; }
+.detail-head .match-hour {
+  font-size: clamp(15px, 6.4vw, 1.375rem); font-weight: 800; letter-spacing: -.01em; color: var(--text);
+}
 .detail-head .note { margin-top: 8px; font-size: 0.9375rem; }
 .detail-head .meta { margin-top: 12px; display: flex; align-items: center; gap: 12px; }
 .detail-head .meta .bar { flex: 1; height: 8px; margin: 0; }

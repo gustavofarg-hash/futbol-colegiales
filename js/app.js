@@ -5,11 +5,12 @@ import { createStore } from './store.js';
 import { usageLevel, usageSummary, usageTotals, writeFailureText } from './usage.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
+import { usualPlayers } from './regulars.js';
 import {
   todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, clockTime, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -25,8 +26,8 @@ import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, invit
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
-import { amountOwed, mineSummary, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
-import { compensationDoneDates, diaDatesForOrganizer, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets, playerOrganizerMonths } from './stats.js';
+import { amountOwed, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
+import { compensationDoneDates, diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
@@ -46,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v148';
+const APP_VERSION = 'f7c-v149';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -1819,14 +1820,56 @@ function renderHistory() {
 }
 
 function detailPlaceLine(m) {
-  const venue = placeOf(m);
-  const format = `F${perTeamOf(m)}`;
   const court = courtLabel(m);
+  const format = `F${perTeamOf(m)}`;
+  const venue = placeOf(m);
   const bits = [];
-  if (venue) bits.push(esc(venue));
-  if (format) bits.push(esc(format));
   if (court) bits.push(`<span id="match-court">${esc(court)}</span>`);
+  if (format) bits.push(esc(format));
+  if (venue) bits.push(esc(venue));
   return bits.join(' - ');
+}
+
+function playerCountLabel(n) {
+  return `${n} ${n === 1 ? 'jugador' : 'jugadores'}`;
+}
+
+function matchFactLines(players, mainPlayers, who) {
+  const sum = confirmSummary(mainPlayers);
+  const mine = organizerReceipts(players, who);
+  return {
+    confirm: `Confirmados: ${sum.si} - No juegan: ${sum.no} - Sin respuesta: ${sum.pending}`,
+    added: `Anotados por mí: ${mine.added}`,
+    cash: `Me dieron en efectivo: ${formatARS(mine.cash)} (${playerCountLabel(mine.cashPlayers)})`,
+    transfer: `Me transfirieron: ${formatARS(mine.transfer)} (${playerCountLabel(mine.transferPlayers)})`,
+  };
+}
+
+function usualPhone(player) {
+  const view = withAgendaPhone(player);
+  const raw = String(view?.phone || '').trim();
+  if (!raw) return '';
+  const parsed = normalizePhone(raw);
+  return parsed.ok ? parsed.wa : '';
+}
+
+function usualSection(m) {
+  const rows = usualPlayers({
+    match: m,
+    matches: knownMatches(),
+    players: app.players,
+    today: todayISO(),
+  });
+  if (!rows.length) return '';
+  const items = rows.map((row) => {
+    const phone = usualPhone(row.sample);
+    const wa = phone
+      ? `<a class="wa-btn" href="${esc(waSendUrl({ phone, text: '' }))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(row.name)}">${ICON.wa}</a>`
+      : '';
+    const times = `${row.count} ${row.count === 1 ? 'partido' : 'partidos'}`;
+    return `<li class="slot usual-row" data-usual="${esc(row.key)}"><div class="who"><div class="name">${esc(row.name)}</div><div class="sub"><span>${esc(times)}</span></div></div>${wa}</li>`;
+  }).join('');
+  return `<h2 class="section" id="usual-title">Suelen jugar este día y hora:</h2><ul class="slots" id="usual-list">${items}</ul>`;
 }
 
 /** Próximos, o los últimos 7 días del historial. El más reciente primero en el pasado. */
@@ -1924,8 +1967,7 @@ function renderMatch(id) {
       </li>`);
   }
   const full = everyone.length >= cap;
-  const collected = collectedLine(everyone);
-  const mineLine = mineSummary(app.players.filter((p) => p.matchId === id), app.who).text;
+  const facts = matchFactLines(app.players.filter((p) => p.matchId === id), everyone, who);
   const assigned = normalizeTeams(m.teams, everyone.map((p) => p.id));
   const teamCount = assigned.bib.length + assigned.plain.length;
   const signed = everyone.length + waitingOf(id).length + noPlayOf(id).length;
@@ -1947,15 +1989,16 @@ function renderMatch(id) {
   if (!replaceView(`
     <section class="detail-head">
       ${title}
-      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</span></div>
+      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-hour">${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</span></div>
       <p class="hint" id="match-place">${detailPlaceLine(m)}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
       ${notesBlock}
       <div class="meta"><strong id="slot-count">${everyone.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (everyone.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - everyone.length}`}</span></div>
-      ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
-      <div class="mine-line" id="mine-stats">${esc(mineLine)}</div>
-      ${everyone.length ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary(everyone).text)}</div>` : ''}
+      <div class="confirm-sum" id="confirm-sum">${esc(facts.confirm)}</div>
+      <div class="mine-line" id="mine-added">${esc(facts.added)}</div>
+      <div class="mine-line" id="mine-cash">${esc(facts.cash)}</div>
+      <div class="mine-line" id="mine-transfer">${esc(facts.transfer)}</div>
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
         ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
@@ -1970,6 +2013,7 @@ function renderMatch(id) {
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
+    ${usualSection(m)}
     ${noPlaySection(m, readOnly)}
     ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
     ${showMatchCompensation(m) ? matchCompensationHtml(m.date) : ''}
@@ -3678,10 +3722,10 @@ function profileMoney(person) {
 }
 
 const STATS_MODES = [
-  { id: 'jugador', label: 'Jugador' },
-  { id: 'dia', label: 'Día' },
-  { id: 'mes', label: 'Mes' },
-  { id: 'anio', label: 'Año' },
+  { id: 'jugador', label: 'Jugador', title: 'Estadísticas por jugador' },
+  { id: 'dia', label: 'Día', title: 'Estadísticas por día' },
+  { id: 'mes', label: 'Mes', title: 'Estadísticas por mes' },
+  { id: 'anio', label: 'Año', title: 'Estadísticas por año' },
 ];
 
 function statsHash(mode, id) {
@@ -3703,9 +3747,7 @@ function takeSummary(take) {
     <p class="stat-summary" id="stats-collected">Cobrado ${esc(formatARS(take.collected))} de ${esc(formatARS(take.expected))}</p>
     ${pending}
     <h2>Por medio</h2>
-    ${moneyList(take.byMethod, 'Sin cobros.')}
-    <h2>Por organizador</h2>
-    ${moneyList(take.byOrganizer, 'Nadie cobró.')}`;
+    ${moneyList(take.byMethod, 'Sin cobros.')}`;
 }
 
 function renderStats(r) {
@@ -3714,12 +3756,13 @@ function renderStats(r) {
   const searchFocused = !!(prev && document.activeElement === prev);
   const selStart = searchFocused ? prev.selectionStart : 0;
   const selEnd = searchFocused ? prev.selectionEnd : 0;
+  const current = STATS_MODES.find((item) => item.id === mode) || STATS_MODES[0];
   const seg = `<div class="seg stats-seg" id="stats-mode">${STATS_MODES.map((item) => `<a class="btn ${item.id === mode ? 'primary' : ''}" href="${statsHash(item.id)}"${item.id === mode ? ' aria-current="page"' : ''}>${item.label}</a>`).join('')}</div>`;
   let body = '';
   if (mode === 'jugador') body = statsPlayerBody(r.id);
   else if (mode === 'dia') body = statsDayBody(r.id);
   else body = statsPeriodBody(mode === 'anio' ? 'year' : 'month', r.id);
-  if (!replaceView(`<div id="stats-view">${seg}${body}</div>`)) return;
+  if (!replaceView(`<div id="stats-view"><h2 class="section" id="stats-title">${esc(current.title)}</h2>${seg}${body}</div>`)) return;
   const input = $('#stats-q');
   if (input) {
     input.addEventListener('focus', () => {
@@ -3793,7 +3836,6 @@ function statsPlayerBody(id) {
     }
   }
   return `
-    <h2 class="section">Por jugador</h2>
     <label class="field roster-search stats-search"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${missing}
     ${months}
@@ -3828,29 +3870,39 @@ function statsDayBody(id) {
     staff: staffUsers(app.users),
     who: { uid: me.uid, name: me.name },
   });
+  const staff = staffUsers(app.users);
+  const mineOf = (rows) => (rows || []).filter((match) => matchOrganizedBy(match, staff, me));
   if (!id) {
     const rows = dates.map((date) => {
       const dayMatches = byDay.get(date) || [];
-      const times = dayMatches.map((match) => match.time || '--:--').join(' · ');
-      const count = dayMatches.length;
-      const cancelled = dayMatches.filter((match) => match.cancelled === true).length;
+      const mine = mineOf(dayMatches);
+      const times = mine.map((match) => match.time || '--:--').join(' · ');
+      const count = mine.length;
+      const cancelled = mine.filter((match) => match.cancelled === true).length;
       const tag = cancelled ? `<span class="tag">${cancelled === count ? 'Cancelado' : `${cancelled} cancelado${cancelled === 1 ? '' : 's'}`}</span>` : '';
       return `<li class="slot" data-date="${esc(date)}"><a class="who" href="${statsHash('dia', date)}"><div class="name">${esc(capitalize(labelDate(date)))}</div><div class="sub"><span>${count} ${count === 1 ? 'partido' : 'partidos'} · ${esc(times)}</span>${tag}</div><span class="stats-entitled">${esc(entitledLabel(dayShare(date, dayMatches)))}</span></a></li>`;
     }).join('');
-    return `<h2 class="section">Por día</h2><ul class="slots" id="stats-days">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
+    return `<ul class="slots" id="stats-days">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
   }
   const wanted = /^\d{4}-\d{2}-\d{2}$/.test(id) ? id : (matches.find((item) => item.id === id)?.date || '');
-  const dayMatches = byDay.get(wanted);
-  if (!dayMatches) return `<div class="empty"><p><b>No hay partidos ese día.</b></p><p><a class="btn" href="${statsHash('dia')}">Volver a la lista</a></p></div>`;
+  const allDay = byDay.get(wanted) || [];
+  const dayMatches = mineOf(allDay);
+  if (!dayMatches.length) return `<div class="empty"><p><b>No hay partidos ese día.</b></p><p><a class="btn" href="${statsHash('dia')}">Volver a la lista</a></p></div>`;
   const blocks = dayMatches.map((match) => {
-    const take = matchTake({ match, players: app.players, matches, prices: livePrices() });
+    const take = organizerViewTake({
+      match,
+      players: app.players,
+      matches,
+      prices: livePrices(),
+      who: { uid: me.uid, name: me.name },
+    });
     const when = `${match.time || '--:--'} hs`;
     return `<section class="profile-block stats-day-match"><h2>${esc(when)}</h2>${match.cancelled === true ? '<p class="hint">Cancelado: no suma plata.</p>' : ''}${takeSummary(take)}</section>`;
   }).join('');
   return `
     <p class="hint"><a href="${statsHash('dia')}">Todos los días</a></p>
     <h2 class="section" id="stats-day">${esc(capitalize(labelDate(wanted)))}</h2>
-    <p class="stats-entitled" id="stats-entitled">${esc(entitledLabel(dayShare(wanted, dayMatches)))}</p>
+    <p class="stats-entitled" id="stats-entitled">${esc(entitledLabel(dayShare(wanted, allDay)))}</p>
     ${blocks}`;
 }
 
@@ -3870,15 +3922,22 @@ function periodShares(grain) {
 }
 function statsPeriodBody(grain, id) {
   const mode = grain === 'year' ? 'anio' : 'mes';
-  const title = grain === 'year' ? 'Por año' : 'Por mes';
-  const buckets = periodBuckets({ matches: knownMatches(), players: app.players, prices: livePrices(), grain });
+  const me = actor();
+  const buckets = periodBuckets({
+    matches: knownMatches(),
+    players: app.players,
+    prices: livePrices(),
+    grain,
+    who: { uid: me.uid, name: me.name },
+    staff: staffUsers(app.users),
+  });
   const shares = periodShares(grain);
   if (!id) {
     const rows = buckets.map((bucket) => {
       const mine = `<span class="stats-entitled">${esc(entitledLabel(shares.get(bucket.key) || 0))}</span>`;
       return `<li class="slot" data-period="${esc(bucket.key)}"><a class="who" href="${statsHash(mode, bucket.key)}"><div class="name">${esc(bucket.label)}</div><div class="sub"><span>${bucket.matches} ${bucket.matches === 1 ? 'partido' : 'partidos'} · ${bucket.players} ${bucket.players === 1 ? 'jugador' : 'jugadores'}</span><span>${esc(formatARS(bucket.collected))}</span></div>${mine}</a></li>`;
     }).join('');
-    return `<h2 class="section">${title}</h2><ul class="slots" id="stats-periods">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
+    return `<ul class="slots" id="stats-periods">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
   }
   const bucket = buckets.find((item) => item.key === id);
   if (!bucket) return `<div class="empty"><p><b>No hay datos de ese período.</b></p><p><a class="btn" href="${statsHash(mode)}">Volver a la lista</a></p></div>`;
@@ -3895,8 +3954,6 @@ function statsPeriodBody(grain, id) {
       ${bucket.pending > 0 ? `<p class="pay-pending">Transfiere después ${esc(formatARS(bucket.pending))}</p>` : ''}
       <h2>Por medio</h2>
       ${moneyList(bucket.byMethod, 'Sin cobros.')}
-      <h2>Por organizador</h2>
-      ${moneyList(bucket.byOrganizer, 'Nadie cobró.')}
     </section>`;
 }
 
@@ -4010,6 +4067,7 @@ function renderRegistro(r) {
     : `<p class="empty-wait" id="log-empty">${app.logError ? esc(app.logError) : 'No hay registros en estas fechas.'}</p>`;
   if (!replaceView(`
     <div id="log-view">
+      <h2 class="section" id="log-title">Registro de movimientos</h2>
       <div class="seg stats-seg" id="log-mode">
         <a class="btn ${section === 'partidos' ? 'primary' : ''}" href="#/registro/partidos"${section === 'partidos' ? ' aria-current="page"' : ''}>Partidos</a>
         <a class="btn ${section === 'pagos' ? 'primary' : ''}" href="#/registro/pagos"${section === 'pagos' ? ' aria-current="page"' : ''}>Pagos</a>
@@ -7193,7 +7251,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v148" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v149" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7230,7 +7288,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v148" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v149" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

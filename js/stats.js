@@ -110,6 +110,47 @@ export function matchTake({ match, players, matches, prices } = {}) {
   };
 }
 
+/**
+ * La misma ficha, pero la plata es solo la de quien está logueado:
+ * lo que le pagaron y lo que correspondía a quienes se anotaron con él.
+ * No arma el desglose por organizador.
+ */
+export function organizerViewTake({ match, players, matches, prices, who } = {}) {
+  const take = matchTake({ match, players, matches, prices });
+  const name = String(who?.name || '').trim();
+  const uid = String(who?.uid || '').trim();
+  if (!name && !uid) return { ...take, byOrganizer: [] };
+  const rows = (players || []).filter((player) => player && match?.id && player.matchId === match.id);
+  const all = matches || (match ? [match] : []);
+  let expected = 0;
+  let collected = 0;
+  let pending = 0;
+  const byMethod = new Map();
+  if (match?.cancelled !== true) {
+    for (const player of rows) {
+      const signed = signupOrganizerUid(player);
+      const mineSignup = (uid && signed === uid) || (!signed && name && sameOrganizer(player.addedBy, name));
+      if (mineSignup) expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
+      for (const share of paymentShares(player)) {
+        if (!(share.amount > 0) || !sameOrganizer(share.name, name)) continue;
+        if (share.kind === 'pending') pending = roundARS(pending + share.amount);
+        else {
+          collected = roundARS(collected + share.amount);
+          bump(byMethod, share.kind, share.amount);
+        }
+      }
+    }
+  }
+  return {
+    ...take,
+    expected,
+    collected,
+    pending,
+    byMethod: methodRows(byMethod),
+    byOrganizer: [],
+  };
+}
+
 function emptyPeriod(key, grain) {
   return {
     key,
@@ -129,10 +170,12 @@ function emptyPeriod(key, grain) {
  * Mes o año: cantidad de partidos, jugadores distintos y plata cobrada
  * por organizador y por medio. Los cancelados se cuentan aparte y no suman plata.
  */
-export function periodBuckets({ matches, players, prices, grain = 'month' } = {}) {
+export function periodBuckets({ matches, players, prices, grain = 'month', who, staff } = {}) {
+  const person = who && typeof who === 'object' ? who : null;
   const buckets = new Map();
-  const all = matches || [];
-  for (const match of all) {
+  const source = matches || [];
+  const visible = person ? source.filter((match) => matchOrganizedBy(match, staff, person)) : source;
+  for (const match of visible) {
     if (!match?.id || !/^\d{4}-\d{2}-\d{2}$/.test(match.date || '')) continue;
     const key = grain === 'year' ? match.date.slice(0, 4) : monthKeyOf(match.date);
     if (!key) continue;
@@ -143,7 +186,9 @@ export function periodBuckets({ matches, players, prices, grain = 'month' } = {}
       continue;
     }
     bucket.matches += 1;
-    const take = matchTake({ match, players, matches: all, prices });
+    const take = person
+      ? organizerViewTake({ match, players, matches: source, prices, who: person })
+      : matchTake({ match, players, matches: source, prices });
     for (const item of take.playerKeys) bucket.playerKeys.add(item);
     bucket.expected = roundARS(bucket.expected + take.expected);
     bucket.collected = roundARS(bucket.collected + take.collected);
@@ -180,8 +225,9 @@ function activeDayMatches(matches) {
 }
 
 /** Esta persona organiza el partido: puede anotar, igual que en la compensación. */
-function organizesMatch(match, staff, who) {
-  return matchAdders(match, staff).some((adder) => isThisOrganizer(adder, who));
+export function matchOrganizedBy(match, staff, who) {
+  const person = who && typeof who === 'object' ? who : { uid: '', name: '' };
+  return matchAdders(match, staff).some((adder) => isThisOrganizer(adder, person));
 }
 
 /** Organizadores del día: quienes pueden anotar en algún partido activo. */
@@ -266,7 +312,7 @@ export function diaDatesForOrganizer({ today, done, matches, staff, who } = {}) 
     byDay.get(date).push(match);
   }
   return currentMonthDiaDates({ today, done }).filter((date) => (
-    (byDay.get(date) || []).some((match) => organizesMatch(match, staff, person))
+    (byDay.get(date) || []).some((match) => matchOrganizedBy(match, staff, person))
   ));
 }
 
