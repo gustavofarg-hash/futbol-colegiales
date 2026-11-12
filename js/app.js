@@ -39,7 +39,6 @@ import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
-import { ICON as PHOSPHOR } from './icons.js';
 import { isTrialPage } from './trial.js';
 import { tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
@@ -48,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v155';
+const APP_VERSION = 'f7c-v156';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -73,7 +72,7 @@ function waShareControl(id, { checked = false, named = false } = {}) {
   return `<label class="checkline wa-share" id="${lineId}"><input type="checkbox" id="${id}"${named ? ' name="waShare"' : ''}${checked ? ' checked' : ''}><span>${WA_SHARE_LABEL}</span></label>`;
 }
 function slotSide(p, m, readOnly, payText) {
-  const pay = readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? ' on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">${ICON.pay}</button>`;
+  const pay = readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? ' on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}"><span class="pay-mark" aria-hidden="true">$</span></button>`;
   const wa = waButton(p, waMessage(m, p));
   const more = readOnly ? '' : `<button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>`;
   const stack = (wa || pay) ? `<div class="slot-actions">${wa}${pay}</div>` : '';
@@ -95,8 +94,15 @@ function rosterIdentity(person) {
 }
 const CODE_KEY = 'f7c-code';
 const ICON = {
-  ...PHOSPHOR,
-  pay: '<span class="pay-mark" aria-hidden="true">$</span>',
+  wa: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2l-.4-.2z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  paste: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/></svg>',
+  share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 6l-4-4-4 4M12 2v14"/></svg>',
+  shareNodes: '<svg class="share-nodes" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.1 11.1 15.1 7.2M8.1 12.9 15.1 16.8"/><circle cx="5.6" cy="12" r="2.5"/><circle cx="18.2" cy="5.8" r="2.5"/><circle cx="18.2" cy="18.2" r="2.5"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
+  more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>',
 };
 
 const app = {
@@ -1043,8 +1049,9 @@ function render() {
     document.documentElement.classList.remove('anon-lock');
     requestAnimationFrame(placeBars);
   }
-  const hello = $('#hello-name');
-  if (hello) hello.textContent = givenName({ name: actor().name }) || actor().name || '';
+  const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
+  const brand = $('#venue-name');
+  if (brand) brand.textContent = shownVenue;
   const key = `${r.name}:${r.mode || ''}:${r.section || ''}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
@@ -1228,7 +1235,7 @@ function oweBox(m) {
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
       <span>Faltan pagar (que anoté yo): <b>${esc(formatARS(debt.total))}</b></span>
-      ${ICON.caret}
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
     <ul class="owe-list"${open ? '' : ' hidden'}>${rows}</ul>
   </div>`;
@@ -1281,7 +1288,7 @@ function renderHome() {
     ${confirmBanner()}${reminderBanners(next)}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
-      <div class="empty" id="home-empty"><div class="big">${ICON.soccer}</div><p><b>No hay partidos en los próximos 7 días.</b></p>
+      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
       <p class="small">${emptyHint}</p></div>`}
     ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
     ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
@@ -1311,8 +1318,9 @@ function renderTeams(id) {
   const readOnly = !canAdd(m, actor().uid);
   const byId = new Map(main.map((p) => [p.id, p]));
   const slots = perTeamOf(m);
-  const vest = ICON.shirtFill;
-  const shirt = ICON.shirt;
+  const vestPath = 'M8.15 2.15H10.35C10.7 4 11.35 5.4 12 6.15C12.65 5.4 13.3 4 13.65 2.15H15.85C17.05 4.5 18.25 7.2 18.5 10.6C18.65 12.4 18.4 13.6 18.2 14.4V21.55H5.8V14.4C5.6 13.6 5.35 12.4 5.5 10.6C5.75 7.2 6.95 4.5 8.15 2.15Z';
+  const vest = `<svg class="vest vest-bib" viewBox="0 0 24 24" aria-hidden="true"><path d="${vestPath}"/></svg>`;
+  const shirt = `<svg class="vest vest-plain" viewBox="0 0 24 24" aria-hidden="true"><path d="${vestPath}"/></svg>`;
   const slotRows = (side, list) => {
     const count = Math.max(slots, list.length);
     const rows = [];
@@ -1330,13 +1338,13 @@ function renderTeams(id) {
         ? `<span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span>`
         : `<span class="goal-box"><button type="button" data-goal="-1" aria-label="Restar un gol de ${esc(player.name)}">−</button><span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span><button type="button" data-goal="1" aria-label="Sumar un gol de ${esc(player.name)}">+</button></span>`;
       const goalMark = player.inGoal === true
-        ? `<span class="arco-tick" aria-hidden="true">${ICON.checkCircle}</span>`
+        ? '<span class="arco-tick" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#0f7a3d"/><path d="M4.6 8.2 7 10.6 11.6 5.4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
         : '';
-      const goalIco = `<svg class="goal-ico" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M18 16h30L44 38H16Z" fill="currentColor" opacity=".18"/><path d="M8 22 18 16v22L8 52M56 20 48 16v22l8 14" fill="none" stroke="currentColor" stroke-width="2"/><g fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 20.5h28M17.2 26h26.2M16.4 31.5h24.4M15.8 37h22"/><path d="M24 16.4v21.2M31 16.2v21.6M38 16v21.2M45 15.8v19.6"/><path d="M8 30h10M8 40h8M56 28H48M56 38h-8"/></g><path d="M8 22h48v30" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const goalIco = `<svg class="goal-ico" viewBox="0 0 64 64" aria-hidden="true"><path d="M18 16h30L44 38H16Z" fill="#e7f3ff"/><path d="M8 22 18 16v22L8 52M56 20 48 16v22l8 14" fill="#f4f9fd" stroke="#c5d8ea" stroke-width="1"/><g fill="none" stroke="#7eb6e6" stroke-width="1.2"><path d="M18 20.5h28M17.2 26h26.2M16.4 31.5h24.4M15.8 37h22"/><path d="M24 16.4v21.2M31 16.2v21.6M38 16v21.2M45 15.8v19.6"/><path d="M8 30h10M8 40h8M56 28H48M56 38h-8"/></g><path d="M8 22h48v30" fill="none" stroke="#8ea3b8" stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 22h48v30" fill="none" stroke="#f8fbff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
       const arco = readOnly
         ? (player.inGoal === true ? `<span class="arco-mark on" aria-label="Fue al arco">${goalIco}${goalMark}</span>` : '')
         : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
-      const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">${ICON.x}</button></span>`;
+      const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
       const controls = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
       const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
       rows.push(readOnly
@@ -1748,7 +1756,6 @@ function renderHistory() {
     </div>`;
   if (!replaceView(`
     <h2 class="section">Historial de partidos</h2>
-    <div class="filter-card" id="history-filters">
     <form id="history-filter" class="history-filter">
       <p class="hint roster-lead">Por defecto muestra los últimos 30 partidos</p>
       <label class="field"><span>Una fecha</span><input type="date" id="hist-day" value="${esc(filter.day || '')}"></label>
@@ -1762,13 +1769,12 @@ function renderHistory() {
       </div>
     </form>
     ${chips}
-    </div>
     ${venueNarrow && !(venues.selected || []).length ? '<p class="hint" id="hist-venue-empty">Elegí una sede o Todas para ver los partidos.</p>' : ''}
     <p class="hint" id="hist-caption">${esc(caption)}</p>
     <button type="button" class="btn block" id="btn-hist-import">Importar partidos desde texto</button>
     ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
     ${past.length ? `<ul class="match-list" id="list-history">${historyWithCompensation(past)}</ul>` : `
-      <div class="empty" id="list-history"><div class="big">${ICON.calendar}</div><p><b>${esc(emptyLead)}</b></p>
+      <div class="empty" id="list-history"><div class="big">📅</div><p><b>${esc(emptyLead)}</b></p>
       <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}`)) return;
   $('#history-filter').onsubmit = (e) => {
     e.preventDefault();
@@ -1912,7 +1918,7 @@ function renderMatch(id) {
   const m = matchById(id);
   if (!m) {
     if (app.matchMiss[id] === 'denied') {
-      replaceView(`<div class="empty" id="match-denied"><div class="big">${ICON.lock}</div><p><b>No se pudo abrir este partido.</b></p><p class="small">${esc(RULES_MSG)}</p><p><a class="btn" href="#/historial">Volver al historial</a></p></div>`);
+      replaceView(`<div class="empty" id="match-denied"><div class="big">🔒</div><p><b>No se pudo abrir este partido.</b></p><p class="small">${esc(RULES_MSG)}</p><p><a class="btn" href="#/historial">Volver al historial</a></p></div>`);
       return;
     }
     if (app.matchMiss[id] !== 'done') {
@@ -1925,7 +1931,7 @@ function renderMatch(id) {
           if (current.name === 'match' && current.id === id) render();
         });
       }
-      replaceView(`<div class="empty" id="match-missing"><div class="big">${ICON.soccer}</div><p><b>Buscando el partido…</b></p></div>`);
+      replaceView(`<div class="empty" id="match-missing"><div class="big">⚽</div><p><b>Buscando el partido…</b></p></div>`);
       return;
     }
     replaceView(`<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`);
@@ -1973,7 +1979,7 @@ function renderMatch(id) {
   const switchLabel = matchTitleLabel(m.date);
   const switchable = canSwitchMatch(m);
   const title = switchable
-    ? `<button type="button" class="match-switch" id="match-date" aria-haspopup="dialog">${esc(switchLabel)}${ICON.caret}</button>`
+    ? `<button type="button" class="match-switch" id="match-date" aria-haspopup="dialog">${esc(switchLabel)}<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`
     : `<h1 id="match-date">${esc(switchLabel)}</h1>`;
   const rel = relativeLabel(m.date);
   const notesBtn = canEdit ? '<button type="button" class="btn" id="btn-notes">Notas</button>' : '';
@@ -1984,7 +1990,7 @@ function renderMatch(id) {
   if (!replaceView(`
     <section class="detail-head">
       ${title}
-      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-hour">${esc(hour)} <span class="match-price-bit">(<span id="match-price">${esc(priceText)}</span>)</span></span></div>
+      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-hour">${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</span></div>
       <p class="hint" id="match-place">${detailPlaceLine(m)}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
@@ -3501,7 +3507,7 @@ function renderRoster() {
   if (!replaceView(`
     <h2 class="section">Jugadores</h2>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
-    <label class="field roster-search filter-card"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
+    <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.'}</p>`}
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
@@ -3799,7 +3805,7 @@ function statsPlayerBody(id) {
   const requested = id ? statsRosterPerson(id) : null;
   const person = requested && !browsing ? requested : null;
   const missing = id && !requested
-    ? `<div class="empty" id="stats-missing"><div class="big">${ICON.user}</div><p><b>No encontramos este jugador.</b></p></div>`
+    ? `<div class="empty" id="stats-missing"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p></div>`
     : '';
   let months = '';
   if (person) {
@@ -3831,7 +3837,7 @@ function statsPlayerBody(id) {
     }
   }
   return `
-    <label class="field roster-search stats-search filter-card"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
+    <label class="field roster-search stats-search"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${missing}
     ${months}
     ${list}`;
@@ -4067,7 +4073,7 @@ function renderRegistro(r) {
         <a class="btn ${section === 'partidos' ? 'primary' : ''}" href="#/registro/partidos"${section === 'partidos' ? ' aria-current="page"' : ''}>Partidos</a>
         <a class="btn ${section === 'pagos' ? 'primary' : ''}" href="#/registro/pagos"${section === 'pagos' ? ' aria-current="page"' : ''}>Pagos</a>
       </div>
-      <form id="log-range" class="log-range filter-card">
+      <form id="log-range" class="log-range">
         <label class="field"><span>Desde</span><input type="date" id="log-from" value="${esc(range.from)}" aria-label="Desde"></label>
         <label class="field"><span>Hasta</span><input type="date" id="log-to" value="${esc(range.to)}" aria-label="Hasta"></label>
         <button type="submit" class="btn" id="log-apply">Ver</button>
@@ -4106,7 +4112,7 @@ function renderRegistro(r) {
 
 function renderUsers() {
   if (app.role !== 'admin') {
-    replaceView(`<div class="empty"><div class="big">${ICON.lock}</div><p><b>Solo el administrador puede crear o desactivar organizadores.</b></p><p class="small">Los partidos, los jugadores, los pagos y el plantel los pueden editar los dos.</p></div>`);
+    replaceView(`<div class="empty"><div class="big">🔒</div><p><b>Solo el administrador puede crear o desactivar organizadores.</b></p><p class="small">Los partidos, los jugadores, los pagos y el plantel los pueden editar los dos.</p></div>`);
     return;
   }
   const rows = (app.users || []).map((user) => `
@@ -4165,7 +4171,7 @@ function renderProfile(id) {
   }
   if (!person) {
     app.signupDraft = null;
-    replaceView(`<div class="empty"><div class="big">${ICON.user}</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
+    replaceView(`<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
     return;
   }
   const who = rosterIdentity(person);
@@ -4183,7 +4189,6 @@ function renderProfile(id) {
         <h2 class="section${fichaSuspended(person)}">${fichaName(person, person.name)}</h2>
         ${playerShareButton('profile-share')}
       </div>
-      <section class="profile-block" id="profile-card">
       ${money.panel.nickHtml}
       ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" value="${esc(person.name)}"></label>` : ''}
       <div class="phone-row">
@@ -4196,7 +4201,6 @@ function renderProfile(id) {
         : phoneHidden(person)
           ? `<button type="button" class="btn profile-wa" id="profile-wa" disabled>${ICON.wa}${esc(PRIVATE_WA_TEXT)}</button>`
           : `<button type="button" class="btn profile-add-phone" id="profile-add-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
-      </section>
       ${partidosSection(person)}
       <section class="profile-block">
         <h2>Nivel de juego</h2>
@@ -4889,7 +4893,7 @@ function openPlayerForm(m, p, opts = {}) {
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
       ${signupFields(p, m)}
       ${editingFriend ? `<p class="hint" id="friend-stays">Sigue siendo invitado de ${esc(hostName || 'quien lo invitó')}.</p>` : ''}
-      ${p ? '' : `<label class="field filter-card"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
+      ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
       <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       ${p ? nickField(p) : ''}
@@ -5240,7 +5244,7 @@ function recordedPaymentList(player, listId) {
   return `<ul class="pay-recorded" id="${listId}">${rows.map((share, index) => {
     const label = paymentShareLabel(share);
     const x = canAnnulPayment(player, share)
-      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">${ICON.x}</button>`
+      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">✕</button>`
       : '';
     const pendingClass = share.kind === 'pending' ? ' class="pay-pending-row"' : '';
     return `<li${pendingClass}><span>${esc(label)}</span>${x}</li>`;
@@ -7248,7 +7252,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v155" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v156" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7285,7 +7289,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v155" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v156" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -7325,8 +7329,7 @@ async function boot() {
   watchTheme();
   clearWaChoice();
   clearMineFilter();
-  const hello = $('#hello-name');
-  if (hello) hello.textContent = '';
+  $('#venue-name').textContent = 'Agenda de partidos';
   $('#btn-back').onclick = () => {
     const r = route();
     if (r.name === 'teams') { location.hash = `#/partido/${encodeURIComponent(r.id)}`; return; }

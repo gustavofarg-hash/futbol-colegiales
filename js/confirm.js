@@ -6,7 +6,6 @@ import { isFirebaseConfigured, DEMO_STORAGE_KEY } from './store.js';
 import { capitalize, labelDate } from './dates.js';
 import { givenName } from './roster.js';
 import { confirmationAllowed } from './reminders.js';
-import { ICON } from './icons.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -110,7 +109,7 @@ function render(state) {
   const root = $('#confirm');
   const { match, player, error } = state;
   if (error || !confirmationAllowed(player, matchId, token) || !match) {
-    root.innerHTML = `<div class="empty"><div class="big">${ICON.link}</div><p><b>Este link no es válido.</b></p><p class="small">Pedile a Gustavo o a Martín que te lo reenvíen.</p></div>`;
+    root.innerHTML = `<div class="empty"><div class="big">🔗</div><p><b>Este link no es válido.</b></p><p class="small">Pedile a Gustavo o a Martín que te lo reenvíen.</p></div>`;
     return;
   }
   const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
