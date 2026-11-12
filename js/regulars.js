@@ -19,8 +19,9 @@ function clock(time) {
 
 /**
  * Quienes se anotaron (titular o espera) con este organizador, el mismo día
- * de la semana y la misma hora, en los últimos 3 meses. No entran los que ya
- * están en este partido. Orden: más veces primero.
+ * de la semana y la misma hora, en los últimos 3 meses. Un partido que después
+ * se canceló también cuenta. No entran los que ya están en este partido.
+ * Orden: más veces primero.
  */
 export function usualPlayers({ match, matches, players, today, who } = {}) {
   const uid = String(who?.uid || '').trim();
@@ -38,7 +39,7 @@ export function usualPlayers({ match, matches, players, today, who } = {}) {
   const byKey = new Map();
   const seen = new Set();
   for (const other of matches || []) {
-    if (!other?.id || other.id === match.id || other.cancelled === true) continue;
+    if (!other?.id || other.id === match.id) continue;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(other.date || '')) continue;
     if (other.date < from || other.date >= today) continue;
     if (weekdayOf(other.date) !== day || clock(other.time) !== time) continue;

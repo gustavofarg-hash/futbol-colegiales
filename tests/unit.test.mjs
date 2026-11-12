@@ -3571,7 +3571,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v153');
+  assert.equal(version, 'f7c-v154');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4323,6 +4323,9 @@ test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
     { id: 'otra', date: '2026-10-15', time: '18:00' },
     { id: 'viejo', date: '2026-07-16', time: '21:00' },
     { id: 'espera', date: '2026-09-24', time: '21:00' },
+    { id: 'lluvia', date: '2026-09-17', time: '21:00', cancelled: true },
+    { id: 'lluvia-otra', date: '2026-09-17', time: '18:00', cancelled: true },
+    { id: 'lluvia-vieja', date: '2026-06-18', time: '21:00', cancelled: true },
   ];
   const mine = { signedUpWith: 'gus' };
   const players = [
@@ -4335,9 +4338,16 @@ test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
     { id: 'ajeno', matchId: 't1', name: 'Ajeno', phone: '5491166666666', signedUpWith: 'mar' },
     { id: 'ciro', matchId: 'otra', name: 'Ciro', phone: '5491133333333', ...mine },
     { id: 'viejo', matchId: 'viejo', name: 'Viejo', phone: '5491144444444', ...mine },
+    { id: 'ana-lluvia', matchId: 'lluvia', name: 'Ana', phone: '5491111111111', ...mine },
+    { id: 'beto-lluvia', matchId: 'lluvia', name: 'Beto', phone: '5491122222222', ...mine },
+    { id: 'nube', matchId: 'lluvia', name: 'Nube', phone: '5491177777777', ...mine },
+    { id: 'espera-lluvia', matchId: 'lluvia', name: 'Espera', phone: '5491188888888', waiting: true, ...mine },
+    { id: 'ajeno-lluvia', matchId: 'lluvia', name: 'Ajeno Lluvia', phone: '5491199999999', signedUpWith: 'mar' },
+    { id: 'otra-lluvia', matchId: 'lluvia-otra', name: 'Otra Lluvia', phone: '5491100000000', ...mine },
+    { id: 'vieja-lluvia', matchId: 'lluvia-vieja', name: 'Vieja Lluvia', phone: '5491100000001', ...mine },
   ];
   const rows = usualPlayers({ match, matches, players, today, who: { uid: 'gus', name: 'Gustavo' } });
-  assert.deepEqual(rows.map((row) => [row.name, row.count]), [['Beto', 2], ['Luz', 1]]);
+  assert.deepEqual(rows.map((row) => [row.name, row.count]), [['Beto', 3], ['Espera', 1], ['Luz', 1], ['Nube', 1]]);
 });
 
 test('el medidor no escribe seguido ni con la app oculta', () => {
