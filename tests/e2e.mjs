@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v156');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v157');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -233,8 +233,18 @@ await page.click('#sheet [data-close]');
 await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForFunction(() => document.querySelector('#tab-proximos')?.getAttribute('aria-current') === 'page');
-check('La app se llama Mis Partidos', (await page.title()) === 'Mis Partidos' && (await page.textContent('.brand-title')) === 'Mis Partidos');
-check('Bajo el título dice Agenda de partidos', (await page.textContent('#venue-name')) === 'Agenda de partidos');
+const helloLook = await page.evaluate(() => {
+  const name = document.querySelector('#hello-name');
+  return {
+    title: document.title,
+    brand: document.querySelector('.brand-title')?.textContent.replace(/\s+/g, ' ').trim(),
+    name: name?.textContent.trim(),
+    color: name ? getComputedStyle(name).color : '',
+    sub: document.querySelector('#venue-name')?.textContent.trim(),
+  };
+});
+check('La app se llama Mis Partidos', helloLook.title === 'Mis Partidos' && helloLook.brand === 'Hola, Gustavo' && helloLook.name === 'Gustavo', JSON.stringify(helloLook));
+check('Bajo el título dice Tu agenda de partidos', helloLook.sub === 'Tu agenda de partidos' && helloLook.color === 'rgb(198, 244, 50)', JSON.stringify(helloLook));
 await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/header-agenda.png' });
 check('La lista no muestra sede y formato al pie', await page.locator('#view .footer-note').count() === 0 && !(await page.locator('#view').innerText()).includes('Fútbol 7 contra 7'));
 check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
