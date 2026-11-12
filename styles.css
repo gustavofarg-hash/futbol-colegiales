@@ -22,6 +22,7 @@
   --promo-bg: #ffe08a;
   --promo-ink: #3f2500;
   --pay-ink: #3a4760;
+  --price-ink: #3a4760;
   --safe-b: env(safe-area-inset-bottom, 0px);
   color-scheme: light dark;
 }
@@ -48,6 +49,7 @@
     --promo-bg: #6a4308;
     --promo-ink: #ffe7b8;
     --pay-ink: #f4efe4;
+    --price-ink: #c5d0e2;
   }
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -278,6 +280,9 @@ h2.section:first-child { margin-top: 4px; }
 .detail-head .match-hour {
   font-size: clamp(15px, 6.4vw, 1.375rem); font-weight: 800; letter-spacing: -.01em; color: var(--text);
 }
+.detail-head .match-price-bit {
+  font-size: 0.82rem; font-weight: 400; letter-spacing: 0; color: var(--price-ink);
+}
 .detail-head .note { margin-top: 8px; font-size: 0.9375rem; }
 .detail-head .meta { margin-top: 12px; display: flex; align-items: center; gap: 12px; }
 .detail-head .meta .bar { flex: 1; height: 8px; margin: 0; }
@@ -316,8 +321,10 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
 .slot .sub .nick { font-weight: 600; color: var(--text, inherit); white-space: nowrap; }
 #slots .phone-line { white-space: nowrap; flex: 0 0 auto; }
 #slots .pay-line,
+#slots .pay-pending,
 #slots .promo-badge,
-#slots .tag { white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: anywhere; }
+#slots .confirm-tag,
+#slots .tag { white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: break-word; word-break: normal; }
 #slots .slot-side { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; }
 #slots .slot-actions { display: flex; flex-direction: column; gap: 4px; flex: none; }
 #slots .slot-actions .wa-btn,
@@ -1069,6 +1076,7 @@ html.dark {
   --promo-bg: #6a4308;
   --promo-ink: #ffe7b8;
   --pay-ink: #f4efe4;
+  --price-ink: #c5d0e2;
   --bg: #07111f;
   --card: #162236;
   --text: #eef3fb;
@@ -1178,7 +1186,7 @@ html:root .trial-court {
   background: #1d4ed8; color: #fff; font-weight: 800; font-size: .85rem;
 }
 html:root .trial-price {
-  display: block; order: 6; margin-left: auto; color: var(--muted); font-weight: 600; font-size: 0.82rem;
+  display: block; order: 6; margin-left: auto; color: var(--price-ink); font-weight: 400; font-size: 0.82rem;
 }
 html:root .match-note[data-venue] {
   order: 7; flex: 1 0 100%; display: flex; align-items: center; gap: 6px;

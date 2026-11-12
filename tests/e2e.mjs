@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v157');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v158');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -1673,6 +1673,11 @@ await page.waitForSelector('.slot:has-text("Ana Hoy") .pay-pending');
 const anaPay = (await page.locator('.slot', { hasText: 'Ana Hoy' }).innerText()).replace(/\s+/g, ' ');
 check('Fila con efectivo, transferencia y transfiere después',
   anaPay.includes('Pagó $5.000') && anaPay.includes('Efectivo $2.000') && anaPay.includes('Transferencia $3.000') && anaPay.includes('Transfiere después $1.500'), anaPay);
+const pendingCut = await page.locator('.slot', { hasText: 'Ana Hoy' }).locator('.pay-pending').evaluate((el) => {
+  const style = getComputedStyle(el);
+  return { ellipsis: style.textOverflow === 'ellipsis', nowrap: style.whiteSpace === 'nowrap', clipped: el.scrollWidth > el.clientWidth + 1 };
+});
+check('Transfiere después en la fila no se corta', !pendingCut.ellipsis && !pendingCut.nowrap && !pendingCut.clipped, JSON.stringify(pendingCut));
 const recSplit = `${await page.textContent('#mine-cash')} ${await page.textContent('#mine-transfer')}`.replace(/\s+/g, ' ');
 check('El efectivo y la transferencia no suman lo pendiente', recSplit.includes('Me dieron en efectivo: $2.000') && recSplit.includes('Me transfirieron: $3.000') && !recSplit.includes('$1.500') && !recSplit.includes('$4.500'), recSplit);
 await page.click('#btn-copy');
@@ -2720,6 +2725,16 @@ await page.click('#match-form button[type=submit]');
 await page.waitForSelector('.match-card[data-date="2026-11-08"]');
 const norteCard = (await page.locator('.match-card[data-date="2026-11-08"]').innerText()).replace(/\s+/g, ' ');
 check('La tarjeta muestra la sede y el cupo de 6 por equipo', norteCard.includes('Club Norte Sur') && /0\/12/.test(norteCard), norteCard);
+const cardPrice = await page.locator('.match-card[data-date="2026-11-08"] .trial-price').evaluate((el) => {
+  const style = getComputedStyle(el);
+  const root = document.documentElement;
+  const was = root.classList.contains('dark');
+  root.classList.add('dark');
+  const dark = getComputedStyle(el).color;
+  root.classList.toggle('dark', was);
+  return { size: parseFloat(style.fontSize), weight: Number(style.fontWeight), color: style.color, dark };
+});
+check('En la tarjeta el precio es chico, normal y gris', cardPrice.weight < 600 && cardPrice.size < 18 && cardPrice.color === 'rgb(58, 71, 96)' && cardPrice.dark === 'rgb(197, 208, 226)', JSON.stringify(cardPrice));
 await page.click('.match-card[data-date="2026-11-08"]');
 await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.trim().startsWith('Domingo 08/11'));
 const norteDetail = {
@@ -2739,6 +2754,25 @@ const hourLook = await page.evaluate(() => {
   return { dateSize: date.fontSize, hourSize: hour.fontSize, dateWeight: Number(date.fontWeight), hourWeight: Number(hour.fontWeight) };
 });
 check('La hora pesa igual que la fecha', hourLook.dateSize === hourLook.hourSize && hourLook.hourWeight >= 700 && hourLook.dateWeight >= 700, JSON.stringify(hourLook));
+const priceLook = await page.evaluate(() => {
+  const hourEl = document.querySelector('.match-hour');
+  const priceEl = document.querySelector('#match-price');
+  const hour = getComputedStyle(hourEl);
+  const price = getComputedStyle(priceEl);
+  const root = document.documentElement;
+  const was = root.classList.contains('dark');
+  root.classList.add('dark');
+  const dark = getComputedStyle(priceEl).color;
+  root.classList.toggle('dark', was);
+  return {
+    hourSize: parseFloat(hour.fontSize),
+    priceSize: parseFloat(price.fontSize),
+    priceWeight: Number(price.fontWeight),
+    priceColor: price.color,
+    dark,
+  };
+});
+check('El precio es más chico, normal y gris', priceLook.priceSize < priceLook.hourSize - 2 && priceLook.priceWeight < 600 && priceLook.priceColor === 'rgb(58, 71, 96)' && priceLook.dark === 'rgb(197, 208, 226)', JSON.stringify(priceLook));
 check('Sin habituales no aparece la sección', await page.locator('#usual-title').count() === 0);
 const usualId = await page.evaluate(async () => {
   const app = window.__app;
