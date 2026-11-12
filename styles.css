@@ -587,11 +587,6 @@ button.team-name {
   position: sticky;
   top: calc(var(--header-h, 64px) + var(--tabbar-h, 56px));
   z-index: 6;
-  margin: 0 0 12px;
-  padding: 8px 12px 10px;
-  background: var(--card);
-  color: var(--text);
-  border-radius: 16px;
 }
 #stats-view .roster-search {
   position: static;
@@ -1353,17 +1348,53 @@ html:root #view > .hint a,
 html:root #stats-view > .hint a,
 html:root #log-view > .hint,
 html:root #log-view > .hint a { color: var(--on-blue); }
-html:root #history-filter,
-html:root #log-range {
-  background: var(--card);
-  color: var(--text);
-  border-radius: 24px;
-  padding: 14px;
+html:root .filter-card {
+  background: #fff;
+  color: #122033;
+  border-radius: 16px;
+  padding: 12px;
   margin: 0 0 12px;
   box-shadow: var(--shadow);
 }
-html:root #history-filter :is(.hint, .roster-lead),
-html:root #log-range :is(.hint, .roster-lead) { color: var(--muted); }
+html.dark .filter-card { background: #152033; color: #eef3fb; }
+html:root .sheet .filter-card,
+html.dark .sheet .filter-card {
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  padding: 0;
+  margin: 0 0 14px;
+}
+html:root .filter-card :is(input, textarea, select):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=button]):not([type=submit]):not([type=reset]) {
+  background-color: #fff;
+  color: #122033;
+  -webkit-text-fill-color: #122033;
+  border-color: #d5deea;
+  color-scheme: light;
+}
+html.dark .filter-card :is(input, textarea, select):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=button]):not([type=submit]):not([type=reset]) {
+  background-color: #243652;
+  color: #eef3fb;
+  -webkit-text-fill-color: #eef3fb;
+  border-color: #3d5270;
+  color-scheme: dark;
+}
+html:root .filter-card :is(input, textarea)::placeholder {
+  color: #5a657c;
+  -webkit-text-fill-color: #5a657c;
+  opacity: 1;
+}
+html.dark .filter-card :is(input, textarea)::placeholder {
+  color: #b7c3d6;
+  -webkit-text-fill-color: #b7c3d6;
+  opacity: 1;
+}
+html:root #view .filter-card :is(.hint, .roster-lead),
+html:root .filter-card :is(.hint, .roster-lead) { color: #5a657c; }
+html.dark #view .filter-card :is(.hint, .roster-lead),
+html.dark .filter-card :is(.hint, .roster-lead) { color: #b7c3d6; }
+html:root .filter-card .chip:not(.on) { background: #e7edf5; color: #122033; border-color: transparent; }
+html.dark .filter-card .chip:not(.on) { background: #243652; color: #eef3fb; border-color: transparent; }
 html.dark .btn:disabled { background: #1c2d45; color: #d5deea; border-color: #3d5270; }
 html.dark .confirm-actions .btn:not(.primary) { background: #152033; color: #eef3fb; border-color: #3d5270; }
 html:root #view .detail-head .hint a,
