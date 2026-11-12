@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v152');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v153');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -2223,17 +2223,23 @@ const teamsIntro = await page.locator('#view').innerText();
 check('Equipos no repite la ayuda ni el cupo', !teamsIntro.includes('Con los anotados') && !teamsIntro.includes('Tocá la pechera') && (await page.locator('#tanteador').innerText()) === 'TANTEADOR' && (await page.locator('#scoreboard svg').count()) === 2 && (await page.locator('#scoreboard [data-delta="1"]').first().innerText()) === '+' && (await page.locator('#scoreboard [data-delta="-1"]').first().innerText()) === '−' && (await page.locator('#btn-teams-clear').innerText()) === 'Reset');
 const bibFill = await page.locator('#scoreboard .vest-bib path').evaluate((el) => getComputedStyle(el).fill);
 const plainFill = await page.locator('#scoreboard .vest-plain path').evaluate((el) => getComputedStyle(el).fill);
-check('Con pechera es una musculosa naranja', bibFill === 'rgb(255, 106, 0)', bibFill);
+check('Con pechera es la remera naranja', bibFill === 'rgb(255, 106, 0)', bibFill);
 const bibBtnBg = await page.locator('#team-unassigned [data-assign="bib"]').first().evaluate((el) => getComputedStyle(el).backgroundColor);
 check('El botón de pechera no parece seleccionado', bibBtnBg === 'rgba(0, 0, 0, 0)' || bibBtnBg === 'transparent', bibBtnBg);
-check('Los títulos de equipo llevan la musculosa', (await page.locator('#team-bib h2 .vest-bib').count()) === 1 && (await page.locator('#team-plain h2 .vest-plain').count()) === 1);
-check('Sin pechera es la misma musculosa en contorno', plainFill === 'none' || plainFill === 'rgba(0, 0, 0, 0)', plainFill);
-const vestShape = await page.locator('.vest path').evaluateAll((els) => {
-  const ds = els.map((el) => el.getAttribute('d'));
-  const box = els[0].getBBox();
-  return { same: new Set(ds).size === 1, n: ds.length, x: box.x, w: box.width };
+check('Los títulos de equipo llevan la remera', (await page.locator('#team-bib h2 .vest-bib').count()) === 1 && (await page.locator('#team-plain h2 .vest-plain').count()) === 1);
+check('Sin pechera es la remera en contorno', plainFill !== 'none' && plainFill !== 'rgba(0, 0, 0, 0)' && plainFill !== 'rgb(255, 106, 0)', plainFill);
+const vestShape = await page.locator('.vest').evaluateAll((els) => {
+  const bib = els.filter((el) => el.classList.contains('vest-bib')).map((el) => el.querySelector('path')?.getAttribute('d') || '');
+  const plain = els.filter((el) => el.classList.contains('vest-plain')).map((el) => el.querySelector('path')?.getAttribute('d') || '');
+  return {
+    n: els.length,
+    bibSame: new Set(bib).size === 1 && bib.length >= 2,
+    plainSame: new Set(plain).size === 1 && plain.length >= 2,
+    differ: bib[0] && plain[0] && bib[0] !== plain[0],
+    box: els[0].viewBox.baseVal.width,
+  };
 });
-check('Todas las pecheras son la misma musculosa sin mangas', vestShape.same && vestShape.n >= 4 && vestShape.x > 5 && vestShape.w < 14, JSON.stringify(vestShape));
+check('La pechera es la remera llena y la otra el contorno', vestShape.n >= 4 && vestShape.bibSame && vestShape.plainSame && vestShape.differ && vestShape.box === 256, JSON.stringify(vestShape));
 check('El marcador arranca en cero', (await page.textContent('#score-bib')) === '0' && (await page.textContent('#score-plain')) === '0');
 await page.locator('#scoreboard [data-score="bib"][data-delta="1"]').click();
 await page.locator('#scoreboard [data-score="bib"][data-delta="1"]').click();
@@ -2310,10 +2316,10 @@ const arcoOn = await page.locator('#team-bib [data-arco].on').evaluate((btn) => 
     bg: style.backgroundColor,
     opacity: ico.opacity,
     tick: !!tick,
-    fill: tick ? tick.querySelector('circle')?.getAttribute('fill') : '',
+    fill: tick ? getComputedStyle(tick).fill : '',
   };
 });
-check('El arco prendido se ve entero y suma el tilde verde', (arcoOn.bg === 'rgba(0, 0, 0, 0)' || arcoOn.bg === 'transparent') && arcoOn.opacity === '1' && arcoOn.tick && arcoOn.fill === '#0f7a3d', JSON.stringify(arcoOn));
+check('El arco prendido se ve entero y suma el tilde verde', (arcoOn.bg === 'rgba(0, 0, 0, 0)' || arcoOn.bg === 'transparent') && arcoOn.opacity === '1' && arcoOn.tick && arcoOn.fill === 'rgb(15, 122, 61)', JSON.stringify(arcoOn));
 check('Avisa si está desbalanceado', (await page.textContent('#team-balance')).includes('desbalanceado'));
 await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Beto' }).locator('[data-assign="bib"]').click();
 await page.locator('#team-unassigned .team-row', { hasText: 'Equipo Ciro' }).locator('[data-assign="bib"]').click();
@@ -5940,9 +5946,10 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     return btn.left >= name.right - 2 && btn.top < name.bottom && btn.bottom > name.top;
   });
   check('En la ficha el ícono queda a la derecha del nombre', beside);
-  check('El ícono de compartir son tres círculos', await page.locator('#profile-share circle').count() === 3);
-  const filled = await page.locator('#profile-share circle').first().evaluate((el) => getComputedStyle(el).fill);
-  check('Los círculos del ícono están rellenos', filled !== 'none' && filled !== 'rgba(0, 0, 0, 0)', filled);
+  const sharePath = await page.locator('#profile-share svg.ph path').getAttribute('d');
+  check('El ícono de compartir es la red de tres nodos', (sharePath || '').startsWith('M176,160'));
+  const filled = await page.locator('#profile-share svg.ph').evaluate((el) => getComputedStyle(el).fill);
+  check('Los nodos del ícono están rellenos', filled !== 'none' && filled !== 'rgba(0, 0, 0, 0)', filled);
   await page.click('#profile-share');
   await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Enlace copiado'));
   const link = await page.evaluate(() => navigator.clipboard.readText());
