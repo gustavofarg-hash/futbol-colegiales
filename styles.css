@@ -479,19 +479,20 @@ dialog.sheet[open] > .tabbar {
   display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center;
   min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 8px;
 }
-.tanteador { margin: 8px 4px 0; text-align: center; font-size: 0.75rem; font-weight: 800; letter-spacing: .12em; color: var(--muted); }
+.tanteador { margin: 8px 4px 0; text-align: center; font-size: 0.75rem; font-weight: 800; letter-spacing: .12em; color: #fff; }
+html.dark .tanteador { color: #eef3fb; }
 .score-side { min-width: 0; text-align: center; }
 .score-label { display: flex; align-items: center; justify-content: center; gap: 4px; font-weight: 700; font-size: 0.8rem; line-height: 1.15; }
 .score-label svg { width: 22px; height: 22px; flex: none; }
-.vest-bib path { fill: #FF6A00; stroke: #C24100; stroke-width: 1.15; }
-.vest-plain { color: var(--muted); }
-.vest-plain path { fill: none; stroke: currentColor; stroke-width: 1.7; }
+.vest-bib path { fill: #FF6A00; stroke: #9A3412; stroke-width: 1.6; }
+.vest-plain { color: var(--text); }
+.vest-plain path { fill: none; stroke: currentColor; stroke-width: 1.8; }
 .score-controls { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .score-side strong { font-size: 1.8rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .score-dash { font-size: 1.4rem; font-weight: 800; }
 .score-btn {
-  min-width: 40px; min-height: 40px; padding: 0 8px; border: 1px solid var(--line);
-  border-radius: 10px; background: var(--bg); color: inherit; font: inherit; font-weight: 800;
+  min-width: 40px; min-height: 40px; padding: 0 8px; border: 1px solid var(--control-line, #4a5d78);
+  border-radius: 10px; background: var(--card); color: var(--text); font: inherit; font-weight: 800;
 }
 .team-counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-count {
@@ -519,32 +520,33 @@ h2.section.team-heading {
   display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: .02em;
   position: sticky; top: calc(var(--header-h, 64px) + var(--tabbar-h, 56px)); z-index: 4;
   margin: 0 0 8px; padding: 8px 2px;
-  background: var(--header-bg, var(--card));
-  color: #fff;
+  background: var(--card);
+  color: var(--text);
 }
 h2.section.team-heading .vest { width: 20px; height: 20px; flex: none; }
 .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-columns section, .team-row, .team-slot { min-width: 0; }
 .team-row {
   display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; min-height: 44px; padding: 2px 4px 2px 8px;
-  border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text);
 }
 .team-row:active { background: color-mix(in srgb, var(--card) 88%, var(--green-soft)); }
 .team-side { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
 .arco-btn, .arco-mark {
   position: relative; flex: 0 0 40px; width: 40px; height: 40px; padding: 0;
   display: grid; place-items: center; border: 0; border-radius: 12px;
-  background: transparent; color: inherit;
+  background: transparent; color: var(--text);
 }
 .arco-btn:active { transform: scale(.96); }
-.arco-btn .goal-ico, .arco-mark .goal-ico { width: 26px; height: 26px; display: block; opacity: .38; }
+.arco-btn .goal-ico, .arco-mark .goal-ico { width: 26px; height: 26px; display: block; opacity: .55; }
 .arco-btn.on .goal-ico, .arco-mark.on .goal-ico { opacity: 1; }
 .arco-tick { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; pointer-events: none; }
 .arco-tick svg { width: 14px; height: 14px; display: block; }
-.arco-left { margin: 0 0 6px; color: var(--muted); font-size: 0.75rem; font-weight: 700; }
+.arco-left { margin: 0 0 6px; color: #fff; font-size: 0.75rem; font-weight: 700; }
+html.dark .arco-left { color: #eef3fb; }
 .team-name { flex: 1 1 4.5rem; min-width: min(100%, 4.5rem); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button.team-name {
-  border: 0; background: transparent; color: inherit; font: inherit; font-weight: 700;
+  border: 0; background: transparent; color: var(--text); font: inherit; font-weight: 700;
   text-align: left; padding: 0; cursor: pointer;
 }
 .menu-pay { margin: 0 0 10px; }
@@ -556,11 +558,11 @@ button.team-name {
   min-width: 28px; height: 28px; padding: 0; border-radius: 8px; font-weight: 800;
   font-variant-numeric: tabular-nums; display: grid; place-items: center;
 }
-.goal-box button { border: 1px solid var(--line); background: var(--bg); color: inherit; font: inherit; font-weight: 800; }
-.goal-n { color: var(--muted); }
+.goal-box button { border: 1px solid var(--control-line, #4a5d78); background: var(--card); color: var(--text); font: inherit; font-weight: 800; }
+.goal-n { color: var(--text); }
 .team-ico, .team-x {
-  flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 1px solid var(--line);
-  border-radius: 10px; background: var(--bg); color: inherit; display: grid; place-items: center;
+  flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 1px solid var(--control-line, #4a5d78);
+  border-radius: 10px; background: var(--card); color: var(--text); display: grid; place-items: center;
 }
 .team-ico svg { width: 20px; height: 20px; display: block; }
 .team-ico[data-assign="bib"] {
@@ -1060,6 +1062,7 @@ html:root {
   --lime-ink: #14200a;
   --header-bg: #3d7dff;
   --bar-bg: #ffffff;
+  --control-line: #4a5d78;
   color-scheme: light;
 }
 html:root body {
@@ -1087,6 +1090,7 @@ html.dark {
   --shadow: 0 12px 28px rgba(0, 0, 0, .35);
   --header-bg: #0B1220;
   --bar-bg: #152033;
+  --control-line: #9eb0c8;
   color-scheme: dark;
 }
 html.dark body {
@@ -1276,7 +1280,12 @@ html:root .profile-block h2 { color: var(--text); }
 html:root .sheet-body h2.section::after,
 html:root .detail-head h2.section::after,
 html:root h2.section.team-heading::after { display: none; }
-html:root h2.section.team-heading { font-size: 0.95rem; min-width: 0; overflow: hidden; }
+html:root h2.section.team-heading {
+  font-size: 0.95rem; min-width: 0; overflow: hidden;
+  color: var(--text); background: var(--card);
+}
+html.dark .chip.on { color: #0b1220; }
+html:root .team-slot.empty { background: var(--card); color: var(--text); }
 html:root .empty-wait { color: rgba(255,255,255,.9); }
 html:root .sheet-body .empty-wait,
 html:root .slot .empty-wait,
