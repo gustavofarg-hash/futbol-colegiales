@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v160');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v161');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -6441,6 +6441,82 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
   const closed = (await page.locator('#view .slot', { hasText: 'Quita Pendiente' }).innerText()).replace(/\s+/g, ' ');
   check('Al cerrar el pago la tarjeta sigue sin Transfiere después', !closed.includes('Transfiere después'), closed);
+}
+
+{
+  const oldId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-12', time: '20:00', price: 5000, note: 'Viejo', capacity: 14 }, app.who);
+    const playerId = await app.store.addPlayer({ id }, { name: 'Pablo Luján', phone: '5491166661212' }, app.who);
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const row = db.players[playerId];
+    db.players[playerId] = {
+      ...row,
+      paid: false,
+      amount: null,
+      method: null,
+      cash: null,
+      transfer: null,
+      fromCredit: null,
+      cashTo: null,
+      transferTo: null,
+      creditTo: null,
+      receivedBy: null,
+      transferParts: null,
+      pendingTransfer: 5000,
+      pendingTo: 'Gus',
+      paidUpdatedBy: 'Gus',
+    };
+    localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+    app.store._emit();
+    return id;
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.evaluate((id) => {
+    document.documentElement.classList.add('dark');
+    location.hash = `#/partido/${encodeURIComponent(id)}`;
+  }, oldId);
+  await page.waitForSelector('.slot:has-text("Pablo Luján") .pay-pending');
+  const oldCard = (await page.locator('#view .slot', { hasText: 'Pablo Luján' }).innerText()).replace(/\s+/g, ' ');
+  check('El pendiente viejo a nombre de Gus se ve en la tarjeta', oldCard.includes('Transfiere después $5.000') && oldCard.includes('Gus'), oldCard);
+  await page.click('.slot:has-text("Pablo Luján") .pay-btn');
+  await page.waitForSelector('#pay-form .pay-pending-row .pay-x');
+  const oldLook = await page.evaluate(() => {
+    const row = document.querySelector('#pay-form .pay-pending-row');
+    const btn = row.querySelector('.pay-x');
+    const box = btn.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    const svg = btn.querySelector('svg');
+    return {
+      text: row.innerText.replace(/\s+/g, ' ').trim(),
+      copies: document.querySelectorAll('#pay-form .pay-pending-row').length,
+      w: box.width,
+      svg: svg ? svg.getBoundingClientRect().width : 0,
+      color: getComputedStyle(btn).color,
+      seen: hit === btn || btn.contains(hit),
+      inside: box.right <= window.innerWidth + 1 && box.left >= 0,
+      vw: window.innerWidth,
+    };
+  });
+  check('En 360px oscuro la franja vieja tiene una X grande', oldLook.vw === 360 && oldLook.copies === 1 && oldLook.text.includes('Transfiere después $5.000') && oldLook.text.includes('Gus') && oldLook.w >= 40 && oldLook.svg >= 24 && oldLook.color === 'rgb(255, 154, 171)' && oldLook.seen && oldLook.inside, JSON.stringify(oldLook));
+  await page.locator('.sheet-body').screenshot({ path: '/opt/cursor/artifacts/screenshots/v161-pago-viejo-oscuro.png' });
+  await page.click('#pay-form .pay-pending-row .pay-x');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Pablo Luján'));
+    return row && !row.innerText.includes('Transfiere después');
+  });
+  const oldSaved = await page.evaluate(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Pablo Luján');
+    const card = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Pablo Luján'))?.innerText.replace(/\s+/g, ' ') || '';
+    return { pending: row?.pendingTransfer ?? null, card };
+  });
+  check('Anular el pendiente viejo se guarda y sale de la tarjeta', oldSaved.pending == null && !oldSaved.card.includes('Transfiere después'), JSON.stringify(oldSaved));
+  if (await page.locator('#sheet[open]').count()) await page.locator('#sheet [data-close]').last().click();
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => document.documentElement.classList.remove('dark'));
 }
 
 {

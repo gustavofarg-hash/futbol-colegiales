@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v161** (12/11/2026): la franja «Transfiere después» del menú de pagos tiene X también con datos viejos y cuando el nombre guardado es el apodo (Gus) del organizador (Gustavo). La X es más grande, anula con confirmación, guarda y saca la etiqueta de la tarjeta. `firestore.rules` no cambió.
 **Actualizada para f7c-v160** (12/11/2026): la X de «Transfiere después» en el menú de pagos anula esa parte, la guarda y saca la etiqueta de la tarjeta del jugador en el momento. `firestore.rules` no cambió.
 **Actualizada para f7c-v159** (12/11/2026): en la hoja Pago y en el menú del jugador, «Transfiere después $… · a …» vuelve a tener la X roja para anularla, la misma de efectivo, transferencia y crédito. En el menú no se repite la pastilla sin X. Se lee en claro y en oscuro. `firestore.rules` no cambió.
 **Actualizada para f7c-v158** (12/11/2026): en el detalle y en las tarjetas, el precio queda más chico, en peso normal y en gris. «Transfiere después» y las otras etiquetas de pago de la fila bajan de línea y no se cortan. `firestore.rules` no cambió.
