@@ -72,7 +72,7 @@ function waShareControl(id, { checked = false, named = false } = {}) {
   return `<label class="checkline wa-share" id="${lineId}"><input type="checkbox" id="${id}"${named ? ' name="waShare"' : ''}${checked ? ' checked' : ''}><span>${WA_SHARE_LABEL}</span></label>`;
 }
 function slotSide(p, m, readOnly, payText) {
-  const pay = readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? ' on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>`;
+  const pay = readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? ' on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">${ICON.pay}</button>`;
   const wa = waButton(p, waMessage(m, p));
   const more = readOnly ? '' : `<button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>`;
   const stack = (wa || pay) ? `<div class="slot-actions">${wa}${pay}</div>` : '';
@@ -103,6 +103,7 @@ const ICON = {
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
   more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>',
+  pay: '<svg class="pay-coin" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="25" fill="#F5C518" stroke="#2B2B2B" stroke-width="7"/><path fill="#2B2B2B" transform="translate(32 32) scale(2.35) translate(-12 -12)" d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>',
 };
 
 const app = {
