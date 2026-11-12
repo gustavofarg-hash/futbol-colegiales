@@ -409,8 +409,8 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
   display: grid; place-items: center; flex: none;
 }
 .pay-btn .pay-coin { width: 100%; height: 100%; display: block; fill: none; stroke: none; }
-.pay-btn .pay-coin circle { fill: #F5C518; stroke: #2B2B2B; stroke-width: 7px; }
-.pay-btn .pay-coin path { fill: #2B2B2B; stroke: none; }
+.pay-btn .pay-coin circle { fill: var(--promo-bg); stroke: var(--promo-ink); stroke-width: 7px; }
+.pay-btn .pay-coin path { fill: var(--promo-ink); stroke: none; }
 .pay-btn.on { background: transparent; }
 .arrows { display: flex; flex-direction: column; gap: 2px; flex: none; }
 .arrow-btn {
@@ -856,10 +856,9 @@ html.anon-lock #view .loading { display: none; }
 .field .pay-money input, .field .pay-money select { min-width: 0; width: auto; flex: 1 1 0; }
 .promo-badge {
   display: inline-block; margin-top: 4px; font-size: 0.75rem; font-weight: 800;
-  color: #3f2500; background: #ffe08a; border-radius: 99px; padding: 1px 8px;
+  color: var(--promo-ink); background: var(--promo-bg); border-radius: 99px; padding: 1px 8px;
   min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-html.dark .promo-badge { color: #ffe7b8; background: #6a4308; }
 .pay-apply { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; font-weight: 700; }
 .pay-split-preview { list-style: none; margin: 0 0 12px; padding: 8px 10px; display: grid; gap: 4px; border-radius: 12px; background: var(--bg); }
 .pay-split-preview li { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; }
@@ -1067,6 +1066,8 @@ html:root {
   --header-bg: #3d7dff;
   --bar-bg: #ffffff;
   --control-line: #4a5d78;
+  --promo-bg: #ffe08a;
+  --promo-ink: #3f2500;
   color-scheme: light;
 }
 html:root body {
@@ -1095,6 +1096,8 @@ html.dark {
   --header-bg: #0B1220;
   --bar-bg: #152033;
   --control-line: #9eb0c8;
+  --promo-bg: #6a4308;
+  --promo-ink: #ffe7b8;
   color-scheme: dark;
 }
 html.dark body {
