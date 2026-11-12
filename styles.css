@@ -664,7 +664,8 @@ button.team-name {
 .field .phone-row { margin-bottom: 4px; }
 .field .phone-row input[type="tel"] { flex: 0 0 auto; width: 10.6rem; min-width: 10.6rem; max-width: 54%; font-size: 0.9rem; }
 .checkline span { min-width: 0; overflow-wrap: anywhere; }
-.profile-wa { width: 100%; margin-bottom: 16px; background: var(--wa); border-color: var(--wa); color: #fff; }
+.profile-wa { width: 100%; margin-bottom: 16px; background: var(--wa); border-color: var(--wa); color: #122033; }
+.profile-wa svg { fill: currentColor; stroke: none; }
 .profile-add-phone { width: 100%; margin-bottom: 16px; }
 .profile-block { margin: 0 0 18px; }
 .profile-block h2 { margin: 0 0 8px; font-size: 0.9375rem; }
@@ -1068,6 +1069,10 @@ html:root {
   --control-line: #4a5d78;
   --promo-bg: #ffe08a;
   --promo-ink: #3f2500;
+  --input-bg: #eef1f6;
+  --input-ink: #122033;
+  --placeholder: #5a657c;
+  --on-blue: #fff;
   color-scheme: light;
 }
 html:root body {
@@ -1098,6 +1103,10 @@ html.dark {
   --control-line: #9eb0c8;
   --promo-bg: #6a4308;
   --promo-ink: #ffe7b8;
+  --input-bg: #243652;
+  --input-ink: #eef3fb;
+  --placeholder: #b7c3d6;
+  --on-blue: #fff;
   color-scheme: dark;
 }
 html.dark body {
@@ -1283,7 +1292,8 @@ html:root h2.section::after {
 }
 html:root .sheet-body h2.section,
 html:root .detail-head h2.section,
-html:root .profile-block h2 { color: var(--text); }
+html:root .sheet-body .profile-block h2,
+html:root .detail-head .profile-block h2 { color: var(--text); }
 html:root .sheet-body h2.section::after,
 html:root .detail-head h2.section::after,
 html:root h2.section.team-heading::after { display: none; }
@@ -1298,6 +1308,42 @@ html:root .sheet-body .empty-wait,
 html:root .slot .empty-wait,
 html:root .detail-head .empty-wait { color: var(--muted); }
 html:root .loading { color: rgba(255,255,255,.9); }
+html:root :is(input, textarea, select):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=button]):not([type=submit]):not([type=reset]) {
+  color: var(--input-ink);
+  -webkit-text-fill-color: var(--input-ink);
+  background-color: var(--input-bg);
+  caret-color: var(--input-ink);
+}
+html:root :is(input, textarea)::placeholder {
+  color: var(--placeholder);
+  -webkit-text-fill-color: var(--placeholder);
+  opacity: 1;
+}
+html:root :is(input, textarea, select):disabled:not([type=checkbox]):not([type=radio]) {
+  color: var(--input-ink);
+  -webkit-text-fill-color: var(--input-ink);
+  opacity: 1;
+}
+html.dark :is(input, textarea, select):not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not([type=button]):not([type=submit]):not([type=reset]) {
+  border-color: var(--control-line);
+}
+html.dark #set-text-size {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b7c3d6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+html:root #view :is(.muted, .profile-phone, .footer-note, .roster-lead, .stat-dates, .mine-line, .err) { color: var(--on-blue); }
+html:root #view :is(.slot, .match-card, .detail-head, .empty, .pnote, .scoreboard, .confirm-card) :is(.muted, .profile-phone, .footer-note, .stat-dates, .mine-line) { color: var(--muted); }
+html:root #view :is(.slot, .match-card, .detail-head, .empty, .pnote, .confirm-card) .err { color: var(--danger); }
+html:root #profile .profile-block > h2,
+html:root #profile .player-share,
+html:root #profile .hint a { color: var(--on-blue); }
+html:root #profile .player-balance {
+  background: var(--card);
+  color: var(--text);
+  border-radius: 16px;
+  padding: 10px 12px;
+}
+html:root #view .detail-head .hint a,
+html:root #view .slot .hint a { color: var(--text); }
 html:root .field input,
 html:root .field textarea,
 html:root .field select,
