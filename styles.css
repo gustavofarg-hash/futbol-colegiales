@@ -392,20 +392,28 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
 .pay-recorded { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 6px; }
 .pay-recorded li { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pay-recorded li span { flex: 1 1 auto; min-width: 0; font-size: 0.875rem; }
-#pay-recorded li.pay-pending-row {
+.pay-recorded li.pay-pending-row {
   background: var(--warn-bg);
   color: var(--warn-text);
   border-radius: 16px;
   padding: 10px 6px 10px 14px;
 }
-#pay-recorded li.pay-pending-row span {
+.pay-recorded li.pay-pending-row span {
   font-size: 1rem;
   font-weight: 800;
   color: var(--warn-text);
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.pay-x { width: 32px; height: 32px; flex: none; border: 0; border-radius: 8px; background: transparent; color: var(--danger); font-size: 1.125rem; font-weight: 700; }
+.menu-pay .pay-pending {
+  display: flex; align-items: center; white-space: normal; overflow: visible; text-overflow: unset;
+  overflow-wrap: break-word; max-width: 100%;
+}
+.pay-x {
+  width: 32px; height: 32px; flex: 0 0 32px; border: 0; border-radius: 8px; padding: 0;
+  background: transparent; color: var(--danger); display: grid; place-items: center; z-index: 1;
+}
+.pay-x svg { width: 18px; height: 18px; display: block; }
 .signup-check { position: relative; flex: none; display: grid; place-items: center; }
 .signup-check input { width: 1.375rem; height: 1.375rem; margin: 0; }
 .signup-block { position: absolute; inset: -6px; border: 0; background: transparent; }

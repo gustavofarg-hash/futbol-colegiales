@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v158');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v159');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -1709,15 +1709,33 @@ const pendingLook = await page.evaluate(() => {
   root.classList.toggle('dark', wasDark);
   const amount = (row.innerText.match(/Transfiere después \$\d[\d.]*/) || [])[0] || '';
   const copies = [...document.querySelectorAll('#pay-form .pay-pending, #pay-recorded li')].filter((el) => el.innerText.includes(amount)).length;
+  const xOf = (btn) => {
+    if (!btn) return null;
+    const box = btn.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return {
+      label: btn.getAttribute('aria-label') || '',
+      color: getComputedStyle(btn).color,
+      w: box.width,
+      seen: hit === btn || btn.contains(hit),
+    };
+  };
+  const marks = [...document.querySelectorAll('#pay-recorded .pay-x')].map(xOf);
+  root.classList.remove('dark');
+  const xLight = xOf(row.querySelector('.pay-x'));
+  root.classList.add('dark');
+  const xDark = xOf(row.querySelector('.pay-x'));
+  root.classList.toggle('dark', wasDark);
   return {
     text: row.innerText.replace(/\s+/g, ' ').trim(),
     x: row.querySelector('.pay-x')?.getAttribute('aria-label') || '',
     pill: document.querySelector('#pay-pending-now') != null,
     copies,
     light, dark,
+    xLight, xDark, marks,
   };
 });
-check('Transfiere después queda una sola vez, en la fila amarilla con la X', pendingLook.copies === 1 && !pendingLook.pill && pendingLook.text.includes('Transfiere después $1.500') && pendingLook.text.includes('Gustavo') && pendingLook.x.startsWith('Anular') && pendingLook.light.bg === 'rgb(255, 246, 216)' && pendingLook.light.color === 'rgb(107, 82, 0)' && pendingLook.light.weight >= 700 && pendingLook.light.radius >= 12 && pendingLook.dark.bg === 'rgb(58, 49, 24)' && pendingLook.dark.color === 'rgb(246, 226, 162)', JSON.stringify(pendingLook));
+check('Transfiere después queda una sola vez, en la fila amarilla con la X', pendingLook.copies === 1 && !pendingLook.pill && pendingLook.text.includes('Transfiere después $1.500 · a Gustavo') && pendingLook.x.startsWith('Anular') && pendingLook.xLight.seen && pendingLook.xLight.w >= 32 && pendingLook.xLight.color === 'rgb(208, 18, 45)' && pendingLook.xDark.seen && pendingLook.xDark.color === 'rgb(255, 154, 171)' && pendingLook.marks.length >= 3 && pendingLook.marks.every((mark) => mark.seen && mark.label.startsWith('Anular')) && pendingLook.light.bg === 'rgb(255, 246, 216)' && pendingLook.light.color === 'rgb(107, 82, 0)' && pendingLook.light.weight >= 700 && pendingLook.light.radius >= 12 && pendingLook.dark.bg === 'rgb(58, 49, 24)' && pendingLook.dark.color === 'rgb(246, 226, 162)', JSON.stringify(pendingLook));
 const anaWhy = (await page.locator('#pay-remind-why').innerText()).trim();
 check('Sin el WhatsApp de Ana el recordatorio no abre el chat',
   await page.locator('#btn-pending-remind').isDisabled() && (await page.getAttribute('#btn-pending-remind', 'href')) == null && anaWhy === 'El WhatsApp de este jugador es privado',
@@ -6331,7 +6349,29 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.fill('#pay-form [name=pending]', '1500');
   await page.click('#pay-form button[type=submit]');
   await page.waitForFunction(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && Number(p.pendingTransfer) === 1500));
-  await page.click('.slot:has-text("Anula Díaz") .pay-btn');
+  await page.click('.slot:has-text("Anula Díaz") .more-btn');
+  await page.waitForSelector('#menu-payments .pay-pending-row .pay-x');
+  const menuPending = await page.evaluate(() => {
+    const row = document.querySelector('#menu-payments .pay-pending-row');
+    row.scrollIntoView({ block: 'center' });
+    const badge = [...document.querySelectorAll('#menu-pay .pay-pending')].map((el) => el.innerText.replace(/\s+/g, ' ').trim());
+    const btn = row.querySelector('.pay-x');
+    const see = () => {
+      const box = btn.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return { seen: hit === btn || btn.contains(hit), color: getComputedStyle(btn).color, bg: getComputedStyle(row).backgroundColor };
+    };
+    const root = document.documentElement;
+    const wasDark = root.classList.contains('dark');
+    root.classList.remove('dark');
+    const light = see();
+    root.classList.add('dark');
+    const dark = see();
+    root.classList.toggle('dark', wasDark);
+    return { text: row.innerText.replace(/\s+/g, ' ').trim(), badge, light, dark };
+  });
+  check('En el menú, Transfiere después es la fila amarilla con la X y no se repite', menuPending.text.includes('Transfiere después $1.500 · a Gustavo') && menuPending.badge.length === 0 && menuPending.light.seen && menuPending.light.color === 'rgb(208, 18, 45)' && menuPending.light.bg === 'rgb(255, 246, 216)' && menuPending.dark.seen && menuPending.dark.color === 'rgb(255, 154, 171)' && menuPending.dark.bg === 'rgb(58, 49, 24)', JSON.stringify(menuPending));
+  await page.click('#pm-pay');
   await page.waitForSelector('#pay-recorded .pay-pending-row .pay-x');
   await page.evaluate(() => {
     const app = window.__app;
