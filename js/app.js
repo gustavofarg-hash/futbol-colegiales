@@ -47,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v158';
+const APP_VERSION = 'f7c-v159';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -749,8 +749,8 @@ function inviteClass(player) {
   for (let i = 0; i < hostId.length; i++) hash = (hash * 33 + hostId.charCodeAt(i)) >>> 0;
   return ` invite-${hash % 6}${isGuest(player) ? ' guest-row' : ' host-row'}`;
 }
-function payMarkup(player) {
-  const pending = pendingStatusText(player);
+function payMarkup(player, { hidePending = false } = {}) {
+  const pending = hidePending ? '' : pendingStatusText(player);
   const waiting = awaitingText(player);
   const headline = paymentHeadline(player);
   const cls = player.paid === true ? 'ok' : 'no';
@@ -5227,7 +5227,9 @@ const PAYMENT_KIND = { cash: 'Efectivo', transfer: 'Transferencia', credit: 'Cr�
 function paymentShareLabel(share) {
   const kind = PAYMENT_KIND[share?.kind] || 'Pago';
   const who = String(share?.name || '').trim();
-  return `${kind} ${formatARS(share?.amount || 0)}${who ? ` · ${who}` : ''}`;
+  if (!who) return `${kind} ${formatARS(share?.amount || 0)}`;
+  // La fila pendiente se lee igual que la etiqueta: «Transfiere después $… · a Gustavo».
+  return `${kind} ${formatARS(share?.amount || 0)}${share?.kind === 'pending' ? ` · a ${who}` : ` · ${who}`}`;
 }
 
 function canAnnulPayment(player, share) {
@@ -5243,7 +5245,7 @@ function recordedPaymentList(player, listId) {
   return `<ul class="pay-recorded" id="${listId}">${rows.map((share, index) => {
     const label = paymentShareLabel(share);
     const x = canAnnulPayment(player, share)
-      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">✕</button>`
+      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`
       : '';
     const pendingClass = share.kind === 'pending' ? ' class="pay-pending-row"' : '';
     return `<li${pendingClass}><span>${esc(label)}</span>${x}</li>`;
@@ -6784,7 +6786,10 @@ function openPlayerMenu(m, p) {
   const own = canEditPlayer(p, actor());
   const phoneView = withAgendaPhone(p);
   const panel = playerPanelPieces(p, null, MENU_PANEL, personKey(p, app.players));
-  const payLine = `${payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>'}${recordedPaymentList(p, 'menu-payments')}`;
+  const payList = recordedPaymentList(p, 'menu-payments');
+  const pendingInList = paymentShares(p).some((share) => share.kind === 'pending' && share.amount > 0);
+  const payStatus = payMarkup(p, { hidePending: pendingInList });
+  const payLine = `${payStatus || (payList ? '' : '<p class="hint" id="menu-unpaid">Sin pago cargado</p>')}${payList}`;
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   const canAnnotate = !!(match && canAdd(match, actor().uid));
   const suspend = suspensionControls(p);
@@ -7251,7 +7256,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v158" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v159" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7288,7 +7293,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v158" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v159" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
