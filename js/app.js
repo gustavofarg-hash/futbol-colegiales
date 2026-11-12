@@ -1756,6 +1756,7 @@ function renderHistory() {
     </div>`;
   if (!replaceView(`
     <h2 class="section">Historial de partidos</h2>
+    <div class="filter-card" id="history-filters">
     <form id="history-filter" class="history-filter">
       <p class="hint roster-lead">Por defecto muestra los últimos 30 partidos</p>
       <label class="field"><span>Una fecha</span><input type="date" id="hist-day" value="${esc(filter.day || '')}"></label>
@@ -1769,6 +1770,7 @@ function renderHistory() {
       </div>
     </form>
     ${chips}
+    </div>
     ${venueNarrow && !(venues.selected || []).length ? '<p class="hint" id="hist-venue-empty">Elegí una sede o Todas para ver los partidos.</p>' : ''}
     <p class="hint" id="hist-caption">${esc(caption)}</p>
     <button type="button" class="btn block" id="btn-hist-import">Importar partidos desde texto</button>
@@ -3507,7 +3509,7 @@ function renderRoster() {
   if (!replaceView(`
     <h2 class="section">Jugadores</h2>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
-    <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
+    <label class="field roster-search filter-card"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.'}</p>`}
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
@@ -3837,7 +3839,7 @@ function statsPlayerBody(id) {
     }
   }
   return `
-    <label class="field roster-search stats-search"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
+    <label class="field roster-search stats-search filter-card"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${missing}
     ${months}
     ${list}`;
@@ -4073,7 +4075,7 @@ function renderRegistro(r) {
         <a class="btn ${section === 'partidos' ? 'primary' : ''}" href="#/registro/partidos"${section === 'partidos' ? ' aria-current="page"' : ''}>Partidos</a>
         <a class="btn ${section === 'pagos' ? 'primary' : ''}" href="#/registro/pagos"${section === 'pagos' ? ' aria-current="page"' : ''}>Pagos</a>
       </div>
-      <form id="log-range" class="log-range">
+      <form id="log-range" class="log-range filter-card">
         <label class="field"><span>Desde</span><input type="date" id="log-from" value="${esc(range.from)}" aria-label="Desde"></label>
         <label class="field"><span>Hasta</span><input type="date" id="log-to" value="${esc(range.to)}" aria-label="Hasta"></label>
         <button type="submit" class="btn" id="log-apply">Ver</button>
@@ -4895,7 +4897,7 @@ function openPlayerForm(m, p, opts = {}) {
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
       ${signupFields(p, m)}
       ${editingFriend ? `<p class="hint" id="friend-stays">Sigue siendo invitado de ${esc(hostName || 'quien lo invitó')}.</p>` : ''}
-      ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
+      ${p ? '' : `<label class="field filter-card"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
       <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       ${p ? nickField(p) : ''}
