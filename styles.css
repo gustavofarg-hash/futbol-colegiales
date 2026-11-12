@@ -1121,16 +1121,6 @@ html.dark:root .topstack {
   z-index: 40;
   isolation: isolate;
 }
-html:root .topstack::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 390 240' fill='none'><path d='M220-20l210 80-40 90L160 40z' fill='%23ffffff' opacity='.06'/><g stroke='%23ffffff' stroke-width='1.4' opacity='.16'><rect x='16' y='36' width='358' height='168' rx='2'/><path d='M195 36v168'/><circle cx='195' cy='120' r='32'/><path d='M16 78h48M16 162h48M326 78h48M326 162h48'/></g><g stroke='%23ffffff' stroke-width='1.6' opacity='.2'><circle cx='318' cy='58' r='18'/><path d='M304 50c8 2 12 8 12 16M334 66c-8-2-16 0-20 6M308 70c10-8 20-6 26 2'/><circle cx='62' cy='168' r='24'/><path d='M44 156c10 4 16 12 16 22M84 180c-10-2-20 0-26 8'/></g><g fill='%23ffffff' opacity='.1'><circle cx='78' cy='64' r='7'/><path d='M70 78c2-8 16-8 18 0l5 20H65z'/></g></svg>") center / cover no-repeat;
-}
-html.dark .topstack::before { opacity: .55; }
-html:root .topstack > * { position: relative; z-index: 1; }
 html:root .topbar,
 html.dark:root .topbar,
 html:root .tabbar,
@@ -1218,19 +1208,6 @@ html.dark:root .confirm-card {
 html:root .match-card {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
   padding: 16px 16px 14px;
-  position: relative; overflow: hidden;
-}
-html:root .match-card::after {
-  content: "";
-  position: absolute; z-index: 0; right: -18px; top: 6px; width: 168px; height: 168px;
-  pointer-events: none;
-  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23d6e6ff'/><circle cx='50' cy='50' r='18' fill='%23ffffff' opacity='.55'/><path d='M50 8v14M50 78v14M8 50h14M78 50h14M20 20l10 10M70 70l10 10M80 20L70 30M30 70L20 80' stroke='%23ffffff' stroke-width='3' opacity='.7'/></svg>") center / contain no-repeat;
-  opacity: .95;
-}
-html:root .match-card > * { position: relative; z-index: 1; }
-html.dark .match-card::after {
-  opacity: .9;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='48' fill='%23182638'/><circle cx='50' cy='50' r='18' fill='%2324384e' opacity='.8'/><path d='M50 8v14M50 78v14M8 50h14M78 50h14M20 20l10 10M70 70l10 10M80 20L70 30M30 70L20 80' stroke='%2324384e' stroke-width='3'/></svg>");
 }
 html:root .match-card .datebox,
 html:root .match-card .bar,
@@ -1254,8 +1231,10 @@ html:root .trial-court {
   background: #2563eb; color: #fff; font-weight: 800; font-size: .85rem;
 }
 html:root .trial-price {
-  display: block; order: 6; margin-left: auto; color: var(--muted); font-weight: 700; font-size: 1.05rem;
+  display: block; order: 6; margin-left: auto; flex: none;
+  color: #3a4760; font-weight: 600; font-size: 1rem; white-space: nowrap;
 }
+html.dark .trial-price { color: #c5d0e2; }
 html:root .match-note[data-venue] {
   order: 7; flex: 1 0 100%; display: flex; align-items: center; gap: 6px;
   color: var(--muted); font-size: .92rem;
