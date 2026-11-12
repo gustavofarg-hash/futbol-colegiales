@@ -321,6 +321,7 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
 #slots .slot-actions { display: flex; flex-direction: column; gap: 4px; flex: none; }
 #slots .slot-actions .wa-btn,
 #slots .slot-actions .pay-btn { width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
+#slots .slot-actions .pay-btn { width: max(40px, 2.25em); height: max(40px, 2.25em); }
 #slots .slot-side .more-btn { width: 40px; min-width: 40px; min-height: 40px; height: auto; align-self: stretch; }
 /* Lista de espera: igual que el partido. El nombre (o apodo) y las etiquetas se ven enteros, sin «…» y sin partir palabras. */
 #wait-list .name { white-space: normal; overflow: visible; text-overflow: unset; min-width: auto; overflow-wrap: normal; word-break: normal; hyphens: none; }
@@ -403,11 +404,14 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
 .signup-block { position: absolute; inset: -6px; border: 0; background: transparent; }
 .signup-row .btn { flex: none; min-height: 40px; padding: 0 10px; }
 .pay-btn {
-  width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line);
-  background: var(--bg); font-size: 1.125rem; line-height: 1; padding: 0;
+  width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+  border: 0; border-radius: 50%; background: transparent; padding: 0;
   display: grid; place-items: center; flex: none;
 }
-.pay-btn.on { background: var(--green-soft); border-color: transparent; }
+.pay-btn .pay-coin { width: 100%; height: 100%; display: block; fill: none; stroke: none; }
+.pay-btn .pay-coin circle { fill: #F5C518; stroke: #2B2B2B; stroke-width: 7px; }
+.pay-btn .pay-coin path { fill: #2B2B2B; stroke: none; }
+.pay-btn.on { background: transparent; }
 .arrows { display: flex; flex-direction: column; gap: 2px; flex: none; }
 .arrow-btn {
   width: 36px; height: 26px; border-radius: 8px; border: 1px solid var(--line);
