@@ -586,6 +586,42 @@ export function collectedLine(players) {
 }
 
 /**
+ * Lo que este organizador anotó y lo que le pagaron en estos jugadores.
+ * Anotados: se anotaron con él (si no hay uid, quien los agregó).
+ * Efectivo y transferencia: solo lo ya cobrado a su nombre. El pendiente no entra.
+ */
+export function organizerReceipts(players, who) {
+  const uid = String(who?.uid || '').trim();
+  const name = String(who?.name || '').trim();
+  let added = 0;
+  let cash = 0;
+  let cashPlayers = 0;
+  let transfer = 0;
+  let transferPlayers = 0;
+  for (const player of players || []) {
+    if (!player) continue;
+    const signed = String(player.signedUpWith || '').trim() || String(player.addedByUid || '').trim();
+    if ((uid && signed === uid) || (!signed && name && sameOrganizer(player.addedBy, name))) added += 1;
+    let cashHere = 0;
+    let transferHere = 0;
+    for (const share of paymentShares(player)) {
+      if (!(share.amount > 0) || !sameOrganizer(share.name, name)) continue;
+      if (share.kind === 'cash') cashHere = roundARS(cashHere + share.amount);
+      else if (share.kind === 'transfer') transferHere = roundARS(transferHere + share.amount);
+    }
+    if (cashHere > 0) {
+      cash = roundARS(cash + cashHere);
+      cashPlayers += 1;
+    }
+    if (transferHere > 0) {
+      transfer = roundARS(transfer + transferHere);
+      transferPlayers += 1;
+    }
+  }
+  return { added, cash, cashPlayers, transfer, transferPlayers };
+}
+
+/**
  * Campos para mergear en el jugador. No toca nombre, teléfono ni partido.
  * { ok:true, patch } o { ok:false, error }.
  */

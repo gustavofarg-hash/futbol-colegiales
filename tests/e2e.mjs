@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v148');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v149');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -285,7 +285,7 @@ check('Partido agregado aparece en la lista', /JUE/.test(cardText) && /Jueves 22
 check('La lista con partidos tampoco muestra el pie de sede y formato', await page.locator('#view .footer-note').count() === 0);
 await page.click('.match-card');
 await page.waitForSelector('#btn-add-player');
-check('El detalle sigue mostrando la sede y el formato', (await page.textContent('#match-place'))?.replace(/\s+/g, ' ').trim() === 'Polideportivo Colegiales - F7');
+check('El detalle sigue mostrando la sede y el formato', (await page.textContent('#match-place'))?.replace(/\s+/g, ' ').trim() === 'F7 - Polideportivo Colegiales');
 check('Con un solo próximo la fecha es texto y no abre la lista', (await page.textContent('#match-date'))?.trim() === 'Jueves 22/10' && await page.locator('#match-date').evaluate((el) => el.tagName) === 'H1' && (await page.locator('#btn-notes').innerText()) === 'Notas' && await page.locator('#match-notes .hint').count() === 0 && !(await page.locator('#match-notes').innerText()).includes('Sin notas') && (await page.locator('#match-when').innerText()).replace(/\s+/g, ' ').includes('21hs ($5.000)'));
 await page.click('#btn-notes');
 await page.waitForSelector('#notes-form');
@@ -814,8 +814,8 @@ check('Juan: Pagó $5.000 · Transferencia', juanPay.includes('Pagó $5.000') &&
 
 check('Pedro sigue sin estado de pago', (await page.$$('.slot:has-text("Pedro Gómez") .pay-line')).length === 0);
 check('Nico sigue sin estado de pago', (await page.$$('.slot:has-text("Nico R.") .pay-line')).length === 0);
-const rec = (await page.textContent('#collected')).replace(/\s+/g, ' ');
-check('Total recaudado 1/3', rec.includes('Recaudado: $5.000') && rec.includes('1/3 pagaron'), rec);
+const rec = (await page.textContent('#mine-transfer')).replace(/\s+/g, ' ');
+check('La transferencia cobrada es de quien está logueado', rec.includes('Me transfirieron: $5.000') && rec.includes('1 jugador'), rec);
 
 await page.click('#btn-copy');
 const clipPay = await page.evaluate(() => navigator.clipboard.readText());
@@ -847,13 +847,13 @@ await page.fill('#pay-form [name=cash]', '4500');
 await page.fill('#pay-form [name=transfer]', '');
 await page.click('#pay-form button[type=submit]');
 await page2.waitForFunction(() => document.body.innerText.includes('Efectivo') && document.body.innerText.includes('$4.500'));
-check('La otra pestaña se actualiza sola', (await page2.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500'));
+check('La otra pestaña se actualiza sola', (await page2.textContent('#mine-cash')).replace(/\s+/g, ' ').includes('Me dieron en efectivo: $4.500'));
 await page2.close();
 
 check('Sin el filtro, Pedro sigue en el partido', (await page.locator('#slots .name', { hasText: 'Pedro Gómez' }).count()) === 1 && (await page.locator('#slots .name', { hasText: 'Nico R.' }).count()) === 1 && (await page.locator('#slots .name', { hasText: 'Juan Pérez' }).count()) === 1);
 check('El cupo sigue siendo el del partido', (await page.textContent('#slot-count')) === '3/14');
-const mineText = (await page.textContent('#mine-stats')).replace(/\s+/g, ' ');
-check('Estadística propia del partido', mineText.includes('Anotaste 1') && mineText.includes('Cobraste $4.500'), mineText);
+const mineText = `${await page.textContent('#mine-added')} ${await page.textContent('#mine-cash')}`.replace(/\s+/g, ' ');
+check('Estadística propia del partido', mineText.includes('Anotados por mí: 2') && mineText.includes('Me dieron en efectivo: $4.500'), mineText);
 
 // Lista de espera con lugares libres: queda al final, no ocupa un cupo
 await page.click('#btn-add-wait');
@@ -890,7 +890,7 @@ for (let i = 4; i <= 14; i++) {
 }
 check('14/14 y se puede seguir anotando (van a la espera)', (await page.textContent('#slot-count')) === '14/14' && !(await page.isDisabled('#btn-add-player')));
 check('Agregar jugador no cambia de nombre con el cupo lleno', (await page.textContent('#btn-add-player')).includes('Agregar jugador'));
-check('El total pasa a 1/14', (await page.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500 · 1/14 pagaron'));
+check('El efectivo cobrado sigue después de completar el cupo', (await page.textContent('#mine-cash')).replace(/\s+/g, ' ').includes('Me dieron en efectivo: $4.500'));
 check('Cero sigue en espera al llenarse el partido', (await page.textContent('#wait-list')).includes('Espera Cero') && !(await page.locator('#slots').getByText('Espera Cero', { exact: true }).count()));
 
 await page.click('#btn-add-player');
@@ -968,7 +968,7 @@ check('Datos persisten tras recargar (sin volver a pedir la contraseña)', (awai
 check('Sigue en modo demo tras recargar', (await page.evaluate(() => window.__app?.store?.mode)) === 'demo');
 await page.click('.match-card[data-date="2026-10-22"]');
 await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
-check('El pago persiste tras recargar', (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).includes('Efectivo') && (await page.textContent('#collected')).includes('$4.500'));
+check('El pago persiste tras recargar', (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).includes('Efectivo') && (await page.textContent('#mine-cash')).includes('$4.500'));
 await page.click('#btn-back');
 await page.waitForSelector('.match-card');
 
@@ -992,7 +992,7 @@ check('Reservado ocupa cupo, no va a la espera y no figura confirmado',
   && luisRow.includes('Reservado · a confirmar')
   && !luisRow.includes('Confirmó')
   && !luisRow.includes('Sin respuesta'), luisRow);
-check('El resumen cuenta A confirmar', (await page.textContent('#confirm-sum')).includes('A confirmar: 1') && (await page.textContent('#confirm-sum')).includes('Sin respuesta: 0'));
+check('El resumen no mezcla el lugar reservado con sin respuesta', (await page.textContent('#confirm-sum')).includes('Confirmados: 0 - No juegan: 0 - Sin respuesta: 0') && !(await page.textContent('#confirm-sum')).includes('A confirmar'), await page.textContent('#confirm-sum'));
 const fontBefore = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
 async function tentativeLayout(width, px) {
   await page.setViewportSize({ width, height: 844 });
@@ -1560,13 +1560,21 @@ await page.evaluate(async () => {
     transfers: calc.transfers,
   });
 });
+const statsButtons = await page.$$eval('#stats-mode a', (els) => els.map((el) => el.textContent.trim()));
+check('Los botones de Estadísticas son Jugador, Día, Mes y Año', JSON.stringify(statsButtons) === JSON.stringify(['Jugador', 'Día', 'Mes', 'Año']), statsButtons.join(','));
+const statsTitleFirst = await page.evaluate(() => {
+  const title = document.querySelector('#stats-title');
+  const seg = document.querySelector('#stats-mode');
+  return !!title && !!seg && (title.compareDocumentPosition(seg) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+});
+check('El título de Estadísticas queda arriba de los botones', statsTitleFirst && (await page.locator('#stats-title').innerText()).trim() === 'Estadísticas por jugador');
 await page.click('#stats-mode a[href="#/estadisticas/dia"]');
 await page.waitForSelector('#stats-days');
 check('La vista se llama Día', (await page.locator('#stats-mode a[aria-current="page"]').innerText()).trim() === 'Día');
 await page.locator('#stats-days .who').first().click();
 await page.waitForSelector('#stats-collected');
 const matchStats = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
-check('Por día muestra lo que correspondió y la asistencia de cada partido', matchStats.includes('Te correspondió:') && matchStats.includes('En la lista:') && matchStats.includes('No juega:') && matchStats.includes('Cobrado') && matchStats.includes('Por medio') && matchStats.includes('Por organizador'), matchStats.slice(0, 280));
+check('Por día muestra lo que correspondió y la asistencia de cada partido', matchStats.includes('Te correspondió:') && matchStats.includes('En la lista:') && matchStats.includes('No juega:') && matchStats.includes('Cobrado') && matchStats.includes('Por medio') && !matchStats.includes('Por organizador') && (await page.locator('#stats-title').innerText()).trim() === 'Estadísticas por día', matchStats.slice(0, 280));
 await page.evaluate(() => {
   const store = window.__app.store;
   const db = store._load();
@@ -1655,8 +1663,8 @@ await page.waitForSelector('.slot:has-text("Ana Hoy") .pay-pending');
 const anaPay = (await page.locator('.slot', { hasText: 'Ana Hoy' }).innerText()).replace(/\s+/g, ' ');
 check('Fila con efectivo, transferencia y transfiere después',
   anaPay.includes('Pagó $5.000') && anaPay.includes('Efectivo $2.000') && anaPay.includes('Transferencia $3.000') && anaPay.includes('Transfiere después $1.500'), anaPay);
-const recSplit = (await page.textContent('#collected')).replace(/\s+/g, ' ');
-check('Recaudado no suma lo pendiente', recSplit.includes('Recaudado: $5.000') && recSplit.includes('Transfiere después: $1.500'), recSplit);
+const recSplit = `${await page.textContent('#mine-cash')} ${await page.textContent('#mine-transfer')}`.replace(/\s+/g, ' ');
+check('El efectivo y la transferencia no suman lo pendiente', recSplit.includes('Me dieron en efectivo: $2.000') && recSplit.includes('Me transfirieron: $3.000') && !recSplit.includes('$1.500') && !recSplit.includes('$4.500'), recSplit);
 await page.click('#btn-copy');
 const clipSplit = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada incluye transfiere después', clipSplit.includes('Transfiere después $1.500') && clipSplit.includes('Transfiere después: $1.500'), clipSplit);
@@ -1715,7 +1723,7 @@ await page.waitForFunction(() => {
   const row = [...document.querySelectorAll('.slot')].find((el) => el.innerText.includes('Ana Hoy'));
   return row && !row.innerText.includes('Transfiere después') && row.innerText.includes('$6.500');
 });
-check('Marcar la transferencia la suma a lo cobrado', (await page.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $6.500'));
+check('Marcar la transferencia la suma a lo cobrado', (await page.textContent('#mine-transfer')).replace(/\s+/g, ' ').includes('Me transfirieron: $4.500'));
 const anaStored = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Ana Hoy'));
 check('Quedó como transferencia cobrada por Gustavo', anaStored.pendingTransfer == null && anaStored.transfer === 4500 && anaStored.cash === 2000 && anaStored.amount === 6500 && anaStored.transferReceivedBy === 'Gustavo' && anaStored.paid === true);
 await page.click('.slot:has-text("Ana Hoy") .pay-btn');
@@ -1873,7 +1881,7 @@ await page.locator('#pay-free').check();
 check('Juega gratis deja los montos vacíos y apagados', await page.$eval('#pay-form [name=transfer]', (el) => el.disabled && el.value === '') && await page.$eval('#pay-form [name=cash]', (el) => el.disabled));
 await page.click('#pay-form button[type=submit]');
 await page.waitForSelector('.slot:has-text("Precio Propio") .pay-line');
-check('Quien juega gratis figura saldado', (await page.textContent('.slot:has-text("Precio Propio")')).includes('Juega gratis') && (await page.textContent('#collected')).includes('juega gratis'));
+check('Quien juega gratis figura saldado', (await page.textContent('.slot:has-text("Precio Propio")')).includes('Juega gratis'));
 await page.click('#btn-settings');
 await page.fill('#price-form [name=matchPrice]', '5000');
 await page.fill('#price-form [name=promo2Price]', '9000');
@@ -2714,7 +2722,51 @@ const norteDetail = {
   price: await page.textContent('#match-price'),
   tag: await page.locator('#match-date').evaluate((el) => el.tagName),
 };
-check('El detalle usa la sede y Faltan 12', (norteDetail.date || '').startsWith('Domingo 08/11') && !(norteDetail.date || '').includes('hs') && norteDetail.tag === 'BUTTON' && (norteDetail.when || '').includes('19:30hs ($8.000)') && norteDetail.place === 'Club Norte Sur - F6 - Cancha 3' && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'), JSON.stringify(norteDetail));
+check('El detalle usa la sede y Faltan 12', (norteDetail.date || '').startsWith('Domingo 08/11') && !(norteDetail.date || '').includes('hs') && norteDetail.tag === 'BUTTON' && (norteDetail.when || '').includes('19:30hs ($8.000)') && norteDetail.place === 'Cancha 3 - F6 - Club Norte Sur' && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'), JSON.stringify(norteDetail));
+const hourLook = await page.evaluate(() => {
+  const date = getComputedStyle(document.querySelector('#match-date'));
+  const hour = getComputedStyle(document.querySelector('.match-hour'));
+  return { dateSize: date.fontSize, hourSize: hour.fontSize, dateWeight: Number(date.fontWeight), hourWeight: Number(hour.fontWeight) };
+});
+check('La hora pesa igual que la fecha', hourLook.dateSize === hourLook.hourSize && hourLook.hourWeight >= 700 && hourLook.dateWeight >= 700, JSON.stringify(hourLook));
+check('Sin habituales no aparece la sección', await page.locator('#usual-title').count() === 0);
+const usualId = await page.evaluate(async () => {
+  const app = window.__app;
+  const who = app.who;
+  const id = await app.store.addMatch({ date: '2026-10-29', time: '21:10', capacity: 14, note: 'Habituales' }, who);
+  const rows = [
+    ['2026-10-15', '21:10', 'Habitual Sol', '11 4100-0001'],
+    ['2026-10-08', '21:10', 'Habitual Sol', '11 4100-0001'],
+    ['2026-10-15', '21:10', 'Habitual Leo', '11 4100-0002'],
+    ['2026-10-01', '21:10', 'Habitual Mudo', ''],
+    ['2026-10-15', '18:10', 'Habitual Otra', '11 4100-0003'],
+    ['2026-07-16', '21:10', 'Habitual Vieja', '11 4100-0004'],
+  ];
+  for (const [date, time, name, phone] of rows) {
+    const mid = await app.store.addMatch({ date, time, capacity: 14, note: 'Historia habitual' }, who);
+    const match = app.matches.find((item) => item.id === mid) || { id: mid, date, time, capacity: 14 };
+    await app.store.addPlayer(match, { name, phone }, who);
+  }
+  return id;
+});
+await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, usualId);
+await page.waitForSelector('#usual-list');
+const usualNames = await page.$$eval('#usual-list .name', (els) => els.map((el) => el.textContent.trim()));
+const usualCounts = await page.$$eval('#usual-list .sub', (els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+const solHref = await page.locator('#usual-list .slot', { hasText: 'Habitual Sol' }).locator('a.wa-btn').getAttribute('href');
+const mudoWa = await page.locator('#usual-list .slot', { hasText: 'Habitual Mudo' }).locator('a.wa-btn').count();
+check('Suelen jugar ordena por veces y abre WhatsApp vacío', JSON.stringify(usualNames) === JSON.stringify(['Habitual Sol', 'Habitual Leo', 'Habitual Mudo']) && usualCounts[0] === '2 partidos' && usualCounts[1] === '1 partido' && solHref === 'https://wa.me/5491141000001' && mudoWa === 0, `${usualNames.join(',')} ${usualCounts.join('|')} ${solHref}`);
+await page.click('#btn-add-player');
+await page.fill('#player-name', 'Habitual Sol');
+await page.fill('#player-form [name=phone]', '11 4100-0001');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Habitual Sol")');
+await page.waitForFunction(() => ![...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.includes('Habitual Sol')));
+check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).join(',') === 'Habitual Leo,Habitual Mudo');
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card[data-date="2026-11-08"]');
+await page.click('.match-card[data-date="2026-11-08"]');
+await page.waitForSelector('#match-court');
 await page.click('#btn-copy');
 const norteCopy = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada nombra la sede', norteCopy.includes('Club Norte Sur') && norteCopy.includes('Faltan 12') && norteCopy.includes('⚽ Fútbol 6') && norteCopy.includes('Cancha 3'), norteCopy.split('\n').slice(0, 4).join(' | '));
@@ -4044,6 +4096,12 @@ await page.evaluate(async () => {
 });
 await page.evaluate(() => { location.hash = '#/registro/partidos'; });
 await page.waitForSelector('#log-list');
+const logTitleFirst = await page.evaluate(() => {
+  const title = document.querySelector('#log-title');
+  const seg = document.querySelector('#log-mode');
+  return !!title && !!seg && (title.compareDocumentPosition(seg) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && title.textContent.trim() === 'Registro de movimientos';
+});
+check('Registro titula Registro de movimientos arriba de los botones', logTitleFirst);
 const partidos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
 check('Registro de partidos anota el alta, el invitado y no el partido ajeno', partidos.includes('nuevo partido') && partidos.includes('alta') && partidos.includes('Invitado 1 (invitado de Anfitrión Log)') && partidos.includes('En la lista de espera') && !partidos.includes('23:41'), partidos.slice(0, 400));
 check('Quien solo puede ver el partido igual ve su registro', partidos.includes('Visible Por Ver') && partidos.includes('23:42'));
