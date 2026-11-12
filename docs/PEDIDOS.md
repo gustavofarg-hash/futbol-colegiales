@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
 **Actualizada para f7c-v154** (12/11/2026): «Suelen anotarse para jugar este día y hora:» también cuenta los partidos que después se cancelaron. Sigue siendo los últimos 3 meses, solo quien se anotó con el organizador logueado, incluye la espera y deja afuera a quien ya está en el partido actual. `firestore.rules` no cambió.
 **Actualizada para f7c-v153** (12/11/2026): los íconos pasan a Phosphor (regular, y fill en la pestaña activa), en SVG local y sin CDN. La pechera es la remera llena naranja y sin pechera es el contorno. La moneda de pago sigue con el fondo de la promo. La red del arco sigue igual: Phosphor no tiene ese dibujo. A− y A+ siguen siendo texto y los íconos escalan con ellos. `firestore.rules` no cambió.
 **Actualizada para f7c-v152** (12/11/2026): se sacó la pelota de las tarjetas de partido y los dibujos del encabezado. El header queda azul marino sólido y opaco. El precio del partido es gris oscuro, chico, sobre la tarjeta. `firestore.rules` no cambió.

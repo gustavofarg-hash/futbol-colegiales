@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v154');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v155');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -3579,8 +3579,13 @@ async function filaLayout(px) {
     const phone = row.querySelector('.phone-line');
     const pay = row.querySelector('.pay-line');
     const promo = row.querySelector('.promo-badge');
-    const wa = row.querySelector('.wa-btn').getBoundingClientRect();
-    const money = row.querySelector('.pay-btn').getBoundingClientRect();
+    const waEl = row.querySelector('.wa-btn');
+    const moneyEl = row.querySelector('.pay-btn');
+    const wa = waEl.getBoundingClientRect();
+    const money = moneyEl.getBoundingClientRect();
+    const waStyle = getComputedStyle(waEl);
+    const moneyStyle = getComputedStyle(moneyEl);
+    const promoStyle = getComputedStyle(promo);
     const more = row.querySelector('.more-btn').getBoundingClientRect();
     const full = (el) => getComputedStyle(el).textOverflow !== 'ellipsis' && el.scrollWidth <= el.clientWidth + 2;
     const phoneStyle = getComputedStyle(phone);
@@ -3596,13 +3601,15 @@ async function filaLayout(px) {
       phoneOne: phoneStyle.whiteSpace === 'nowrap' && phoneBox.height <= parseFloat(phoneStyle.fontSize) * 1.6,
       stacked: money.top >= wa.bottom - 2 && Math.abs(wa.left - money.left) < 6 && more.left >= wa.right - 1,
       targets: [wa, money, more].every((box) => box.width >= 40 && box.height >= 40),
+      sameButton: Math.abs(wa.width - money.width) < 0.5 && Math.abs(wa.height - money.height) < 0.5 && waStyle.borderRadius === moneyStyle.borderRadius && waStyle.padding === moneyStyle.padding,
+      promoBg: moneyStyle.backgroundColor === promoStyle.backgroundColor,
       inside: row.getBoundingClientRect().right <= window.innerWidth + 1,
     };
   });
 }
 const fila18 = await filaLayout(18);
 const fila22 = await filaLayout(22);
-const filaOk = (row) => row.name === 'Facundo Aguirre' && row.phone === '+54 9 11 2799-3830' && row.pay.includes('Pagó $4.500') && row.pay.includes('Efectivo') && row.promo === 'Promo 2 partidos por $9.000' && row.nameFull && row.payFull && row.promoFull && row.phoneOne && row.stacked && row.targets && row.inside;
+const filaOk = (row) => row.name === 'Facundo Aguirre' && row.phone === '+54 9 11 2799-3830' && row.pay.includes('Pagó $4.500') && row.pay.includes('Efectivo') && row.promo === 'Promo 2 partidos por $9.000' && row.nameFull && row.payFull && row.promoFull && row.phoneOne && row.stacked && row.targets && row.inside && row.sameButton && row.promoBg;
 check('A 18px la fila muestra el texto y apila WhatsApp sobre el pago', filaOk(fila18), JSON.stringify(fila18));
 check('A 22px la fila sigue entera', filaOk(fila22), JSON.stringify(fila22));
 await page.evaluate(() => { document.documentElement.style.fontSize = '18px'; });
