@@ -23,6 +23,51 @@ export function sameOrganizer(a, b) {
   return left !== '' && left === foldText(b);
 }
 
+function organizerIdentity(value) {
+  if (value && typeof value === 'object') {
+    return {
+      uid: String(value.uid || '').trim(),
+      name: String(value.name || '').trim(),
+    };
+  }
+  return { uid: '', name: String(value || '').trim() };
+}
+
+/**
+ * La misma persona: mismo uid, mismo nombre, o un apodo que es el
+ * comienzo del nombre (Gus y Gustavo). El apodo tiene al menos 3 letras.
+ */
+export function sameOrganizerIdentity(a, b) {
+  const left = organizerIdentity(a);
+  const right = organizerIdentity(b);
+  if (left.uid && right.uid && left.uid === right.uid) return true;
+  if (sameOrganizer(left.name, right.name)) return true;
+  const ln = foldText(left.name);
+  const rn = foldText(right.name);
+  if (ln.length < 3 || rn.length < 3) return false;
+  return ln.startsWith(rn) || rn.startsWith(ln);
+}
+
+/**
+ * Nombre con el que se guarda un cobro. Si el texto es el apodo de una
+ * sola persona de la lista, queda el nombre de esa persona.
+ * Si hay más de una, no se adivina.
+ */
+export function canonicalOrganizerName(label, people) {
+  const raw = String(label || '').trim().replace(/\s+/g, ' ');
+  const list = (Array.isArray(people) ? people : [people]).map(organizerIdentity).filter((item) => item.name);
+  if (!raw) return list.length === 1 ? list[0].name : '';
+  const exact = list.find((item) => sameOrganizer(item.name, raw));
+  if (exact) return exact.name;
+  const hits = [];
+  for (const item of list) {
+    if (!sameOrganizerIdentity(raw, item)) continue;
+    if (hits.some((have) => (have.uid && item.uid && have.uid === item.uid) || sameOrganizer(have.name, item.name))) continue;
+    hits.push(item);
+  }
+  return hits.length === 1 ? hits[0].name : raw;
+}
+
 /** Clase del tag "Agregó". Gustavo y Martín conservan el color; el resto, neutro. */
 export function organizerTagClass(name) {
   const folded = foldText(name);

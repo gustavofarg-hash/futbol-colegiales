@@ -24,7 +24,7 @@ import { activityNoticeText, activityNotices } from './notify.js';
 import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
-import { organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
+import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
 import { compensationDoneDates, diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths } from './stats.js';
@@ -47,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v161';
+const APP_VERSION = 'f7c-v162';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -259,11 +259,27 @@ function savePaymentsSpendingCredit(entries, okMsg, creditMove) {
   return run(applyPaySave(entries, creditMove), okMsg);
 }
 
-function organizerUidByName(name) {
+/** uid y nombre canónico. «Gus» es Gustavo si ese es el nombre de la cuenta. */
+function collectorIdentity(name) {
   const me = actor();
-  if (sameOrganizer(name, me.name) && me.uid) return me.uid;
-  const user = staffUsers(app.users).find((item) => sameOrganizer(item.name, name));
-  return user?.uid || '';
+  const raw = String(name || '').trim();
+  const people = [];
+  for (const user of staffUsers(app.users)) {
+    const uid = String(user?.uid || '').trim();
+    const full = String(user?.name || '').trim();
+    if (!uid || !full || people.some((item) => item.uid === uid)) continue;
+    people.push({ uid, name: full });
+  }
+  if (me.uid && !people.some((item) => item.uid === me.uid) && me.name) people.unshift({ uid: me.uid, name: me.name });
+  if (!raw) return { uid: me.uid || '', name: me.name || '' };
+  if (sameOrganizerIdentity(raw, me) && me.uid) return { uid: me.uid, name: me.name || raw };
+  const found = people.find((item) => sameOrganizerIdentity(item, raw));
+  if (found) return { uid: found.uid, name: found.name };
+  return { uid: '', name: raw };
+}
+
+function organizerUidByName(name) {
+  return collectorIdentity(name).uid;
 }
 
 function mergeCreditMoves(moves) {
@@ -290,7 +306,7 @@ function creditOrganizerOf(player) {
   const name = String(player?.signedUpWithName || player?.addedBy || '').trim();
   if (uid) return { uid, name: name || actor().name };
   if (!name) return null;
-  if (sameOrganizer(name, actor().name) && actor().uid) return { uid: actor().uid, name: actor().name };
+  if (sameOrganizerIdentity(name, actor()) && actor().uid) return { uid: actor().uid, name: actor().name };
   const found = organizerUidByName(name);
   return found ? { uid: found, name } : null;
 }
@@ -806,16 +822,12 @@ function olderDebts(player, skipIds) {
 }
 function receiptParts({ cash, cashTo, transfer, transferTo, credit, creditTo }) {
   const me = actor();
-  const uidOf = (name) => {
-    if (!name) return '';
-    if (sameOrganizer(name, me.name)) return me.uid;
-    return organizerUidByName(name);
-  };
   const part = (kind, amount, name) => {
     const money = roundMoney(amount);
     if (!(money > 0)) return null;
-    const uid = uidOf(name);
-    return { kind, amount: money, name: name || me.name, uid, confirmed: !uid || uid === me.uid };
+    const who = collectorIdentity(name);
+    const uid = who.uid;
+    return { kind, amount: money, name: who.name || me.name, uid, confirmed: !uid || uid === me.uid };
   };
   return [part('cash', cash, cashTo), part('transfer', transfer, transferTo), part('credit', credit, creditTo)].filter(Boolean);
 }
@@ -5232,24 +5244,16 @@ function paymentShareLabel(share) {
   return `${kind} ${formatARS(share?.amount || 0)}${share?.kind === 'pending' ? ` · a ${who}` : ` · ${who}`}`;
 }
 
-function sameOrShortOrganizer(a, b) {
-  if (sameOrganizer(a, b)) return true;
-  const left = foldText(a);
-  const right = foldText(b);
-  if (left.length < 3 || right.length < 3) return false;
-  return left.startsWith(right) || right.startsWith(left);
-}
-
 function canAnnulPayment(player, share) {
-  const me = actor().name;
+  const me = actor();
   const name = String(share?.name || '').trim();
   // «Gus» y «Gustavo» son el mismo organizador. Un pendiente viejo sin nombre también se puede sacar.
   if (share?.kind === 'pending') {
     if (!name) return true;
-    return sameOrShortOrganizer(name, me) || sameOrShortOrganizer(player?.paidUpdatedBy, me) || sameOrShortOrganizer(player?.pendingTo, me);
+    return sameOrganizerIdentity(name, me) || sameOrganizerIdentity(player?.paidUpdatedBy, me) || sameOrganizerIdentity(player?.pendingTo, me);
   }
-  if (name) return sameOrganizer(name, me);
-  return sameOrganizer(player?.paidUpdatedBy, me);
+  if (name) return sameOrganizerIdentity(name, me);
+  return sameOrganizerIdentity(player?.paidUpdatedBy, me);
 }
 
 const PAY_X_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
@@ -5365,7 +5369,7 @@ async function annulRecordedPayment(player, share) {
   const batch = payBatchForShare(fresh);
   if (batch) {
     const names = payBatchCollectorNames(batch);
-    if (names.some((name) => !sameOrShortOrganizer(name, actor().name))) {
+    if (names.some((name) => !sameOrganizerIdentity(name, actor()))) {
       askNotice('Este pago se cargó junto con un cobro de otro organizador.');
       return;
     }
@@ -5397,13 +5401,12 @@ async function annulRecordedPayment(player, share) {
   const key = personKey(current, app.players);
   const moves = [];
   for (const item of annulCreditDeltas(current, share, due)) {
-    const name = item.name || actor().name;
-    const uid = sameOrganizer(name, actor().name) ? actor().uid : organizerUidByName(name);
-    if (!uid || !key) {
+    const who = collectorIdentity(item.name || actor().name);
+    if (!who.uid || !key) {
       askNotice('No se puede anular este pago sin identificar al jugador y a quien cobró.');
       return;
     }
-    moves.push({ personKey: key, organizerUid: uid, organizerName: name, name: current.name, delta: item.delta });
+    moves.push({ personKey: key, organizerUid: who.uid, organizerName: who.name, name: current.name, delta: item.delta });
   }
   const after = snapshotAfterFallback(current, input);
   const logs = annulLogLines(before, after).map((entry) => ({ playerId: current.id, entry }));
@@ -5583,9 +5586,9 @@ function openPaymentForm(m, p, opts = {}) {
   if (payBack && back) payBack.onclick = () => back();
   const paintSelect = (select, selected) => {
     const names = payStaffNames(m, [selected, ...paymentShares(p).map((share) => share.name)]);
-    const current = names.find((name) => sameOrganizer(name, selected)) || names[0] || '';
-    select.innerHTML = names.map((name) => `<option value="${esc(name)}"${sameOrganizer(name, current) ? ' selected' : ''}>${esc(name)}</option>`).join('');
-    if (current) select.value = names.find((name) => sameOrganizer(name, current)) || names[0];
+    const current = names.find((name) => sameOrganizerIdentity(name, selected)) || names[0] || '';
+    select.innerHTML = names.map((name) => `<option value="${esc(name)}"${sameOrganizerIdentity(name, current) ? ' selected' : ''}>${esc(name)}</option>`).join('');
+    if (current) select.value = names.find((name) => sameOrganizerIdentity(name, current)) || names[0];
   };
   const paintPrices = () => {
     const fresh = promoOf(p);
@@ -5976,13 +5979,12 @@ function openPaymentForm(m, p, opts = {}) {
         if (refund.credits.length && !key) { $('#pay-err').textContent = 'No se puede guardar el saldo sin identificar a quien pagó.'; return; }
         const grants = [];
         for (const credit of refund.credits) {
-          const organizerName = credit.name || actor().name;
-          const organizerUid = organizerUidByName(organizerName) || (sameOrganizer(organizerName, actor().name) ? actor().uid : '');
-          if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+          const found = collectorIdentity(credit.name || actor().name);
+          if (!found.uid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
           grants.push({
             personKey: key,
-            organizerUid,
-            organizerName,
+            organizerUid: found.uid,
+            organizerName: found.name,
             name: beneficiary.name,
             delta: credit.amount,
           });
@@ -6031,6 +6033,11 @@ function openPaymentForm(m, p, opts = {}) {
     if (cash.amount > 0 && !String(form.cashTo.value || '').trim()) { $('#pay-err').textContent = 'Elegí quién cobró el efectivo.'; return; }
     if (transfer.amount > 0 && !keepTransferParts && !String(form.transferTo.value || '').trim()) { $('#pay-err').textContent = 'Elegí quién cobró la transferencia.'; return; }
     const creditTo = loggedInStaffName();
+    const named = (raw) => {
+      const text = String(raw || '').trim();
+      if (!text) return '';
+      return collectorIdentity(text).name || text;
+    };
     const payInput = (part) => ({
       paid: true,
       split: true,
@@ -6039,9 +6046,9 @@ function openPaymentForm(m, p, opts = {}) {
       transfer: part.transfer,
       pendingTransfer: part.pending,
       fromCredit: part.credit,
-      cashTo: part.cash > 0 ? form.cashTo.value : null,
-      transferTo: part.transfer > 0 ? form.transferTo.value : null,
-      pendingTo: part.pending > 0 ? form.pendingTo.value : null,
+      cashTo: part.cash > 0 ? named(form.cashTo.value) : null,
+      transferTo: part.transfer > 0 ? named(form.transferTo.value) : null,
+      pendingTo: part.pending > 0 ? named(form.pendingTo.value) : null,
       creditTo: part.credit > 0 ? creditTo : null,
     });
     const finishPay = (entries, people, okMsg) => {
@@ -6074,9 +6081,9 @@ function openPaymentForm(m, p, opts = {}) {
           id: row.player.id,
           input: {
             ...payInput({ cash, transfer, pending: pendingAmt, credit: creditAmt }),
-            cashTo: cash > 0 ? (row.cash > 0 ? form.cashTo.value : (row.player.cashTo || form.cashTo.value)) : null,
-            transferTo: transfer > 0 ? (row.transfer > 0 ? form.transferTo.value : (row.player.transferTo || form.transferTo.value)) : null,
-            pendingTo: pendingAmt > 0 ? (row.pending > 0 ? form.pendingTo.value : (row.player.pendingTo || form.pendingTo.value)) : null,
+            cashTo: cash > 0 ? named(row.cash > 0 ? form.cashTo.value : (row.player.cashTo || form.cashTo.value)) : null,
+            transferTo: transfer > 0 ? named(row.transfer > 0 ? form.transferTo.value : (row.player.transferTo || form.transferTo.value)) : null,
+            pendingTo: pendingAmt > 0 ? named(row.pending > 0 ? form.pendingTo.value : (row.player.pendingTo || form.pendingTo.value)) : null,
             creditTo: creditAmt > 0 ? creditTo : null,
             transferParts: keepParts ? row.player.transferParts : null,
           },
@@ -6109,12 +6116,12 @@ function openPaymentForm(m, p, opts = {}) {
       });
       const grants = [];
       for (const item of notes) {
-        const organizerUid = organizerUidByName(item.name);
-        if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+        const found = collectorIdentity(item.name);
+        if (!found.uid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
         grants.push({
           personKey: personKey(p, app.players),
-          organizerUid,
-          organizerName: item.name,
+          organizerUid: found.uid,
+          organizerName: found.name,
           name: p.name,
           delta: item.amount,
         });
@@ -6176,11 +6183,11 @@ function openPaymentForm(m, p, opts = {}) {
           id: row.player.id,
           input: {
             ...payInput({ cash: cashSum, transfer: transferSum, pending: row.pendingTransfer || 0, credit: creditSum }),
-            cashTo: cashSum > 0 ? cashTo : null,
-            transferTo: transferBits.length === 1 ? transferBits[0].to : null,
-            transferParts: transferBits.length > 1 ? transferBits : null,
-            creditTo: creditSum > 0 ? creditTo : null,
-            pendingTo: row.pendingTransfer > 0 ? form.pendingTo.value : null,
+            cashTo: cashSum > 0 ? named(cashTo) : null,
+            transferTo: transferBits.length === 1 ? named(transferBits[0].to) : null,
+            transferParts: transferBits.length > 1 ? transferBits.map((part) => ({ ...part, to: named(part.to) || part.to })) : null,
+            creditTo: creditSum > 0 ? named(creditTo) : null,
+            pendingTo: row.pendingTransfer > 0 ? named(form.pendingTo.value) : null,
             ...(awaiting.length ? { awaiting } : {}),
           },
         });
@@ -6189,9 +6196,9 @@ function openPaymentForm(m, p, opts = {}) {
       }
       for (const item of row.applied?.settlements || []) debtAdds.push(item);
       for (const item of row.applied?.credits || []) {
-        const organizerUid = item.uid || organizerUidByName(item.name);
-        if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
-        grants.push({ personKey: personKey(p, app.players), organizerUid, organizerName: item.name, name: p.name, delta: item.amount });
+        const found = item.uid ? { uid: item.uid, name: collectorIdentity(item.name).name || item.name } : collectorIdentity(item.name);
+        if (!found.uid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+        grants.push({ personKey: personKey(p, app.players), organizerUid: found.uid, organizerName: found.name, name: p.name, delta: item.amount });
       }
     }
     if (!entries.length && !grants.length) { $('#pay-err').textContent = 'Poné un monto.'; return; }
@@ -6984,23 +6991,23 @@ async function applyPromoSettlement(person, plan) {
   const key = personKey(beneficiary, app.players);
   const net = new Map();
   for (const credit of plan.credits || []) {
-    const name = credit.name || actor().name;
+    const name = collectorIdentity(credit.name || actor().name).name || actor().name;
     net.set(name, roundMoney((net.get(name) || 0) + credit.amount));
   }
   for (const spend of plan.spends || []) {
-    const name = spend.name || '';
+    const name = collectorIdentity(spend.name || '').name;
     if (!name) continue;
     net.set(name, roundMoney((net.get(name) || 0) - spend.amount));
   }
   const moves = [];
   for (const [organizerName, delta] of net) {
     if (!delta) continue;
-    const organizerUid = organizerUidByName(organizerName) || (sameOrganizer(organizerName, actor().name) ? actor().uid : '');
-    if (!organizerUid || !key) throw Object.assign(new Error('No se puede guardar el saldo sin identificar a quien pagó.'), { code: 'invalid-credit' });
+    const found = collectorIdentity(organizerName);
+    if (!found.uid || !key) throw Object.assign(new Error('No se puede guardar el saldo sin identificar a quien pagó.'), { code: 'invalid-credit' });
     moves.push({
       personKey: key,
-      organizerUid,
-      organizerName,
+      organizerUid: found.uid,
+      organizerName: found.name,
       name: beneficiary.name || '',
       delta,
     });
@@ -7087,13 +7094,12 @@ async function unwindPromoPayment(player) {
   if (refund.credits.length && !key) throw Object.assign(new Error('No se puede guardar el saldo sin identificar a quien pagó.'), { code: 'invalid-credit' });
   const grants = [];
   for (const credit of refund.credits || []) {
-    const organizerName = credit.name || actor().name;
-    const organizerUid = organizerUidByName(organizerName) || (sameOrganizer(organizerName, actor().name) ? actor().uid : '');
-    if (!organizerUid) throw Object.assign(new Error('No encuentro al organizador que cobró lo que sobra.'), { code: 'invalid-credit' });
+    const found = collectorIdentity(credit.name || actor().name);
+    if (!found.uid) throw Object.assign(new Error('No encuentro al organizador que cobró lo que sobra.'), { code: 'invalid-credit' });
     grants.push({
       personKey: key,
-      organizerUid,
-      organizerName,
+      organizerUid: found.uid,
+      organizerName: found.name,
       name: beneficiary.name || '',
       delta: credit.amount,
     });
@@ -7292,7 +7298,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v161" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v162" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7329,7 +7335,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v161" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v162" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

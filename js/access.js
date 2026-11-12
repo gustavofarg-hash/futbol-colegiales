@@ -1,7 +1,7 @@
 // Quién ve y quién anota en un partido. Puro: lo usan la app, el store y las pruebas.
 // Un partido sin `viewers` es de todos (los de antes). `*` en la lista también es todos.
 // El límite cuenta titulares y lista de espera. Las reglas no pueden contarlos: lo frena la app.
-import { sameOrganizer } from './organizers.js';
+import { sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 
 export const EVERYONE = '*';
 
@@ -197,7 +197,7 @@ export function payeeNames(match, staff, extra = []) {
   const names = matchStaff(match, staff).map((user) => user.name);
   for (const raw of extra) {
     const name = String(raw || '').trim();
-    if (!name || names.some((have) => sameOrganizer(have, name))) continue;
+    if (!name || names.some((have) => sameOrganizerIdentity(have, name))) continue;
     names.push(name);
   }
   return names;

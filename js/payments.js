@@ -23,7 +23,7 @@
 // Si no hay cashTo/transferTo/pendingTo/transferParts, receivedBy vale
 // para el efectivo y para la transferencia.
 
-import { sameOrganizer } from './organizers.js';
+import { canonicalOrganizerName, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 
 export const MAX_AMOUNT = 1_000_000_000;
 export const MAX_TRANSFER_PARTS = 6;
@@ -417,7 +417,7 @@ export function payBatchCollectorNames(batch) {
   const names = [];
   const add = (name) => {
     const clean = String(name || '').trim();
-    if (clean && !names.some((have) => sameOrganizer(have, clean))) names.push(clean);
+    if (clean && !names.some((have) => sameOrganizerIdentity(have, clean))) names.push(clean);
   };
   for (const row of batch?.payments || []) {
     const before = row?.before || {};
@@ -592,7 +592,6 @@ export function collectedLine(players) {
  */
 export function organizerReceipts(players, who) {
   const uid = String(who?.uid || '').trim();
-  const name = String(who?.name || '').trim();
   let added = 0;
   let cash = 0;
   let cashPlayers = 0;
@@ -601,11 +600,11 @@ export function organizerReceipts(players, who) {
   for (const player of players || []) {
     if (!player) continue;
     const signed = String(player.signedUpWith || '').trim() || String(player.addedByUid || '').trim();
-    if ((uid && signed === uid) || (!signed && name && sameOrganizer(player.addedBy, name))) added += 1;
+    if ((uid && signed === uid) || (!signed && sameOrganizerIdentity(player.addedBy, who))) added += 1;
     let cashHere = 0;
     let transferHere = 0;
     for (const share of paymentShares(player)) {
-      if (!(share.amount > 0) || !sameOrganizer(share.name, name)) continue;
+      if (!(share.amount > 0) || !sameOrganizerIdentity(share.name, who)) continue;
       if (share.kind === 'cash') cashHere = roundARS(cashHere + share.amount);
       else if (share.kind === 'transfer') transferHere = roundARS(transferHere + share.amount);
     }
@@ -851,6 +850,13 @@ function legacyReceiver(player) {
   return String(player?.receivedBy || '').trim();
 }
 
+/** Si el nombre guardado es el apodo de quien cobra, queda el nombre canónico. */
+function collectorName(stored, clicker) {
+  const clean = String(stored || '').trim();
+  if (!clean) return '';
+  return canonicalOrganizerName(clean, clicker);
+}
+
 function transferBuckets(player, parts) {
   if (Array.isArray(player?.transferParts) && player.transferParts.length) {
     return player.transferParts
@@ -865,7 +871,7 @@ function transferBuckets(player, parts) {
 function mergeTransfer(buckets, to, amount) {
   const name = String(to || '').trim();
   const next = buckets.map((part) => ({ ...part }));
-  const found = next.find((part) => sameOrganizer(part.to, name) || (!part.to && !name));
+  const found = next.find((part) => sameOrganizerIdentity(part.to, name) || (!part.to && !name));
   if (found) found.amount = roundARS(found.amount + amount);
   else next.push({ to: name, amount });
   return next.filter((part) => part.amount > 0);
@@ -877,12 +883,20 @@ export function receivePendingTransfer(player, who, now = Date.now()) {
   if (parts.pending <= 0) return { ok: false, error: 'No hay transferencia pendiente.' };
   const directed = hasPaymentDirection(player);
   const clicker = String(who || '').trim();
-  const pendingTo = directed
+  const pendingStored = directed
     ? String(player?.pendingTo || '').trim()
-    : String(player?.paidUpdatedBy || '').trim() || clicker;
+    : String(player?.paidUpdatedBy || '').trim();
+  const pendingTo = collectorName(pendingStored, clicker) || clicker;
   const cash = parts.split ? parts.cash : (player?.method === 'efectivo' && player?.paid === true ? parts.received : 0);
-  const cashTo = cash > 0 ? (directed ? String(player?.cashTo || '').trim() : legacyReceiver(player)) : '';
-  const buckets = mergeTransfer(transferBuckets(player, parts).filter((part) => part.to || parts.transfer > 0), pendingTo || clicker, parts.pending);
+  const cashStored = cash > 0 ? (directed ? String(player?.cashTo || '').trim() : legacyReceiver(player)) : '';
+  const cashTo = collectorName(cashStored, clicker);
+  const buckets = mergeTransfer(
+    transferBuckets(player, parts)
+      .filter((part) => part.to || parts.transfer > 0)
+      .map((part) => ({ ...part, to: collectorName(part.to, clicker) || part.to })),
+    pendingTo || clicker,
+    parts.pending,
+  );
   const named = buckets.filter((part) => part.to);
   const useParts = named.length > 1;
   const transfer = roundARS(buckets.reduce((sum, part) => sum + part.amount, 0));

@@ -3,7 +3,7 @@
 import { MESES_CORTOS, numericDate, shortHour } from './dates.js';
 import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { priceOfMatch, promoForPlayer } from './prices.js';
-import { UNSPECIFIED, sameOrganizer } from './organizers.js';
+import { UNSPECIFIED, sameOrganizerIdentity } from './organizers.js';
 import { foldText, isNamedGuest, personKey, phoneIdentity, playerMatchesPerson } from './roster.js';
 
 export function receiverLabel(player) {
@@ -32,7 +32,7 @@ export function monthLabel(key) {
 function wants(label, organizer) {
   if (!organizer) return true;
   if (organizer === UNSPECIFIED) return label === UNSPECIFIED;
-  return sameOrganizer(label, organizer);
+  return sameOrganizerIdentity(label, organizer);
 }
 
 function shareLabel(name) {
@@ -260,11 +260,11 @@ export function mineSummary(players, name) {
   let amount = 0;
   let pending = 0;
   for (const player of players || []) {
-    if (sameOrganizer(player.addedBy, name)) added += 1;
+    if (sameOrganizerIdentity(player.addedBy, name)) added += 1;
     if (player.paid === true) {
-      for (const share of receivedShares(player)) if (sameOrganizer(share.name, name)) amount += share.amount;
+      for (const share of receivedShares(player)) if (sameOrganizerIdentity(share.name, name)) amount += share.amount;
     }
-    for (const share of pendingShareList(player)) if (sameOrganizer(share.name, name)) pending += share.amount;
+    for (const share of pendingShareList(player)) if (sameOrganizerIdentity(share.name, name)) pending += share.amount;
   }
   const pendingText = pending > 0 ? ` · por transferir ${formatARS(pending)}` : '';
   return { added, amount, pending, text: `Anotaste ${added} · Cobraste ${formatARS(amount)}${pendingText}` };
@@ -312,7 +312,7 @@ export function addedByOrganizer(player, organizer) {
   const who = organizerOf(organizer);
   if (!who.uid && !who.name) return false;
   if (who.uid && player?.addedByUid && player.addedByUid === who.uid) return true;
-  return !!who.name && sameOrganizer(player?.addedBy, who.name);
+  return sameOrganizerIdentity(player?.addedBy, who);
 }
 
 /**
@@ -326,7 +326,7 @@ export function owesOrganizer(player, organizer) {
   const name = String(player?.signedUpWithName || '').trim();
   if (!uid && !name) return addedByOrganizer(player, organizer);
   if (who.uid && uid) return uid === who.uid;
-  return !!who.name && !!name && sameOrganizer(name, who.name);
+  return !!name && sameOrganizerIdentity(name, who);
 }
 
 /**
