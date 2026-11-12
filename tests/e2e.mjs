@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v159');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v160');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -6402,6 +6402,45 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('#pay-form');
   check('Al reabrir el pago la fila de Transfiere después no vuelve', await page.locator('#pay-recorded .pay-pending-row').count() === 0 && await page.locator('#pay-pending-now').count() === 0);
   await page.click('#sheet [data-close]');
+}
+
+{
+  const matchId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-26', time: '20:00', price: 5000, note: 'Quitar pendiente', capacity: 14 }, app.who);
+    await app.store.addPlayer({ id }, { name: 'Quita Pendiente', phone: '5491166669090' }, app.who);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+  await page.waitForSelector('.slot:has-text("Quita Pendiente") .pay-btn');
+  await page.click('.slot:has-text("Quita Pendiente") .pay-btn');
+  await page.waitForSelector('#pay-form [name=pending]');
+  await page.fill('#pay-form [name=pending]', '5000');
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Quita Pendiente'));
+    return row && row.innerText.includes('Transfiere después $5.000');
+  });
+  await page.click('.slot:has-text("Quita Pendiente") .pay-btn');
+  await page.waitForSelector('#pay-recorded .pay-pending-row .pay-x');
+  await page.click('#pay-recorded .pay-pending-row .pay-x');
+  await page.waitForSelector('#ask-ok');
+  check('La X de Transfiere después pregunta antes de anular', (await page.locator('#app-ask-text').innerText()).includes('¿Anular este pago?'));
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Quita Pendiente'));
+    return row && !row.innerText.includes('Transfiere después');
+  });
+  const saved = await page.evaluate(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Quita Pendiente');
+    const card = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Quita Pendiente'))?.innerText.replace(/\s+/g, ' ') || '';
+    return { pending: row?.pendingTransfer ?? null, paid: row?.paid === true, card };
+  });
+  check('Anular Transfiere después desde el menú de pagos se guarda y sale de la tarjeta', saved.pending == null && saved.paid === false && !saved.card.includes('Transfiere después'), JSON.stringify(saved));
+  await page.click('#pay-form [data-close]');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  const closed = (await page.locator('#view .slot', { hasText: 'Quita Pendiente' }).innerText()).replace(/\s+/g, ' ');
+  check('Al cerrar el pago la tarjeta sigue sin Transfiere después', !closed.includes('Transfiere después'), closed);
 }
 
 {
