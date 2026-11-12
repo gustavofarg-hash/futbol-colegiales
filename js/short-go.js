@@ -3,13 +3,14 @@
 import { firebaseConfig } from '../config.js';
 import { isFirebaseConfigured, DEMO_STORAGE_KEY } from './store.js';
 import { confirmTarget, isShortCode } from './short.js';
+import { ICON } from './icons.js';
 
 const $ = (sel) => document.querySelector(sel);
 const code = new URLSearchParams(location.search).get('k') || '';
 
 function invalid() {
   const root = $('#go');
-  if (root) root.innerHTML = `<div class="empty"><div class="big">🔗</div><p><b>Este link no es válido.</b></p><p class="small">Pedile a Gustavo o a Martín que te lo reenvíen.</p></div>`;
+  if (root) root.innerHTML = `<div class="empty"><div class="big">${ICON.link}</div><p><b>Este link no es válido.</b></p><p class="small">Pedile a Gustavo o a Martín que te lo reenvíen.</p></div>`;
 }
 
 function go(link) {

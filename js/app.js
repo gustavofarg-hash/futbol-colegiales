@@ -39,6 +39,7 @@ import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
+import { ICON as PHOSPHOR } from './icons.js';
 import { isTrialPage } from './trial.js';
 import { tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
@@ -47,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v152';
+const APP_VERSION = 'f7c-v153';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -94,16 +95,8 @@ function rosterIdentity(person) {
 }
 const CODE_KEY = 'f7c-code';
 const ICON = {
-  wa: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.1l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.1-1.2l-.4-.2z"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
-  paste: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/></svg>',
-  share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M16 6l-4-4-4 4M12 2v14"/></svg>',
-  shareNodes: '<svg class="share-nodes" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.1 11.1 15.1 7.2M8.1 12.9 15.1 16.8"/><circle cx="5.6" cy="12" r="2.5"/><circle cx="18.2" cy="5.8" r="2.5"/><circle cx="18.2" cy="18.2" r="2.5"/></svg>',
-  copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
-  edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
-  more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>',
-  pay: '<svg class="pay-coin" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="25" fill="var(--promo-bg)" stroke="var(--promo-ink)" stroke-width="7"/><path fill="var(--promo-ink)" transform="translate(32 32) scale(2.35) translate(-12 -12)" d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>',
+  ...PHOSPHOR,
+  pay: '<svg class="pay-coin" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><circle cx="32" cy="32" r="25" fill="var(--promo-bg)" stroke="var(--promo-ink)" stroke-width="7"/><path fill="var(--promo-ink)" transform="translate(32 32) scale(2.35) translate(-12 -12)" d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>',
 };
 
 const app = {
@@ -1235,7 +1228,7 @@ function oweBox(m) {
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
       <span>Faltan pagar (que anoté yo): <b>${esc(formatARS(debt.total))}</b></span>
-      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      ${ICON.caret}
     </button>
     <ul class="owe-list"${open ? '' : ' hidden'}>${rows}</ul>
   </div>`;
@@ -1288,7 +1281,7 @@ function renderHome() {
     ${confirmBanner()}${reminderBanners(next)}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
-      <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
+      <div class="empty" id="home-empty"><div class="big">${ICON.soccer}</div><p><b>No hay partidos en los próximos 7 días.</b></p>
       <p class="small">${emptyHint}</p></div>`}
     ${later.length ? `<button type="button" class="later-toggle" id="btn-later" aria-expanded="${open ? 'true' : 'false'}">${open ? 'Ocultar más adelante' : `Ver más adelante (${later.length})`}</button>` : ''}
     ${open ? `<h2 class="section">Más adelante</h2><ul class="match-list" id="list-later">${later.map(matchCard).join('')}</ul>` : ''}
@@ -1318,9 +1311,8 @@ function renderTeams(id) {
   const readOnly = !canAdd(m, actor().uid);
   const byId = new Map(main.map((p) => [p.id, p]));
   const slots = perTeamOf(m);
-  const vestPath = 'M8.15 2.15H10.35C10.7 4 11.35 5.4 12 6.15C12.65 5.4 13.3 4 13.65 2.15H15.85C17.05 4.5 18.25 7.2 18.5 10.6C18.65 12.4 18.4 13.6 18.2 14.4V21.55H5.8V14.4C5.6 13.6 5.35 12.4 5.5 10.6C5.75 7.2 6.95 4.5 8.15 2.15Z';
-  const vest = `<svg class="vest vest-bib" viewBox="0 0 24 24" aria-hidden="true"><path d="${vestPath}"/></svg>`;
-  const shirt = `<svg class="vest vest-plain" viewBox="0 0 24 24" aria-hidden="true"><path d="${vestPath}"/></svg>`;
+  const vest = ICON.shirtFill;
+  const shirt = ICON.shirt;
   const slotRows = (side, list) => {
     const count = Math.max(slots, list.length);
     const rows = [];
@@ -1338,13 +1330,13 @@ function renderTeams(id) {
         ? `<span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span>`
         : `<span class="goal-box"><button type="button" data-goal="-1" aria-label="Restar un gol de ${esc(player.name)}">−</button><span class="goal-n" aria-label="Goles de ${esc(player.name)}">${goals}</span><button type="button" data-goal="1" aria-label="Sumar un gol de ${esc(player.name)}">+</button></span>`;
       const goalMark = player.inGoal === true
-        ? '<span class="arco-tick" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#0f7a3d"/><path d="M4.6 8.2 7 10.6 11.6 5.4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
+        ? `<span class="arco-tick" aria-hidden="true">${ICON.checkCircle}</span>`
         : '';
-      const goalIco = `<svg class="goal-ico" viewBox="0 0 64 64" aria-hidden="true"><path d="M18 16h30L44 38H16Z" fill="currentColor" opacity=".18"/><path d="M8 22 18 16v22L8 52M56 20 48 16v22l8 14" fill="none" stroke="currentColor" stroke-width="2"/><g fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 20.5h28M17.2 26h26.2M16.4 31.5h24.4M15.8 37h22"/><path d="M24 16.4v21.2M31 16.2v21.6M38 16v21.2M45 15.8v19.6"/><path d="M8 30h10M8 40h8M56 28H48M56 38h-8"/></g><path d="M8 22h48v30" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const goalIco = `<svg class="goal-ico" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M18 16h30L44 38H16Z" fill="currentColor" opacity=".18"/><path d="M8 22 18 16v22L8 52M56 20 48 16v22l8 14" fill="none" stroke="currentColor" stroke-width="2"/><g fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 20.5h28M17.2 26h26.2M16.4 31.5h24.4M15.8 37h22"/><path d="M24 16.4v21.2M31 16.2v21.6M38 16v21.2M45 15.8v19.6"/><path d="M8 30h10M8 40h8M56 28H48M56 38h-8"/></g><path d="M8 22h48v30" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
       const arco = readOnly
         ? (player.inGoal === true ? `<span class="arco-mark on" aria-label="Fue al arco">${goalIco}${goalMark}</span>` : '')
         : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
-      const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
+      const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">${ICON.x}</button></span>`;
       const controls = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
       const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
       rows.push(readOnly
@@ -1776,7 +1768,7 @@ function renderHistory() {
     <button type="button" class="btn block" id="btn-hist-import">Importar partidos desde texto</button>
     ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
     ${past.length ? `<ul class="match-list" id="list-history">${historyWithCompensation(past)}</ul>` : `
-      <div class="empty" id="list-history"><div class="big">📅</div><p><b>${esc(emptyLead)}</b></p>
+      <div class="empty" id="list-history"><div class="big">${ICON.calendar}</div><p><b>${esc(emptyLead)}</b></p>
       <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}`)) return;
   $('#history-filter').onsubmit = (e) => {
     e.preventDefault();
@@ -1920,7 +1912,7 @@ function renderMatch(id) {
   const m = matchById(id);
   if (!m) {
     if (app.matchMiss[id] === 'denied') {
-      replaceView(`<div class="empty" id="match-denied"><div class="big">🔒</div><p><b>No se pudo abrir este partido.</b></p><p class="small">${esc(RULES_MSG)}</p><p><a class="btn" href="#/historial">Volver al historial</a></p></div>`);
+      replaceView(`<div class="empty" id="match-denied"><div class="big">${ICON.lock}</div><p><b>No se pudo abrir este partido.</b></p><p class="small">${esc(RULES_MSG)}</p><p><a class="btn" href="#/historial">Volver al historial</a></p></div>`);
       return;
     }
     if (app.matchMiss[id] !== 'done') {
@@ -1933,7 +1925,7 @@ function renderMatch(id) {
           if (current.name === 'match' && current.id === id) render();
         });
       }
-      replaceView(`<div class="empty" id="match-missing"><div class="big">⚽</div><p><b>Buscando el partido…</b></p></div>`);
+      replaceView(`<div class="empty" id="match-missing"><div class="big">${ICON.soccer}</div><p><b>Buscando el partido…</b></p></div>`);
       return;
     }
     replaceView(`<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`);
@@ -1981,7 +1973,7 @@ function renderMatch(id) {
   const switchLabel = matchTitleLabel(m.date);
   const switchable = canSwitchMatch(m);
   const title = switchable
-    ? `<button type="button" class="match-switch" id="match-date" aria-haspopup="dialog">${esc(switchLabel)}<svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`
+    ? `<button type="button" class="match-switch" id="match-date" aria-haspopup="dialog">${esc(switchLabel)}${ICON.caret}</button>`
     : `<h1 id="match-date">${esc(switchLabel)}</h1>`;
   const rel = relativeLabel(m.date);
   const notesBtn = canEdit ? '<button type="button" class="btn" id="btn-notes">Notas</button>' : '';
@@ -3807,7 +3799,7 @@ function statsPlayerBody(id) {
   const requested = id ? statsRosterPerson(id) : null;
   const person = requested && !browsing ? requested : null;
   const missing = id && !requested
-    ? `<div class="empty" id="stats-missing"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p></div>`
+    ? `<div class="empty" id="stats-missing"><div class="big">${ICON.user}</div><p><b>No encontramos este jugador.</b></p></div>`
     : '';
   let months = '';
   if (person) {
@@ -4114,7 +4106,7 @@ function renderRegistro(r) {
 
 function renderUsers() {
   if (app.role !== 'admin') {
-    replaceView(`<div class="empty"><div class="big">🔒</div><p><b>Solo el administrador puede crear o desactivar organizadores.</b></p><p class="small">Los partidos, los jugadores, los pagos y el plantel los pueden editar los dos.</p></div>`);
+    replaceView(`<div class="empty"><div class="big">${ICON.lock}</div><p><b>Solo el administrador puede crear o desactivar organizadores.</b></p><p class="small">Los partidos, los jugadores, los pagos y el plantel los pueden editar los dos.</p></div>`);
     return;
   }
   const rows = (app.users || []).map((user) => `
@@ -4173,7 +4165,7 @@ function renderProfile(id) {
   }
   if (!person) {
     app.signupDraft = null;
-    replaceView(`<div class="empty"><div class="big">👤</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
+    replaceView(`<div class="empty"><div class="big">${ICON.user}</div><p><b>No encontramos este jugador.</b></p><p class="small">${app.rosterError ? esc(app.rosterError) : 'Puede que lo hayan borrado de Jugadores.'}</p><p><a class="btn" href="#/jugadores">Volver a Jugadores</a></p></div>`);
     return;
   }
   const who = rosterIdentity(person);
@@ -5248,7 +5240,7 @@ function recordedPaymentList(player, listId) {
   return `<ul class="pay-recorded" id="${listId}">${rows.map((share, index) => {
     const label = paymentShareLabel(share);
     const x = canAnnulPayment(player, share)
-      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">✕</button>`
+      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">${ICON.x}</button>`
       : '';
     const pendingClass = share.kind === 'pending' ? ' class="pay-pending-row"' : '';
     return `<li${pendingClass}><span>${esc(label)}</span>${x}</li>`;
@@ -7256,7 +7248,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v152" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v153" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7293,7 +7285,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v152" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v153" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
