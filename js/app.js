@@ -5,11 +5,12 @@ import { createStore } from './store.js';
 import { usageLevel, usageSummary, usageTotals, writeFailureText } from './usage.js';
 import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
+import { usualPlayers } from './regulars.js';
 import {
   todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, clockTime, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -23,10 +24,10 @@ import { activityNoticeText, activityNotices } from './notify.js';
 import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
-import { organizerChoices, organizerTagClass, sameOrganizer } from './organizers.js';
+import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
-import { amountOwed, mineSummary, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
-import { compensationDoneDates, diaDatesForOrganizer, matchTake, organizerDayShare, organizerShareByPeriod, periodBuckets, playerOrganizerMonths } from './stats.js';
+import { amountOwed, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
+import { compensationDoneDates, diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
@@ -46,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v148';
+const APP_VERSION = 'f7c-v162';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -71,7 +72,7 @@ function waShareControl(id, { checked = false, named = false } = {}) {
   return `<label class="checkline wa-share" id="${lineId}"><input type="checkbox" id="${id}"${named ? ' name="waShare"' : ''}${checked ? ' checked' : ''}><span>${WA_SHARE_LABEL}</span></label>`;
 }
 function slotSide(p, m, readOnly, payText) {
-  const pay = readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? ' on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}">💵</button>`;
+  const pay = readOnly ? '' : `<button type="button" class="pay-btn ${p.paid === true ? ' on' : ''}" data-pay="${esc(p.id)}" aria-label="Pago de ${esc(p.name)}${payText ? ': ' + esc(payText) : ''}"><span class="pay-mark" aria-hidden="true">$</span></button>`;
   const wa = waButton(p, waMessage(m, p));
   const more = readOnly ? '' : `<button class="more-btn" data-menu="${esc(p.id)}" aria-label="Opciones de ${esc(p.name)}">${ICON.more}</button>`;
   const stack = (wa || pay) ? `<div class="slot-actions">${wa}${pay}</div>` : '';
@@ -258,11 +259,27 @@ function savePaymentsSpendingCredit(entries, okMsg, creditMove) {
   return run(applyPaySave(entries, creditMove), okMsg);
 }
 
-function organizerUidByName(name) {
+/** uid y nombre canónico. «Gus» es Gustavo si ese es el nombre de la cuenta. */
+function collectorIdentity(name) {
   const me = actor();
-  if (sameOrganizer(name, me.name) && me.uid) return me.uid;
-  const user = staffUsers(app.users).find((item) => sameOrganizer(item.name, name));
-  return user?.uid || '';
+  const raw = String(name || '').trim();
+  const people = [];
+  for (const user of staffUsers(app.users)) {
+    const uid = String(user?.uid || '').trim();
+    const full = String(user?.name || '').trim();
+    if (!uid || !full || people.some((item) => item.uid === uid)) continue;
+    people.push({ uid, name: full });
+  }
+  if (me.uid && !people.some((item) => item.uid === me.uid) && me.name) people.unshift({ uid: me.uid, name: me.name });
+  if (!raw) return { uid: me.uid || '', name: me.name || '' };
+  if (sameOrganizerIdentity(raw, me) && me.uid) return { uid: me.uid, name: me.name || raw };
+  const found = people.find((item) => sameOrganizerIdentity(item, raw));
+  if (found) return { uid: found.uid, name: found.name };
+  return { uid: '', name: raw };
+}
+
+function organizerUidByName(name) {
+  return collectorIdentity(name).uid;
 }
 
 function mergeCreditMoves(moves) {
@@ -289,7 +306,7 @@ function creditOrganizerOf(player) {
   const name = String(player?.signedUpWithName || player?.addedBy || '').trim();
   if (uid) return { uid, name: name || actor().name };
   if (!name) return null;
-  if (sameOrganizer(name, actor().name) && actor().uid) return { uid: actor().uid, name: actor().name };
+  if (sameOrganizerIdentity(name, actor()) && actor().uid) return { uid: actor().uid, name: actor().name };
   const found = organizerUidByName(name);
   return found ? { uid: found, name } : null;
 }
@@ -748,8 +765,8 @@ function inviteClass(player) {
   for (let i = 0; i < hostId.length; i++) hash = (hash * 33 + hostId.charCodeAt(i)) >>> 0;
   return ` invite-${hash % 6}${isGuest(player) ? ' guest-row' : ' host-row'}`;
 }
-function payMarkup(player) {
-  const pending = pendingStatusText(player);
+function payMarkup(player, { hidePending = false } = {}) {
+  const pending = hidePending ? '' : pendingStatusText(player);
   const waiting = awaitingText(player);
   const headline = paymentHeadline(player);
   const cls = player.paid === true ? 'ok' : 'no';
@@ -805,16 +822,12 @@ function olderDebts(player, skipIds) {
 }
 function receiptParts({ cash, cashTo, transfer, transferTo, credit, creditTo }) {
   const me = actor();
-  const uidOf = (name) => {
-    if (!name) return '';
-    if (sameOrganizer(name, me.name)) return me.uid;
-    return organizerUidByName(name);
-  };
   const part = (kind, amount, name) => {
     const money = roundMoney(amount);
     if (!(money > 0)) return null;
-    const uid = uidOf(name);
-    return { kind, amount: money, name: name || me.name, uid, confirmed: !uid || uid === me.uid };
+    const who = collectorIdentity(name);
+    const uid = who.uid;
+    return { kind, amount: money, name: who.name || me.name, uid, confirmed: !uid || uid === me.uid };
   };
   return [part('cash', cash, cashTo), part('transfer', transfer, transferTo), part('credit', credit, creditTo)].filter(Boolean);
 }
@@ -1048,9 +1061,8 @@ function render() {
     document.documentElement.classList.remove('anon-lock');
     requestAnimationFrame(placeBars);
   }
-  const shownVenue = (r.name === 'match' || r.name === 'teams') ? placeOf(matchById(r.id) || {}) : 'Agenda de partidos';
-  const brand = $('#venue-name');
-  if (brand) brand.textContent = shownVenue;
+  const hello = $('#hello-name');
+  if (hello) hello.textContent = givenName({ name: actor().name }) || actor().name || '';
   const key = `${r.name}:${r.mode || ''}:${r.section || ''}:${r.id || ''}`;
   const same = key === renderKey;
   renderKey = key;
@@ -1819,14 +1831,57 @@ function renderHistory() {
 }
 
 function detailPlaceLine(m) {
-  const venue = placeOf(m);
-  const format = `F${perTeamOf(m)}`;
   const court = courtLabel(m);
+  const format = `F${perTeamOf(m)}`;
+  const venue = placeOf(m);
   const bits = [];
-  if (venue) bits.push(esc(venue));
-  if (format) bits.push(esc(format));
   if (court) bits.push(`<span id="match-court">${esc(court)}</span>`);
+  if (format) bits.push(esc(format));
+  if (venue) bits.push(esc(venue));
   return bits.join(' - ');
+}
+
+function playerCountLabel(n) {
+  return `${n} ${n === 1 ? 'jugador' : 'jugadores'}`;
+}
+
+function matchFactLines(players, mainPlayers, who) {
+  const sum = confirmSummary(mainPlayers);
+  const mine = organizerReceipts(players, who);
+  return {
+    confirm: `Confirmados: ${sum.si} - No juegan: ${sum.no} - Sin respuesta: ${sum.pending}`,
+    added: `Anotados por mí: ${mine.added}`,
+    cash: `Me dieron en efectivo: ${formatARS(mine.cash)} (${playerCountLabel(mine.cashPlayers)})`,
+    transfer: `Me transfirieron: ${formatARS(mine.transfer)} (${playerCountLabel(mine.transferPlayers)})`,
+  };
+}
+
+function usualPhone(player) {
+  const view = withAgendaPhone(player);
+  const raw = String(view?.phone || '').trim();
+  if (!raw) return '';
+  const parsed = normalizePhone(raw);
+  return parsed.ok ? parsed.wa : '';
+}
+
+function usualSection(m) {
+  const rows = usualPlayers({
+    match: m,
+    matches: knownMatches(),
+    players: app.players,
+    today: todayISO(),
+    who: actor(),
+  });
+  if (!rows.length) return '';
+  const items = rows.map((row) => {
+    const phone = usualPhone(row.sample);
+    const wa = phone
+      ? `<a class="wa-btn" href="${esc(waSendUrl({ phone, text: '' }))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(row.name)}">${ICON.wa}</a>`
+      : '';
+    const times = `${row.count} ${row.count === 1 ? 'partido' : 'partidos'}`;
+    return `<li class="slot usual-row" data-usual="${esc(row.key)}"><div class="who"><div class="name">${esc(row.name)}</div><div class="sub"><span>${esc(times)}</span></div></div>${wa}</li>`;
+  }).join('');
+  return `<h2 class="section" id="usual-title">Suelen anotarse para jugar este día y hora:</h2><ul class="slots" id="usual-list">${items}</ul>`;
 }
 
 /** Próximos, o los últimos 7 días del historial. El más reciente primero en el pasado. */
@@ -1924,8 +1979,7 @@ function renderMatch(id) {
       </li>`);
   }
   const full = everyone.length >= cap;
-  const collected = collectedLine(everyone);
-  const mineLine = mineSummary(app.players.filter((p) => p.matchId === id), app.who).text;
+  const facts = matchFactLines(app.players.filter((p) => p.matchId === id), everyone, who);
   const assigned = normalizeTeams(m.teams, everyone.map((p) => p.id));
   const teamCount = assigned.bib.length + assigned.plain.length;
   const signed = everyone.length + waitingOf(id).length + noPlayOf(id).length;
@@ -1947,15 +2001,16 @@ function renderMatch(id) {
   if (!replaceView(`
     <section class="detail-head">
       ${title}
-      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span>${esc(hour)} (<span id="match-price">${esc(priceText)}</span>)</span></div>
+      <div class="when" id="match-when">${rel ? `<span class="badge">${esc(rel)}</span>` : ''}${m.cancelled ? '<span class="badge bad">Cancelado</span>' : ''}<span class="match-hour">${esc(hour)} <span class="match-price-bit">(<span id="match-price">${esc(priceText)}</span>)</span></span></div>
       <p class="hint" id="match-place">${detailPlaceLine(m)}</p>
       ${m.note ? `<div class="note">📝 ${esc(m.note)}</div>` : ''}
       ${m.cancelled ? '<p class="match-cancelled" id="match-cancelled">Partido cancelado. No se mandan recordatorios ni se puede confirmar.</p>' : ''}
       ${notesBlock}
       <div class="meta"><strong id="slot-count">${everyone.length}/${cap}</strong><div class="bar"><i style="width:${Math.min(100, (everyone.length / cap) * 100)}%"></i></div><span class="muted small">${full ? '¡Completo!' : `Faltan ${cap - everyone.length}`}</span></div>
-      ${collected ? `<div class="collected" id="collected">${esc(collected)}</div>` : ''}
-      <div class="mine-line" id="mine-stats">${esc(mineLine)}</div>
-      ${everyone.length ? `<div class="confirm-sum" id="confirm-sum">${esc(confirmSummary(everyone).text)}</div>` : ''}
+      <div class="confirm-sum" id="confirm-sum">${esc(facts.confirm)}</div>
+      <div class="mine-line" id="mine-added">${esc(facts.added)}</div>
+      <div class="mine-line" id="mine-cash">${esc(facts.cash)}</div>
+      <div class="mine-line" id="mine-transfer">${esc(facts.transfer)}</div>
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
         ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
@@ -1970,6 +2025,7 @@ function renderMatch(id) {
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
+    ${usualSection(m)}
     ${noPlaySection(m, readOnly)}
     ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
     ${showMatchCompensation(m) ? matchCompensationHtml(m.date) : ''}
@@ -3678,10 +3734,10 @@ function profileMoney(person) {
 }
 
 const STATS_MODES = [
-  { id: 'jugador', label: 'Jugador' },
-  { id: 'dia', label: 'Día' },
-  { id: 'mes', label: 'Mes' },
-  { id: 'anio', label: 'Año' },
+  { id: 'jugador', label: 'Jugador', title: 'Estadísticas por jugador' },
+  { id: 'dia', label: 'Día', title: 'Estadísticas por día' },
+  { id: 'mes', label: 'Mes', title: 'Estadísticas por mes' },
+  { id: 'anio', label: 'Año', title: 'Estadísticas por año' },
 ];
 
 function statsHash(mode, id) {
@@ -3703,9 +3759,7 @@ function takeSummary(take) {
     <p class="stat-summary" id="stats-collected">Cobrado ${esc(formatARS(take.collected))} de ${esc(formatARS(take.expected))}</p>
     ${pending}
     <h2>Por medio</h2>
-    ${moneyList(take.byMethod, 'Sin cobros.')}
-    <h2>Por organizador</h2>
-    ${moneyList(take.byOrganizer, 'Nadie cobró.')}`;
+    ${moneyList(take.byMethod, 'Sin cobros.')}`;
 }
 
 function renderStats(r) {
@@ -3714,12 +3768,13 @@ function renderStats(r) {
   const searchFocused = !!(prev && document.activeElement === prev);
   const selStart = searchFocused ? prev.selectionStart : 0;
   const selEnd = searchFocused ? prev.selectionEnd : 0;
+  const current = STATS_MODES.find((item) => item.id === mode) || STATS_MODES[0];
   const seg = `<div class="seg stats-seg" id="stats-mode">${STATS_MODES.map((item) => `<a class="btn ${item.id === mode ? 'primary' : ''}" href="${statsHash(item.id)}"${item.id === mode ? ' aria-current="page"' : ''}>${item.label}</a>`).join('')}</div>`;
   let body = '';
   if (mode === 'jugador') body = statsPlayerBody(r.id);
   else if (mode === 'dia') body = statsDayBody(r.id);
   else body = statsPeriodBody(mode === 'anio' ? 'year' : 'month', r.id);
-  if (!replaceView(`<div id="stats-view">${seg}${body}</div>`)) return;
+  if (!replaceView(`<div id="stats-view"><h2 class="section" id="stats-title">${esc(current.title)}</h2>${seg}${body}</div>`)) return;
   const input = $('#stats-q');
   if (input) {
     input.addEventListener('focus', () => {
@@ -3793,7 +3848,6 @@ function statsPlayerBody(id) {
     }
   }
   return `
-    <h2 class="section">Por jugador</h2>
     <label class="field roster-search stats-search"><span>Buscar</span><input id="stats-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
     ${missing}
     ${months}
@@ -3828,29 +3882,39 @@ function statsDayBody(id) {
     staff: staffUsers(app.users),
     who: { uid: me.uid, name: me.name },
   });
+  const staff = staffUsers(app.users);
+  const mineOf = (rows) => (rows || []).filter((match) => matchOrganizedBy(match, staff, me));
   if (!id) {
     const rows = dates.map((date) => {
       const dayMatches = byDay.get(date) || [];
-      const times = dayMatches.map((match) => match.time || '--:--').join(' · ');
-      const count = dayMatches.length;
-      const cancelled = dayMatches.filter((match) => match.cancelled === true).length;
+      const mine = mineOf(dayMatches);
+      const times = mine.map((match) => match.time || '--:--').join(' · ');
+      const count = mine.length;
+      const cancelled = mine.filter((match) => match.cancelled === true).length;
       const tag = cancelled ? `<span class="tag">${cancelled === count ? 'Cancelado' : `${cancelled} cancelado${cancelled === 1 ? '' : 's'}`}</span>` : '';
       return `<li class="slot" data-date="${esc(date)}"><a class="who" href="${statsHash('dia', date)}"><div class="name">${esc(capitalize(labelDate(date)))}</div><div class="sub"><span>${count} ${count === 1 ? 'partido' : 'partidos'} · ${esc(times)}</span>${tag}</div><span class="stats-entitled">${esc(entitledLabel(dayShare(date, dayMatches)))}</span></a></li>`;
     }).join('');
-    return `<h2 class="section">Por día</h2><ul class="slots" id="stats-days">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
+    return `<ul class="slots" id="stats-days">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
   }
   const wanted = /^\d{4}-\d{2}-\d{2}$/.test(id) ? id : (matches.find((item) => item.id === id)?.date || '');
-  const dayMatches = byDay.get(wanted);
-  if (!dayMatches) return `<div class="empty"><p><b>No hay partidos ese día.</b></p><p><a class="btn" href="${statsHash('dia')}">Volver a la lista</a></p></div>`;
+  const allDay = byDay.get(wanted) || [];
+  const dayMatches = mineOf(allDay);
+  if (!dayMatches.length) return `<div class="empty"><p><b>No hay partidos ese día.</b></p><p><a class="btn" href="${statsHash('dia')}">Volver a la lista</a></p></div>`;
   const blocks = dayMatches.map((match) => {
-    const take = matchTake({ match, players: app.players, matches, prices: livePrices() });
+    const take = organizerViewTake({
+      match,
+      players: app.players,
+      matches,
+      prices: livePrices(),
+      who: { uid: me.uid, name: me.name },
+    });
     const when = `${match.time || '--:--'} hs`;
     return `<section class="profile-block stats-day-match"><h2>${esc(when)}</h2>${match.cancelled === true ? '<p class="hint">Cancelado: no suma plata.</p>' : ''}${takeSummary(take)}</section>`;
   }).join('');
   return `
     <p class="hint"><a href="${statsHash('dia')}">Todos los días</a></p>
     <h2 class="section" id="stats-day">${esc(capitalize(labelDate(wanted)))}</h2>
-    <p class="stats-entitled" id="stats-entitled">${esc(entitledLabel(dayShare(wanted, dayMatches)))}</p>
+    <p class="stats-entitled" id="stats-entitled">${esc(entitledLabel(dayShare(wanted, allDay)))}</p>
     ${blocks}`;
 }
 
@@ -3870,15 +3934,22 @@ function periodShares(grain) {
 }
 function statsPeriodBody(grain, id) {
   const mode = grain === 'year' ? 'anio' : 'mes';
-  const title = grain === 'year' ? 'Por año' : 'Por mes';
-  const buckets = periodBuckets({ matches: knownMatches(), players: app.players, prices: livePrices(), grain });
+  const me = actor();
+  const buckets = periodBuckets({
+    matches: knownMatches(),
+    players: app.players,
+    prices: livePrices(),
+    grain,
+    who: { uid: me.uid, name: me.name },
+    staff: staffUsers(app.users),
+  });
   const shares = periodShares(grain);
   if (!id) {
     const rows = buckets.map((bucket) => {
       const mine = `<span class="stats-entitled">${esc(entitledLabel(shares.get(bucket.key) || 0))}</span>`;
       return `<li class="slot" data-period="${esc(bucket.key)}"><a class="who" href="${statsHash(mode, bucket.key)}"><div class="name">${esc(bucket.label)}</div><div class="sub"><span>${bucket.matches} ${bucket.matches === 1 ? 'partido' : 'partidos'} · ${bucket.players} ${bucket.players === 1 ? 'jugador' : 'jugadores'}</span><span>${esc(formatARS(bucket.collected))}</span></div>${mine}</a></li>`;
     }).join('');
-    return `<h2 class="section">${title}</h2><ul class="slots" id="stats-periods">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
+    return `<ul class="slots" id="stats-periods">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
   }
   const bucket = buckets.find((item) => item.key === id);
   if (!bucket) return `<div class="empty"><p><b>No hay datos de ese período.</b></p><p><a class="btn" href="${statsHash(mode)}">Volver a la lista</a></p></div>`;
@@ -3895,8 +3966,6 @@ function statsPeriodBody(grain, id) {
       ${bucket.pending > 0 ? `<p class="pay-pending">Transfiere después ${esc(formatARS(bucket.pending))}</p>` : ''}
       <h2>Por medio</h2>
       ${moneyList(bucket.byMethod, 'Sin cobros.')}
-      <h2>Por organizador</h2>
-      ${moneyList(bucket.byOrganizer, 'Nadie cobró.')}
     </section>`;
 }
 
@@ -4010,6 +4079,7 @@ function renderRegistro(r) {
     : `<p class="empty-wait" id="log-empty">${app.logError ? esc(app.logError) : 'No hay registros en estas fechas.'}</p>`;
   if (!replaceView(`
     <div id="log-view">
+      <h2 class="section" id="log-title">Registro de movimientos</h2>
       <div class="seg stats-seg" id="log-mode">
         <a class="btn ${section === 'partidos' ? 'primary' : ''}" href="#/registro/partidos"${section === 'partidos' ? ' aria-current="page"' : ''}>Partidos</a>
         <a class="btn ${section === 'pagos' ? 'primary' : ''}" href="#/registro/pagos"${section === 'pagos' ? ' aria-current="page"' : ''}>Pagos</a>
@@ -5169,15 +5239,24 @@ const PAYMENT_KIND = { cash: 'Efectivo', transfer: 'Transferencia', credit: 'Cr�
 function paymentShareLabel(share) {
   const kind = PAYMENT_KIND[share?.kind] || 'Pago';
   const who = String(share?.name || '').trim();
-  return `${kind} ${formatARS(share?.amount || 0)}${who ? ` · ${who}` : ''}`;
+  if (!who) return `${kind} ${formatARS(share?.amount || 0)}`;
+  // La fila pendiente se lee igual que la etiqueta: «Transfiere después $… · a Gustavo».
+  return `${kind} ${formatARS(share?.amount || 0)}${share?.kind === 'pending' ? ` · a ${who}` : ` · ${who}`}`;
 }
 
 function canAnnulPayment(player, share) {
-  const me = actor().name;
+  const me = actor();
   const name = String(share?.name || '').trim();
-  if (name) return sameOrganizer(name, me);
-  return sameOrganizer(player?.paidUpdatedBy, me);
+  // «Gus» y «Gustavo» son el mismo organizador. Un pendiente viejo sin nombre también se puede sacar.
+  if (share?.kind === 'pending') {
+    if (!name) return true;
+    return sameOrganizerIdentity(name, me) || sameOrganizerIdentity(player?.paidUpdatedBy, me) || sameOrganizerIdentity(player?.pendingTo, me);
+  }
+  if (name) return sameOrganizerIdentity(name, me);
+  return sameOrganizerIdentity(player?.paidUpdatedBy, me);
 }
+
+const PAY_X_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
 function recordedPaymentList(player, listId) {
   const rows = paymentShares(player);
@@ -5185,7 +5264,7 @@ function recordedPaymentList(player, listId) {
   return `<ul class="pay-recorded" id="${listId}">${rows.map((share, index) => {
     const label = paymentShareLabel(share);
     const x = canAnnulPayment(player, share)
-      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">✕</button>`
+      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">${PAY_X_SVG}</button>`
       : '';
     const pendingClass = share.kind === 'pending' ? ' class="pay-pending-row"' : '';
     return `<li${pendingClass}><span>${esc(label)}</span>${x}</li>`;
@@ -5278,6 +5357,10 @@ function reopenAfterAnnul(player, input) {
   const matchNow = knownMatches().find((item) => item.id === updated.matchId);
   if ($('#pay-form') && matchNow) openPaymentForm(matchNow, updated);
   else if (matchNow) openPlayerMenu(matchNow, updated);
+  // La hoja sigue abierta, así que el redibujado habitual queda en espera.
+  // La tarjeta tiene que perder «Transfiere después» enseguida.
+  pendingRender = false;
+  render();
 }
 
 async function annulRecordedPayment(player, share) {
@@ -5286,7 +5369,7 @@ async function annulRecordedPayment(player, share) {
   const batch = payBatchForShare(fresh);
   if (batch) {
     const names = payBatchCollectorNames(batch);
-    if (names.some((name) => !sameOrganizer(name, actor().name))) {
+    if (names.some((name) => !sameOrganizerIdentity(name, actor()))) {
       askNotice('Este pago se cargó junto con un cobro de otro organizador.');
       return;
     }
@@ -5318,13 +5401,12 @@ async function annulRecordedPayment(player, share) {
   const key = personKey(current, app.players);
   const moves = [];
   for (const item of annulCreditDeltas(current, share, due)) {
-    const name = item.name || actor().name;
-    const uid = sameOrganizer(name, actor().name) ? actor().uid : organizerUidByName(name);
-    if (!uid || !key) {
+    const who = collectorIdentity(item.name || actor().name);
+    if (!who.uid || !key) {
       askNotice('No se puede anular este pago sin identificar al jugador y a quien cobró.');
       return;
     }
-    moves.push({ personKey: key, organizerUid: uid, organizerName: name, name: current.name, delta: item.delta });
+    moves.push({ personKey: key, organizerUid: who.uid, organizerName: who.name, name: current.name, delta: item.delta });
   }
   const after = snapshotAfterFallback(current, input);
   const logs = annulLogLines(before, after).map((entry) => ({ playerId: current.id, entry }));
@@ -5360,9 +5442,14 @@ function pendingTransferReminderRow(m, p, pending) {
     ? `<a class="btn pay-remind" id="btn-pending-remind" href="${esc(waHref(phone, text))}" target="_blank" rel="noopener">${ICON.wa}<span>Enviar recordatorio</span></a>`
     : `<button type="button" class="btn pay-remind" id="btn-pending-remind" disabled>${ICON.wa}<span>Enviar recordatorio</span></button>`;
   const shownInRow = paymentShares(p).some((share) => share.kind === 'pending' && share.amount > 0);
+  const label = pendingStatusText(p) || `Transfiere después ${formatARS(pending)}`;
+  const share = { kind: 'pending', name: String(p?.pendingTo || p?.paidUpdatedBy || '').trim(), amount: pending };
+  const x = !shownInRow && canAnnulPayment(p, share)
+    ? `<button type="button" class="pay-x" data-annul-pending="1" aria-label="Anular ${esc(label)}">${PAY_X_SVG}</button>`
+    : '';
   const pill = shownInRow
     ? ''
-    : `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(pending))}</p>`;
+    : `<ul class="pay-recorded" id="pay-pending-now"><li class="pay-pending-row"><span>${esc(label)}</span>${x}</li></ul>`;
   return `${pill}
       <div class="pay-receive-row" id="pay-receive-row">
         <button type="button" class="btn" id="btn-receive-pending">Marcar transferencia como cobrada</button>
@@ -5469,6 +5556,18 @@ function openPaymentForm(m, p, opts = {}) {
     const pending = paymentParts(fresh).pending;
     slot.innerHTML = `${recordedPaymentList(fresh, 'pay-recorded')}${pending > 0 ? pendingTransferReminderRow(m, fresh, pending) : ''}`;
     bindAnnulList($('#pay-recorded'), fresh);
+    slot.querySelectorAll('[data-annul-pending]').forEach((btn) => {
+      btn.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const amount = paymentParts(fresh).pending;
+        annulRecordedPayment(fresh, {
+          kind: 'pending',
+          name: String(fresh.pendingTo || fresh.paidUpdatedBy || '').trim(),
+          amount,
+        });
+      };
+    });
     const receive = $('#btn-receive-pending');
     if (receive) receive.onclick = () => {
       const job = Promise.resolve(app.store.markTransferReceived(fresh.id, app.who)).catch((error) => {
@@ -5487,9 +5586,9 @@ function openPaymentForm(m, p, opts = {}) {
   if (payBack && back) payBack.onclick = () => back();
   const paintSelect = (select, selected) => {
     const names = payStaffNames(m, [selected, ...paymentShares(p).map((share) => share.name)]);
-    const current = names.find((name) => sameOrganizer(name, selected)) || names[0] || '';
-    select.innerHTML = names.map((name) => `<option value="${esc(name)}"${sameOrganizer(name, current) ? ' selected' : ''}>${esc(name)}</option>`).join('');
-    if (current) select.value = names.find((name) => sameOrganizer(name, current)) || names[0];
+    const current = names.find((name) => sameOrganizerIdentity(name, selected)) || names[0] || '';
+    select.innerHTML = names.map((name) => `<option value="${esc(name)}"${sameOrganizerIdentity(name, current) ? ' selected' : ''}>${esc(name)}</option>`).join('');
+    if (current) select.value = names.find((name) => sameOrganizerIdentity(name, current)) || names[0];
   };
   const paintPrices = () => {
     const fresh = promoOf(p);
@@ -5880,13 +5979,12 @@ function openPaymentForm(m, p, opts = {}) {
         if (refund.credits.length && !key) { $('#pay-err').textContent = 'No se puede guardar el saldo sin identificar a quien pagó.'; return; }
         const grants = [];
         for (const credit of refund.credits) {
-          const organizerName = credit.name || actor().name;
-          const organizerUid = organizerUidByName(organizerName) || (sameOrganizer(organizerName, actor().name) ? actor().uid : '');
-          if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+          const found = collectorIdentity(credit.name || actor().name);
+          if (!found.uid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
           grants.push({
             personKey: key,
-            organizerUid,
-            organizerName,
+            organizerUid: found.uid,
+            organizerName: found.name,
             name: beneficiary.name,
             delta: credit.amount,
           });
@@ -5935,6 +6033,11 @@ function openPaymentForm(m, p, opts = {}) {
     if (cash.amount > 0 && !String(form.cashTo.value || '').trim()) { $('#pay-err').textContent = 'Elegí quién cobró el efectivo.'; return; }
     if (transfer.amount > 0 && !keepTransferParts && !String(form.transferTo.value || '').trim()) { $('#pay-err').textContent = 'Elegí quién cobró la transferencia.'; return; }
     const creditTo = loggedInStaffName();
+    const named = (raw) => {
+      const text = String(raw || '').trim();
+      if (!text) return '';
+      return collectorIdentity(text).name || text;
+    };
     const payInput = (part) => ({
       paid: true,
       split: true,
@@ -5943,9 +6046,9 @@ function openPaymentForm(m, p, opts = {}) {
       transfer: part.transfer,
       pendingTransfer: part.pending,
       fromCredit: part.credit,
-      cashTo: part.cash > 0 ? form.cashTo.value : null,
-      transferTo: part.transfer > 0 ? form.transferTo.value : null,
-      pendingTo: part.pending > 0 ? form.pendingTo.value : null,
+      cashTo: part.cash > 0 ? named(form.cashTo.value) : null,
+      transferTo: part.transfer > 0 ? named(form.transferTo.value) : null,
+      pendingTo: part.pending > 0 ? named(form.pendingTo.value) : null,
       creditTo: part.credit > 0 ? creditTo : null,
     });
     const finishPay = (entries, people, okMsg) => {
@@ -5978,9 +6081,9 @@ function openPaymentForm(m, p, opts = {}) {
           id: row.player.id,
           input: {
             ...payInput({ cash, transfer, pending: pendingAmt, credit: creditAmt }),
-            cashTo: cash > 0 ? (row.cash > 0 ? form.cashTo.value : (row.player.cashTo || form.cashTo.value)) : null,
-            transferTo: transfer > 0 ? (row.transfer > 0 ? form.transferTo.value : (row.player.transferTo || form.transferTo.value)) : null,
-            pendingTo: pendingAmt > 0 ? (row.pending > 0 ? form.pendingTo.value : (row.player.pendingTo || form.pendingTo.value)) : null,
+            cashTo: cash > 0 ? named(row.cash > 0 ? form.cashTo.value : (row.player.cashTo || form.cashTo.value)) : null,
+            transferTo: transfer > 0 ? named(row.transfer > 0 ? form.transferTo.value : (row.player.transferTo || form.transferTo.value)) : null,
+            pendingTo: pendingAmt > 0 ? named(row.pending > 0 ? form.pendingTo.value : (row.player.pendingTo || form.pendingTo.value)) : null,
             creditTo: creditAmt > 0 ? creditTo : null,
             transferParts: keepParts ? row.player.transferParts : null,
           },
@@ -6013,12 +6116,12 @@ function openPaymentForm(m, p, opts = {}) {
       });
       const grants = [];
       for (const item of notes) {
-        const organizerUid = organizerUidByName(item.name);
-        if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+        const found = collectorIdentity(item.name);
+        if (!found.uid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
         grants.push({
           personKey: personKey(p, app.players),
-          organizerUid,
-          organizerName: item.name,
+          organizerUid: found.uid,
+          organizerName: found.name,
           name: p.name,
           delta: item.amount,
         });
@@ -6080,11 +6183,11 @@ function openPaymentForm(m, p, opts = {}) {
           id: row.player.id,
           input: {
             ...payInput({ cash: cashSum, transfer: transferSum, pending: row.pendingTransfer || 0, credit: creditSum }),
-            cashTo: cashSum > 0 ? cashTo : null,
-            transferTo: transferBits.length === 1 ? transferBits[0].to : null,
-            transferParts: transferBits.length > 1 ? transferBits : null,
-            creditTo: creditSum > 0 ? creditTo : null,
-            pendingTo: row.pendingTransfer > 0 ? form.pendingTo.value : null,
+            cashTo: cashSum > 0 ? named(cashTo) : null,
+            transferTo: transferBits.length === 1 ? named(transferBits[0].to) : null,
+            transferParts: transferBits.length > 1 ? transferBits.map((part) => ({ ...part, to: named(part.to) || part.to })) : null,
+            creditTo: creditSum > 0 ? named(creditTo) : null,
+            pendingTo: row.pendingTransfer > 0 ? named(form.pendingTo.value) : null,
             ...(awaiting.length ? { awaiting } : {}),
           },
         });
@@ -6093,9 +6196,9 @@ function openPaymentForm(m, p, opts = {}) {
       }
       for (const item of row.applied?.settlements || []) debtAdds.push(item);
       for (const item of row.applied?.credits || []) {
-        const organizerUid = item.uid || organizerUidByName(item.name);
-        if (!organizerUid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
-        grants.push({ personKey: personKey(p, app.players), organizerUid, organizerName: item.name, name: p.name, delta: item.amount });
+        const found = item.uid ? { uid: item.uid, name: collectorIdentity(item.name).name || item.name } : collectorIdentity(item.name);
+        if (!found.uid) { $('#pay-err').textContent = 'No encuentro al organizador que cobró lo que sobra.'; return; }
+        grants.push({ personKey: personKey(p, app.players), organizerUid: found.uid, organizerName: found.name, name: p.name, delta: item.amount });
       }
     }
     if (!entries.length && !grants.length) { $('#pay-err').textContent = 'Poné un monto.'; return; }
@@ -6726,7 +6829,10 @@ function openPlayerMenu(m, p) {
   const own = canEditPlayer(p, actor());
   const phoneView = withAgendaPhone(p);
   const panel = playerPanelPieces(p, null, MENU_PANEL, personKey(p, app.players));
-  const payLine = `${payMarkup(p) || '<p class="hint" id="menu-unpaid">Sin pago cargado</p>'}${recordedPaymentList(p, 'menu-payments')}`;
+  const payList = recordedPaymentList(p, 'menu-payments');
+  const pendingInList = paymentShares(p).some((share) => share.kind === 'pending' && share.amount > 0);
+  const payStatus = payMarkup(p, { hidePending: pendingInList });
+  const payLine = `${payStatus || (payList ? '' : '<p class="hint" id="menu-unpaid">Sin pago cargado</p>')}${payList}`;
   const paidAlready = p.paid === true || paymentParts(p).received > 0;
   const canAnnotate = !!(match && canAdd(match, actor().uid));
   const suspend = suspensionControls(p);
@@ -6885,23 +6991,23 @@ async function applyPromoSettlement(person, plan) {
   const key = personKey(beneficiary, app.players);
   const net = new Map();
   for (const credit of plan.credits || []) {
-    const name = credit.name || actor().name;
+    const name = collectorIdentity(credit.name || actor().name).name || actor().name;
     net.set(name, roundMoney((net.get(name) || 0) + credit.amount));
   }
   for (const spend of plan.spends || []) {
-    const name = spend.name || '';
+    const name = collectorIdentity(spend.name || '').name;
     if (!name) continue;
     net.set(name, roundMoney((net.get(name) || 0) - spend.amount));
   }
   const moves = [];
   for (const [organizerName, delta] of net) {
     if (!delta) continue;
-    const organizerUid = organizerUidByName(organizerName) || (sameOrganizer(organizerName, actor().name) ? actor().uid : '');
-    if (!organizerUid || !key) throw Object.assign(new Error('No se puede guardar el saldo sin identificar a quien pagó.'), { code: 'invalid-credit' });
+    const found = collectorIdentity(organizerName);
+    if (!found.uid || !key) throw Object.assign(new Error('No se puede guardar el saldo sin identificar a quien pagó.'), { code: 'invalid-credit' });
     moves.push({
       personKey: key,
-      organizerUid,
-      organizerName,
+      organizerUid: found.uid,
+      organizerName: found.name,
       name: beneficiary.name || '',
       delta,
     });
@@ -6988,13 +7094,12 @@ async function unwindPromoPayment(player) {
   if (refund.credits.length && !key) throw Object.assign(new Error('No se puede guardar el saldo sin identificar a quien pagó.'), { code: 'invalid-credit' });
   const grants = [];
   for (const credit of refund.credits || []) {
-    const organizerName = credit.name || actor().name;
-    const organizerUid = organizerUidByName(organizerName) || (sameOrganizer(organizerName, actor().name) ? actor().uid : '');
-    if (!organizerUid) throw Object.assign(new Error('No encuentro al organizador que cobró lo que sobra.'), { code: 'invalid-credit' });
+    const found = collectorIdentity(credit.name || actor().name);
+    if (!found.uid) throw Object.assign(new Error('No encuentro al organizador que cobró lo que sobra.'), { code: 'invalid-credit' });
     grants.push({
       personKey: key,
-      organizerUid,
-      organizerName,
+      organizerUid: found.uid,
+      organizerName: found.name,
       name: beneficiary.name || '',
       delta: credit.amount,
     });
@@ -7193,7 +7298,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v148" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v162" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7230,7 +7335,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v148" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v162" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -7270,7 +7375,8 @@ async function boot() {
   watchTheme();
   clearWaChoice();
   clearMineFilter();
-  $('#venue-name').textContent = 'Agenda de partidos';
+  const hello = $('#hello-name');
+  if (hello) hello.textContent = '';
   $('#btn-back').onclick = () => {
     const r = route();
     if (r.name === 'teams') { location.hash = `#/partido/${encodeURIComponent(r.id)}`; return; }

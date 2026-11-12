@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v148');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v162');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -233,8 +233,18 @@ await page.click('#sheet [data-close]');
 await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForFunction(() => document.querySelector('#tab-proximos')?.getAttribute('aria-current') === 'page');
-check('La app se llama Mis Partidos', (await page.title()) === 'Mis Partidos' && (await page.textContent('.brand-title')) === 'Mis Partidos');
-check('Bajo el título dice Agenda de partidos', (await page.textContent('#venue-name')) === 'Agenda de partidos');
+const helloLook = await page.evaluate(() => {
+  const name = document.querySelector('#hello-name');
+  return {
+    title: document.title,
+    brand: document.querySelector('.brand-title')?.textContent.replace(/\s+/g, ' ').trim(),
+    name: name?.textContent.trim(),
+    color: name ? getComputedStyle(name).color : '',
+    sub: document.querySelector('#venue-name')?.textContent.trim(),
+  };
+});
+check('La app se llama Mis Partidos', helloLook.title === 'Mis Partidos' && helloLook.brand === 'Hola, Gustavo' && helloLook.name === 'Gustavo', JSON.stringify(helloLook));
+check('Bajo el título dice Tu agenda de partidos', helloLook.sub === 'Tu agenda de partidos' && helloLook.color === 'rgb(198, 244, 50)', JSON.stringify(helloLook));
 await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/header-agenda.png' });
 check('La lista no muestra sede y formato al pie', await page.locator('#view .footer-note').count() === 0 && !(await page.locator('#view').innerText()).includes('Fútbol 7 contra 7'));
 check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
@@ -285,7 +295,7 @@ check('Partido agregado aparece en la lista', /JUE/.test(cardText) && /Jueves 22
 check('La lista con partidos tampoco muestra el pie de sede y formato', await page.locator('#view .footer-note').count() === 0);
 await page.click('.match-card');
 await page.waitForSelector('#btn-add-player');
-check('El detalle sigue mostrando la sede y el formato', (await page.textContent('#match-place'))?.replace(/\s+/g, ' ').trim() === 'Polideportivo Colegiales - F7');
+check('El detalle sigue mostrando la sede y el formato', (await page.textContent('#match-place'))?.replace(/\s+/g, ' ').trim() === 'F7 - Polideportivo Colegiales');
 check('Con un solo próximo la fecha es texto y no abre la lista', (await page.textContent('#match-date'))?.trim() === 'Jueves 22/10' && await page.locator('#match-date').evaluate((el) => el.tagName) === 'H1' && (await page.locator('#btn-notes').innerText()) === 'Notas' && await page.locator('#match-notes .hint').count() === 0 && !(await page.locator('#match-notes').innerText()).includes('Sin notas') && (await page.locator('#match-when').innerText()).replace(/\s+/g, ' ').includes('21hs ($5.000)'));
 await page.click('#btn-notes');
 await page.waitForSelector('#notes-form');
@@ -814,8 +824,8 @@ check('Juan: Pagó $5.000 · Transferencia', juanPay.includes('Pagó $5.000') &&
 
 check('Pedro sigue sin estado de pago', (await page.$$('.slot:has-text("Pedro Gómez") .pay-line')).length === 0);
 check('Nico sigue sin estado de pago', (await page.$$('.slot:has-text("Nico R.") .pay-line')).length === 0);
-const rec = (await page.textContent('#collected')).replace(/\s+/g, ' ');
-check('Total recaudado 1/3', rec.includes('Recaudado: $5.000') && rec.includes('1/3 pagaron'), rec);
+const rec = (await page.textContent('#mine-transfer')).replace(/\s+/g, ' ');
+check('La transferencia cobrada es de quien está logueado', rec.includes('Me transfirieron: $5.000') && rec.includes('1 jugador'), rec);
 
 await page.click('#btn-copy');
 const clipPay = await page.evaluate(() => navigator.clipboard.readText());
@@ -847,13 +857,13 @@ await page.fill('#pay-form [name=cash]', '4500');
 await page.fill('#pay-form [name=transfer]', '');
 await page.click('#pay-form button[type=submit]');
 await page2.waitForFunction(() => document.body.innerText.includes('Efectivo') && document.body.innerText.includes('$4.500'));
-check('La otra pestaña se actualiza sola', (await page2.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500'));
+check('La otra pestaña se actualiza sola', (await page2.textContent('#mine-cash')).replace(/\s+/g, ' ').includes('Me dieron en efectivo: $4.500'));
 await page2.close();
 
 check('Sin el filtro, Pedro sigue en el partido', (await page.locator('#slots .name', { hasText: 'Pedro Gómez' }).count()) === 1 && (await page.locator('#slots .name', { hasText: 'Nico R.' }).count()) === 1 && (await page.locator('#slots .name', { hasText: 'Juan Pérez' }).count()) === 1);
 check('El cupo sigue siendo el del partido', (await page.textContent('#slot-count')) === '3/14');
-const mineText = (await page.textContent('#mine-stats')).replace(/\s+/g, ' ');
-check('Estadística propia del partido', mineText.includes('Anotaste 1') && mineText.includes('Cobraste $4.500'), mineText);
+const mineText = `${await page.textContent('#mine-added')} ${await page.textContent('#mine-cash')}`.replace(/\s+/g, ' ');
+check('Estadística propia del partido', mineText.includes('Anotados por mí: 2') && mineText.includes('Me dieron en efectivo: $4.500'), mineText);
 
 // Lista de espera con lugares libres: queda al final, no ocupa un cupo
 await page.click('#btn-add-wait');
@@ -890,7 +900,7 @@ for (let i = 4; i <= 14; i++) {
 }
 check('14/14 y se puede seguir anotando (van a la espera)', (await page.textContent('#slot-count')) === '14/14' && !(await page.isDisabled('#btn-add-player')));
 check('Agregar jugador no cambia de nombre con el cupo lleno', (await page.textContent('#btn-add-player')).includes('Agregar jugador'));
-check('El total pasa a 1/14', (await page.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $4.500 · 1/14 pagaron'));
+check('El efectivo cobrado sigue después de completar el cupo', (await page.textContent('#mine-cash')).replace(/\s+/g, ' ').includes('Me dieron en efectivo: $4.500'));
 check('Cero sigue en espera al llenarse el partido', (await page.textContent('#wait-list')).includes('Espera Cero') && !(await page.locator('#slots').getByText('Espera Cero', { exact: true }).count()));
 
 await page.click('#btn-add-player');
@@ -968,7 +978,7 @@ check('Datos persisten tras recargar (sin volver a pedir la contraseña)', (awai
 check('Sigue en modo demo tras recargar', (await page.evaluate(() => window.__app?.store?.mode)) === 'demo');
 await page.click('.match-card[data-date="2026-10-22"]');
 await page.waitForSelector('.slot:has-text("Juan Pérez") .pay-line.ok');
-check('El pago persiste tras recargar', (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).includes('Efectivo') && (await page.textContent('#collected')).includes('$4.500'));
+check('El pago persiste tras recargar', (await page.textContent('.slot:has-text("Juan Pérez") .pay-line')).includes('Efectivo') && (await page.textContent('#mine-cash')).includes('$4.500'));
 await page.click('#btn-back');
 await page.waitForSelector('.match-card');
 
@@ -992,7 +1002,7 @@ check('Reservado ocupa cupo, no va a la espera y no figura confirmado',
   && luisRow.includes('Reservado · a confirmar')
   && !luisRow.includes('Confirmó')
   && !luisRow.includes('Sin respuesta'), luisRow);
-check('El resumen cuenta A confirmar', (await page.textContent('#confirm-sum')).includes('A confirmar: 1') && (await page.textContent('#confirm-sum')).includes('Sin respuesta: 0'));
+check('El resumen no mezcla el lugar reservado con sin respuesta', (await page.textContent('#confirm-sum')).includes('Confirmados: 0 - No juegan: 0 - Sin respuesta: 0') && !(await page.textContent('#confirm-sum')).includes('A confirmar'), await page.textContent('#confirm-sum'));
 const fontBefore = await page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
 async function tentativeLayout(width, px) {
   await page.setViewportSize({ width, height: 844 });
@@ -1560,13 +1570,21 @@ await page.evaluate(async () => {
     transfers: calc.transfers,
   });
 });
+const statsButtons = await page.$$eval('#stats-mode a', (els) => els.map((el) => el.textContent.trim()));
+check('Los botones de Estadísticas son Jugador, Día, Mes y Año', JSON.stringify(statsButtons) === JSON.stringify(['Jugador', 'Día', 'Mes', 'Año']), statsButtons.join(','));
+const statsTitleFirst = await page.evaluate(() => {
+  const title = document.querySelector('#stats-title');
+  const seg = document.querySelector('#stats-mode');
+  return !!title && !!seg && (title.compareDocumentPosition(seg) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+});
+check('El título de Estadísticas queda arriba de los botones', statsTitleFirst && (await page.locator('#stats-title').innerText()).trim() === 'Estadísticas por jugador');
 await page.click('#stats-mode a[href="#/estadisticas/dia"]');
 await page.waitForSelector('#stats-days');
 check('La vista se llama Día', (await page.locator('#stats-mode a[aria-current="page"]').innerText()).trim() === 'Día');
 await page.locator('#stats-days .who').first().click();
 await page.waitForSelector('#stats-collected');
 const matchStats = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
-check('Por día muestra lo que correspondió y la asistencia de cada partido', matchStats.includes('Te correspondió:') && matchStats.includes('En la lista:') && matchStats.includes('No juega:') && matchStats.includes('Cobrado') && matchStats.includes('Por medio') && matchStats.includes('Por organizador'), matchStats.slice(0, 280));
+check('Por día muestra lo que correspondió y la asistencia de cada partido', matchStats.includes('Te correspondió:') && matchStats.includes('En la lista:') && matchStats.includes('No juega:') && matchStats.includes('Cobrado') && matchStats.includes('Por medio') && !matchStats.includes('Por organizador') && (await page.locator('#stats-title').innerText()).trim() === 'Estadísticas por día', matchStats.slice(0, 280));
 await page.evaluate(() => {
   const store = window.__app.store;
   const db = store._load();
@@ -1655,8 +1673,13 @@ await page.waitForSelector('.slot:has-text("Ana Hoy") .pay-pending');
 const anaPay = (await page.locator('.slot', { hasText: 'Ana Hoy' }).innerText()).replace(/\s+/g, ' ');
 check('Fila con efectivo, transferencia y transfiere después',
   anaPay.includes('Pagó $5.000') && anaPay.includes('Efectivo $2.000') && anaPay.includes('Transferencia $3.000') && anaPay.includes('Transfiere después $1.500'), anaPay);
-const recSplit = (await page.textContent('#collected')).replace(/\s+/g, ' ');
-check('Recaudado no suma lo pendiente', recSplit.includes('Recaudado: $5.000') && recSplit.includes('Transfiere después: $1.500'), recSplit);
+const pendingCut = await page.locator('.slot', { hasText: 'Ana Hoy' }).locator('.pay-pending').evaluate((el) => {
+  const style = getComputedStyle(el);
+  return { ellipsis: style.textOverflow === 'ellipsis', nowrap: style.whiteSpace === 'nowrap', clipped: el.scrollWidth > el.clientWidth + 1 };
+});
+check('Transfiere después en la fila no se corta', !pendingCut.ellipsis && !pendingCut.nowrap && !pendingCut.clipped, JSON.stringify(pendingCut));
+const recSplit = `${await page.textContent('#mine-cash')} ${await page.textContent('#mine-transfer')}`.replace(/\s+/g, ' ');
+check('El efectivo y la transferencia no suman lo pendiente', recSplit.includes('Me dieron en efectivo: $2.000') && recSplit.includes('Me transfirieron: $3.000') && !recSplit.includes('$1.500') && !recSplit.includes('$4.500'), recSplit);
 await page.click('#btn-copy');
 const clipSplit = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada incluye transfiere después', clipSplit.includes('Transfiere después $1.500') && clipSplit.includes('Transfiere después: $1.500'), clipSplit);
@@ -1686,15 +1709,33 @@ const pendingLook = await page.evaluate(() => {
   root.classList.toggle('dark', wasDark);
   const amount = (row.innerText.match(/Transfiere después \$\d[\d.]*/) || [])[0] || '';
   const copies = [...document.querySelectorAll('#pay-form .pay-pending, #pay-recorded li')].filter((el) => el.innerText.includes(amount)).length;
+  const xOf = (btn) => {
+    if (!btn) return null;
+    const box = btn.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return {
+      label: btn.getAttribute('aria-label') || '',
+      color: getComputedStyle(btn).color,
+      w: box.width,
+      seen: hit === btn || btn.contains(hit),
+    };
+  };
+  const marks = [...document.querySelectorAll('#pay-recorded .pay-x')].map(xOf);
+  root.classList.remove('dark');
+  const xLight = xOf(row.querySelector('.pay-x'));
+  root.classList.add('dark');
+  const xDark = xOf(row.querySelector('.pay-x'));
+  root.classList.toggle('dark', wasDark);
   return {
     text: row.innerText.replace(/\s+/g, ' ').trim(),
     x: row.querySelector('.pay-x')?.getAttribute('aria-label') || '',
     pill: document.querySelector('#pay-pending-now') != null,
     copies,
     light, dark,
+    xLight, xDark, marks,
   };
 });
-check('Transfiere después queda una sola vez, en la fila amarilla con la X', pendingLook.copies === 1 && !pendingLook.pill && pendingLook.text.includes('Transfiere después $1.500') && pendingLook.text.includes('Gustavo') && pendingLook.x.startsWith('Anular') && pendingLook.light.bg === 'rgb(255, 246, 216)' && pendingLook.light.color === 'rgb(107, 82, 0)' && pendingLook.light.weight >= 700 && pendingLook.light.radius >= 12 && pendingLook.dark.bg === 'rgb(58, 49, 24)' && pendingLook.dark.color === 'rgb(246, 226, 162)', JSON.stringify(pendingLook));
+check('Transfiere después queda una sola vez, en la fila amarilla con la X', pendingLook.copies === 1 && !pendingLook.pill && pendingLook.text.includes('Transfiere después $1.500 · a Gustavo') && pendingLook.x.startsWith('Anular') && pendingLook.xLight.seen && pendingLook.xLight.w >= 32 && pendingLook.xLight.color === 'rgb(208, 18, 45)' && pendingLook.xDark.seen && pendingLook.xDark.color === 'rgb(255, 154, 171)' && pendingLook.marks.length >= 3 && pendingLook.marks.every((mark) => mark.seen && mark.label.startsWith('Anular')) && pendingLook.light.bg === 'rgb(255, 246, 216)' && pendingLook.light.color === 'rgb(107, 82, 0)' && pendingLook.light.weight >= 700 && pendingLook.light.radius >= 12 && pendingLook.dark.bg === 'rgb(58, 49, 24)' && pendingLook.dark.color === 'rgb(246, 226, 162)', JSON.stringify(pendingLook));
 const anaWhy = (await page.locator('#pay-remind-why').innerText()).trim();
 check('Sin el WhatsApp de Ana el recordatorio no abre el chat',
   await page.locator('#btn-pending-remind').isDisabled() && (await page.getAttribute('#btn-pending-remind', 'href')) == null && anaWhy === 'El WhatsApp de este jugador es privado',
@@ -1715,7 +1756,7 @@ await page.waitForFunction(() => {
   const row = [...document.querySelectorAll('.slot')].find((el) => el.innerText.includes('Ana Hoy'));
   return row && !row.innerText.includes('Transfiere después') && row.innerText.includes('$6.500');
 });
-check('Marcar la transferencia la suma a lo cobrado', (await page.textContent('#collected')).replace(/\s+/g, ' ').includes('Recaudado: $6.500'));
+check('Marcar la transferencia la suma a lo cobrado', (await page.textContent('#mine-transfer')).replace(/\s+/g, ' ').includes('Me transfirieron: $4.500'));
 const anaStored = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Ana Hoy'));
 check('Quedó como transferencia cobrada por Gustavo', anaStored.pendingTransfer == null && anaStored.transfer === 4500 && anaStored.cash === 2000 && anaStored.amount === 6500 && anaStored.transferReceivedBy === 'Gustavo' && anaStored.paid === true);
 await page.click('.slot:has-text("Ana Hoy") .pay-btn');
@@ -1873,7 +1914,7 @@ await page.locator('#pay-free').check();
 check('Juega gratis deja los montos vacíos y apagados', await page.$eval('#pay-form [name=transfer]', (el) => el.disabled && el.value === '') && await page.$eval('#pay-form [name=cash]', (el) => el.disabled));
 await page.click('#pay-form button[type=submit]');
 await page.waitForSelector('.slot:has-text("Precio Propio") .pay-line');
-check('Quien juega gratis figura saldado', (await page.textContent('.slot:has-text("Precio Propio")')).includes('Juega gratis') && (await page.textContent('#collected')).includes('juega gratis'));
+check('Quien juega gratis figura saldado', (await page.textContent('.slot:has-text("Precio Propio")')).includes('Juega gratis'));
 await page.click('#btn-settings');
 await page.fill('#price-form [name=matchPrice]', '5000');
 await page.fill('#price-form [name=promo2Price]', '9000');
@@ -2702,6 +2743,16 @@ await page.click('#match-form button[type=submit]');
 await page.waitForSelector('.match-card[data-date="2026-11-08"]');
 const norteCard = (await page.locator('.match-card[data-date="2026-11-08"]').innerText()).replace(/\s+/g, ' ');
 check('La tarjeta muestra la sede y el cupo de 6 por equipo', norteCard.includes('Club Norte Sur') && /0\/12/.test(norteCard), norteCard);
+const cardPrice = await page.locator('.match-card[data-date="2026-11-08"] .trial-price').evaluate((el) => {
+  const style = getComputedStyle(el);
+  const root = document.documentElement;
+  const was = root.classList.contains('dark');
+  root.classList.add('dark');
+  const dark = getComputedStyle(el).color;
+  root.classList.toggle('dark', was);
+  return { size: parseFloat(style.fontSize), weight: Number(style.fontWeight), color: style.color, dark };
+});
+check('En la tarjeta el precio es chico, normal y gris', cardPrice.weight < 600 && cardPrice.size < 18 && cardPrice.color === 'rgb(58, 71, 96)' && cardPrice.dark === 'rgb(197, 208, 226)', JSON.stringify(cardPrice));
 await page.click('.match-card[data-date="2026-11-08"]');
 await page.waitForFunction(() => document.querySelector('#match-date')?.textContent?.trim().startsWith('Domingo 08/11'));
 const norteDetail = {
@@ -2714,7 +2765,79 @@ const norteDetail = {
   price: await page.textContent('#match-price'),
   tag: await page.locator('#match-date').evaluate((el) => el.tagName),
 };
-check('El detalle usa la sede y Faltan 12', (norteDetail.date || '').startsWith('Domingo 08/11') && !(norteDetail.date || '').includes('hs') && norteDetail.tag === 'BUTTON' && (norteDetail.when || '').includes('19:30hs ($8.000)') && norteDetail.place === 'Club Norte Sur - F6 - Cancha 3' && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'), JSON.stringify(norteDetail));
+check('El detalle usa la sede y Faltan 12', (norteDetail.date || '').startsWith('Domingo 08/11') && !(norteDetail.date || '').includes('hs') && norteDetail.tag === 'BUTTON' && (norteDetail.when || '').includes('19:30hs ($8.000)') && norteDetail.place === 'Cancha 3 - F6 - Club Norte Sur' && norteDetail.slots === '0/12' && norteDetail.size === 0 && norteDetail.court === 'Cancha 3' && (norteDetail.price || '').includes('$8.000'), JSON.stringify(norteDetail));
+const hourLook = await page.evaluate(() => {
+  const date = getComputedStyle(document.querySelector('#match-date'));
+  const hour = getComputedStyle(document.querySelector('.match-hour'));
+  return { dateSize: date.fontSize, hourSize: hour.fontSize, dateWeight: Number(date.fontWeight), hourWeight: Number(hour.fontWeight) };
+});
+check('La hora pesa igual que la fecha', hourLook.dateSize === hourLook.hourSize && hourLook.hourWeight >= 700 && hourLook.dateWeight >= 700, JSON.stringify(hourLook));
+const priceLook = await page.evaluate(() => {
+  const hourEl = document.querySelector('.match-hour');
+  const priceEl = document.querySelector('#match-price');
+  const hour = getComputedStyle(hourEl);
+  const price = getComputedStyle(priceEl);
+  const root = document.documentElement;
+  const was = root.classList.contains('dark');
+  root.classList.add('dark');
+  const dark = getComputedStyle(priceEl).color;
+  root.classList.toggle('dark', was);
+  return {
+    hourSize: parseFloat(hour.fontSize),
+    priceSize: parseFloat(price.fontSize),
+    priceWeight: Number(price.fontWeight),
+    priceColor: price.color,
+    dark,
+  };
+});
+check('El precio es más chico, normal y gris', priceLook.priceSize < priceLook.hourSize - 2 && priceLook.priceWeight < 600 && priceLook.priceColor === 'rgb(58, 71, 96)' && priceLook.dark === 'rgb(197, 208, 226)', JSON.stringify(priceLook));
+check('Sin habituales no aparece la sección', await page.locator('#usual-title').count() === 0);
+const usualId = await page.evaluate(async () => {
+  const app = window.__app;
+  const who = app.who;
+  const id = await app.store.addMatch({ date: '2026-10-29', time: '21:10', capacity: 14, note: 'Habituales' }, who);
+  const rows = [
+    ['2026-10-15', '21:10', 'Habitual Sol', '11 4100-0001'],
+    ['2026-10-08', '21:10', 'Habitual Sol', '11 4100-0001'],
+    ['2026-10-15', '21:10', 'Habitual Leo', '11 4100-0002'],
+    ['2026-10-01', '21:10', 'Habitual Mudo', ''],
+    ['2026-10-15', '18:10', 'Habitual Otra', '11 4100-0003'],
+    ['2026-07-16', '21:10', 'Habitual Vieja', '11 4100-0004'],
+  ];
+  for (const [date, time, name, phone] of rows) {
+    const mid = await app.store.addMatch({ date, time, capacity: 14, note: 'Historia habitual' }, who);
+    const match = app.matches.find((item) => item.id === mid) || { id: mid, date, time, capacity: 14 };
+    await app.store.addPlayer(match, { name, phone }, who);
+  }
+  const rainId = await app.store.addMatch({ date: '2026-09-17', time: '21:10', capacity: 14, note: 'Lluvia' }, who);
+  const rain = app.matches.find((item) => item.id === rainId) || { id: rainId, date: '2026-09-17', time: '21:10', capacity: 14 };
+  await app.store.addPlayer(rain, { name: 'Habitual Lluvia', phone: '11 4100-0005' }, who);
+  await app.store.addPlayer(rain, { name: 'Habitual Espera', phone: '11 4100-0006' }, who, { waiting: true });
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  db.matches[rainId].cancelled = true;
+  db.matches[rainId].notes = 'Lluvia';
+  localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+  app.store._emit();
+  return id;
+});
+await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, usualId);
+await page.waitForSelector('#usual-list');
+const usualNames = await page.$$eval('#usual-list .name', (els) => els.map((el) => el.textContent.trim()));
+const usualCounts = await page.$$eval('#usual-list .sub', (els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+const solHref = await page.locator('#usual-list .slot', { hasText: 'Habitual Sol' }).locator('a.wa-btn').getAttribute('href');
+const mudoWa = await page.locator('#usual-list .slot', { hasText: 'Habitual Mudo' }).locator('a.wa-btn').count();
+check('Suelen jugar ordena por veces y abre WhatsApp vacío', JSON.stringify(usualNames) === JSON.stringify(['Habitual Sol', 'Habitual Espera', 'Habitual Leo', 'Habitual Lluvia', 'Habitual Mudo']) && usualCounts[0] === '2 partidos' && usualCounts[1] === '1 partido' && solHref === 'https://wa.me/5491141000001' && mudoWa === 0, `${usualNames.join(',')} ${usualCounts.join('|')} ${solHref}`);
+await page.click('#btn-add-player');
+await page.fill('#player-name', 'Habitual Sol');
+await page.fill('#player-form [name=phone]', '11 4100-0001');
+await page.click('#player-form button[type=submit]');
+await page.waitForSelector('#slots .name:text-is("Habitual Sol")');
+await page.waitForFunction(() => ![...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.includes('Habitual Sol')));
+check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).join(',') === 'Habitual Espera,Habitual Leo,Habitual Lluvia,Habitual Mudo');
+await page.evaluate(() => { location.hash = '#/'; });
+await page.waitForSelector('.match-card[data-date="2026-11-08"]');
+await page.click('.match-card[data-date="2026-11-08"]');
+await page.waitForSelector('#match-court');
 await page.click('#btn-copy');
 const norteCopy = await page.evaluate(() => navigator.clipboard.readText());
 check('La lista copiada nombra la sede', norteCopy.includes('Club Norte Sur') && norteCopy.includes('Faltan 12') && norteCopy.includes('⚽ Fútbol 6') && norteCopy.includes('Cancha 3'), norteCopy.split('\n').slice(0, 4).join(' | '));
@@ -4044,6 +4167,12 @@ await page.evaluate(async () => {
 });
 await page.evaluate(() => { location.hash = '#/registro/partidos'; });
 await page.waitForSelector('#log-list');
+const logTitleFirst = await page.evaluate(() => {
+  const title = document.querySelector('#log-title');
+  const seg = document.querySelector('#log-mode');
+  return !!title && !!seg && (title.compareDocumentPosition(seg) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && title.textContent.trim() === 'Registro de movimientos';
+});
+check('Registro titula Registro de movimientos arriba de los botones', logTitleFirst);
 const partidos = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
 check('Registro de partidos anota el alta, el invitado y no el partido ajeno', partidos.includes('nuevo partido') && partidos.includes('alta') && partidos.includes('Invitado 1 (invitado de Anfitrión Log)') && partidos.includes('En la lista de espera') && !partidos.includes('23:41'), partidos.slice(0, 400));
 check('Quien solo puede ver el partido igual ve su registro', partidos.includes('Visible Por Ver') && partidos.includes('23:42'));
@@ -6220,7 +6349,29 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.fill('#pay-form [name=pending]', '1500');
   await page.click('#pay-form button[type=submit]');
   await page.waitForFunction(() => window.__app.players.some((p) => p.name === 'Anula Díaz' && Number(p.pendingTransfer) === 1500));
-  await page.click('.slot:has-text("Anula Díaz") .pay-btn');
+  await page.click('.slot:has-text("Anula Díaz") .more-btn');
+  await page.waitForSelector('#menu-payments .pay-pending-row .pay-x');
+  const menuPending = await page.evaluate(() => {
+    const row = document.querySelector('#menu-payments .pay-pending-row');
+    row.scrollIntoView({ block: 'center' });
+    const badge = [...document.querySelectorAll('#menu-pay .pay-pending')].map((el) => el.innerText.replace(/\s+/g, ' ').trim());
+    const btn = row.querySelector('.pay-x');
+    const see = () => {
+      const box = btn.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return { seen: hit === btn || btn.contains(hit), color: getComputedStyle(btn).color, bg: getComputedStyle(row).backgroundColor };
+    };
+    const root = document.documentElement;
+    const wasDark = root.classList.contains('dark');
+    root.classList.remove('dark');
+    const light = see();
+    root.classList.add('dark');
+    const dark = see();
+    root.classList.toggle('dark', wasDark);
+    return { text: row.innerText.replace(/\s+/g, ' ').trim(), badge, light, dark };
+  });
+  check('En el menú, Transfiere después es la fila amarilla con la X y no se repite', menuPending.text.includes('Transfiere después $1.500 · a Gustavo') && menuPending.badge.length === 0 && menuPending.light.seen && menuPending.light.color === 'rgb(208, 18, 45)' && menuPending.light.bg === 'rgb(255, 246, 216)' && menuPending.dark.seen && menuPending.dark.color === 'rgb(255, 154, 171)' && menuPending.dark.bg === 'rgb(58, 49, 24)', JSON.stringify(menuPending));
+  await page.click('#pm-pay');
   await page.waitForSelector('#pay-recorded .pay-pending-row .pay-x');
   await page.evaluate(() => {
     const app = window.__app;
@@ -6251,6 +6402,201 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('#pay-form');
   check('Al reabrir el pago la fila de Transfiere después no vuelve', await page.locator('#pay-recorded .pay-pending-row').count() === 0 && await page.locator('#pay-pending-now').count() === 0);
   await page.click('#sheet [data-close]');
+}
+
+{
+  const matchId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-26', time: '20:00', price: 5000, note: 'Quitar pendiente', capacity: 14 }, app.who);
+    await app.store.addPlayer({ id }, { name: 'Quita Pendiente', phone: '5491166669090' }, app.who);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, matchId);
+  await page.waitForSelector('.slot:has-text("Quita Pendiente") .pay-btn');
+  await page.click('.slot:has-text("Quita Pendiente") .pay-btn');
+  await page.waitForSelector('#pay-form [name=pending]');
+  await page.fill('#pay-form [name=pending]', '5000');
+  await page.click('#pay-form button[type=submit]');
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Quita Pendiente'));
+    return row && row.innerText.includes('Transfiere después $5.000');
+  });
+  await page.click('.slot:has-text("Quita Pendiente") .pay-btn');
+  await page.waitForSelector('#pay-recorded .pay-pending-row .pay-x');
+  await page.click('#pay-recorded .pay-pending-row .pay-x');
+  await page.waitForSelector('#ask-ok');
+  check('La X de Transfiere después pregunta antes de anular', (await page.locator('#app-ask-text').innerText()).includes('¿Anular este pago?'));
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Quita Pendiente'));
+    return row && !row.innerText.includes('Transfiere después');
+  });
+  const saved = await page.evaluate(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Quita Pendiente');
+    const card = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Quita Pendiente'))?.innerText.replace(/\s+/g, ' ') || '';
+    return { pending: row?.pendingTransfer ?? null, paid: row?.paid === true, card };
+  });
+  check('Anular Transfiere después desde el menú de pagos se guarda y sale de la tarjeta', saved.pending == null && saved.paid === false && !saved.card.includes('Transfiere después'), JSON.stringify(saved));
+  await page.click('#pay-form [data-close]');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  const closed = (await page.locator('#view .slot', { hasText: 'Quita Pendiente' }).innerText()).replace(/\s+/g, ' ');
+  check('Al cerrar el pago la tarjeta sigue sin Transfiere después', !closed.includes('Transfiere después'), closed);
+}
+
+{
+  const oldId = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-12', time: '20:00', price: 5000, note: 'Viejo', capacity: 14 }, app.who);
+    const playerId = await app.store.addPlayer({ id }, { name: 'Pablo Luján', phone: '5491166661212' }, app.who);
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const row = db.players[playerId];
+    db.players[playerId] = {
+      ...row,
+      paid: false,
+      amount: null,
+      method: null,
+      cash: null,
+      transfer: null,
+      fromCredit: null,
+      cashTo: null,
+      transferTo: null,
+      creditTo: null,
+      receivedBy: null,
+      transferParts: null,
+      pendingTransfer: 5000,
+      pendingTo: 'Gus',
+      paidUpdatedBy: 'Gus',
+    };
+    localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+    app.store._emit();
+    return id;
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.evaluate((id) => {
+    document.documentElement.classList.add('dark');
+    location.hash = `#/partido/${encodeURIComponent(id)}`;
+  }, oldId);
+  await page.waitForSelector('.slot:has-text("Pablo Luján") .pay-pending');
+  const oldCard = (await page.locator('#view .slot', { hasText: 'Pablo Luján' }).innerText()).replace(/\s+/g, ' ');
+  check('El pendiente viejo a nombre de Gus se ve en la tarjeta', oldCard.includes('Transfiere después $5.000') && oldCard.includes('Gus'), oldCard);
+  await page.click('.slot:has-text("Pablo Luján") .pay-btn');
+  await page.waitForSelector('#pay-form .pay-pending-row .pay-x');
+  const oldLook = await page.evaluate(() => {
+    const row = document.querySelector('#pay-form .pay-pending-row');
+    const btn = row.querySelector('.pay-x');
+    const box = btn.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    const svg = btn.querySelector('svg');
+    return {
+      text: row.innerText.replace(/\s+/g, ' ').trim(),
+      copies: document.querySelectorAll('#pay-form .pay-pending-row').length,
+      w: box.width,
+      svg: svg ? svg.getBoundingClientRect().width : 0,
+      color: getComputedStyle(btn).color,
+      seen: hit === btn || btn.contains(hit),
+      inside: box.right <= window.innerWidth + 1 && box.left >= 0,
+      vw: window.innerWidth,
+    };
+  });
+  check('En 360px oscuro la franja vieja tiene una X grande', oldLook.vw === 360 && oldLook.copies === 1 && oldLook.text.includes('Transfiere después $5.000') && oldLook.text.includes('Gus') && oldLook.w >= 40 && oldLook.svg >= 24 && oldLook.color === 'rgb(255, 154, 171)' && oldLook.seen && oldLook.inside, JSON.stringify(oldLook));
+  await page.locator('.sheet-body').screenshot({ path: '/opt/cursor/artifacts/screenshots/v161-pago-viejo-oscuro.png' });
+  await page.click('#pay-form .pay-pending-row .pay-x');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Pablo Luján'));
+    return row && !row.innerText.includes('Transfiere después');
+  });
+  const oldSaved = await page.evaluate(() => {
+    const row = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).players).find((p) => p.name === 'Pablo Luján');
+    const card = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Pablo Luján'))?.innerText.replace(/\s+/g, ' ') || '';
+    return { pending: row?.pendingTransfer ?? null, card };
+  });
+  check('Anular el pendiente viejo se guarda y sale de la tarjeta', oldSaved.pending == null && !oldSaved.card.includes('Transfiere después'), JSON.stringify(oldSaved));
+  if (await page.locator('#sheet[open]').count()) await page.locator('#sheet [data-close]').last().click();
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => document.documentElement.classList.remove('dark'));
+}
+
+{
+  const gusMatch = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-12', time: '21:00', price: 5000, note: 'Resumen Gus', capacity: 14 }, app.who);
+    const oldId = await app.store.addPlayer({ id }, { name: 'Cobro Viejo', phone: '5491166661313' }, app.who);
+    const pendingId = await app.store.addPlayer({ id }, { name: 'Invitado 4', phone: '' }, app.who);
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const stamp = (row, extra) => ({ ...row, paidUpdatedBy: 'Gus', ...extra });
+    db.players[oldId] = stamp(db.players[oldId], {
+      paid: true,
+      amount: 5000,
+      method: 'transferencia',
+      split: true,
+      cash: 0,
+      transfer: 5000,
+      transferTo: 'Gus',
+      pendingTransfer: null,
+      pendingTo: null,
+      receivedBy: 'Gus',
+      cashTo: null,
+      creditTo: null,
+      fromCredit: null,
+      transferParts: null,
+    });
+    db.players[pendingId] = stamp(db.players[pendingId], {
+      paid: false,
+      amount: null,
+      method: null,
+      split: true,
+      cash: null,
+      transfer: null,
+      transferTo: null,
+      pendingTransfer: 5000,
+      pendingTo: 'Gus',
+      receivedBy: null,
+      cashTo: null,
+      creditTo: null,
+      fromCredit: null,
+      transferParts: null,
+    });
+    localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+    app.store._emit();
+    return id;
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.evaluate((id) => {
+    document.documentElement.classList.add('dark');
+    location.hash = `#/partido/${encodeURIComponent(id)}`;
+  }, gusMatch);
+  await page.waitForSelector('.slot:has-text("Invitado 4") .pay-pending');
+  const before = (await page.locator('#mine-transfer').innerText()).replace(/\s+/g, ' ');
+  check('Una transferencia vieja a nombre de Gus ya suma en el resumen', before.includes('Me transfirieron: $5.000') && before.includes('1 jugador'), before);
+  await page.click('.slot:has-text("Invitado 4") .pay-btn');
+  await page.waitForSelector('#btn-receive-pending');
+  await page.click('#btn-receive-pending');
+  await page.waitForFunction(() => {
+    const line = document.querySelector('#mine-transfer')?.innerText.replace(/\s+/g, ' ') || '';
+    return line.includes('Me transfirieron: $10.000') && line.includes('2 jugadores');
+  });
+  const after = await page.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const row = Object.values(db.players).find((p) => p.name === 'Invitado 4');
+    const card = [...document.querySelectorAll('#view .slot')].find((el) => el.innerText.includes('Invitado 4'))?.innerText.replace(/\s+/g, ' ') || '';
+    const summary = ['#mine-cash', '#mine-transfer'].map((sel) => document.querySelector(sel)?.innerText.replace(/\s+/g, ' ') || '').join(' | ');
+    return {
+      transferTo: row?.transferTo || '',
+      pending: row?.pendingTransfer ?? null,
+      receivedBy: row?.receivedBy || '',
+      card,
+      summary,
+    };
+  });
+  check('Marcar el pendiente de Gus lo guarda como Gustavo y suma en Me transfirieron', after.transferTo === 'Gustavo' && after.receivedBy === 'Gustavo' && after.pending == null && after.card.includes('cobró Gustavo') && !after.card.includes('Transfiere después') && after.summary.includes('Me transfirieron: $10.000') && after.summary.includes('2 jugadores'), JSON.stringify(after));
+  if (await page.locator('#sheet[open]').count()) await page.locator('#sheet [data-close]').last().click();
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  await page.locator('.detail-head').screenshot({ path: '/opt/cursor/artifacts/screenshots/v162-resumen-gus.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => document.documentElement.classList.remove('dark'));
 }
 
 {

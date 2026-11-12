@@ -3,7 +3,7 @@
 // sin número, por el id del plantel o por el nombre.
 import { DIAS, addDays, capitalize, labelDate, todayISO, toEpoch, weekdayOf } from './dates.js';
 import { formatARS, paymentShares } from './payments.js';
-import { sameOrganizer } from './organizers.js';
+import { sameOrganizerIdentity } from './organizers.js';
 import { foldText, personKey, phoneIdentity, playerMatchesPerson } from './roster.js';
 import { playerDebt } from './ledger.js';
 import { alreadyInMatch } from './guests.js';
@@ -251,7 +251,7 @@ function paidShare(player, organizer) {
   if (!name) return 0;
   return paymentShares(player).reduce((sum, share) => {
     if (share.kind === 'pending' || !(share.amount > 0)) return sum;
-    return sameOrganizer(share.name, name) ? sum + share.amount : sum;
+    return sameOrganizerIdentity(share.name, organizer) ? sum + share.amount : sum;
   }, 0);
 }
 
