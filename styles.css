@@ -227,10 +227,9 @@ h2.section:first-child { margin-top: 4px; }
 
 /* Barra inferior de acciones */
 .actionbar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 9;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
   display: flex; gap: 10px; padding: 12px 14px calc(12px + var(--safe-b));
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  background: var(--bar-bg, #fff);
   border-top: 1px solid var(--line);
 }
 .actionbar > * { flex: 1; }
@@ -520,8 +519,8 @@ h2.section.team-heading {
   display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: .02em;
   position: sticky; top: calc(var(--header-h, 64px) + var(--tabbar-h, 56px)); z-index: 4;
   margin: 0 0 8px; padding: 8px 2px;
-  background: color-mix(in srgb, var(--bg) 92%, transparent);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  background: var(--header-bg, var(--card));
+  color: #fff;
 }
 h2.section.team-heading .vest { width: 20px; height: 20px; flex: none; }
 .team-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
@@ -584,7 +583,7 @@ button.team-name {
   z-index: 6;
   margin: 0 0 12px;
   padding: 8px 2px 10px;
-  background: var(--bg);
+  background: var(--header-bg, var(--bg));
 }
 #stats-view .roster-search {
   position: static;
@@ -1059,6 +1058,8 @@ html:root {
   --shadow: 0 10px 28px rgba(22, 42, 90, .08);
   --lime: #c6f432;
   --lime-ink: #14200a;
+  --header-bg: #3d7dff;
+  --bar-bg: #ffffff;
   color-scheme: light;
 }
 html:root body {
@@ -1084,6 +1085,8 @@ html.dark {
   --warn-bg: #3a3118;
   --warn-text: #f6e2a2;
   --shadow: 0 12px 28px rgba(0, 0, 0, .35);
+  --header-bg: #0B1220;
+  --bar-bg: #152033;
   color-scheme: dark;
 }
 html.dark body {
@@ -1094,11 +1097,20 @@ html.dark body {
   color: #fff;
 }
 html:root .topstack,
-html.dark .topstack { background: transparent; color: #fff; }
-html:root .topbar {
-  background: transparent;
+html.dark:root .topstack {
+  background: var(--header-bg);
+  color: #fff;
+  z-index: 40;
+}
+html:root .topbar,
+html.dark:root .topbar,
+html:root .tabbar,
+html.dark:root .tabbar {
+  background: var(--header-bg);
   box-shadow: none;
   color: #fff;
+}
+html:root .topbar {
   padding: 8px 12px 2px;
 }
 html:root .brand img { display: none; }
@@ -1116,7 +1128,7 @@ html:root #btn-back {
   border-radius: 50%; border: 0; background: rgba(255,255,255,.18); color: #fff;
 }
 html:root .tabbar {
-  background: transparent; border: 0; padding: 2px 6px 12px; gap: 0;
+  border: 0; padding: 2px 6px 12px; gap: 0;
 }
 html:root .tab-ico {
   display: grid; place-items: center;
@@ -1228,9 +1240,8 @@ html:root .owe-box {
 html:root .owe-toggle b { font-weight: 800; }
 html.dark .owe-box { background: #3d1822; color: #ffb4c2; }
 html:root .actionbar {
-  background: var(--card); border-top: 0;
+  background: var(--bar-bg); border-top: 0;
   box-shadow: 0 -8px 24px rgba(16, 32, 70, .08);
-  backdrop-filter: none; -webkit-backdrop-filter: none;
   pointer-events: auto;
 }
 html:root .actionbar .btn { border-radius: 999px; min-height: 52px; font-weight: 700; }

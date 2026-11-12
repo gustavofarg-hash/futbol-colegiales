@@ -3,6 +3,7 @@
 > **Antes de cada cambio, revisar esta lista y no quitar nada sin pedido explícito de Gustavo. Al terminar, actualizarla.**
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
+**Actualizada para f7c-v151** (12/11/2026): el encabezado, las pestañas y la barra de abajo tienen fondo opaco. En claro es el azul de arriba del degradado; en oscuro, #0B1220 la cabecera y pizarra la barra. No usa desenfoque. `firestore.rules` no cambió.
 **Actualizada para f7c-v150** (12/11/2026): el encabezado saluda con el nombre de pila, el fondo es azul con tarjetas blancas o pizarra, y la promo se lee mejor en claro. «Suelen anotarse para jugar este día y hora:» cuenta también la espera, solo de quien está logueado. En la ficha, el precio es más chico y HOY/MAÑANA más grande. `firestore.rules` no cambió.
 **Actualizada para f7c-v149** (12/11/2026): en el partido, la hora pesa como la fecha, el lugar va cancha - formato - sede, y debajo de la barra quedan confirmados, anotados por mí, efectivo y transferencia. Estadísticas muestra solo los datos de quien está logueado. Debajo de la espera, «Suelen jugar este día y hora:». Los títulos de Estadísticas y Registro quedan arriba de los botones. `firestore.rules` no cambió.
 **Actualizada para f7c-v148** (10/11/2026): en Estadísticas, Día no muestra un día en el que quien está logueado no organizó ningún partido. Sigue la ventana del mes, desde el 1 hasta el último cálculo guardado. Mes y Año no cambian. `firestore.rules` no cambió.
