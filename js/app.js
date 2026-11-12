@@ -47,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v160';
+const APP_VERSION = 'f7c-v161';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -5232,12 +5232,27 @@ function paymentShareLabel(share) {
   return `${kind} ${formatARS(share?.amount || 0)}${share?.kind === 'pending' ? ` · a ${who}` : ` · ${who}`}`;
 }
 
+function sameOrShortOrganizer(a, b) {
+  if (sameOrganizer(a, b)) return true;
+  const left = foldText(a);
+  const right = foldText(b);
+  if (left.length < 3 || right.length < 3) return false;
+  return left.startsWith(right) || right.startsWith(left);
+}
+
 function canAnnulPayment(player, share) {
   const me = actor().name;
   const name = String(share?.name || '').trim();
+  // «Gus» y «Gustavo» son el mismo organizador. Un pendiente viejo sin nombre también se puede sacar.
+  if (share?.kind === 'pending') {
+    if (!name) return true;
+    return sameOrShortOrganizer(name, me) || sameOrShortOrganizer(player?.paidUpdatedBy, me) || sameOrShortOrganizer(player?.pendingTo, me);
+  }
   if (name) return sameOrganizer(name, me);
   return sameOrganizer(player?.paidUpdatedBy, me);
 }
+
+const PAY_X_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
 function recordedPaymentList(player, listId) {
   const rows = paymentShares(player);
@@ -5245,7 +5260,7 @@ function recordedPaymentList(player, listId) {
   return `<ul class="pay-recorded" id="${listId}">${rows.map((share, index) => {
     const label = paymentShareLabel(share);
     const x = canAnnulPayment(player, share)
-      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`
+      ? `<button type="button" class="pay-x" data-annul="${index}" aria-label="Anular ${esc(label)}">${PAY_X_SVG}</button>`
       : '';
     const pendingClass = share.kind === 'pending' ? ' class="pay-pending-row"' : '';
     return `<li${pendingClass}><span>${esc(label)}</span>${x}</li>`;
@@ -5350,7 +5365,7 @@ async function annulRecordedPayment(player, share) {
   const batch = payBatchForShare(fresh);
   if (batch) {
     const names = payBatchCollectorNames(batch);
-    if (names.some((name) => !sameOrganizer(name, actor().name))) {
+    if (names.some((name) => !sameOrShortOrganizer(name, actor().name))) {
       askNotice('Este pago se cargó junto con un cobro de otro organizador.');
       return;
     }
@@ -5424,9 +5439,14 @@ function pendingTransferReminderRow(m, p, pending) {
     ? `<a class="btn pay-remind" id="btn-pending-remind" href="${esc(waHref(phone, text))}" target="_blank" rel="noopener">${ICON.wa}<span>Enviar recordatorio</span></a>`
     : `<button type="button" class="btn pay-remind" id="btn-pending-remind" disabled>${ICON.wa}<span>Enviar recordatorio</span></button>`;
   const shownInRow = paymentShares(p).some((share) => share.kind === 'pending' && share.amount > 0);
+  const label = pendingStatusText(p) || `Transfiere después ${formatARS(pending)}`;
+  const share = { kind: 'pending', name: String(p?.pendingTo || p?.paidUpdatedBy || '').trim(), amount: pending };
+  const x = !shownInRow && canAnnulPayment(p, share)
+    ? `<button type="button" class="pay-x" data-annul-pending="1" aria-label="Anular ${esc(label)}">${PAY_X_SVG}</button>`
+    : '';
   const pill = shownInRow
     ? ''
-    : `<p class="pay-pending" id="pay-pending-now">Transfiere después ${esc(formatARS(pending))}</p>`;
+    : `<ul class="pay-recorded" id="pay-pending-now"><li class="pay-pending-row"><span>${esc(label)}</span>${x}</li></ul>`;
   return `${pill}
       <div class="pay-receive-row" id="pay-receive-row">
         <button type="button" class="btn" id="btn-receive-pending">Marcar transferencia como cobrada</button>
@@ -5533,6 +5553,18 @@ function openPaymentForm(m, p, opts = {}) {
     const pending = paymentParts(fresh).pending;
     slot.innerHTML = `${recordedPaymentList(fresh, 'pay-recorded')}${pending > 0 ? pendingTransferReminderRow(m, fresh, pending) : ''}`;
     bindAnnulList($('#pay-recorded'), fresh);
+    slot.querySelectorAll('[data-annul-pending]').forEach((btn) => {
+      btn.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const amount = paymentParts(fresh).pending;
+        annulRecordedPayment(fresh, {
+          kind: 'pending',
+          name: String(fresh.pendingTo || fresh.paidUpdatedBy || '').trim(),
+          amount,
+        });
+      };
+    });
     const receive = $('#btn-receive-pending');
     if (receive) receive.onclick = () => {
       const job = Promise.resolve(app.store.markTransferReceived(fresh.id, app.who)).catch((error) => {
@@ -7260,7 +7292,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v160" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v161" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7297,7 +7329,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v160" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v161" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
