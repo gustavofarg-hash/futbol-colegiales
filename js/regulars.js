@@ -1,6 +1,7 @@
 // Quién suele jugar el mismo día de la semana y la misma hora.
 // Solo mira los partidos y jugadores que ya están cargados.
 import { addDays, toISODate, weekdayOf } from './dates.js';
+import { isAutoGuestName } from './guests.js';
 import { personKey } from './roster.js';
 import { signupOrganizerUid } from './stats.js';
 
@@ -20,8 +21,8 @@ function clock(time) {
 /**
  * Quienes se anotaron (titular o espera) con este organizador, el mismo día
  * de la semana y la misma hora, en los últimos 3 meses. Un partido que después
- * se canceló también cuenta. No entran los que ya están en este partido.
- * Orden: más veces primero.
+ * se canceló también cuenta. No entran los que ya están en este partido
+ * ni un invitado sin nombre (Invitado 1, Amigo 2). Orden: más veces primero.
  */
 export function usualPlayers({ match, matches, players, today, who } = {}) {
   const uid = String(who?.uid || '').trim();
@@ -45,6 +46,7 @@ export function usualPlayers({ match, matches, players, today, who } = {}) {
     if (weekdayOf(other.date) !== day || clock(other.time) !== time) continue;
     for (const player of players || []) {
       if (player?.matchId !== other.id || !uid || signupOrganizerUid(player) !== uid) continue;
+      if (isAutoGuestName(player?.name)) continue;
       const key = personKey(player, players);
       if (!key || here.has(key)) continue;
       const once = `${other.id}:${key}`;
