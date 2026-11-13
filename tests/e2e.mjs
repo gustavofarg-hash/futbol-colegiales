@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v162');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v163');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -2827,6 +2827,18 @@ const usualCounts = await page.$$eval('#usual-list .sub', (els) => els.map((el) 
 const solHref = await page.locator('#usual-list .slot', { hasText: 'Habitual Sol' }).locator('a.wa-btn').getAttribute('href');
 const mudoWa = await page.locator('#usual-list .slot', { hasText: 'Habitual Mudo' }).locator('a.wa-btn').count();
 check('Suelen jugar ordena por veces y abre WhatsApp vacío', JSON.stringify(usualNames) === JSON.stringify(['Habitual Sol', 'Habitual Espera', 'Habitual Leo', 'Habitual Lluvia', 'Habitual Mudo']) && usualCounts[0] === '2 partidos' && usualCounts[1] === '1 partido' && solHref === 'https://wa.me/5491141000001' && mudoWa === 0, `${usualNames.join(',')} ${usualCounts.join('|')} ${solHref}`);
+await page.evaluate(async (id) => {
+  const app = window.__app;
+  const mid = await app.store.addMatch({ date: '2026-10-08', time: '21:10', capacity: 14, note: 'Invitado habitual' }, app.who);
+  const past = { id: mid, date: '2026-10-08', time: '21:10', capacity: 14 };
+  const host = await app.store.addPlayer(past, { name: 'Anfitrión Ya', phone: '11 4100-0077' }, app.who);
+  await app.store.addPlayer(past, { name: 'Invitado 1', phone: '', invitedBy: host, invitedByName: 'Anfitrión Ya', guestAuto: true }, app.who);
+  await app.store.addPlayer(past, { name: 'Amigo 2', phone: '', invitedBy: host, invitedByName: 'Anfitrión Ya', guestAuto: true }, app.who);
+  await app.store.addPlayer({ id, date: '2026-10-29', time: '21:10', capacity: 14 }, { name: 'Anfitrión Ya', phone: '11 4100-0077' }, app.who);
+}, usualId);
+await page.waitForSelector('#slots .name:text-is("Anfitrión Ya")');
+const usualAfterGuest = (await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim());
+check('Suelen anotarse no lista Invitado ni Amigo sin nombre', usualAfterGuest.includes('Habitual Sol') && !usualAfterGuest.some((name) => name === 'Invitado 1' || name === 'Amigo 2' || name === 'Anfitrión Ya'), usualAfterGuest.join(','));
 await page.click('#btn-add-player');
 await page.fill('#player-name', 'Habitual Sol');
 await page.fill('#player-form [name=phone]', '11 4100-0001');
@@ -2834,6 +2846,96 @@ await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Habitual Sol")');
 await page.waitForFunction(() => ![...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.includes('Habitual Sol')));
 check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).join(',') === 'Habitual Espera,Habitual Leo,Habitual Lluvia,Habitual Mudo');
+
+{
+  await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Deudor Lista', phone: '5491166661717' }, app.who);
+    await app.store.addRoster({ name: 'Al Día Lista', phone: '5491166661818' }, app.who);
+    const otherId = await app.store.addRoster({ name: 'Deuda Ajena', phone: '5491166661919' }, app.who);
+    const gusId = await app.store.addRoster({ name: 'Deuda Gus', phone: '5491166662121' }, app.who);
+    const one = await app.store.addMatch({ date: '2026-10-20', time: '21:00', price: 5000, capacity: 14, note: 'Debe uno' }, app.who);
+    const two = await app.store.addMatch({ date: '2026-10-18', time: '19:00', price: 3000, capacity: 14, note: 'Debe dos' }, app.who);
+    const alien = await app.store.addMatch({ date: '2026-10-21', time: '18:00', price: 8000, capacity: 14, note: 'Debe Martín' }, app.who);
+    const nick = await app.store.addMatch({ date: '2026-10-17', time: '20:00', price: 4000, capacity: 14, note: 'Debe Gus' }, app.who);
+    const person = { name: 'Deudor Lista', phone: '5491166661717', rosterId };
+    await app.store.addPlayer({ id: one, date: '2026-10-20', price: 5000 }, person, app.who);
+    await app.store.addPlayer({ id: two, date: '2026-10-18', price: 3000 }, person, app.who);
+    const other = await app.store.addPlayer({ id: alien, date: '2026-10-21', price: 8000 }, { name: 'Deuda Ajena', phone: '5491166661919', rosterId: otherId }, app.who);
+    const gus = await app.store.addPlayer({ id: nick, date: '2026-10-17', price: 4000 }, { name: 'Deuda Gus', phone: '5491166662121', rosterId: gusId }, app.who);
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    db.players[other].signedUpWith = 'martin';
+    db.players[other].signedUpWithName = 'Martín';
+    db.players[gus].signedUpWith = '';
+    db.players[gus].signedUpWithName = 'Gus';
+    db.players[gus].addedBy = 'Gus';
+    db.players[gus].addedByUid = '';
+    localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+    app.store._emit();
+  });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.evaluate(() => { location.hash = '#/jugadores'; });
+  await page.waitForSelector('#roster-list .slot:has-text("Deudor Lista") .owe-toggle');
+  const folded = (await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-toggle').innerText()).replace(/\s+/g, ' ');
+  check('En Jugadores, plegado, dice cuánto me debe', folded.includes('Me debe:') && folded.includes('$8.000') && await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-list').getAttribute('hidden') !== null, folded);
+  check('Quien no debe y quien le debe a otro no tienen la franja', await page.locator('#roster-list .slot', { hasText: 'Al Día Lista' }).locator('.owe-box').count() === 0 && await page.locator('#roster-list .slot', { hasText: 'Deuda Ajena' }).locator('.owe-box').count() === 0);
+  const gusFolded = (await page.locator('#roster-list .slot', { hasText: 'Deuda Gus' }).locator('.owe-toggle').innerText()).replace(/\s+/g, ' ');
+  check('La deuda guardada a nombre de Gus también es mía', gusFolded.includes('Me debe:') && gusFolded.includes('$4.000'), gusFolded);
+  const lightDebt = await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-box').evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { bg: style.backgroundColor, color: style.color };
+  });
+  check('La franja de deuda se lee en claro', lightDebt.bg === 'rgb(253, 236, 239)' && lightDebt.color === 'rgb(208, 18, 45)', JSON.stringify(lightDebt));
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#roster-list .slot')].find((el) => el.innerText.includes('Deudor Lista'));
+    const top = row.getBoundingClientRect().top + window.scrollY - 160;
+    window.scrollTo(0, Math.max(0, top));
+  });
+  await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).screenshot({ path: '/opt/cursor/artifacts/screenshots/v163-jugadores-plegado.png' });
+  await page.evaluate(() => document.documentElement.classList.add('dark'));
+  const darkDebt = await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-box').evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { bg: style.backgroundColor, color: style.color };
+  });
+  check('La franja de deuda se lee en oscuro', darkDebt.bg === 'rgb(61, 24, 34)' && darkDebt.color === 'rgb(255, 180, 194)', JSON.stringify(darkDebt));
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#roster-list .slot')].find((el) => el.innerText.includes('Deudor Lista'));
+    const top = row.getBoundingClientRect().top + window.scrollY - 160;
+    window.scrollTo(0, Math.max(0, top));
+  });
+  await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).screenshot({ path: '/opt/cursor/artifacts/screenshots/v163-jugadores-plegado-oscuro.png' });
+  await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-toggle').click();
+  await page.waitForSelector('#roster-list .slot:has-text("Deudor Lista") .owe-list:not([hidden])');
+  const openRows = (await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-player').allInnerTexts()).map((text) => text.replace(/\s+/g, ' ').trim());
+  check('Desplegado lista cada partido con fecha e importe', openRows.length === 2 && openRows.some((text) => text.includes('18/10/2026') && text.includes('$3.000')) && openRows.some((text) => text.includes('20/10/2026') && text.includes('$5.000')), openRows.join(' | '));
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('#roster-list .slot')].find((el) => el.innerText.includes('Deudor Lista'));
+    const top = row.getBoundingClientRect().top + window.scrollY - 160;
+    window.scrollTo(0, Math.max(0, top));
+  });
+  await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).screenshot({ path: '/opt/cursor/artifacts/screenshots/v163-jugadores-desplegado-oscuro.png' });
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('dark');
+    const row = [...document.querySelectorAll('#roster-list .slot')].find((el) => el.innerText.includes('Deudor Lista'));
+    const top = row.getBoundingClientRect().top + window.scrollY - 160;
+    window.scrollTo(0, Math.max(0, top));
+  });
+  await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).screenshot({ path: '/opt/cursor/artifacts/screenshots/v163-jugadores-desplegado.png' });
+  await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-player', { hasText: '$5.000' }).click();
+  await page.waitForSelector('#pay-form');
+  const payWho = (await page.locator('#pay-name').innerText()).trim();
+  check('Tocar un partido abre el pago de ese jugador', payWho === 'Deudor Lista' && (await page.locator('#pay-when').innerText()).includes('20/10'), payWho);
+  await page.click('#pay-back');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  check('Al cerrar el pago sigue desplegada la deuda', await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-list:not([hidden])').count() === 1);
+  await page.click('#roster-debtors');
+  await page.waitForFunction(() => document.querySelector('#roster-debtors')?.getAttribute('aria-pressed') === 'true');
+  const filtered = (await page.locator('#roster-list .name').allInnerTexts()).map((text) => text.trim());
+  check('Jugadores con deuda deja solo los que me deben', filtered.includes('Deudor Lista') && filtered.includes('Deuda Gus') && !filtered.includes('Al Día Lista') && !filtered.includes('Deuda Ajena'), filtered.join(','));
+  await page.evaluate(() => { window.__app.rosterDebtors = false; });
+  await page.setViewportSize({ width: 390, height: 844 });
+}
+
 await page.evaluate(() => { location.hash = '#/'; });
 await page.waitForSelector('.match-card[data-date="2026-11-08"]');
 await page.click('.match-card[data-date="2026-11-08"]');

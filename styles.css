@@ -291,6 +291,13 @@ h2.section:first-child { margin-top: 4px; }
 .detail-tools .btn { min-height: 40px; font-size: 0.875rem; padding: 0 12px; flex: 1; }
 
 .slots { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+#roster-filters { margin: 0 0 12px; }
+#roster-list > .slot:has(.owe-box) { padding-bottom: 0; overflow: hidden; align-items: center; }
+#roster-list > .slot > .owe-box {
+  flex: 1 0 calc(100% + 18px);
+  margin: 6px -8px 0 -10px;
+  border-radius: 0 0 13px 13px;
+}
 .slot {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--card);
   border: 1px solid var(--line); border-radius: 14px; padding: 8px 8px 8px 10px; min-height: 60px;
