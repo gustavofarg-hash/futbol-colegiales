@@ -47,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v162';
+const APP_VERSION = 'f7c-v163';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -136,6 +136,8 @@ const app = {
   historyMeta: null,
   historyError: '',
   historyDebtors: false,
+  rosterDebtors: false,
+  rosterDebtOpen: new Set(),
   oweOpen: new Set(),
   matchMiss: {},
   showLater: false,
@@ -3495,13 +3497,42 @@ function openHistoryImportPreview(text, found) {
 }
 
 /* ───────── plantel (Jugadores) ───────── */
+function rosterPersonDebt(person) {
+  return playerDebt({
+    person,
+    players: app.players,
+    matches: knownMatches(),
+    prices: livePrices(),
+    organizer: actor(),
+  });
+}
+
+function rosterDebtBox(person) {
+  const debt = rosterPersonDebt(person);
+  if (!(debt.total > 0)) return '';
+  const open = app.rosterDebtOpen?.has(person.id) === true;
+  const rows = debt.rows.map((row) => {
+    const when = [numericDate(row.date), shortHour(row.time)].filter(Boolean).join(' · ');
+    return `<li><button type="button" class="owe-player" data-roster-debt="${esc(person.id)}" data-debt-player="${esc(row.playerId)}" data-debt-match="${esc(row.matchId)}"><span>${esc(when || row.text)}</span><b>${esc(formatARS(row.owed))}</b></button></li>`;
+  }).join('');
+  return `<div class="owe-box${open ? ' open' : ''}" id="roster-debt-${esc(person.id)}">
+    <button type="button" class="owe-toggle" data-roster-debt-toggle="${esc(person.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar lo que me debe' : 'Ver lo que me debe'}">
+      <span>Me debe: <b>${esc(formatARS(debt.total))}</b></span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <ul class="owe-list"${open ? '' : ' hidden'}>${rows}</ul>
+  </div>`;
+}
+
 function renderRoster() {
   const prevSearch = $('#roster-q');
   const q = prevSearch?.value || '';
   const searchFocused = !!(prevSearch && document.activeElement === prevSearch);
   const selStart = searchFocused ? prevSearch.selectionStart : 0;
   const selEnd = searchFocused ? prevSearch.selectionEnd : 0;
-  const people = searchRoster(rosterForOrganizer(app.roster, actor()), q);
+  const debtOn = app.rosterDebtors === true;
+  let people = searchRoster(rosterForOrganizer(app.roster, actor()), q);
+  if (debtOn) people = people.filter((person) => rosterPersonDebt(person).total > 0);
   const rows = people.map((person) => {
     const locked = !canEditRoster(person, actor());
     return `
@@ -3513,13 +3544,18 @@ function renderRoster() {
       ${waButton(person)}
       <button type="button" class="more-btn" data-roster-edit="${esc(person.id)}" aria-label="Editar ${esc(person.name)}"${locked && !canEditRosterNick(person, actorWithRole()) ? ' disabled' : ''}>${ICON.edit}</button>
       <button type="button" class="more-btn" data-roster-del="${esc(person.id)}" aria-label="Borrar ${esc(person.name)}">${ICON.trash}</button>
+      ${rosterDebtBox(person)}
     </li>`;
   }).join('');
+  const empty = q
+    ? 'Nadie coincide con esa búsqueda.'
+    : (debtOn ? 'Nadie te debe en los partidos cargados.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.');
   if (!replaceView(`
     <h2 class="section">Jugadores</h2>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
     <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
-    ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${q ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.'}</p>`}
+    <div class="chips" id="roster-filters"><button type="button" class="btn chip${debtOn ? ' on' : ''}" id="roster-debtors" aria-pressed="${debtOn ? 'true' : 'false'}">Jugadores con deuda</button></div>
+    ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${esc(empty)}</p>`}
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
     </div></div>`)) return;
@@ -3530,8 +3566,43 @@ function renderRoster() {
     try { input.setSelectionRange(selStart, selEnd); } catch { /* el navegador puede rechazar el rango */ }
   }
   $('#btn-add-roster').onclick = () => openRosterForm();
+  const debtFilter = $('#roster-debtors');
+  if (debtFilter) debtFilter.onclick = () => {
+    app.rosterDebtors = !app.rosterDebtors;
+    renderRoster();
+  };
   const list = $('#roster-list');
   if (list) list.onclick = (e) => {
+    const toggle = e.target.closest('[data-roster-debt-toggle]');
+    if (toggle) {
+      e.preventDefault();
+      const id = toggle.dataset.rosterDebtToggle;
+      if (!app.rosterDebtOpen) app.rosterDebtOpen = new Set();
+      if (app.rosterDebtOpen.has(id)) app.rosterDebtOpen.delete(id);
+      else app.rosterDebtOpen.add(id);
+      renderRoster();
+      return;
+    }
+    const jump = e.target.closest('[data-roster-debt]');
+    if (jump) {
+      e.preventDefault();
+      const rosterId = jump.dataset.rosterDebt;
+      if (!app.rosterDebtOpen) app.rosterDebtOpen = new Set();
+      if (rosterId) app.rosterDebtOpen.add(rosterId);
+      const match = knownMatches().find((item) => item.id === jump.dataset.debtMatch);
+      const who = app.players.find((item) => item.id === jump.dataset.debtPlayer);
+      if (match && who && canAdd(match, actor().uid)) {
+        const hash = location.hash;
+        openPaymentForm(match, who, {
+          returnTo: () => {
+            if (rosterId) app.rosterDebtOpen.add(rosterId);
+            if (location.hash !== hash) location.hash = hash;
+            if (sheet.open) closeSheet();
+          },
+        });
+      }
+      return;
+    }
     const edit = e.target.closest('[data-roster-edit]');
     if (edit) {
       const person = app.roster.find((r) => r.id === edit.dataset.rosterEdit);
@@ -7298,7 +7369,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v162" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v163" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7335,7 +7406,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v162" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v163" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

@@ -3571,7 +3571,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v162');
+  assert.equal(version, 'f7c-v163');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4397,9 +4397,13 @@ test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
     { id: 'ajeno-lluvia', matchId: 'lluvia', name: 'Ajeno Lluvia', phone: '5491199999999', signedUpWith: 'mar' },
     { id: 'otra-lluvia', matchId: 'lluvia-otra', name: 'Otra Lluvia', phone: '5491100000000', ...mine },
     { id: 'vieja-lluvia', matchId: 'lluvia-vieja', name: 'Vieja Lluvia', phone: '5491100000001', ...mine },
+    { id: 'inv', matchId: 't1', name: 'Invitado 1', phone: '', invitedBy: 'beto-1', invitedByName: 'Beto', guestAuto: true, ...mine },
+    { id: 'amigo', matchId: 't2', name: 'Amigo 2', phone: '5491133330000', invitedBy: 'ana-1', guestAuto: true, ...mine },
+    { id: 'primo', matchId: 't1', name: 'Primo Real', phone: '5491141000099', invitedBy: 'beto-1', ...mine },
   ];
   const rows = usualPlayers({ match, matches, players, today, who: { uid: 'gus', name: 'Gustavo' } });
-  assert.deepEqual(rows.map((row) => [row.name, row.count]), [['Beto', 3], ['Espera', 1], ['Luz', 1], ['Nube', 1]]);
+  assert.deepEqual(rows.map((row) => [row.name, row.count]), [['Beto', 3], ['Espera', 1], ['Luz', 1], ['Nube', 1], ['Primo Real', 1]]);
+  assert.equal(rows.some((row) => row.name === 'Invitado 1' || row.name === 'Amigo 2'), false);
 });
 
 test('el medidor no escribe seguido ni con la app oculta', () => {
