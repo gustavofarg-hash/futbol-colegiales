@@ -47,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v164';
+const APP_VERSION = 'f7c-v165';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -3722,6 +3722,27 @@ function rosterFormError(error, formId) {
   toast('No se pudo guardar: ' + (error?.code || error?.message || error));
 }
 
+function placeCaretAtEnd(input) {
+  if (!input?.isConnected) return;
+  const len = String(input.value || '').length;
+  try { input.setSelectionRange(len, len); } catch { /* type=number no deja elegir rango */ }
+}
+
+/** Foco en el nombre y cursor al final. En Android el teclado lo manda al principio: se vuelve a poner. */
+function focusCaretAtEnd(input) {
+  if (!input || input.disabled) return;
+  const place = () => {
+    if (!input.isConnected) return;
+    input.focus();
+    placeCaretAtEnd(input);
+  };
+  input.addEventListener('focus', () => placeCaretAtEnd(input));
+  place();
+  requestAnimationFrame(place);
+  setTimeout(place, 60);
+  setTimeout(place, 300);
+}
+
 function openRosterForm(person, opts = {}) {
   const presetName = !person ? String(opts.name || '').trim() : '';
   const lockPhone = phoneHidden(person);
@@ -3731,7 +3752,7 @@ function openRosterForm(person, opts = {}) {
       <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">Nombre completo. El WhatsApp es opcional. Si otro organizador ya tiene ese número, es el mismo jugador. Si lo tenés vos, no se duplica.</p>
-      <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || presetName)}"></label>
+      <label class="field"><span>Nombre</span><input name="name" required ${presetName ? '' : 'autofocus'} autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || presetName)}"></label>
       <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${person ? `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(displayFromWa(person.phone))}">` : `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="">${waShareControl('wa-share', { named: true })}</div>`}
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
@@ -3739,6 +3760,7 @@ function openRosterForm(person, opts = {}) {
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit"${locked ? ' disabled' : ''}>${person ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
   const form = $('#roster-form');
+  if (presetName && form.name) focusCaretAtEnd(form.name);
   if (locked) {
     // El admin puede cambiar el apodo aunque la ficha sea de otro organizador.
     const nickOk = canEditRosterNick(person, actorWithRole());
@@ -7453,7 +7475,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v164" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v165" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7490,7 +7512,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v164" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v165" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
