@@ -21,7 +21,7 @@ import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { activityNoticeText, activityNotices } from './notify.js';
-import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone } from './roster.js';
+import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone, withPendingRoster } from './roster.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
@@ -47,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v164';
+const APP_VERSION = 'f7c-v165';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -137,6 +137,8 @@ const app = {
   historyError: '',
   historyDebtors: false,
   rosterDebtors: false,
+  rosterQueryPinned: false,
+  rosterPending: null,
   rosterDebtOpen: new Set(),
   oweOpen: new Set(),
   matchMiss: {},
@@ -1051,6 +1053,7 @@ function playerLinkDenied(id) {
   return !person || !rosterHeldBy(person, actor());
 }
 function render() {
+  rosterRevealJustScrolled = false;
   if (!app.session?.user) { lockShell(); return; }
   if (document.documentElement.classList.contains('signed-out')) unlockShell();
   const r = route();
@@ -1087,7 +1090,7 @@ function render() {
   requestAnimationFrame(placeBars);
   if (app.revealPlayerId && !app.revealShown) settleRevealedPlayer();
   const revealingHere = !!(app.revealPlayerId && !app.revealShown && addedPlayerRow(app.revealPlayerId));
-  if (same && y > 0 && !revealingHere) {
+  if (same && y > 0 && !revealingHere && !rosterRevealJustScrolled) {
     const top = y;
     requestAnimationFrame(() => {
       if (app.revealUserMoved) return;
@@ -3542,6 +3545,9 @@ function rosterDebtBox(person) {
 }
 
 function rosterQuery() {
+  // Al guardar un alta se fija la búsqueda vacía. Si se lee el input todavía
+  // montado, el texto viejo vuelve a filtrar y el jugador nuevo no entra.
+  if (app.rosterQueryPinned) return app.rosterQuery || '';
   const live = $('#roster-q');
   if (live) return live.value;
   return app.rosterQuery || '';
@@ -3581,15 +3587,49 @@ function rosterBodyHtml() {
   return people.length ? `<ul class="slots" id="roster-list">${rosterRowsHtml(people)}</ul>` : `<p class="empty-wait" id="roster-list">${esc(empty)}</p>`;
 }
 
+let rosterRevealJustScrolled = false;
+
 function revealRosterPlayer() {
   const id = app.rosterRevealId;
   if (!id || app.rosterRevealScrolled || Date.now() >= (app.rosterRevealUntil || 0)) return;
   const row = document.querySelector(`#roster-list [data-roster="${CSS.escape(id)}"]`);
   if (!row) return;
   app.rosterRevealScrolled = true;
+  rosterRevealJustScrolled = true;
   const delta = revealScrollDelta(row);
   const scroller = document.scrollingElement || document.documentElement;
   if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+}
+
+/** Muestra el alta antes del snapshot y deja la lista sin búsqueda ni filtro de deuda. */
+function stageNewRoster(id, fields) {
+  const me = actor();
+  const person = {
+    id,
+    name: String(fields?.name || '').trim(),
+    phone: fields?.phone || '',
+    createdBy: me.name || '',
+    createdByUid: me.uid || '',
+    hasPhone: !!fields?.phone,
+    ...(me.uid ? { holders: [me.uid] } : {}),
+    ...(cleanShortName(fields?.shortName) ? { shortName: cleanShortName(fields.shortName) } : {}),
+  };
+  const until = Date.now() + 15000;
+  // Si el snapshot ya trajo la ficha, no hay que retenerla: un borrado posterior
+  // volvería a mostrarla. Si todavía no está, se sostiene hasta que llegue.
+  if (app.roster.some((row) => row.id === id)) app.rosterPending = null;
+  else {
+    app.rosterPending = { id, person, until };
+    app.roster = app.roster.concat(person);
+  }
+  app.rosterQuery = '';
+  app.rosterQueryPinned = true;
+  app.rosterDebtors = false;
+  app.rosterRevealId = id;
+  app.rosterRevealUntil = until;
+  app.rosterRevealScrolled = false;
+  const live = $('#roster-q');
+  if (live) live.value = '';
 }
 
 function bindRosterList() {
@@ -3658,6 +3698,7 @@ function paintRosterBody() {
 function renderRoster() {
   const { q, debtOn, base } = rosterMatches();
   app.rosterQuery = q;
+  app.rosterQueryPinned = false;
   const showAdd = !!q.trim() && base.length === 0;
   if (!replaceView(`
     <h2 class="section">Jugadores</h2>
@@ -3778,13 +3819,7 @@ function openRosterForm(person, opts = {}) {
       ? app.store.updateRoster(person.id, phoneRaw === null ? { name, shortName } : { name, phone, shortName })
       : app.store.addRoster({ name, phone, shortName, phoneShared: $('#wa-share')?.checked === true }, app.who);
     Promise.resolve(job).then((id) => {
-      if (!person && id) {
-        app.rosterQuery = '';
-        app.rosterDebtors = false;
-        app.rosterRevealId = id;
-        app.rosterRevealUntil = Date.now() + 2200;
-        app.rosterRevealScrolled = false;
-      }
+      if (!person && id) stageNewRoster(id, { name, phone, shortName });
       closeSheet();
       toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores');
     }).catch((err) => rosterFormError(err, 'rf-err'));
@@ -3806,6 +3841,7 @@ async function deleteRosterPlayer(person) {
     return;
   }
   if (!(await askConfirm(`¿Borrar a ${person.name} de Jugadores? No lo quita de los partidos.`, { danger: true }))) return;
+  if (app.rosterPending?.id === person.id) app.rosterPending = null;
   Promise.resolve(app.store.deleteRoster(person.id)).then(() => toast(`${person.name} borrado`)).catch((err) => {
     if (err?.code === 'roster-delete-blocked') askNotice(`No se puede borrar a ${person.name}.\n${(err.reasons || []).join('\n')}`);
     else if (isRosterDenied(err)) showError(ROSTER_DENIED_WRITE);
@@ -7453,7 +7489,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v164" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v165" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7490,7 +7526,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v164" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v165" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -7655,6 +7691,9 @@ async function boot() {
     app.historyMeta = historyMeta || null;
     app.historyError = historyError || '';
     app.roster = roster || [];
+    const pendingRoster = withPendingRoster(app.roster, app.rosterPending, Date.now());
+    app.roster = pendingRoster.roster;
+    app.rosterPending = pendingRoster.pending;
     app.rosterNotes = view.rosterNotes || {};
     app.suspensions = view.suspensions || [];
     app.suspensionHistory = view.suspensionHistory || [];

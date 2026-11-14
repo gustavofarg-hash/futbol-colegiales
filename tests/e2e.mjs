@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v164');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v165');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -2981,10 +2981,43 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
   await page.click('#btn-add-roster');
   await page.waitForSelector('#roster-form [name=name]');
   await page.fill('#roster-form [name=name]', 'Visible Nuevo');
+  await page.evaluate(() => { document.scrollingElement.scrollTop = 0; });
   await page.click('#roster-form button[type=submit]');
   await page.waitForSelector('#roster-list .slot.just-added:has-text("Visible Nuevo")');
   check('Al agregar se limpia la búsqueda y se ve el jugador', (await page.inputValue('#roster-q')) === '' && await page.locator('#roster-debtors').getAttribute('aria-pressed') === 'false');
-  await page.locator('#roster-list .slot.just-added').screenshot({ path: '/opt/cursor/artifacts/screenshots/v164-jugador-nuevo.png' });
+  await page.click('#roster-debtors');
+  await page.fill('#roster-q', 'nadie-con-este-nombre');
+  await page.click('#btn-add-roster');
+  await page.waitForSelector('#roster-form [name=name]');
+  await page.fill('#roster-form [name=name]', 'Visible Sin Filtro');
+  await page.evaluate(() => { document.scrollingElement.scrollTop = 0; });
+  await page.click('#roster-form button[type=submit]');
+  await page.waitForSelector('#roster-list .slot.just-added:has-text("Visible Sin Filtro")');
+  check('Con deuda y búsqueda, el alta limpia el filtro y muestra al jugador', (await page.inputValue('#roster-q')) === '' && await page.locator('#roster-debtors').getAttribute('aria-pressed') === 'false' && await page.locator('#roster-list .name', { hasText: 'Visible Sin Filtro' }).count() === 1);
+  await page.fill('#roster-q', 'López Visible Completo');
+  await page.waitForSelector('#roster-add-new:not([hidden])');
+  await page.click('#roster-add-new');
+  await page.waitForSelector('#roster-form [name=name]');
+  check('El más abre el alta con el nombre completo', (await page.inputValue('#roster-form [name=name]')) === 'López Visible Completo');
+  await page.evaluate(() => { document.scrollingElement.scrollTop = 0; });
+  await page.click('#roster-form button[type=submit]');
+  await page.waitForSelector('#roster-list .slot.just-added:has-text("López Visible Completo")');
+  const placed = await page.evaluate(() => {
+    const row = document.querySelector('#roster-list .slot.just-added');
+    const box = row?.getBoundingClientRect();
+    const header = document.querySelector('.topstack')?.getBoundingClientRect().bottom ?? 0;
+    const bar = document.querySelector('#view .actionbar')?.getBoundingClientRect().top ?? window.innerHeight;
+    return {
+      top: box?.top ?? -1,
+      bottom: box?.bottom ?? -1,
+      header,
+      bar,
+      q: document.querySelector('#roster-q')?.value ?? null,
+      debt: document.querySelector('#roster-debtors')?.getAttribute('aria-pressed'),
+    };
+  });
+  check('El alta desde el más queda en la pantalla sin el filtro', placed.q === '' && placed.debt === 'false' && placed.top >= placed.header - 1 && placed.bottom <= placed.bar + 1, JSON.stringify(placed));
+  await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v165-jugador-nuevo.png' });
   const cashMatch = await page.evaluate(async () => {
     const app = window.__app;
     const day = '2026-11-15';
