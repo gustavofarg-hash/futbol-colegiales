@@ -130,22 +130,27 @@ function render(state) {
   const thanks = player.confirmed === 'si'
     ? '¡Gracias! Quedó anotado que jugás.'
     : player.confirmed === 'no'
-      ? 'Quedó anotado que no jugás. Si cambiás de idea, tocá de nuevo.'
+      ? 'Quedó anotado que no jugás.'
       : '';
+  const choice = answered
+    ? `<p class="confirm-result ${player.confirmed}" id="thanks">${esc(thanks)}</p>`
+    : `<p class="hint">¿Jugás este partido?</p>
+      <div class="confirm-actions">
+        <button type="button" class="btn primary" id="btn-si">Sí, juego</button>
+        <button type="button" class="btn" id="btn-no">No juego</button>
+      </div>
+      <p class="thanks" id="thanks" hidden></p>`;
   root.innerHTML = `
     <section class="detail-head confirm-card">
       <h1>${esc(publicName(player))}</h1>
       <div class="when">${esc(when)}</div>
       <div class="note">${esc(match.venueName || VENUE)}${match.note ? ` · ${esc(match.note)}` : ''}</div>
-      <p class="hint">¿Jugás este partido?</p>
-      <div class="confirm-actions">
-        <button type="button" class="btn primary ${player.confirmed === 'si' ? 'chosen' : ''}" id="btn-si">Sí, juego</button>
-        <button type="button" class="btn ${player.confirmed === 'no' ? 'chosen' : ''}" id="btn-no">No juego</button>
-      </div>
-      <p class="thanks" id="thanks" ${answered ? '' : 'hidden'}>${esc(thanks)}</p>
+      ${choice}
     </section>`;
-  $('#btn-si').onclick = () => choose(state, 'si');
-  $('#btn-no').onclick = () => choose(state, 'no');
+  const yes = $('#btn-si');
+  const no = $('#btn-no');
+  if (yes) yes.onclick = () => choose(state, 'si');
+  if (no) no.onclick = () => choose(state, 'no');
 }
 
 async function choose(state, answer) {

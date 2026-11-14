@@ -1,6 +1,6 @@
 // Totales de pagos y de "Agregó", por jugador y por organizador.
 // Puro: las pruebas no necesitan Firebase. Un pago sin receivedBy cuenta como "Sin especificar".
-import { MESES_CORTOS, numericDate, shortHour } from './dates.js';
+import { MESES_CORTOS, numericDate, shortHour, todayISO, toEpoch } from './dates.js';
 import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { priceOfMatch, promoForPlayer } from './prices.js';
 import { UNSPECIFIED, sameOrganizerIdentity } from './organizers.js';
@@ -362,12 +362,26 @@ export function organizerMatchDebt({ match, players, matches, prices, organizer 
 }
 
 /**
+ * El partido ya se jugó: la fecha y la hora ya pasaron, y no está cancelado.
+ * Sin hora, cuenta solo si el día ya pasó.
+ */
+export function matchDebtCounts(match, now = Date.now()) {
+  if (!match?.date || match.cancelled === true) return false;
+  const time = String(match.time || '').trim();
+  if (!/^\d{1,2}:\d{2}$/.test(time)) return match.date < todayISO(new Date(now));
+  const clock = time.length === 4 ? `0${time}` : time;
+  const start = toEpoch(match.date, clock);
+  return Number.isFinite(start) && start <= now;
+}
+
+/**
  * Lo que le falta pagar, partido por partido.
  * Debe el precio del partido menos lo ya cobrado (efectivo + transferencia).
  * Con promo, el precio es la parte de ese día. Transfiere después entra en el resto.
  * Juega gratis, la lista de espera y un partido cancelado no suman.
+ * playedOnly: solo partidos ya jugados (para recordar el cobro).
  */
-export function playerDebt({ person, players, matches, prices, organizer = null, key = '' }) {
+export function playerDebt({ person, players, matches, prices, organizer = null, key = '', playedOnly = false, now = Date.now() }) {
   const wanted = String(key || '').trim();
   const byId = new Map((matches || []).map((match) => [match.id, match]));
   const rows = [];
@@ -379,6 +393,7 @@ export function playerDebt({ person, players, matches, prices, organizer = null,
     if (!(owed > 0)) continue;
     const match = byId.get(player.matchId);
     if (!match) continue;
+    if (playedOnly && !matchDebtCounts(match, now)) continue;
     const when = [numericDate(match.date), shortHour(match.time)].filter(Boolean).join(' · ');
     rows.push({
       matchId: match.id,
