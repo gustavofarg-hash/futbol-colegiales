@@ -132,9 +132,10 @@ export function transferReminderWhen(iso, now = new Date()) {
   return dm ? `del ${dm}` : '';
 }
 
-/** Texto del chat. No lleva importe ni link: la persona aprieta Enviar en WhatsApp. */
-export function transferReminderText(firstName, when) {
-  return `Qué tal ${firstName}? No te olvides de transferirme el partido ${when} porfa`;
+/** Texto del chat. No lleva importe ni link: la persona aprieta Enviar en WhatsApp. Con 2 o más deudas, «los partidos». */
+export function transferReminderText(firstName, when, count = 1) {
+  const what = Number(count) >= 2 ? 'los partidos' : `el partido ${when}`;
+  return `Qué tal ${firstName}? No te olvides de transferirme ${what} porfa`;
 }
 
 /** "Hoy", "Mañana" o "" */
