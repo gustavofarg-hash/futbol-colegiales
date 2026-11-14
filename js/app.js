@@ -20,7 +20,7 @@ import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { activityNoticeText, activityNotices } from './notify.js';
 import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, capitalizeWords, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone, withPendingRoster } from './roster.js';
-import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
+import { ALREADY_IN_MATCH, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
@@ -4920,28 +4920,67 @@ function guestQtyHtml(value) {
   </div>`;
 }
 
-function bindGuestQty({ min = 0, value = 0, taken = [] } = {}) {
+function bindGuestSuggest(field, hits, match) {
+  const paintHits = () => {
+    const q = field.value.trim();
+    const picked = app.roster.find((item) => item.id === field.dataset.rosterId);
+    if (picked && foldText(picked.name) !== foldText(q)) delete field.dataset.rosterId;
+    const linked = field.dataset.rosterId;
+    const matches = q && !linked ? searchRoster(rosterForOrganizer(app.roster, actor()), q).slice(0, 8) : [];
+    hits.hidden = matches.length === 0;
+    hits.innerHTML = matches.map((person) => {
+      const taken = match ? signupError(match.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]) : '';
+      const detail = [cleanShortName(person.shortName), person.phone ? displayFromWa(person.phone) : phoneHidden(person) ? PRIVATE_WA_TEXT : 'Sin número'].filter(Boolean).join(' · ');
+      return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${esc(detail)}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+    }).join('');
+  };
+  const choose = (id) => {
+    const person = app.roster.find((item) => item.id === id);
+    if (!person) return;
+    field.value = person.name;
+    field.dataset.rosterId = person.id;
+    hits.hidden = true;
+    hits.innerHTML = '';
+  };
+  bindComposedSearch(field, paintHits);
+  hits.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('[data-pick]')) event.preventDefault();
+  });
+  hits.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-pick]');
+    if (!btn || btn.disabled) return;
+    choose(btn.dataset.pick);
+  });
+}
+
+function bindGuestQty({ min = 0, value = 0, taken = [], match = null } = {}) {
   const input = $('#friend-count');
   const rows = $('#friend-rows');
   if (!input || !rows) return;
   const clamp = (n) => Math.min(20, Math.max(min, Number.isFinite(n) ? n : min));
   const paint = (n, focus) => {
     const count = clamp(Math.floor(Number(n) || 0));
-    const kept = [...rows.querySelectorAll('input')].map((el) => el.value);
+    const kept = [...rows.querySelectorAll('input.friend-name')].map((el) => ({
+      value: el.value,
+      rosterId: el.dataset.rosterId || '',
+    }));
     input.value = String(count);
     rows.innerHTML = '';
     for (let i = 0; i < count; i++) {
       const row = document.createElement('div');
       row.className = 'friend-row';
-      row.innerHTML = `<input type="text" maxlength="60" autocomplete="off" autocapitalize="words" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado ${i + 1}">`;
+      row.innerHTML = `<input class="friend-name" type="text" maxlength="60" autocomplete="off" autocapitalize="words" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado ${i + 1}"><ul class="roster-hits friend-hits" hidden></ul>`;
       rows.appendChild(row);
-      row.querySelector('input').value = kept[i] || '';
+      const field = row.querySelector('input');
+      field.value = kept[i]?.value || '';
+      if (kept[i]?.rosterId) field.dataset.rosterId = kept[i].rosterId;
+      bindGuestSuggest(field, row.querySelector('.friend-hits'), match);
     }
     const names = resolveFriendNames(Array.from({ length: count }, () => ''), taken);
     const hint = $('#friend-hint');
     if (hint) {
       hint.textContent = names.length
-        ? `Si dejás el nombre vacío: ${names.map((item) => item.name).join(', ')}.`
+        ? `Si dejás el nombre vacío: ${names.map((item) => item.name).join(', ')}. Si ya está en Jugadores, elegilo de la lista.`
         : 'Sin invitados entra solo él.';
     }
     if (focus) rows.querySelector('input')?.focus();
@@ -4975,11 +5014,17 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], opts
   const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
   if (guestBlock) { toast(guestBlock); return false; }
   const taken = host?.id ? friendNamesOf(m.id, host.id) : [];
-  const friends = (resolved || resolveFriendNames(friendRows, taken)).map((friend) => ({
+  const friends = (resolved || guestsFromRows(friendRows, taken)).map((friend) => ({
     name: friend.name,
-    guestAuto: friend.guestAuto,
+    guestAuto: friend.guestAuto === true,
     invitedBy: host?.id || (friend.guestAuto ? 'nuevo' : ''),
     invitedByName: host?.name || '',
+    shortName: friend.shortName || '',
+    phone: friend.phone || '',
+    rosterId: friend.rosterId || '',
+    phoneKey: friend.phoneKey || '',
+    hasPhone: friend.hasPhone === true,
+    phoneShared: friend.phoneShared === true,
   }));
   const people = host?.id
     ? friends
@@ -5041,12 +5086,17 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], opts
     for (const friend of friends) {
       const waiting = offset >= place.main;
       const friendId = await app.store.addPlayer(m, {
+        ...signup,
         name: friend.name,
-        phone: '',
+        shortName: friend.shortName || '',
+        phone: friend.phone || '',
+        rosterId: friend.rosterId || '',
+        phoneKey: friend.phoneKey || '',
+        hasPhone: friend.hasPhone === true,
+        phoneShared: friend.phoneShared === true,
         invitedBy: hostId,
         invitedByName: hostName,
         guestAuto: friend.guestAuto === true,
-        ...signup,
       }, app.who, { waiting });
       if (!waiting) await applyAutoCredit(friendId);
       offset += 1;
@@ -5103,7 +5153,7 @@ async function addGuestsToSameDay(targets, friends, signup, source) {
     if (blocked) { notes.push(`${label}: ${blocked}`); continue; }
     const there = new Set(friendNamesOf(match.id, host.id).map((name) => normName(name)));
     const fresh = friends.filter((friend) => !there.has(normName(friend.name)));
-    const todo = fresh.filter((friend) => !firstDuplicate(matesOf(match.id), [{ name: friend.name, phone: '', guestAuto: friend.guestAuto === true }]));
+    const todo = fresh.filter((friend) => !firstDuplicate(matesOf(match.id), [{ name: friend.name, phone: friend.phone || '', rosterId: friend.rosterId || '', phoneKey: friend.phoneKey || '', hasPhone: friend.hasPhone === true, guestAuto: friend.guestAuto === true }]));
     const clash = fresh.filter((friend) => !todo.includes(friend)).map((friend) => friend.name);
     if (clash.length) notes.push(`${label}: ${clash.join(', ')} ya figura${clash.length > 1 ? 'n' : ''} en ese partido`);
     if (!todo.length) { if (!clash.length) notes.push(`${label}: ya estaban`); continue; }
@@ -5114,12 +5164,17 @@ async function addGuestsToSameDay(targets, friends, signup, source) {
     for (const friend of todo) {
       const thereSignup = match.id === source?.id ? signup : signupForMatch(match, signup, actor());
       const friendId = await app.store.addPlayer(match, {
+        ...thereSignup,
         name: friend.name,
-        phone: '',
+        shortName: friend.shortName || '',
+        phone: friend.phone || '',
+        rosterId: friend.rosterId || '',
+        phoneKey: friend.phoneKey || '',
+        hasPhone: friend.hasPhone === true,
+        phoneShared: friend.phoneShared === true,
         invitedBy: host.id,
         invitedByName: host.name,
         guestAuto: friend.guestAuto === true,
-        ...thereSignup,
       }, app.who, { waiting: offset >= place.main });
       if (offset < place.main) await applyAutoCredit(friendId);
       offset += 1;
@@ -5453,7 +5508,7 @@ function openPlayerForm(m, p, opts = {}) {
       find.focus();
     }, 50);
   }
-  if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [] });
+  if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [], match: m });
   form.onsubmit = async (e) => {
     e.preventDefault();
     if (form.dataset.mode !== 'edit' || !p || form.dataset.editId !== p.id) p = null;
@@ -5565,7 +5620,21 @@ function openPlayerForm(m, p, opts = {}) {
 }
 
 function friendRowValues() {
-  return [...document.querySelectorAll('#friend-rows input')].map((input) => input.value);
+  return [...document.querySelectorAll('#friend-rows input.friend-name')].map((input) => ({
+    text: input.value,
+    rosterId: input.dataset.rosterId || '',
+  }));
+}
+
+/** El texto escrito, y la ficha de Jugadores solo si sigue siendo ese nombre. */
+function guestsFromRows(rows, taken) {
+  const list = rows || [];
+  const texts = list.map((row) => (typeof row === 'string' ? row : row?.text || ''));
+  return resolveFriendNames(texts, taken).map((friend, index) => {
+    const rosterId = typeof list[index] === 'object' ? String(list[index]?.rosterId || '') : '';
+    const person = rosterId ? (app.roster || []).find((item) => item.id === rosterId) : null;
+    return attachRosterGuest(friend, person);
+  });
 }
 /* Pago del jugador */
 function moneyText(amount) {
@@ -7617,7 +7686,7 @@ function openFriendForm(m, host) {
   openSheet(`
     <form id="friend-form" novalidate>
       <h3>Invitados de ${esc(host.name)}</h3>
-      <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Cuentan para el cupo como cualquier jugador.</p>
+      <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Si ya está en Jugadores, elegilo de la lista. Cuentan para el cupo como cualquier jugador.</p>
       ${signupFields(null, m)}
       <div class="friend-box">
         ${guestQtyHtml(1)}
@@ -7633,7 +7702,7 @@ function openFriendForm(m, host) {
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Agregar</button></div>
     </form>`);
   const form = $('#friend-form');
-  bindGuestQty({ min: 1, value: 1, taken: friendNamesOf(m.id, host.id) });
+  bindGuestQty({ min: 1, value: 1, taken: friendNamesOf(m.id, host.id), match: m });
   form.onsubmit = async (e) => {
     e.preventDefault();
     const rows = friendRowValues();
@@ -7641,7 +7710,7 @@ function openFriendForm(m, host) {
     const picked = new Set([...form.querySelectorAll('input[name=also]:checked')].map((input) => input.value));
     const also = sameDay.filter((row) => !row.blocked && picked.has(row.match.id));
     // Los nombres salen de este partido; en los otros van los mismos (mismo anfitrión + nombre = misma persona).
-    const resolved = resolveFriendNames(rows, friendNamesOf(m.id, host.id));
+    const resolved = guestsFromRows(rows, friendNamesOf(m.id, host.id));
     const result = await addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also, reveal: true });
     if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#friend-err').textContent = result;
   };

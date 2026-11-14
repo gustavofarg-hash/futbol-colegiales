@@ -101,6 +101,23 @@ export function firstDuplicate(existing, people) {
  * "Amigo N" viejo cuenta para el máximo. Renombrar "Amigo 1" no reescribe
  * a "Amigo 2": el próximo vacío sigue desde el número más alto que figura.
  */
+/** La ficha elegida solo si el texto sigue siendo ese nombre. Si no, queda el invitado escrito. */
+export function attachRosterGuest(friend, person) {
+  if (!friend || friend.guestAuto === true || !person?.id) return friend;
+  if (foldText(friend.name) !== foldText(person.name)) return friend;
+  return {
+    ...friend,
+    name: person.name,
+    shortName: cleanShortName(person.shortName) || '',
+    phone: person.phone || '',
+    rosterId: person.id,
+    phoneKey: person.phoneKey || '',
+    hasPhone: person.hasPhone === true,
+    phoneShared: person.phoneShared === true,
+    guestAuto: false,
+  };
+}
+
 export function resolveFriendNames(typed, taken = []) {
   let max = 0;
   for (const name of taken || []) max = Math.max(max, guestNumber(name));
