@@ -11,7 +11,7 @@ import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveCli
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
-import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
+import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
@@ -4557,6 +4557,21 @@ test('dos toques seguidos suman dos goles y dos al tanteador', async () => {
   const db = JSON.parse(mem.get(store.key));
   assert.equal(db.players[playerId].goals, 2);
   assert.equal(db.matches[matchId].score.bib, 2);
+});
+
+test('elegir un agendado vincula al invitado y un texto suelto no', () => {
+  const person = { id: 'r1', name: 'Ernesto Pérez', shortName: 'tito', phone: '5491111112222', phoneKey: 'abc', hasPhone: true, phoneShared: true };
+  const linked = attachRosterGuest({ name: 'Ernesto Pérez', guestAuto: false }, person);
+  assert.equal(linked.rosterId, 'r1');
+  assert.equal(linked.shortName, 'Tito');
+  assert.equal(linked.phone, '5491111112222');
+  assert.equal(linked.phoneShared, true);
+  const typed = attachRosterGuest({ name: 'Otro nombre', guestAuto: false }, person);
+  assert.equal(typed.rosterId, undefined);
+  assert.equal(typed.name, 'Otro nombre');
+  const empty = attachRosterGuest({ name: 'Invitado 1', guestAuto: true }, person);
+  assert.equal(empty.guestAuto, true);
+  assert.equal(empty.rosterId, undefined);
 });
 
 test('el cartel de las 2 horas nombra solo a quien no confirmó', () => {

@@ -7926,6 +7926,58 @@ await fresh.close();
 }
 
 {
+  await page.evaluate(() => { document.documentElement.classList.remove('dark'); });
+  const sug = await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Ernesto Sugerido', shortName: 'Tito Sug', phone: '11 7000-1771', phoneShared: true }, app.who);
+    const matchId = await app.store.addMatch({ date: '2026-12-02', time: '19:00', price: 5000, capacity: 14, note: 'Invitado sugerido' }, app.who);
+    const hostId = await app.store.addPlayer({ id: matchId, date: '2026-12-02', price: 5000 }, { name: 'Anfitrión Sug', phone: '11 7000-1770' }, app.who);
+    location.hash = `#/partido/${encodeURIComponent(matchId)}`;
+    return { rosterId, hostId };
+  });
+  await page.waitForSelector('.slot .name:text-is("Anfitrión Sug")');
+  await page.locator('.slot', { hasText: 'Anfitrión Sug' }).locator('[data-menu]').click();
+  await page.waitForSelector('#pm-friend');
+  await page.click('#pm-friend');
+  await page.waitForSelector('#friend-form .friend-name');
+  const ime = await page.evaluate(() => {
+    const input = document.querySelector('#friend-form .friend-name');
+    input.focus();
+    input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, 'Ern');
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText' }));
+    const during = document.querySelector('#friend-form .friend-hits')?.hidden === true;
+    input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'Ern' }));
+    return { during, text: document.querySelector('#friend-form .friend-hits')?.innerText || '' };
+  });
+  check('Mientras el teclado arma la palabra no salen sugerencias de invitados', ime.during && ime.text.includes('Ernesto Sugerido'), JSON.stringify(ime));
+  await page.fill('#friend-form .friend-name', 'ernesto');
+  await page.waitForSelector('#friend-form .roster-hit:has-text("Ernesto Sugerido")');
+  check('La sugerencia trae apodo y WhatsApp sin mirar mayúsculas', (await page.locator('#friend-form .roster-hit').innerText()).includes('Tito Sug') && (await page.locator('#friend-form .roster-hit').innerText()).includes('7000'));
+  await page.locator('#friend-form .friend-row').screenshot({ path: '/opt/cursor/artifacts/screenshots/v166-invitado-sugerido.png' });
+  await page.click('#friend-form .roster-hit');
+  check('Elegir la sugerencia completa el nombre', (await page.inputValue('#friend-form .friend-name')) === 'Ernesto Sugerido' && await page.locator('#friend-form .friend-hits').isHidden());
+  await page.click('#friend-form button[type=submit]');
+  await page.waitForSelector('#slots .name:text-is("Tito Sug")');
+  const linked = await page.evaluate((rosterId) => {
+    const guest = window.__app.players.find((player) => player.rosterId === rosterId && player.invitedBy);
+    return guest ? { name: guest.name, shortName: guest.shortName || '', phone: guest.phone || '', rosterId: guest.rosterId } : null;
+  }, sug.rosterId);
+  check('El invitado queda vinculado con el apodo y el WhatsApp', linked?.name === 'Ernesto Sugerido' && linked.shortName === 'Tito Sug' && linked.phone.includes('7000') && linked.rosterId === sug.rosterId, JSON.stringify(linked));
+  await page.locator('.slot', { has: page.locator('.name:text-is("Anfitrión Sug")') }).locator('[data-menu]').click();
+  await page.waitForSelector('#pm-friend');
+  await page.click('#pm-friend');
+  await page.fill('#friend-form .friend-name', 'Invitado Suelto');
+  await page.click('#friend-form button[type=submit]');
+  await page.waitForSelector('#slots .name:text-is("Invitado Suelto")');
+  const loose = await page.evaluate(() => {
+    const guest = window.__app.players.find((player) => player.name === 'Invitado Suelto');
+    return guest ? { rosterId: guest.rosterId || '' } : null;
+  });
+  check('Sin elegir una sugerencia queda el texto escrito', loose?.rosterId === '', JSON.stringify(loose));
+}
+
+{
   // Con GOOGLE_DRIVE_CLIENT_ID: pide permiso con Google y sube el archivo con la API de Drive.
   const driveCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
   await driveCtx.route('**/config.js', async (route) => {
