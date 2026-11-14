@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v163');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v164');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -589,12 +589,22 @@ check('La confirmación no tiene menús', confirmBare && confirmBody.includes('S
 check('La página no muestra teléfonos ni a los otros', !confirmBody.includes('549') && !confirmBody.includes('1234') && !confirmBody.includes('Pedro') && !confirmBody.includes('Pérez') && (await confirmPage.locator('h1').innerText()) === 'Juan' && confirmBody.includes('Cancha 2') && confirmBody.includes('Jueves 22/10') && confirmBody.includes('21:00'), confirmBody.replace(/\s+/g, ' ').slice(0, 180));
 await confirmPage.screenshot({ path: '/opt/cursor/artifacts/screenshots/v120-confirmar.png' });
 await confirmPage.click('#btn-si');
-await confirmPage.waitForSelector('#thanks:not([hidden])');
-check('Agradece el sí', (await confirmPage.textContent('#thanks')).includes('jugás'));
+await confirmPage.waitForSelector('#thanks');
+check('Agradece el sí', (await confirmPage.textContent('#thanks')).includes('jugás') && await confirmPage.locator('#btn-si').count() === 0 && await confirmPage.locator('#btn-no').count() === 0);
 await page.waitForFunction(() => document.querySelector('#slots .slot')?.innerText.includes('Confirmó'));
 check('El organizador ve ✅ Confirmó al instante', (await page.textContent('#slots .slot:has-text("Juan Pérez")')).includes('Confirmó'));
-await confirmPage.click('#btn-no');
-await confirmPage.waitForFunction(() => (document.querySelector('#thanks')?.textContent || '').includes('no jugás'));
+await confirmPage.reload();
+await confirmPage.waitForSelector('#thanks');
+check('Al reabrir el link sigue el mensaje y no los botones', (await confirmPage.textContent('#thanks')).includes('jugás') && await confirmPage.locator('#btn-si').count() === 0);
+await page.evaluate((id) => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const player = db.players[id];
+  player.confirmed = 'no';
+  const card = player.confirmToken && db.confirmations?.[player.confirmToken];
+  if (card) card.confirmed = 'no';
+  localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+  window.__app.store._emit();
+}, juan.id);
 await page.waitForFunction(() => (document.querySelector('#confirm-sum')?.textContent || '').includes('No juegan: 1'));
 check('Se puede cambiar a No juego', (await page.textContent('#slots .slot:has-text("Juan Pérez")')).includes('No juega'));
 await confirmPage.close();
@@ -2877,7 +2887,7 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
   await page.evaluate(() => { location.hash = '#/jugadores'; });
   await page.waitForSelector('#roster-list .slot:has-text("Deudor Lista") .owe-toggle');
   const folded = (await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-toggle').innerText()).replace(/\s+/g, ' ');
-  check('En Jugadores, plegado, dice cuánto me debe', folded.includes('Me debe:') && folded.includes('$8.000') && await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-list').getAttribute('hidden') !== null, folded);
+  check('En Jugadores, plegado, dice cuánto me debe', folded.includes('Me debe:') && folded.includes('$3.000') && !folded.includes('$8.000') && await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-list').getAttribute('hidden') !== null, folded);
   check('Quien no debe y quien le debe a otro no tienen la franja', await page.locator('#roster-list .slot', { hasText: 'Al Día Lista' }).locator('.owe-box').count() === 0 && await page.locator('#roster-list .slot', { hasText: 'Deuda Ajena' }).locator('.owe-box').count() === 0);
   const gusFolded = (await page.locator('#roster-list .slot', { hasText: 'Deuda Gus' }).locator('.owe-toggle').innerText()).replace(/\s+/g, ' ');
   check('La deuda guardada a nombre de Gus también es mía', gusFolded.includes('Me debe:') && gusFolded.includes('$4.000'), gusFolded);
@@ -2907,7 +2917,7 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
   await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-toggle').click();
   await page.waitForSelector('#roster-list .slot:has-text("Deudor Lista") .owe-list:not([hidden])');
   const openRows = (await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-player').allInnerTexts()).map((text) => text.replace(/\s+/g, ' ').trim());
-  check('Desplegado lista cada partido con fecha e importe', openRows.length === 2 && openRows.some((text) => text.includes('18/10/2026') && text.includes('$3.000')) && openRows.some((text) => text.includes('20/10/2026') && text.includes('$5.000')), openRows.join(' | '));
+  check('Desplegado lista cada partido con fecha e importe', openRows.length === 1 && openRows.some((text) => text.includes('18/10/2026') && text.includes('$3.000')) && !openRows.some((text) => text.includes('20/10/2026')), openRows.join(' | '));
   await page.evaluate(() => {
     const row = [...document.querySelectorAll('#roster-list .slot')].find((el) => el.innerText.includes('Deudor Lista'));
     const top = row.getBoundingClientRect().top + window.scrollY - 160;
@@ -2921,10 +2931,10 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
     window.scrollTo(0, Math.max(0, top));
   });
   await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).screenshot({ path: '/opt/cursor/artifacts/screenshots/v163-jugadores-desplegado.png' });
-  await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-player', { hasText: '$5.000' }).click();
+  await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-player', { hasText: '$3.000' }).click();
   await page.waitForSelector('#pay-form');
   const payWho = (await page.locator('#pay-name').innerText()).trim();
-  check('Tocar un partido abre el pago de ese jugador', payWho === 'Deudor Lista' && (await page.locator('#pay-when').innerText()).includes('20/10'), payWho);
+  check('Tocar un partido abre el pago de ese jugador', payWho === 'Deudor Lista' && (await page.locator('#pay-when').innerText()).includes('18/10'), payWho);
   await page.click('#pay-back');
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
   check('Al cerrar el pago sigue desplegada la deuda', await page.locator('#roster-list .slot', { hasText: 'Deudor Lista' }).locator('.owe-list:not([hidden])').count() === 1);
@@ -2934,6 +2944,102 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
   check('Jugadores con deuda deja solo los que me deben', filtered.includes('Deudor Lista') && filtered.includes('Deuda Gus') && !filtered.includes('Al Día Lista') && !filtered.includes('Deuda Ajena'), filtered.join(','));
   await page.evaluate(() => { window.__app.rosterDebtors = false; });
   await page.setViewportSize({ width: 390, height: 844 });
+}
+
+{
+  await page.evaluate(() => {
+    document.documentElement.classList.remove('dark');
+    location.hash = '#/jugadores';
+  });
+  await page.waitForSelector('#roster-q');
+  await page.fill('#roster-q', 'Zzzsinficha');
+  await page.waitForSelector('#roster-add-new:not([hidden])');
+  await page.locator('.roster-search').screenshot({ path: '/opt/cursor/artifacts/screenshots/v164-buscar-mas.png' });
+  await page.click('#roster-add-new');
+  await page.waitForSelector('#roster-form [name=name]');
+  check('El más abre el alta con el texto buscado', (await page.inputValue('#roster-form [name=name]')) === 'Zzzsinficha');
+  await page.click('#roster-form [data-close]');
+  await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
+  const ime = await page.evaluate(() => {
+    const input = document.querySelector('#roster-q');
+    input.focus();
+    input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    const set = (value) => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', data: value }));
+    };
+    set('G');
+    set('Gom');
+    const same = document.querySelector('#roster-q') === input;
+    const mid = input.value;
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, 'Gómez');
+    input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'Gómez' }));
+    return { same, mid, value: document.querySelector('#roster-q').value, node: document.querySelector('#roster-q') === input };
+  });
+  check('La sugerencia del teclado completa Gómez', ime.same && ime.mid === 'Gom' && ime.value === 'Gómez' && ime.node, JSON.stringify(ime));
+  await page.fill('#roster-q', '');
+  await page.click('#btn-add-roster');
+  await page.waitForSelector('#roster-form [name=name]');
+  await page.fill('#roster-form [name=name]', 'Visible Nuevo');
+  await page.click('#roster-form button[type=submit]');
+  await page.waitForSelector('#roster-list .slot.just-added:has-text("Visible Nuevo")');
+  check('Al agregar se limpia la búsqueda y se ve el jugador', (await page.inputValue('#roster-q')) === '' && await page.locator('#roster-debtors').getAttribute('aria-pressed') === 'false');
+  await page.locator('#roster-list .slot.just-added').screenshot({ path: '/opt/cursor/artifacts/screenshots/v164-jugador-nuevo.png' });
+  const cashMatch = await page.evaluate(async () => {
+    const app = window.__app;
+    const day = '2026-11-15';
+    const a = await app.store.addMatch({ date: day, time: '18:00', price: 5000, capacity: 14, note: 'Efectivo día' }, app.who);
+    const b = await app.store.addMatch({ date: day, time: '21:00', price: 5000, capacity: 14, note: 'Efectivo noche' }, app.who);
+    const pa = await app.store.addPlayer({ id: a, date: day, price: 5000 }, { name: 'Caja Uno', phone: '5491166663131' }, app.who);
+    const pb = await app.store.addPlayer({ id: b, date: day, price: 5000 }, { name: 'Caja Dos', phone: '5491166663232' }, app.who);
+    await app.store.setPayment(pa, { paid: true, split: true, cash: 2000, cashTo: 'Gustavo', transfer: 0, pendingTransfer: 0, fromCredit: 0 }, app.who);
+    await app.store.setPayment(pb, { paid: true, split: true, cash: 3500, cashTo: 'Gus', transfer: 0, pendingTransfer: 0, fromCredit: 0 }, app.who);
+    return a;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, cashMatch);
+  await page.waitForSelector('#day-cash');
+  const dayCash = (await page.locator('#day-cash').innerText()).replace(/\s+/g, ' ');
+  check('El total de efectivo del día suma lo cobrado a Gus y a Gustavo', dayCash.includes('Total efectivo del día: $5.500'), dayCash);
+  await page.locator('.detail-head').screenshot({ path: '/opt/cursor/artifacts/screenshots/v164-efectivo-dia.png' });
+  const waitMatch = await page.evaluate(async () => {
+    const app = window.__app;
+    const id = await app.store.addMatch({ date: '2026-11-16', time: '19:00', price: 5000, capacity: 14, note: 'Registro espera' }, app.who);
+    await app.store.addPlayer({ id, date: '2026-11-16' }, { name: 'Titular Espera', phone: '5491166663333' }, app.who);
+    return id;
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, waitMatch);
+  await page.waitForSelector('.slot:has-text("Titular Espera") [data-menu]');
+  await page.locator('.slot', { hasText: 'Titular Espera' }).locator('[data-menu]').click();
+  await page.waitForSelector('#pm-wait');
+  await page.click('#pm-wait');
+  await page.waitForSelector('#wait-list .name:text-is("Titular Espera")');
+  await page.click('#wait-list .promote-btn');
+  await page.waitForSelector('#slots .name:text-is("Titular Espera")');
+  if (await page.locator('#ask-no').count()) await page.click('#ask-no');
+  await page.evaluate(() => { location.hash = '#/registro/partidos'; });
+  await page.waitForSelector('#log-list');
+  const logText = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
+  check('El registro anota la baja a la espera y la subida', logText.includes('pasó a lista de espera') && logText.includes('pasó de lista de espera al partido') && logText.includes('Titular Espera') && logText.includes('Gustavo'), logText.slice(0, 400));
+  await page.locator('#log-list').screenshot({ path: '/opt/cursor/artifacts/screenshots/v164-registro-espera.png' });
+  await page.evaluate(async () => {
+    const app = window.__app;
+    const player = app.players.find((item) => item.name === 'Titular Espera');
+    if (!player?.confirmToken) return '';
+    return `confirmar.html?m=${encodeURIComponent(player.matchId)}&p=${encodeURIComponent(player.id)}&t=${encodeURIComponent(player.confirmToken)}`;
+  }).then(async (url) => {
+    if (!url) return;
+    const confirm = await page.context().newPage();
+    await confirm.goto(new URL(url, page.url()).href);
+    await confirm.waitForSelector('#btn-no');
+    await confirm.click('#btn-no');
+    await confirm.waitForSelector('#thanks');
+    await confirm.screenshot({ path: '/opt/cursor/artifacts/screenshots/v164-confirmo-no.png' });
+    check('La confirmación reemplaza los botones por el mensaje', (await confirm.locator('#thanks').innerText()).includes('no jugás') && await confirm.locator('#btn-si').count() === 0);
+    await confirm.reload();
+    await confirm.waitForSelector('#thanks');
+    check('Reabrir la confirmación sigue sin botones', await confirm.locator('#btn-no').count() === 0 && (await confirm.locator('#thanks').innerText()).includes('no jugás'));
+    await confirm.close();
+  });
 }
 
 await page.evaluate(() => { location.hash = '#/'; });

@@ -1166,7 +1166,36 @@ class LocalStore {
     this._save(db);
   }
   async promoteFromWaiting(id) {
+    const before = this._load().players[id];
+    const wasWaiting = before?.waiting === true;
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+    if (!wasWaiting) return;
+    const db = this._load();
+    const row = db.players[id];
+    if (!row) return;
+    const match = db.matches[row.matchId];
+    this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: row.matchId, ...match } : { id: row.matchId }, this._venuesOf(db), {
+      type: 'pasó de lista de espera al partido',
+      ...playerLogFields({ id, ...row }, this._matesOf(db, row.matchId)),
+      detail: '',
+    })]);
+    this._save(db);
+  }
+  async moveToWaiting(id, order) {
+    const before = this._load().players[id];
+    const wasMain = !!before && before.waiting !== true;
+    await this.updatePlayer(id, { waiting: true, waitOrder: order, rosterAt: null });
+    if (!wasMain) return;
+    const db = this._load();
+    const row = db.players[id];
+    if (!row) return;
+    const match = db.matches[row.matchId];
+    this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: row.matchId, ...match } : { id: row.matchId }, this._venuesOf(db), {
+      type: 'pasó a lista de espera',
+      ...playerLogFields({ id, ...row }, this._matesOf(db, row.matchId)),
+      detail: '',
+    })]);
+    this._save(db);
   }
   async setNoPlay(id, on) {
     const next = on === true;
@@ -3069,7 +3098,30 @@ export class FirebaseStore {
     await batch.commit();
   }
   async promoteFromWaiting(id) {
+    const cur = this.state.players.find((player) => player.id === id);
+    const wasWaiting = cur?.waiting === true;
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+    if (!wasWaiting || !cur) return;
+    const match = this.state.matches.find((item) => item.id === cur.matchId);
+    const mates = this.state.players.filter((item) => item.matchId === cur.matchId);
+    await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
+      type: 'pasó de lista de espera al partido',
+      ...playerLogFields({ ...cur, waiting: false }, mates),
+      detail: '',
+    })]);
+  }
+  async moveToWaiting(id, order) {
+    const cur = this.state.players.find((player) => player.id === id);
+    const wasMain = !!cur && cur.waiting !== true;
+    await this.updatePlayer(id, { waiting: true, waitOrder: order, rosterAt: null });
+    if (!wasMain || !cur) return;
+    const match = this.state.matches.find((item) => item.id === cur.matchId);
+    const mates = this.state.players.filter((item) => item.matchId === cur.matchId);
+    await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
+      type: 'pasó a lista de espera',
+      ...playerLogFields({ ...cur, waiting: true }, mates),
+      detail: '',
+    })]);
   }
   async setNoPlay(id, on) {
     const next = on === true;

@@ -10,7 +10,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, clockTime, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerDayCash, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
@@ -47,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v163';
+const APP_VERSION = 'f7c-v164';
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -2013,6 +2013,7 @@ function renderMatch(id) {
       <div class="mine-line" id="mine-added">${esc(facts.added)}</div>
       <div class="mine-line" id="mine-cash">${esc(facts.cash)}</div>
       <div class="mine-line" id="mine-transfer">${esc(facts.transfer)}</div>
+      <div class="mine-line" id="day-cash">Total efectivo del día: ${esc(formatARS(organizerDayCash(app.players, knownMatches(), m.date, who)))}</div>
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
         ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
@@ -3504,6 +3505,22 @@ function rosterPersonDebt(person) {
     matches: knownMatches(),
     prices: livePrices(),
     organizer: actor(),
+    playedOnly: true,
+  });
+}
+
+function bindComposedSearch(input, apply) {
+  if (!input || input.dataset.composed === '1') return;
+  input.dataset.composed = '1';
+  let composing = false;
+  input.addEventListener('compositionstart', () => { composing = true; });
+  input.addEventListener('compositionend', () => {
+    composing = false;
+    apply();
+  });
+  input.addEventListener('input', () => {
+    if (composing) return;
+    apply();
   });
 }
 
@@ -3524,19 +3541,18 @@ function rosterDebtBox(person) {
   </div>`;
 }
 
-function renderRoster() {
-  const prevSearch = $('#roster-q');
-  const q = prevSearch?.value || '';
-  const searchFocused = !!(prevSearch && document.activeElement === prevSearch);
-  const selStart = searchFocused ? prevSearch.selectionStart : 0;
-  const selEnd = searchFocused ? prevSearch.selectionEnd : 0;
-  const debtOn = app.rosterDebtors === true;
-  let people = searchRoster(rosterForOrganizer(app.roster, actor()), q);
-  if (debtOn) people = people.filter((person) => rosterPersonDebt(person).total > 0);
-  const rows = people.map((person) => {
+function rosterQuery() {
+  const live = $('#roster-q');
+  if (live) return live.value;
+  return app.rosterQuery || '';
+}
+
+function rosterRowsHtml(people) {
+  return people.map((person) => {
     const locked = !canEditRoster(person, actor());
+    const fresh = app.rosterRevealId === person.id && Date.now() < (app.rosterRevealUntil || 0) ? ' just-added' : '';
     return `
-    <li class="slot" data-roster="${esc(person.id)}">
+    <li class="slot${fresh}" data-roster="${esc(person.id)}">
       <button type="button" class="who" data-roster-open="${esc(person.id)}">
         <div class="name${fichaSuspended(person)}">${fichaName(person, person.name)}</div>
         <div class="sub">${cleanShortName(person.shortName) ? `<span class="nick">“${esc(cleanShortName(person.shortName))}”</span>` : ''}${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
@@ -3547,30 +3563,36 @@ function renderRoster() {
       ${rosterDebtBox(person)}
     </li>`;
   }).join('');
+}
+
+function rosterMatches() {
+  const q = rosterQuery();
+  const debtOn = app.rosterDebtors === true;
+  const base = searchRoster(rosterForOrganizer(app.roster, actor()), q);
+  const people = debtOn ? base.filter((person) => rosterPersonDebt(person).total > 0) : base;
+  return { q, debtOn, base, people };
+}
+
+function rosterBodyHtml() {
+  const { q, debtOn, people } = rosterMatches();
   const empty = q
     ? 'Nadie coincide con esa búsqueda.'
-    : (debtOn ? 'Nadie te debe en los partidos cargados.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.');
-  if (!replaceView(`
-    <h2 class="section">Jugadores</h2>
-    ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
-    <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
-    <div class="chips" id="roster-filters"><button type="button" class="btn chip${debtOn ? ' on' : ''}" id="roster-debtors" aria-pressed="${debtOn ? 'true' : 'false'}">Jugadores con deuda</button></div>
-    ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${esc(empty)}</p>`}
-    <div class="actionbar"><div class="actionbar-inner">
-      <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
-    </div></div>`)) return;
-  const input = $('#roster-q');
-  input.addEventListener('input', () => renderRoster());
-  if (searchFocused) {
-    input.focus({ preventScroll: true });
-    try { input.setSelectionRange(selStart, selEnd); } catch { /* el navegador puede rechazar el rango */ }
-  }
-  $('#btn-add-roster').onclick = () => openRosterForm();
-  const debtFilter = $('#roster-debtors');
-  if (debtFilter) debtFilter.onclick = () => {
-    app.rosterDebtors = !app.rosterDebtors;
-    renderRoster();
-  };
+    : (debtOn ? 'Nadie te debe de los partidos ya jugados.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.');
+  return people.length ? `<ul class="slots" id="roster-list">${rosterRowsHtml(people)}</ul>` : `<p class="empty-wait" id="roster-list">${esc(empty)}</p>`;
+}
+
+function revealRosterPlayer() {
+  const id = app.rosterRevealId;
+  if (!id || app.rosterRevealScrolled || Date.now() >= (app.rosterRevealUntil || 0)) return;
+  const row = document.querySelector(`#roster-list [data-roster="${CSS.escape(id)}"]`);
+  if (!row) return;
+  app.rosterRevealScrolled = true;
+  const delta = revealScrollDelta(row);
+  const scroller = document.scrollingElement || document.documentElement;
+  if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+}
+
+function bindRosterList() {
   const list = $('#roster-list');
   if (list) list.onclick = (e) => {
     const toggle = e.target.closest('[data-roster-debt-toggle]');
@@ -3580,7 +3602,7 @@ function renderRoster() {
       if (!app.rosterDebtOpen) app.rosterDebtOpen = new Set();
       if (app.rosterDebtOpen.has(id)) app.rosterDebtOpen.delete(id);
       else app.rosterDebtOpen.add(id);
-      renderRoster();
+      paintRosterBody();
       return;
     }
     const jump = e.target.closest('[data-roster-debt]');
@@ -3620,6 +3642,52 @@ function renderRoster() {
   };
 }
 
+function paintRosterBody() {
+  const box = $('#roster-body');
+  if (!box) return false;
+  const { q, base } = rosterMatches();
+  app.rosterQuery = q;
+  box.innerHTML = rosterBodyHtml();
+  const add = $('#roster-add-new');
+  if (add) add.hidden = !(q.trim() && base.length === 0);
+  bindRosterList();
+  revealRosterPlayer();
+  return true;
+}
+
+function renderRoster() {
+  const { q, debtOn, base } = rosterMatches();
+  app.rosterQuery = q;
+  const showAdd = !!q.trim() && base.length === 0;
+  if (!replaceView(`
+    <h2 class="section">Jugadores</h2>
+    ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
+    <label class="field roster-search"><span>Buscar</span><div class="find-row"><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"><button type="button" class="btn find-add" id="roster-add-new"${showAdd ? '' : ' hidden'} aria-label="Agregar jugador">+</button></div></label>
+    <div class="chips" id="roster-filters"><button type="button" class="btn chip${debtOn ? ' on' : ''}" id="roster-debtors" aria-pressed="${debtOn ? 'true' : 'false'}">Jugadores con deuda</button></div>
+    <div id="roster-body">${rosterBodyHtml()}</div>
+    <div class="actionbar"><div class="actionbar-inner">
+      <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
+    </div></div>`)) return;
+  const input = $('#roster-q');
+  bindComposedSearch(input, () => { paintRosterBody(); });
+  $('#btn-add-roster').onclick = () => openRosterForm();
+  const addNew = $('#roster-add-new');
+  if (addNew) addNew.onclick = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    openRosterForm(null, { name: text });
+  };
+  const debtFilter = $('#roster-debtors');
+  if (debtFilter) debtFilter.onclick = () => {
+    app.rosterDebtors = !app.rosterDebtors;
+    debtFilter.classList.toggle('on', app.rosterDebtors);
+    debtFilter.setAttribute('aria-pressed', app.rosterDebtors ? 'true' : 'false');
+    paintRosterBody();
+  };
+  bindRosterList();
+  revealRosterPlayer();
+}
+
 function rosterFormError(error, formId) {
   const el = document.getElementById(formId);
   if (error?.code === 'already-in-match') {
@@ -3654,7 +3722,8 @@ function rosterFormError(error, formId) {
   toast('No se pudo guardar: ' + (error?.code || error?.message || error));
 }
 
-function openRosterForm(person) {
+function openRosterForm(person, opts = {}) {
+  const presetName = !person ? String(opts.name || '').trim() : '';
   const lockPhone = phoneHidden(person);
   const locked = person && !canEditRoster(person, actor());
   openSheet(`
@@ -3662,7 +3731,7 @@ function openRosterForm(person) {
       <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">Nombre completo. El WhatsApp es opcional. Si otro organizador ya tiene ese número, es el mismo jugador. Si lo tenés vos, no se duplica.</p>
-      <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
+      <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || presetName)}"></label>
       <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${person ? `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(displayFromWa(person.phone))}">` : `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="">${waShareControl('wa-share', { named: true })}</div>`}
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
@@ -3708,7 +3777,17 @@ function openRosterForm(person) {
     const job = person
       ? app.store.updateRoster(person.id, phoneRaw === null ? { name, shortName } : { name, phone, shortName })
       : app.store.addRoster({ name, phone, shortName, phoneShared: $('#wa-share')?.checked === true }, app.who);
-    Promise.resolve(job).then(() => { closeSheet(); toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores'); }).catch((err) => rosterFormError(err, 'rf-err'));
+    Promise.resolve(job).then((id) => {
+      if (!person && id) {
+        app.rosterQuery = '';
+        app.rosterDebtors = false;
+        app.rosterRevealId = id;
+        app.rosterRevealUntil = Date.now() + 2200;
+        app.rosterRevealScrolled = false;
+      }
+      closeSheet();
+      toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores');
+    }).catch((err) => rosterFormError(err, 'rf-err'));
   };
 }
 
@@ -3848,18 +3927,21 @@ function renderStats(r) {
   if (!replaceView(`<div id="stats-view"><h2 class="section" id="stats-title">${esc(current.title)}</h2>${seg}${body}</div>`)) return;
   const input = $('#stats-q');
   if (input) {
+    bindComposedSearch(input, () => {
+      app.statsBrowse = true;
+      app.statsQuery = input.value;
+      render();
+    });
     input.addEventListener('focus', () => {
       if (app.statsBrowse) return;
       app.statsBrowse = true;
       render();
     });
-    input.addEventListener('input', () => {
-      app.statsBrowse = true;
-      render();
-    });
-    if (searchFocused) {
+    if (searchFocused && !input.dataset.skipFocus) {
       input.focus({ preventScroll: true });
-      try { input.setSelectionRange(selStart, selEnd); } catch { /* el navegador puede rechazar el rango */ }
+      const start = Number.isInteger(selStart) ? selStart : input.value.length;
+      const end = Number.isInteger(selEnd) ? selEnd : input.value.length;
+      try { input.setSelectionRange(start, end); } catch { /* el navegador puede rechazar el rango */ }
     }
   }
   const list = $('#stats-players');
@@ -3881,7 +3963,9 @@ function statsRosterPerson(id) {
 }
 
 function statsPlayerBody(id) {
-  const q = $('#stats-q')?.value || '';
+  const live = $('#stats-q');
+  const q = live ? live.value : (app.statsQuery || '');
+  app.statsQuery = q;
   const browsing = app.statsBrowse === true;
   const mine = rosterForOrganizer(app.roster, staffActor());
   const requested = id ? statsRosterPerson(id) : null;
@@ -5073,7 +5157,7 @@ function openPlayerForm(m, p, opts = {}) {
       if (!person) return;
       selectPerson(person);
     };
-    find.addEventListener('input', () => {
+    bindComposedSearch(find, () => {
       if (find.value.trim() !== queryAtPick) collapseHits = false;
       paint();
     });
@@ -7313,7 +7397,7 @@ async function demoteToWait(m, p) {
           await app.store.setPayment(item.id, { paid: false, split: true }, app.who);
         }
       }
-      await app.store.updatePlayer(item.id, { waiting: true, waitOrder: order, rosterAt: null });
+      await app.store.moveToWaiting(item.id, order);
       order += 1;
       await retargetPromoAfterExit(item);
     }
@@ -7369,7 +7453,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v163" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v164" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7406,7 +7490,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v163" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v164" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

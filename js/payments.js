@@ -620,6 +620,15 @@ export function organizerReceipts(players, who) {
   return { added, cash, cashPlayers, transfer, transferPlayers };
 }
 
+/** Efectivo cobrado por este organizador en todos los partidos de ese día. */
+export function organizerDayCash(players, matches, date, who) {
+  const day = String(date || '');
+  if (!day) return 0;
+  const ids = new Set((matches || []).filter((match) => match?.date === day).map((match) => match.id));
+  const rows = (players || []).filter((player) => player && ids.has(player.matchId));
+  return organizerReceipts(rows, who).cash;
+}
+
 /**
  * Campos para mergear en el jugador. No toca nombre, teléfono ni partido.
  * { ok:true, patch } o { ok:false, error }.
