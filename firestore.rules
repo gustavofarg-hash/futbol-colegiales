@@ -372,8 +372,16 @@ service cloud.firestore {
               && request.resource.data.confirmToken == resource.data.confirmToken
               && request.resource.data.confirmToken is string
               && request.resource.data.confirmToken.size() >= 16
-              && (request.resource.data.confirmed == 'si' || request.resource.data.confirmed == 'no')
-              && request.resource.data.confirmedAt is number);
+              && (
+                (
+                  (request.resource.data.confirmed == 'si' || request.resource.data.confirmed == 'no')
+                  && request.resource.data.confirmedAt is number
+                )
+                || (
+                  request.resource.data.confirmed == null
+                  && request.resource.data.confirmedAt == null
+                )
+              ));
     }
 
     function phoneGone(d) {

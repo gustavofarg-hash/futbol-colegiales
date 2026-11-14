@@ -100,7 +100,7 @@ import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
 import { EVERYONE, accessPatch, canAdd, canView, playerAccess } from './access.js';
-import { ROSTER_DENIED_READ, SUSPENDED_TEXT, blockingSuspensions, cleanShortName, cleanSuspensionHistory, cleanSuspensionNote, isRosterDenied, legacyNoteOwnerUid, liftedSuspensionEvent, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterIdForSuspension, rosterNoteDocId, rosterPhoneAction, suspensionDocId, withHolder } from './roster.js';
+import { ROSTER_DENIED_READ, SUSPENDED_TEXT, blockingSuspensions, capitalizeWords, cleanShortName, cleanSuspensionHistory, cleanSuspensionNote, isRosterDenied, legacyNoteOwnerUid, liftedSuspensionEvent, personKey, phoneIdentity, rosterHeldBy, rosterHolderIds, rosterIdForSuspension, rosterNoteDocId, rosterPhoneAction, suspensionDocId, withHolder } from './roster.js';
 import { PRIVATE_WA_TEXT, attachPhone, canonicalWa, phoneKey } from './privacy.js';
 import {
   ORGANIZERS_DENIED_READ, ORGANIZERS_DENIED_WRITE, cleanOrganizerName, isOrganizerDenied, organizerSlug, sameOrganizer,
@@ -268,7 +268,7 @@ function applySignupPatch(rest) {
 }
 
 function cleanPersonName(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ');
+  return capitalizeWords(String(value || '').trim().replace(/\s+/g, ' '));
 }
 
 function rosterPlayers(db) {
@@ -916,7 +916,7 @@ class LocalStore {
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
     const player = {
-      matchId: match.id, matchDate: match.date, name: data.name.trim(),
+      matchId: match.id, matchDate: match.date, name: cleanPersonName(data.name),
       addedBy: who, addedByUid: this.actor?.uid || '', createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
@@ -980,6 +980,34 @@ class LocalStore {
     player.updatedAt = Date.now();
     this._save(db);
   }
+  async setAttendance(id, answer) {
+    const db = this._load();
+    const player = db.players[id];
+    if (!player || player.waiting === true || player.noPlay === true) return;
+    const now = Date.now();
+    const yes = answer === 'si';
+    if (yes) {
+      player.confirmed = 'si';
+      player.confirmedAt = now;
+    } else {
+      delete player.confirmed;
+      delete player.confirmedAt;
+    }
+    player.updatedAt = now;
+    if (player.confirmToken) {
+      db.confirmations ||= {};
+      const card = db.confirmations[player.confirmToken] || { playerId: id, matchId: player.matchId, name: player.name };
+      if (yes) {
+        card.confirmed = 'si';
+        card.confirmedAt = now;
+      } else {
+        delete card.confirmed;
+        delete card.confirmedAt;
+      }
+      db.confirmations[player.confirmToken] = card;
+    }
+    this._save(db);
+  }
   async setInGoal(playerId, on) {
     const db = this._load();
     const player = db.players[playerId];
@@ -1015,6 +1043,7 @@ class LocalStore {
     const oldKey = sync.length ? personKey(self, players) : '';
     const { phone, ...rest } = data || {};
     applySignupPatch(rest);
+    if (typeof rest.name === 'string') rest.name = cleanPersonName(rest.name);
     const now = Date.now();
     Object.assign(player, rest, { updatedAt: now });
     delete player.phone;
@@ -1166,7 +1195,36 @@ class LocalStore {
     this._save(db);
   }
   async promoteFromWaiting(id) {
+    const before = this._load().players[id];
+    const wasWaiting = before?.waiting === true;
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+    if (!wasWaiting) return;
+    const db = this._load();
+    const row = db.players[id];
+    if (!row) return;
+    const match = db.matches[row.matchId];
+    this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: row.matchId, ...match } : { id: row.matchId }, this._venuesOf(db), {
+      type: 'pasó de lista de espera al partido',
+      ...playerLogFields({ id, ...row }, this._matesOf(db, row.matchId)),
+      detail: '',
+    })]);
+    this._save(db);
+  }
+  async moveToWaiting(id, order) {
+    const before = this._load().players[id];
+    const wasMain = !!before && before.waiting !== true;
+    await this.updatePlayer(id, { waiting: true, waitOrder: order, rosterAt: null });
+    if (!wasMain) return;
+    const db = this._load();
+    const row = db.players[id];
+    if (!row) return;
+    const match = db.matches[row.matchId];
+    this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: row.matchId, ...match } : { id: row.matchId }, this._venuesOf(db), {
+      type: 'pasó a lista de espera',
+      ...playerLogFields({ id, ...row }, this._matesOf(db, row.matchId)),
+      detail: '',
+    })]);
+    this._save(db);
   }
   async setNoPlay(id, on) {
     const next = on === true;
@@ -1300,7 +1358,7 @@ class LocalStore {
     }
     const id = rid(); const now = Date.now();
     const ownerUid = this.actor?.uid || '';
-    const person = { name: data.name.trim(), createdBy: who || '', createdByUid: ownerUid, createdAt: now, updatedAt: now, hasPhone: false, phoneKey: '', phoneOwnerUid: ownerUid, phoneShared: false };
+    const person = { name: cleanPersonName(data.name), createdBy: who || '', createdByUid: ownerUid, createdAt: now, updatedAt: now, hasPhone: false, phoneKey: '', phoneOwnerUid: ownerUid, phoneShared: false };
     if (ownerUid) person.holders = [ownerUid];
     applyShortName(person, data.shortName, 'shortName' in (data || {}));
     db.roster[id] = person;
@@ -2309,15 +2367,19 @@ export class FirebaseStore {
     const accessIds = [EVERYONE];
     if (uid) accessIds.unshift(uid);
     this._listenUpcoming();
-    this._listenHistory();
-    this._listenLog();
-    // Jugadores, confirmaciones y compensaciones: solo esta ventana, no toda
-    // la historia. Sin el índice compuesto se escucha como antes.
+    // Jugadores y confirmaciones primero: la lista de hoy. Historial, registro,
+    // compensaciones y el medidor no bloquean el primer dibujo.
     if (!this._datedCutoff) this._datedCutoff = recentCutoff(this._queryDay || todayISO());
     this._listenDated('players', 'matchDate');
     this._listenDated('confirmations', 'date');
-    this._listenCompensations();
-    this._listenUsage();
+    const deferListen = () => {
+      this._listenHistory();
+      this._listenLog();
+      this._listenCompensations();
+      this._listenUsage();
+    };
+    if (typeof setTimeout === 'function') setTimeout(deferListen, 0);
+    else deferListen();
     watch(collection(this.db, 'rosterSuspensions'), null, (snap) => {
       this.state.suspensions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
@@ -2757,7 +2819,7 @@ export class FirebaseStore {
     const canon = canonicalWa(data.phone || '');
     const uid = this.actor?.uid || '';
     const player = {
-      matchId: match.id, matchDate: match.date, name: data.name.trim(), phone: '',
+      matchId: match.id, matchDate: match.date, name: cleanPersonName(data.name), phone: '',
       addedBy: who, addedByUid: uid, createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
@@ -2801,19 +2863,61 @@ export class FirebaseStore {
     const { doc, updateDoc } = this.fs;
     await updateDoc(doc(this.db, 'matches', id), { teams: rec.teams, updatedBy: who || '', updatedAt: Date.now() });
   }
-  async adjustScore(id, side, delta, who) {
-    const { doc, getDoc, updateDoc } = this.fs;
-    const ref = doc(this.db, 'matches', id);
+  async _bumpField(ref, read, write) {
+    const { runTransaction, getDoc, updateDoc } = this.fs;
+    if (typeof runTransaction === 'function') {
+      await runTransaction(this.db, async (tx) => {
+        const snap = await tx.get(ref);
+        tx.update(ref, write(snap.data() || {}));
+      });
+      return;
+    }
     const snap = await getDoc(ref);
-    const score = scoreRecord(bumpScore(snap.data()?.score, side, delta)).score;
-    await updateDoc(ref, { score, updatedBy: who || '', updatedAt: Date.now() });
+    await updateDoc(ref, write(snap.data() || {}));
+  }
+  async adjustScore(id, side, delta, who) {
+    const { doc } = this.fs;
+    const ref = doc(this.db, 'matches', id);
+    const now = Date.now();
+    await this._bumpField(ref, null, (data) => ({
+      score: scoreRecord(bumpScore(data.score, side, delta)).score,
+      updatedBy: who || '',
+      updatedAt: now,
+    }));
   }
   async adjustGoals(playerId, delta) {
-    const { doc, getDoc, updateDoc } = this.fs;
+    const step = Number(delta);
+    if (!Number.isInteger(step) || !step) return;
+    const { doc } = this.fs;
     const ref = doc(this.db, 'players', playerId);
-    const snap = await getDoc(ref);
-    const goals = bumpGoals(snap.data()?.goals, delta);
-    await updateDoc(ref, { goals, updatedAt: Date.now() });
+    const now = Date.now();
+    await this._bumpField(ref, null, (data) => ({
+      goals: bumpGoals(data.goals, step),
+      updatedAt: now,
+    }));
+  }
+  async setAttendance(id, answer) {
+    const player = this.state.players.find((row) => row.id === id);
+    if (!player || player.waiting === true || player.noPlay === true) return;
+    const yes = answer === 'si';
+    const { doc, updateDoc, deleteField, setDoc } = this.fs;
+    const now = Date.now();
+    const patch = yes
+      ? { confirmed: 'si', confirmedAt: now, updatedAt: now }
+      : { confirmed: deleteField(), confirmedAt: deleteField(), updatedAt: now };
+    await updateDoc(doc(this.db, 'players', id), patch);
+    let token = player.confirmToken;
+    if (yes && !token) token = await this.ensureConfirmToken(id);
+    if (!token) return;
+    const cref = doc(this.db, 'confirmations', token);
+    if (yes) {
+      const match = this.state.matches.find((item) => item.id === player.matchId);
+      const body = confirmationIdentity({ playerId: id, player: { ...player, confirmToken: token }, match });
+      await setDoc(cref, { ...body, confirmed: 'si', confirmedAt: now }, { merge: true });
+    } else {
+      try { await updateDoc(cref, { confirmed: deleteField(), confirmedAt: deleteField() }); }
+      catch (e) { if (e?.code !== 'not-found' && e?.code !== 'permission-denied') throw e; }
+    }
   }
   async setInGoal(playerId, on) {
     const { doc, getDoc, updateDoc, deleteField } = this.fs;
@@ -2853,6 +2957,7 @@ export class FirebaseStore {
     const oldKey = sync.length ? personKey(cur, this.state.players) : '';
     const { phone, ...rest } = data || {};
     applySignupPatch(rest);
+    if (typeof rest.name === 'string') rest.name = cleanPersonName(rest.name);
     const patch = { ...rest, updatedAt: Date.now() };
     if ('phone' in (data || {})) {
       try {
@@ -3069,7 +3174,30 @@ export class FirebaseStore {
     await batch.commit();
   }
   async promoteFromWaiting(id) {
+    const cur = this.state.players.find((player) => player.id === id);
+    const wasWaiting = cur?.waiting === true;
     await this.updatePlayer(id, { waiting: false, waitOrder: null, rosterAt: Date.now() });
+    if (!wasWaiting || !cur) return;
+    const match = this.state.matches.find((item) => item.id === cur.matchId);
+    const mates = this.state.players.filter((item) => item.matchId === cur.matchId);
+    await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
+      type: 'pasó de lista de espera al partido',
+      ...playerLogFields({ ...cur, waiting: false }, mates),
+      detail: '',
+    })]);
+  }
+  async moveToWaiting(id, order) {
+    const cur = this.state.players.find((player) => player.id === id);
+    const wasMain = !!cur && cur.waiting !== true;
+    await this.updatePlayer(id, { waiting: true, waitOrder: order, rosterAt: null });
+    if (!wasMain || !cur) return;
+    const match = this.state.matches.find((item) => item.id === cur.matchId);
+    const mates = this.state.players.filter((item) => item.matchId === cur.matchId);
+    await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
+      type: 'pasó a lista de espera',
+      ...playerLogFields({ ...cur, waiting: true }, mates),
+      detail: '',
+    })]);
   }
   async setNoPlay(id, on) {
     const next = on === true;
@@ -3323,7 +3451,7 @@ export class FirebaseStore {
     const { collection, addDoc, doc, updateDoc, deleteField } = this.fs; const now = Date.now();
     const uid = this.actor?.uid || '';
     const person = {
-      name: data.name.trim(), phone: '', createdBy: who || '', createdByUid: uid, createdAt: now, updatedAt: now,
+      name: cleanPersonName(data.name), phone: '', createdBy: who || '', createdByUid: uid, createdAt: now, updatedAt: now,
       hasPhone: false, phoneKey: phone ? phoneKey(phone) : '', phoneOwnerUid: uid, phoneShared: false,
       ...(uid ? { holders: [uid] } : {}),
       ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),

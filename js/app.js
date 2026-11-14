@@ -1,28 +1,26 @@
 import { ACCESS_CODE, VENUE } from '../config.js';
 import * as appConfig from '../config.js';
-import { DRIVE_FOLDER, driveClientId, loadGis, requestDriveToken, shareableBackupName, uploadBackupToDrive } from './drive.js';
 import { createStore } from './store.js';
 import { usageLevel, usageSummary, usageTotals, writeFailureText } from './usage.js';
-import { parseMatchesFromText, parsePlayedMatchesFromText } from './parser.js';
 import { normalizePhone, displayFromWa, WA_CHOICE_KEY, waSendUrl } from './phone.js';
 import { usualPlayers } from './regulars.js';
 import {
   todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, clockTime, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerDayCash, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
-  needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress,
+  needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress, unconfirmedForReminder,
   reservationClearedByAnswer,
 } from './reminders.js';
 import { isShortCode, shortConfirmUrl } from './short.js';
 import { shortenExternal } from './shorten.js';
 import { PRIVATE_WA_TEXT } from './privacy.js';
 import { activityNoticeText, activityNotices } from './notify.js';
-import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone } from './roster.js';
-import { ALREADY_IN_MATCH, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
+import { ROSTER_DENIED_WRITE, SUSPENDED_TEXT, activeSuspensions, blockingSuspensions, canonicalPhone, capitalizeWords, cleanShortName, displayName, foldText, fullNameBehind, givenName, nickOf, isRosterDenied, personKey, phoneIdentity, playerMatchesPerson, rosterByIdentity, rosterByPhone, rosterForOrganizer, rosterHeldBy, rosterIdForSuspension, searchRoster, suspensionHistoryOf, visibleRosterHits, visibleRosterPhone, withPendingRoster } from './roster.js';
+import { ALREADY_IN_MATCH, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, isGuest, normName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestRenames, waitWarning } from './guests.js';
 import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping, formatLevel, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchSignupState, noteWhen, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from './profile.js';
 import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
@@ -37,7 +35,7 @@ import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
-import { balanceTeams, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
+import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
 import { tapChose } from './tap.js';
@@ -47,7 +45,110 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v163';
+const APP_VERSION = 'f7c-v166';
+performance.mark('f7c-boot');
+if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
+function markOnce(name) {
+  if (typeof window === 'undefined') return;
+  if (!window.__f7cMarks) window.__f7cMarks = {};
+  if (window.__f7cMarks[name]) return;
+  window.__f7cMarks[name] = Math.round(performance.now());
+  try { performance.mark(name); } catch { /* marcas viejas del navegador */ }
+}
+let driveApiPromise;
+function driveApi() {
+  if (!driveApiPromise) driveApiPromise = import('./drive.js');
+  return driveApiPromise;
+}
+const goalWrites = new Map();
+const goalHolds = new Map();
+const scoreWrites = new Map();
+const scoreHolds = new Map();
+const attendanceHolds = new Map();
+let goalTapAt = 0;
+function queueGoal(id, delta) {
+  const player = app.players.find((item) => item.id === id);
+  if (!player) return;
+  const next = bumpGoals(player.goals, delta);
+  player.goals = next;
+  goalHolds.set(id, { goals: next, until: Date.now() + 10000 });
+  render();
+  const prev = goalWrites.get(id) || Promise.resolve();
+  goalWrites.set(id, prev.catch(() => {}).then(() => app.store.adjustGoals(id, delta)));
+}
+function queueScore(matchId, side, delta) {
+  const match = app.matches.find((item) => item.id === matchId);
+  if (!match) return;
+  const score = bumpScore(match.score, side, delta);
+  match.score = score;
+  scoreHolds.set(matchId, { score, until: Date.now() + 10000 });
+  render();
+  const prev = scoreWrites.get(matchId) || Promise.resolve();
+  scoreWrites.set(matchId, prev.catch(() => {}).then(() => app.store.adjustScore(matchId, side, delta, app.who)));
+}
+function bindScoreTap(board, matchId) {
+  if (!board) return;
+  board.addEventListener('pointerdown', (e) => {
+    const btn = e.target.closest('[data-score]');
+    if (!btn || (e.button && e.button > 0)) return;
+    e.preventDefault();
+    goalTapAt = Date.now();
+    queueScore(matchId, btn.dataset.score, Number(btn.dataset.delta));
+  });
+  board.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-score]');
+    if (!btn) return;
+    if (Date.now() - goalTapAt < 700) return;
+    queueScore(matchId, btn.dataset.score, Number(btn.dataset.delta));
+  });
+}
+function applyGoalHold(players) {
+  const now = Date.now();
+  return (players || []).map((player) => {
+    const hold = goalHolds.get(player.id);
+    if (!hold || now > hold.until) {
+      goalHolds.delete(player.id);
+      return player;
+    }
+    if (bumpGoals(player.goals, 0) === hold.goals) {
+      goalHolds.delete(player.id);
+      return player;
+    }
+    return { ...player, goals: hold.goals };
+  });
+}
+function applyScoreHold(matches) {
+  const now = Date.now();
+  return (matches || []).map((match) => {
+    const hold = scoreHolds.get(match.id);
+    if (!hold || now > hold.until) {
+      scoreHolds.delete(match.id);
+      return match;
+    }
+    const server = bumpScore(match.score, 'bib', 0);
+    if (server.bib === hold.score.bib && server.plain === hold.score.plain) {
+      scoreHolds.delete(match.id);
+      return match;
+    }
+    return { ...match, score: hold.score };
+  });
+}
+function applyAttendanceHold(players) {
+  const now = Date.now();
+  return (players || []).map((player) => {
+    const hold = attendanceHolds.get(player.id);
+    if (!hold || now > hold.until) {
+      attendanceHolds.delete(player.id);
+      return player;
+    }
+    const server = player.confirmed === 'si' ? 'si' : null;
+    if (server === hold.confirmed) {
+      attendanceHolds.delete(player.id);
+      return player;
+    }
+    return { ...player, confirmed: hold.confirmed, confirmedAt: hold.at || null };
+  });
+}
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function phoneHidden(p) {
@@ -137,6 +238,8 @@ const app = {
   historyError: '',
   historyDebtors: false,
   rosterDebtors: false,
+  rosterQueryPinned: false,
+  rosterPending: null,
   rosterDebtOpen: new Set(),
   oweOpen: new Set(),
   matchMiss: {},
@@ -635,7 +738,7 @@ async function saveNick(p, nick, rosterId) {
 }
 function nickField(p) {
   const value = nickOf(p, app.roster);
-  return `<label class="field"><span>Nombre corto (o apodo)</span><input id="player-nick" name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Vini" value="${esc(value)}">
+  return `<label class="field"><span>Nombre corto (o apodo)</span><input id="player-nick" name="shortName" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Ej: Vini" value="${esc(value)}">
         <div class="small muted" id="pf-nick">Es lo que se ve en la lista del partido y en Equipos.</div></label>`;
 }
 const addBlock = (m) => {
@@ -1051,6 +1154,9 @@ function playerLinkDenied(id) {
   return !person || !rosterHeldBy(person, actor());
 }
 function render() {
+  markOnce('f7c-first-render');
+  if (app.loaded) markOnce('f7c-data-visible');
+  rosterRevealJustScrolled = false;
   if (!app.session?.user) { lockShell(); return; }
   if (document.documentElement.classList.contains('signed-out')) unlockShell();
   const r = route();
@@ -1087,7 +1193,7 @@ function render() {
   requestAnimationFrame(placeBars);
   if (app.revealPlayerId && !app.revealShown) settleRevealedPlayer();
   const revealingHere = !!(app.revealPlayerId && !app.revealShown && addedPlayerRow(app.revealPlayerId));
-  if (same && y > 0 && !revealingHere) {
+  if (same && y > 0 && !revealingHere && !rosterRevealJustScrolled) {
     const top = y;
     requestAnimationFrame(() => {
       if (app.revealUserMoved) return;
@@ -1420,13 +1526,7 @@ function renderTeams(id) {
       </div>
     </div>`)) return;
   const save = (next, msg) => run(app.store.setTeams(m.id, orderTeamsByGoal(normalizeTeams(next, ids), main), app.who), msg);
-  if (!readOnly) {
-    $('#scoreboard').onclick = (e) => {
-      const btn = e.target.closest('[data-score]');
-      if (!btn) return;
-      run(app.store.adjustScore(m.id, btn.dataset.score, Number(btn.dataset.delta), app.who));
-    };
-  }
+  if (!readOnly) bindScoreTap($('#scoreboard'), m.id);
   const assign = (playerId, side) => {
     const moved = movePlayer(teams, playerId, side, ids, slots);
     if (!moved.ok && moved.reason === 'full') {
@@ -1444,12 +1544,23 @@ function renderTeams(id) {
     if (player) openPlayerMenu(m, player);
     return true;
   };
+  if (!readOnly) {
+    $('#team-board').addEventListener('pointerdown', (e) => {
+      const goal = e.target.closest('[data-goal]');
+      const row = e.target.closest('[data-drag-player]');
+      if (!goal || !row || (e.button && e.button > 0)) return;
+      e.preventDefault();
+      goalTapAt = Date.now();
+      queueGoal(row.dataset.dragPlayer, Number(goal.dataset.goal));
+    });
+  }
   $('#team-board').onclick = (e) => {
     if (!readOnly) {
       const row = e.target.closest('[data-drag-player]');
       const goal = e.target.closest('[data-goal]');
       if (goal && row) {
-        run(app.store.adjustGoals(row.dataset.dragPlayer, Number(goal.dataset.goal)));
+        if (Date.now() - goalTapAt < 700) return;
+        queueGoal(row.dataset.dragPlayer, Number(goal.dataset.goal));
         return;
       }
       const arco = e.target.closest('[data-arco]');
@@ -2013,6 +2124,7 @@ function renderMatch(id) {
       <div class="mine-line" id="mine-added">${esc(facts.added)}</div>
       <div class="mine-line" id="mine-cash">${esc(facts.cash)}</div>
       <div class="mine-line" id="mine-transfer">${esc(facts.transfer)}</div>
+      <div class="mine-line" id="day-cash">Total efectivo del día: ${esc(formatARS(organizerDayCash(app.players, knownMatches(), m.date, who)))}</div>
       <div class="detail-tools">
         <button class="btn" id="btn-copy">${ICON.copy}Copiar lista</button>
         ${canEdit ? `<button class="btn" id="btn-edit-match">${ICON.edit}Editar</button>` : ''}
@@ -2253,10 +2365,13 @@ function reminderBanners(matches) {
   const due = (matches || []).filter((m) => needsReminderBanner(m, myReminderPlayers(m.id), now));
   if (!due.length) return '';
   return `<div class="remind-banners">${due.map((m) => {
-    const prog = reminderProgress(myReminderPlayers(m.id));
+    const mine = myReminderPlayers(m.id);
+    const prog = reminderProgress(mine);
+    const missing = unconfirmedForReminder(mine).map((player) => `<li>${esc(shownName(player))}</li>`).join('');
     return `<button type="button" class="remind-banner" data-remind-banner="${esc(m.id)}">
       <strong>${REMINDER_BANNER}</strong>
       <small>${esc(capitalize(labelDate(m.date)))} · ${esc(m.time || '--:--')} hs · ${prog.sent} de ${prog.total} enviados</small>
+      ${missing ? `<ul class="remind-missing">${missing}</ul>` : ''}
     </button>`;
   }).join('')}</div>`;
 }
@@ -2873,6 +2988,7 @@ function saveBackupFile(filename, text) {
 
 async function shareBackupFile(filename, text) {
   // Chrome solo comparte ciertos tipos y .json no está: va como .txt (adentro, el mismo JSON).
+  const { shareableBackupName } = await driveApi();
   const file = new File([text], shareableBackupName(filename), { type: 'text/plain' });
   const payload = { files: [file], title: 'Backup de Mis Partidos' };
   const can = typeof navigator.share === 'function' && (typeof navigator.canShare !== 'function' || navigator.canShare(payload));
@@ -3069,8 +3185,9 @@ function openRestore() {
   if (resumeBtn) resumeBtn.onclick = () => startLoad(true);
 }
 
-function openBackup() {
+async function openBackup() {
   if (app.role !== 'admin') return;
+  const { DRIVE_FOLDER, driveClientId, loadGis, requestDriveToken, uploadBackupToDrive } = await driveApi();
   const driveId = driveClientId(appConfig);
   openSheet(`
     <h3>Hacer backup</h3>
@@ -3326,8 +3443,9 @@ function openImport(prevText = '') {
     <label class="field"><span>Mensaje</span><textarea id="imp-text" autofocus placeholder="Ej: Muchachos, se arma el jueves 22/10 21hs ⚽">${esc(prevText)}</textarea></label>
     <label class="field"><span>Fecha del mensaje <small class="muted">(para “hoy”, “mañana”, “jueves”…)</small></span><input type="date" id="imp-ref" value="${todayISO()}"></label>
     <div class="sheet-actions"><button class="btn" data-close>Cancelar</button><button class="btn primary" id="imp-parse">Analizar</button></div>`);
-  $('#imp-parse').onclick = () => {
+  $('#imp-parse').onclick = async () => {
     const text = $('#imp-text').value;
+    const { parseMatchesFromText } = await import('./parser.js');
     const found = parseMatchesFromText(text, { refDate: $('#imp-ref').value || todayISO() });
     openImportPreview(text, found);
   };
@@ -3435,8 +3553,9 @@ function openHistoryImport(prevText = '') {
     if (!file) return;
     readTextFile(file).then((text) => { $('#hist-imp-text').value = text; }).catch(() => toast('No se pudo leer el archivo'));
   };
-  $('#hist-imp-next').onclick = () => {
+  $('#hist-imp-next').onclick = async () => {
     const text = $('#hist-imp-text').value;
+    const { parsePlayedMatchesFromText } = await import('./parser.js');
     openHistoryImportPreview(text, parsePlayedMatchesFromText(text, { now: new Date() }));
   };
 }
@@ -3504,6 +3623,22 @@ function rosterPersonDebt(person) {
     matches: knownMatches(),
     prices: livePrices(),
     organizer: actor(),
+    playedOnly: true,
+  });
+}
+
+function bindComposedSearch(input, apply) {
+  if (!input || input.dataset.composed === '1') return;
+  input.dataset.composed = '1';
+  let composing = false;
+  input.addEventListener('compositionstart', () => { composing = true; });
+  input.addEventListener('compositionend', () => {
+    composing = false;
+    apply();
+  });
+  input.addEventListener('input', () => {
+    if (composing) return;
+    apply();
   });
 }
 
@@ -3524,19 +3659,35 @@ function rosterDebtBox(person) {
   </div>`;
 }
 
-function renderRoster() {
-  const prevSearch = $('#roster-q');
-  const q = prevSearch?.value || '';
-  const searchFocused = !!(prevSearch && document.activeElement === prevSearch);
-  const selStart = searchFocused ? prevSearch.selectionStart : 0;
-  const selEnd = searchFocused ? prevSearch.selectionEnd : 0;
-  const debtOn = app.rosterDebtors === true;
-  let people = searchRoster(rosterForOrganizer(app.roster, actor()), q);
-  if (debtOn) people = people.filter((person) => rosterPersonDebt(person).total > 0);
-  const rows = people.map((person) => {
+function rosterQuery() {
+  // Tras un alta la búsqueda queda vacía. No se lee el input: al cerrar la
+  // hoja el texto anterior puede volver y dejar la lista sin nadie.
+  if (app.rosterQueryPinned) return '';
+  const live = $('#roster-q');
+  if (live) return live.value;
+  return app.rosterQuery || '';
+}
+
+/** El texto que había antes de guardar no vuelve a filtrar. Una búsqueda nueva sí. */
+function releasePinnedRosterQuery(input) {
+  if (!app.rosterQueryPinned) return;
+  const value = String(input?.value || '');
+  const blocked = String(app.rosterClearedText || '');
+  if (value && value !== blocked) {
+    app.rosterQueryPinned = false;
+    app.rosterClearedText = '';
+    return;
+  }
+  if (input && value) input.value = '';
+  app.rosterQuery = '';
+}
+
+function rosterRowsHtml(people) {
+  return people.map((person) => {
     const locked = !canEditRoster(person, actor());
+    const fresh = app.rosterRevealId === person.id && Date.now() < (app.rosterRevealUntil || 0) ? ' just-added' : '';
     return `
-    <li class="slot" data-roster="${esc(person.id)}">
+    <li class="slot${fresh}" data-roster="${esc(person.id)}">
       <button type="button" class="who" data-roster-open="${esc(person.id)}">
         <div class="name${fichaSuspended(person)}">${fichaName(person, person.name)}</div>
         <div class="sub">${cleanShortName(person.shortName) ? `<span class="nick">“${esc(cleanShortName(person.shortName))}”</span>` : ''}${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? `<span class="private-wa">${esc(PRIVATE_WA_TEXT)}</span>` : 'Sin número'}${locked ? `<span class="edit-lock">${esc(EDIT_LOCK_TEXT)}</span>` : ''}</div>
@@ -3547,30 +3698,71 @@ function renderRoster() {
       ${rosterDebtBox(person)}
     </li>`;
   }).join('');
+}
+
+function rosterMatches() {
+  const q = rosterQuery();
+  const debtOn = app.rosterDebtors === true;
+  const base = searchRoster(rosterForOrganizer(app.roster, actor()), q);
+  const people = debtOn ? base.filter((person) => rosterPersonDebt(person).total > 0) : base;
+  return { q, debtOn, base, people };
+}
+
+function rosterBodyHtml() {
+  const { q, debtOn, people } = rosterMatches();
   const empty = q
     ? 'Nadie coincide con esa búsqueda.'
-    : (debtOn ? 'Nadie te debe en los partidos cargados.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.');
-  if (!replaceView(`
-    <h2 class="section">Jugadores</h2>
-    ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
-    <label class="field roster-search"><span>Buscar</span><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"></label>
-    <div class="chips" id="roster-filters"><button type="button" class="btn chip${debtOn ? ' on' : ''}" id="roster-debtors" aria-pressed="${debtOn ? 'true' : 'false'}">Jugadores con deuda</button></div>
-    ${people.length ? `<ul class="slots" id="roster-list">${rows}</ul>` : `<p class="empty-wait" id="roster-list">${esc(empty)}</p>`}
-    <div class="actionbar"><div class="actionbar-inner">
-      <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
-    </div></div>`)) return;
-  const input = $('#roster-q');
-  input.addEventListener('input', () => renderRoster());
-  if (searchFocused) {
-    input.focus({ preventScroll: true });
-    try { input.setSelectionRange(selStart, selEnd); } catch { /* el navegador puede rechazar el rango */ }
-  }
-  $('#btn-add-roster').onclick = () => openRosterForm();
-  const debtFilter = $('#roster-debtors');
-  if (debtFilter) debtFilter.onclick = () => {
-    app.rosterDebtors = !app.rosterDebtors;
-    renderRoster();
+    : (debtOn ? 'Nadie te debe de los partidos ya jugados.' : 'Todavía no hay jugadores guardados. Cuando anotás a alguien en un partido, se guarda acá. El WhatsApp es opcional.');
+  return people.length ? `<ul class="slots" id="roster-list">${rosterRowsHtml(people)}</ul>` : `<p class="empty-wait" id="roster-list">${esc(empty)}</p>`;
+}
+
+let rosterRevealJustScrolled = false;
+
+function revealRosterPlayer() {
+  const id = app.rosterRevealId;
+  if (!id || app.rosterRevealScrolled || Date.now() >= (app.rosterRevealUntil || 0)) return;
+  const row = document.querySelector(`#roster-list [data-roster="${CSS.escape(id)}"]`);
+  if (!row) return;
+  app.rosterRevealScrolled = true;
+  rosterRevealJustScrolled = true;
+  const delta = revealScrollDelta(row);
+  const scroller = document.scrollingElement || document.documentElement;
+  if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+}
+
+/** Muestra el alta antes del snapshot y deja la lista sin búsqueda ni filtro de deuda. */
+function stageNewRoster(id, fields) {
+  const me = actor();
+  const person = {
+    id,
+    name: String(fields?.name || '').trim(),
+    phone: fields?.phone || '',
+    createdBy: me.name || '',
+    createdByUid: me.uid || '',
+    hasPhone: !!fields?.phone,
+    ...(me.uid ? { holders: [me.uid] } : {}),
+    ...(cleanShortName(fields?.shortName) ? { shortName: cleanShortName(fields.shortName) } : {}),
   };
+  const until = Date.now() + 15000;
+  // Si el snapshot ya trajo la ficha, no hay que retenerla: un borrado posterior
+  // volvería a mostrarla. Si todavía no está, se sostiene hasta que llegue.
+  if (app.roster.some((row) => row.id === id)) app.rosterPending = null;
+  else {
+    app.rosterPending = { id, person, until };
+    app.roster = app.roster.concat(person);
+  }
+  const live = $('#roster-q');
+  app.rosterClearedText = live ? String(live.value || '') : '';
+  if (live) live.value = '';
+  app.rosterQuery = '';
+  app.rosterQueryPinned = true;
+  app.rosterDebtors = false;
+  app.rosterRevealId = id;
+  app.rosterRevealUntil = until;
+  app.rosterRevealScrolled = false;
+}
+
+function bindRosterList() {
   const list = $('#roster-list');
   if (list) list.onclick = (e) => {
     const toggle = e.target.closest('[data-roster-debt-toggle]');
@@ -3580,7 +3772,7 @@ function renderRoster() {
       if (!app.rosterDebtOpen) app.rosterDebtOpen = new Set();
       if (app.rosterDebtOpen.has(id)) app.rosterDebtOpen.delete(id);
       else app.rosterDebtOpen.add(id);
-      renderRoster();
+      paintRosterBody();
       return;
     }
     const jump = e.target.closest('[data-roster-debt]');
@@ -3620,6 +3812,64 @@ function renderRoster() {
   };
 }
 
+function paintRosterBody() {
+  const box = $('#roster-body');
+  if (!box) return false;
+  releasePinnedRosterQuery($('#roster-q'));
+  const { q, base } = rosterMatches();
+  app.rosterQuery = q;
+  box.innerHTML = rosterBodyHtml();
+  const add = $('#roster-add-new');
+  if (add) add.hidden = !(q.trim() && base.length === 0);
+  bindRosterList();
+  revealRosterPlayer();
+  return true;
+}
+
+function renderRoster() {
+  releasePinnedRosterQuery($('#roster-q'));
+  const { q, debtOn, base } = rosterMatches();
+  app.rosterQuery = q;
+  const showAdd = !!q.trim() && base.length === 0;
+  const html = `
+    <h2 class="section">Jugadores</h2>
+    ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
+    <label class="field roster-search"><span>Buscar</span><div class="find-row"><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"><button type="button" class="btn find-add" id="roster-add-new"${showAdd ? '' : ' hidden'} aria-label="Agregar jugador">+</button></div></label>
+    <div class="chips" id="roster-filters"><button type="button" class="btn chip${debtOn ? ' on' : ''}" id="roster-debtors" aria-pressed="${debtOn ? 'true' : 'false'}">Jugadores con deuda</button></div>
+    <div id="roster-body">${rosterBodyHtml()}</div>
+    <div class="actionbar"><div class="actionbar-inner">
+      <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
+    </div></div>`;
+  if (!replaceView(html)) {
+    const debt = $('#roster-debtors');
+    if (debt) {
+      debt.classList.toggle('on', debtOn);
+      debt.setAttribute('aria-pressed', debtOn ? 'true' : 'false');
+    }
+    paintRosterBody();
+    revealRosterPlayer();
+    return;
+  }
+  const input = $('#roster-q');
+  bindComposedSearch(input, () => { paintRosterBody(); });
+  $('#btn-add-roster').onclick = () => openRosterForm();
+  const addNew = $('#roster-add-new');
+  if (addNew) addNew.onclick = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    openRosterForm(null, { name: text });
+  };
+  const debtFilter = $('#roster-debtors');
+  if (debtFilter) debtFilter.onclick = () => {
+    app.rosterDebtors = !app.rosterDebtors;
+    debtFilter.classList.toggle('on', app.rosterDebtors);
+    debtFilter.setAttribute('aria-pressed', app.rosterDebtors ? 'true' : 'false');
+    paintRosterBody();
+  };
+  bindRosterList();
+  revealRosterPlayer();
+}
+
 function rosterFormError(error, formId) {
   const el = document.getElementById(formId);
   if (error?.code === 'already-in-match') {
@@ -3654,7 +3904,8 @@ function rosterFormError(error, formId) {
   toast('No se pudo guardar: ' + (error?.code || error?.message || error));
 }
 
-function openRosterForm(person) {
+function openRosterForm(person, opts = {}) {
+  const presetName = !person ? String(opts.name || '').trim() : '';
   const lockPhone = phoneHidden(person);
   const locked = person && !canEditRoster(person, actor());
   openSheet(`
@@ -3662,14 +3913,24 @@ function openRosterForm(person) {
       <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">Nombre completo. El WhatsApp es opcional. Si otro organizador ya tiene ese número, es el mismo jugador. Si lo tenés vos, no se duplica.</p>
-      <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || '')}"></label>
-      <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
+      <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" autocapitalize="words" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || presetName)}"></label>
+      <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${person ? `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(displayFromWa(person.phone))}">` : `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="">${waShareControl('wa-share', { named: true })}</div>`}
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
       <div class="field"><div class="err" id="rf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit"${locked ? ' disabled' : ''}>${person ? 'Guardar' : 'Agregar'}</button></div>
     </form>`);
   const form = $('#roster-form');
+  if (presetName && form?.name) {
+    const placeCaret = () => {
+      const input = form.name;
+      if (!input?.isConnected) return;
+      const len = input.value.length;
+      input.focus();
+      try { input.setSelectionRange(len, len); } catch { /* el navegador puede rechazar el rango */ }
+    };
+    setTimeout(placeCaret, 80);
+  }
   if (locked) {
     // El admin puede cambiar el apodo aunque la ficha sea de otro organizador.
     const nickOk = canEditRosterNick(person, actorWithRole());
@@ -3708,7 +3969,11 @@ function openRosterForm(person) {
     const job = person
       ? app.store.updateRoster(person.id, phoneRaw === null ? { name, shortName } : { name, phone, shortName })
       : app.store.addRoster({ name, phone, shortName, phoneShared: $('#wa-share')?.checked === true }, app.who);
-    Promise.resolve(job).then(() => { closeSheet(); toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores'); }).catch((err) => rosterFormError(err, 'rf-err'));
+    Promise.resolve(job).then((id) => {
+      if (!person && id) stageNewRoster(id, { name, phone, shortName });
+      closeSheet();
+      toast(person ? 'Jugador actualizado' : 'Guardado en Jugadores');
+    }).catch((err) => rosterFormError(err, 'rf-err'));
   };
 }
 
@@ -3727,6 +3992,7 @@ async function deleteRosterPlayer(person) {
     return;
   }
   if (!(await askConfirm(`¿Borrar a ${person.name} de Jugadores? No lo quita de los partidos.`, { danger: true }))) return;
+  if (app.rosterPending?.id === person.id) app.rosterPending = null;
   Promise.resolve(app.store.deleteRoster(person.id)).then(() => toast(`${person.name} borrado`)).catch((err) => {
     if (err?.code === 'roster-delete-blocked') askNotice(`No se puede borrar a ${person.name}.\n${(err.reasons || []).join('\n')}`);
     else if (isRosterDenied(err)) showError(ROSTER_DENIED_WRITE);
@@ -3848,18 +4114,21 @@ function renderStats(r) {
   if (!replaceView(`<div id="stats-view"><h2 class="section" id="stats-title">${esc(current.title)}</h2>${seg}${body}</div>`)) return;
   const input = $('#stats-q');
   if (input) {
+    bindComposedSearch(input, () => {
+      app.statsBrowse = true;
+      app.statsQuery = input.value;
+      render();
+    });
     input.addEventListener('focus', () => {
       if (app.statsBrowse) return;
       app.statsBrowse = true;
       render();
     });
-    input.addEventListener('input', () => {
-      app.statsBrowse = true;
-      render();
-    });
-    if (searchFocused) {
+    if (searchFocused && !input.dataset.skipFocus) {
       input.focus({ preventScroll: true });
-      try { input.setSelectionRange(selStart, selEnd); } catch { /* el navegador puede rechazar el rango */ }
+      const start = Number.isInteger(selStart) ? selStart : input.value.length;
+      const end = Number.isInteger(selEnd) ? selEnd : input.value.length;
+      try { input.setSelectionRange(start, end); } catch { /* el navegador puede rechazar el rango */ }
     }
   }
   const list = $('#stats-players');
@@ -3881,7 +4150,9 @@ function statsRosterPerson(id) {
 }
 
 function statsPlayerBody(id) {
-  const q = $('#stats-q')?.value || '';
+  const live = $('#stats-q');
+  const q = live ? live.value : (app.statsQuery || '');
+  app.statsQuery = q;
   const browsing = app.statsBrowse === true;
   const mine = rosterForOrganizer(app.roster, staffActor());
   const requested = id ? statsRosterPerson(id) : null;
@@ -4212,7 +4483,7 @@ function renderUsers() {
     <ul class="slots" id="user-list">${rows || '<li class="empty-wait">No hay usuarios.</li>'}</ul>
     <form id="user-form" class="user-form" novalidate>
       <h2 class="section">Nuevo organizador</h2>
-      <label class="field"><span>Nombre</span><input name="name" maxlength="40" autocomplete="off" placeholder="Ej: Lucía"></label>
+      <label class="field"><span>Nombre</span><input name="name" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Ej: Lucía"></label>
       <label class="field"><span>Mail</span><input name="email" type="email" autocomplete="off" placeholder="lucia@correo.com"></label>
       <label class="field"><span>Contraseña</span><input name="password" type="password" autocomplete="new-password" placeholder="Al menos 6 caracteres"></label>
       <div class="field"><div class="err" id="user-err"></div></div>
@@ -4221,7 +4492,7 @@ function renderUsers() {
   $('#user-form').onsubmit = (e) => {
     e.preventDefault();
     const form = e.target;
-    Promise.resolve(app.session.createOrganizer({ name: form.name.value, email: form.email.value, password: form.password.value }))
+    Promise.resolve(app.session.createOrganizer({ name: capitalizeWords(form.name.value.trim()), email: form.email.value, password: form.password.value }))
       .then(() => { form.reset(); toast('Organizador creado'); renderUsers(); })
       .catch((error) => { $('#user-err').textContent = error?.message || 'No se pudo crear'; });
   };
@@ -4649,28 +4920,67 @@ function guestQtyHtml(value) {
   </div>`;
 }
 
-function bindGuestQty({ min = 0, value = 0, taken = [] } = {}) {
+function bindGuestSuggest(field, hits, match) {
+  const paintHits = () => {
+    const q = field.value.trim();
+    const picked = app.roster.find((item) => item.id === field.dataset.rosterId);
+    if (picked && foldText(picked.name) !== foldText(q)) delete field.dataset.rosterId;
+    const linked = field.dataset.rosterId;
+    const matches = q && !linked ? searchRoster(rosterForOrganizer(app.roster, actor()), q).slice(0, 8) : [];
+    hits.hidden = matches.length === 0;
+    hits.innerHTML = matches.map((person) => {
+      const taken = match ? signupError(match.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]) : '';
+      const detail = [cleanShortName(person.shortName), person.phone ? displayFromWa(person.phone) : phoneHidden(person) ? PRIVATE_WA_TEXT : 'Sin número'].filter(Boolean).join(' · ');
+      return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${esc(detail)}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+    }).join('');
+  };
+  const choose = (id) => {
+    const person = app.roster.find((item) => item.id === id);
+    if (!person) return;
+    field.value = person.name;
+    field.dataset.rosterId = person.id;
+    hits.hidden = true;
+    hits.innerHTML = '';
+  };
+  bindComposedSearch(field, paintHits);
+  hits.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('[data-pick]')) event.preventDefault();
+  });
+  hits.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-pick]');
+    if (!btn || btn.disabled) return;
+    choose(btn.dataset.pick);
+  });
+}
+
+function bindGuestQty({ min = 0, value = 0, taken = [], match = null } = {}) {
   const input = $('#friend-count');
   const rows = $('#friend-rows');
   if (!input || !rows) return;
   const clamp = (n) => Math.min(20, Math.max(min, Number.isFinite(n) ? n : min));
   const paint = (n, focus) => {
     const count = clamp(Math.floor(Number(n) || 0));
-    const kept = [...rows.querySelectorAll('input')].map((el) => el.value);
+    const kept = [...rows.querySelectorAll('input.friend-name')].map((el) => ({
+      value: el.value,
+      rosterId: el.dataset.rosterId || '',
+    }));
     input.value = String(count);
     rows.innerHTML = '';
     for (let i = 0; i < count; i++) {
       const row = document.createElement('div');
       row.className = 'friend-row';
-      row.innerHTML = `<input type="text" maxlength="60" autocomplete="off" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado ${i + 1}">`;
+      row.innerHTML = `<input class="friend-name" type="text" maxlength="60" autocomplete="off" autocapitalize="words" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado ${i + 1}"><ul class="roster-hits friend-hits" hidden></ul>`;
       rows.appendChild(row);
-      row.querySelector('input').value = kept[i] || '';
+      const field = row.querySelector('input');
+      field.value = kept[i]?.value || '';
+      if (kept[i]?.rosterId) field.dataset.rosterId = kept[i].rosterId;
+      bindGuestSuggest(field, row.querySelector('.friend-hits'), match);
     }
     const names = resolveFriendNames(Array.from({ length: count }, () => ''), taken);
     const hint = $('#friend-hint');
     if (hint) {
       hint.textContent = names.length
-        ? `Si dejás el nombre vacío: ${names.map((item) => item.name).join(', ')}.`
+        ? `Si dejás el nombre vacío: ${names.map((item) => item.name).join(', ')}. Si ya está en Jugadores, elegilo de la lista.`
         : 'Sin invitados entra solo él.';
     }
     if (focus) rows.querySelector('input')?.focus();
@@ -4704,11 +5014,17 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], opts
   const guestBlock = host?.id ? inviteBlock(matesOf(m.id), host.id) : '';
   if (guestBlock) { toast(guestBlock); return false; }
   const taken = host?.id ? friendNamesOf(m.id, host.id) : [];
-  const friends = (resolved || resolveFriendNames(friendRows, taken)).map((friend) => ({
+  const friends = (resolved || guestsFromRows(friendRows, taken)).map((friend) => ({
     name: friend.name,
-    guestAuto: friend.guestAuto,
+    guestAuto: friend.guestAuto === true,
     invitedBy: host?.id || (friend.guestAuto ? 'nuevo' : ''),
     invitedByName: host?.name || '',
+    shortName: friend.shortName || '',
+    phone: friend.phone || '',
+    rosterId: friend.rosterId || '',
+    phoneKey: friend.phoneKey || '',
+    hasPhone: friend.hasPhone === true,
+    phoneShared: friend.phoneShared === true,
   }));
   const people = host?.id
     ? friends
@@ -4770,12 +5086,17 @@ async function addSignedPlayer(m, host, asWait, tentative, friendRows = [], opts
     for (const friend of friends) {
       const waiting = offset >= place.main;
       const friendId = await app.store.addPlayer(m, {
+        ...signup,
         name: friend.name,
-        phone: '',
+        shortName: friend.shortName || '',
+        phone: friend.phone || '',
+        rosterId: friend.rosterId || '',
+        phoneKey: friend.phoneKey || '',
+        hasPhone: friend.hasPhone === true,
+        phoneShared: friend.phoneShared === true,
         invitedBy: hostId,
         invitedByName: hostName,
         guestAuto: friend.guestAuto === true,
-        ...signup,
       }, app.who, { waiting });
       if (!waiting) await applyAutoCredit(friendId);
       offset += 1;
@@ -4832,7 +5153,7 @@ async function addGuestsToSameDay(targets, friends, signup, source) {
     if (blocked) { notes.push(`${label}: ${blocked}`); continue; }
     const there = new Set(friendNamesOf(match.id, host.id).map((name) => normName(name)));
     const fresh = friends.filter((friend) => !there.has(normName(friend.name)));
-    const todo = fresh.filter((friend) => !firstDuplicate(matesOf(match.id), [{ name: friend.name, phone: '', guestAuto: friend.guestAuto === true }]));
+    const todo = fresh.filter((friend) => !firstDuplicate(matesOf(match.id), [{ name: friend.name, phone: friend.phone || '', rosterId: friend.rosterId || '', phoneKey: friend.phoneKey || '', hasPhone: friend.hasPhone === true, guestAuto: friend.guestAuto === true }]));
     const clash = fresh.filter((friend) => !todo.includes(friend)).map((friend) => friend.name);
     if (clash.length) notes.push(`${label}: ${clash.join(', ')} ya figura${clash.length > 1 ? 'n' : ''} en ese partido`);
     if (!todo.length) { if (!clash.length) notes.push(`${label}: ya estaban`); continue; }
@@ -4843,12 +5164,17 @@ async function addGuestsToSameDay(targets, friends, signup, source) {
     for (const friend of todo) {
       const thereSignup = match.id === source?.id ? signup : signupForMatch(match, signup, actor());
       const friendId = await app.store.addPlayer(match, {
+        ...thereSignup,
         name: friend.name,
-        phone: '',
+        shortName: friend.shortName || '',
+        phone: friend.phone || '',
+        rosterId: friend.rosterId || '',
+        phoneKey: friend.phoneKey || '',
+        hasPhone: friend.hasPhone === true,
+        phoneShared: friend.phoneShared === true,
         invitedBy: host.id,
         invitedByName: host.name,
         guestAuto: friend.guestAuto === true,
-        ...thereSignup,
       }, app.who, { waiting: offset >= place.main });
       if (offset < place.main) await applyAutoCredit(friendId);
       offset += 1;
@@ -4865,7 +5191,7 @@ function openPhoneForm(person) {
     <form id="phone-form" novalidate>
       <h3>WhatsApp de ${esc(person.name)}</h3>
       <p class="hint">Es opcional. Con el número se puede escribir y mandar el link de confirmación.</p>
-      <label class="field"><span>Nombre</span><input id="phone-name" name="name" maxlength="60" autocomplete="name" value="${esc(person.name)}"></label>
+      <label class="field"><span>Nombre</span><input id="phone-name" name="name" maxlength="60" autocomplete="name" autocapitalize="words" value="${esc(person.name)}"></label>
       <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autofocus autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person.phone ? displayFromWa(person.phone) : '')}">
         <div class="small muted" id="phone-hint">Característica + número. Sin 0 ni 15 también sirve.</div></label>
       <div class="field"><div class="err" id="phone-err"></div></div>
@@ -4977,7 +5303,7 @@ function openPlayerForm(m, p, opts = {}) {
       ${editingFriend ? `<p class="hint" id="friend-stays">Sigue siendo invitado de ${esc(hostName || 'quien lo invitó')}.</p>` : ''}
       ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
-      <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
+      <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" autocapitalize="words" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       ${p ? nickField(p) : ''}
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${(!p || editingFriend) ? `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">${waShareControl('wa-share', { named: true, checked: p?.phoneShared === true })}</div>` : `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">`}
         <div class="small muted" id="pf-phone">${esc(emptyPhoneHint)}</div></label>`}
@@ -5073,7 +5399,7 @@ function openPlayerForm(m, p, opts = {}) {
       if (!person) return;
       selectPerson(person);
     };
-    find.addEventListener('input', () => {
+    bindComposedSearch(find, () => {
       if (find.value.trim() !== queryAtPick) collapseHits = false;
       paint();
     });
@@ -5182,7 +5508,7 @@ function openPlayerForm(m, p, opts = {}) {
       find.focus();
     }, 50);
   }
-  if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [] });
+  if ($('#friend-count')) bindGuestQty({ min: 0, value: 0, taken: [], match: m });
   form.onsubmit = async (e) => {
     e.preventDefault();
     if (form.dataset.mode !== 'edit' || !p || form.dataset.editId !== p.id) p = null;
@@ -5294,7 +5620,21 @@ function openPlayerForm(m, p, opts = {}) {
 }
 
 function friendRowValues() {
-  return [...document.querySelectorAll('#friend-rows input')].map((input) => input.value);
+  return [...document.querySelectorAll('#friend-rows input.friend-name')].map((input) => ({
+    text: input.value,
+    rosterId: input.dataset.rosterId || '',
+  }));
+}
+
+/** El texto escrito, y la ficha de Jugadores solo si sigue siendo ese nombre. */
+function guestsFromRows(rows, taken) {
+  const list = rows || [];
+  const texts = list.map((row) => (typeof row === 'string' ? row : row?.text || ''));
+  return resolveFriendNames(texts, taken).map((friend, index) => {
+    const rosterId = typeof list[index] === 'object' ? String(list[index]?.rosterId || '') : '';
+    const person = rosterId ? (app.roster || []).find((item) => item.id === rosterId) : null;
+    return attachRosterGuest(friend, person);
+  });
 }
 /* Pago del jugador */
 function moneyText(amount) {
@@ -5508,7 +5848,8 @@ function pendingTransferReminderRow(m, p, pending) {
   const phone = String(view?.phone || '').trim();
   const hidden = phoneHidden(view);
   const why = hidden ? PRIVATE_WA_TEXT : 'Sin número';
-  const text = transferReminderText(givenName(p, app.roster), transferReminderWhen(m?.date));
+  const owed = playerDebt({ person: p, players: app.players, matches: knownMatches(), prices: livePrices(), organizer: actor(), playedOnly: true });
+  const text = transferReminderText(givenName(p, app.roster), transferReminderWhen(m?.date), owed.rows?.length || 0);
   const remind = phone && !hidden
     ? `<a class="btn pay-remind" id="btn-pending-remind" href="${esc(waHref(phone, text))}" target="_blank" rel="noopener">${ICON.wa}<span>Enviar recordatorio</span></a>`
     : `<button type="button" class="btn pay-remind" id="btn-pending-remind" disabled>${ICON.wa}<span>Enviar recordatorio</span></button>`;
@@ -6447,7 +6788,7 @@ function playerPanelPieces(player, person, ids, debtKey) {
     });
   } catch (error) { console.error(error); }
   const nick = panelNickState(player, person);
-  const nickHtml = `<label class="field nick-field"><span>Nombre corto (o apodo)</span><input id="${ids.nick}" maxlength="40" autocomplete="off" placeholder="Ej: Vini" value="${esc(nick.value)}"${nick.editable ? '' : ' disabled'}><div class="small muted">${NICK_HINT}</div></label>`;
+  const nickHtml = `<label class="field nick-field"><span>Nombre corto (o apodo)</span><input id="${ids.nick}" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Ej: Vini" value="${esc(nick.value)}"${nick.editable ? '' : ' disabled'}><div class="small muted">${NICK_HINT}</div></label>`;
   const debtHtml = debt.total > 0 ? `<p class="debt-total" id="${ids.debt}">${esc(debt.text)}</p>` : '';
   const err = app.creditsError ? `<p class="hint" id="${ids.err}">${esc(app.creditsError)}</p>` : '';
   const mine = credits.find((row) => row.organizerUid === me.uid);
@@ -6922,6 +7263,7 @@ function openPlayerMenu(m, p) {
       ${phoneView.phone && match ? `<a class="btn" id="pm-wa" href="${esc(waHref(phoneView.phone, waMessage(match, p)))}" target="_blank" rel="noopener">${ICON.wa}Mandar WhatsApp</a>` : phoneHidden(phoneView) ? `<button class="btn" type="button" disabled>${esc(PRIVATE_WA_TEXT)}</button>` : `<button class="btn" id="pm-phone"${own ? '' : ' disabled'}>Cargar WhatsApp</button>`}
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
+      ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? `<button class="btn" id="pm-attendance">${p.confirmed === 'si' ? 'Quitar confirmación' : 'Confirmó asistencia'}</button>` : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
       <button class="btn" id="pm-edit"${own || canAnnotate || canWritePlayer(p, actorWithRole()) ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
@@ -6950,6 +7292,19 @@ function openPlayerMenu(m, p) {
   if (loadPhone && own) loadPhone.onclick = () => { closeSheet(); app.wantPhoneForm = true; openPlayerProfile(p, match?.id); };
   const spot = $('#pm-confirm-spot');
   if (spot) spot.onclick = () => { closeSheet(); clearReservedSpot(p); };
+  const attendance = $('#pm-attendance');
+  if (attendance) attendance.onclick = () => {
+    const yes = p.confirmed !== 'si';
+    attendanceHolds.set(p.id, { confirmed: yes ? 'si' : null, at: yes ? Date.now() : null, until: Date.now() + 10000 });
+    const current = app.players.find((item) => item.id === p.id);
+    if (current) {
+      current.confirmed = yes ? 'si' : null;
+      current.confirmedAt = yes ? Date.now() : null;
+    }
+    closeSheet();
+    render();
+    run(app.store.setAttendance(p.id, yes ? 'si' : null), yes ? 'Quedó confirmado' : 'Se quitó la confirmación');
+  };
   if (match && !$('#pm-edit').disabled) $('#pm-edit').onclick = () => openPlayerForm(match, p);
   const addGuest = $('#pm-friend');
   if (addGuest && match) addGuest.onclick = () => openFriendForm(match, p);
@@ -7313,7 +7668,7 @@ async function demoteToWait(m, p) {
           await app.store.setPayment(item.id, { paid: false, split: true }, app.who);
         }
       }
-      await app.store.updatePlayer(item.id, { waiting: true, waitOrder: order, rosterAt: null });
+      await app.store.moveToWaiting(item.id, order);
       order += 1;
       await retargetPromoAfterExit(item);
     }
@@ -7331,7 +7686,7 @@ function openFriendForm(m, host) {
   openSheet(`
     <form id="friend-form" novalidate>
       <h3>Invitados de ${esc(host.name)}</h3>
-      <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Cuentan para el cupo como cualquier jugador.</p>
+      <p class="hint">Si dejás el nombre vacío, sigue ${esc(next)}. Si ya está en Jugadores, elegilo de la lista. Cuentan para el cupo como cualquier jugador.</p>
       ${signupFields(null, m)}
       <div class="friend-box">
         ${guestQtyHtml(1)}
@@ -7347,7 +7702,7 @@ function openFriendForm(m, host) {
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Agregar</button></div>
     </form>`);
   const form = $('#friend-form');
-  bindGuestQty({ min: 1, value: 1, taken: friendNamesOf(m.id, host.id) });
+  bindGuestQty({ min: 1, value: 1, taken: friendNamesOf(m.id, host.id), match: m });
   form.onsubmit = async (e) => {
     e.preventDefault();
     const rows = friendRowValues();
@@ -7355,7 +7710,7 @@ function openFriendForm(m, host) {
     const picked = new Set([...form.querySelectorAll('input[name=also]:checked')].map((input) => input.value));
     const also = sameDay.filter((row) => !row.blocked && picked.has(row.match.id));
     // Los nombres salen de este partido; en los otros van los mismos (mismo anfitrión + nombre = misma persona).
-    const resolved = resolveFriendNames(rows, friendNamesOf(m.id, host.id));
+    const resolved = guestsFromRows(rows, friendNamesOf(m.id, host.id));
     const result = await addSignedPlayer(m, host, host.waiting === true, false, rows, { resolved, also, reveal: true });
     if (result === ALREADY_IN_MATCH || result === SUSPENDED_TEXT) $('#friend-err').textContent = result;
   };
@@ -7369,7 +7724,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v163" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v166" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7406,7 +7761,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v163" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v166" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -7564,13 +7919,16 @@ async function boot() {
   app.store.setActor(app.session.user);
   app.store.subscribe((view) => {
     const { matches, players, roster, rosterError, organizers, organizersError, venues, venuesError, prices, pricesError, credits, creditsError, history, historyMeta, historyError } = view;
-    app.matches = matches || []; app.players = releaseAnsweredReservations(players || []);
+    app.matches = applyScoreHold(matches || []); app.players = applyAttendanceHold(applyGoalHold(releaseAnsweredReservations(players || [])));
     app.pendingWrites = view.pending === true;
     app.fromCache = view.fromCache === true;
     app.history = history || [];
     app.historyMeta = historyMeta || null;
     app.historyError = historyError || '';
     app.roster = roster || [];
+    const pendingRoster = withPendingRoster(app.roster, app.rosterPending, Date.now());
+    app.roster = pendingRoster.roster;
+    app.rosterPending = pendingRoster.pending;
     app.rosterNotes = view.rosterNotes || {};
     app.suspensions = view.suspensions || [];
     app.suspensionHistory = view.suspensionHistory || [];

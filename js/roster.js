@@ -72,8 +72,13 @@ export function phoneDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
+/** Primera letra de cada palabra en mayúscula. El resto de la palabra no se toca. */
+export function capitalizeWords(value) {
+  return String(value || '').replace(/(^|[^\S\r\n]+)(\p{L})/gu, (_all, lead, letter) => lead + letter.toLocaleUpperCase('es-AR'));
+}
+
 export function cleanShortName(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  return capitalizeWords(String(value || '').trim().replace(/\s+/g, ' ')).slice(0, 40);
 }
 
 /**
@@ -196,6 +201,20 @@ export function withHolder(person, uid) {
 
 export function rosterForOrganizer(roster, actor) {
   return (roster || []).filter((person) => rosterHeldBy(person, actor));
+}
+
+/**
+ * El alta de Firestore devuelve el id antes de que el snapshot traiga la ficha.
+ * Hasta que ese id llega, la lista sigue mostrando la ficha nueva. Cuando el
+ * snapshot ya la tiene, se suelta. Si el plazo se vence, también.
+ */
+export function withPendingRoster(roster, pending, now) {
+  const list = roster || [];
+  const id = String(pending?.id || '').trim();
+  if (!id || !pending?.person) return { roster: list, pending: null };
+  if ((Number(now) || 0) >= (Number(pending.until) || 0)) return { roster: list, pending: null };
+  if (list.some((person) => person.id === id)) return { roster: list, pending: null };
+  return { roster: list.concat(pending.person), pending };
 }
 
 export function searchRoster(roster, query) {
