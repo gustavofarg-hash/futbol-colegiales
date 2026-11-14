@@ -72,8 +72,13 @@ export function phoneDigits(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
+/** Primera letra de cada palabra en mayúscula. El resto de la palabra no se toca. */
+export function capitalizeWords(value) {
+  return String(value || '').replace(/(^|[^\S\r\n]+)(\p{L})/gu, (_all, lead, letter) => lead + letter.toLocaleUpperCase('es-AR'));
+}
+
 export function cleanShortName(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  return capitalizeWords(String(value || '').trim().replace(/\s+/g, ' ')).slice(0, 40);
 }
 
 /**

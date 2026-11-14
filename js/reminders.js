@@ -199,6 +199,11 @@ export function reminderAudience(players) {
   return (players || []).filter((p) => p?.waiting !== true && String(p?.phone || '').trim());
 }
 
+/** Todavía no dijeron si juegan. Quien ya confirmó o avisó que no, no entra. */
+export function unconfirmedForReminder(players) {
+  return (players || []).filter((p) => p && p.waiting !== true && p.noPlay !== true && p.confirmed !== 'si' && p.confirmed !== 'no');
+}
+
 export function reminderProgress(players) {
   const audience = reminderAudience(players);
   const sent = audience.filter((p) => p.reminderSentAt).length;

@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v165';
+const VERSION = 'f7c-v166';
 const TRIAL = self.location.pathname.includes('/prueba/');
 const CACHE = (TRIAL ? 'prueba-' : '') + VERSION;
 const SHELL = [
@@ -61,17 +61,28 @@ self.addEventListener('fetch', (e) => {
     })));
     return;
   }
-  // App propia: revalida con el servidor (304 si no cambió). Sin red, la caché del SW.
+  // App propia: si ya está en la caché, se muestra al toque y se revalida atrás.
+  // Sin caché, se espera al servidor. Sin red, queda lo guardado.
   const offline = () => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('index.html'));
-  e.respondWith(
-    fetch(new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' })).then((res) => {
-      if (res.ok) {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-        return res;
-      }
+  const refresh = () => fetch(new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' })).then((res) => {
+    if (res.ok) {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+    }
+    return res;
+  });
+  e.respondWith((async () => {
+    const cached = await caches.match(req, { ignoreSearch: true });
+    if (cached) {
+      refresh().catch(() => {});
+      return cached;
+    }
+    try {
+      const res = await refresh();
       if (res.status === 304) return offline();
       return res;
-    }).catch(offline)
-  );
+    } catch {
+      return offline();
+    }
+  })());
 });
