@@ -10,7 +10,7 @@ import { firebaseConfig as productionConfig } from '../config.js';
 import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
-import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone } from '../js/roster.js';
+import { SUSPENDED_TEXT, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -3571,7 +3571,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v164');
+  assert.equal(version, 'f7c-v165');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3685,6 +3685,63 @@ test('la carga muestra el avance y deja el aviso de éxito hasta cerrarlo', asyn
   assert.deepEqual(live.filter((step) => step.endsWith('/4')), ['0/4', '1/4', '2/4', '3/4', '4/4']);
   assert.deepEqual(commits, ['delete matches/viejo', 'set matches/a', 'set matches/b', 'set users/por-mail']);
   assert.equal(commits.some((line) => line.includes('users/admin-uid')), false);
+});
+
+test('el alta de Firestore no está en la lista hasta el snapshot y el nombre completo no pasa el filtro', async () => {
+  const store = new FirebaseStore();
+  store.db = {};
+  const snaps = {};
+  const written = [];
+  store.fs = {
+    collection(_db, name) { return { kind: 'col', name }; },
+    doc(_db, ...segments) { return { path: segments.join('/') }; },
+    query(ref, ...parts) { return { kind: 'query', ref, parts }; },
+    where(field, op, value) { return { field, op, value }; },
+    orderBy(field, dir) { return { orderBy: field, dir }; },
+    limit(n) { return { limit: n }; },
+    onSnapshot(ref, ...args) {
+      const next = args.find((arg) => typeof arg === 'function');
+      const name = ref?.name || ref?.ref?.name || '';
+      if (name) snaps[name] = next;
+      return () => {};
+    },
+    async addDoc(col, data) {
+      written.push({ name: col.name, data });
+      return { id: 'nuevo-id' };
+    },
+  };
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const seen = [];
+  store.subscribe((view) => { seen.push(view.roster.map((person) => person.id)); });
+  const viejo = { id: 'viejo', data: () => ({ name: 'Viejo', holders: ['gustavo'], createdBy: 'Gustavo', createdByUid: 'gustavo' }) };
+  snaps.roster({ docs: [viejo] });
+  const id = await store.addRoster({ name: 'López Visible Completo', phone: '', shortName: 'López' }, 'Gustavo');
+  assert.equal(id, 'nuevo-id');
+  assert.deepEqual(written[0].data.holders, ['gustavo']);
+  assert.equal(store.state.roster.some((person) => person.id === 'nuevo-id'), false);
+  assert.equal(seen.at(-1).includes('nuevo-id'), false);
+  const pending = {
+    id,
+    until: Date.now() + 15000,
+    person: { id, name: 'López Visible Completo', holders: ['gustavo'], createdByUid: 'gustavo', createdBy: 'Gustavo' },
+  };
+  const gap = withPendingRoster(store.state.roster, pending, Date.now());
+  const actor = { uid: 'gustavo', name: 'Gustavo' };
+  assert.equal(rosterForOrganizer(gap.roster, actor).some((person) => person.id === id), true);
+  assert.equal(searchRoster(gap.roster, 'López Visible Completo').some((person) => person.id === id), false);
+  assert.equal(searchRoster(gap.roster, '').some((person) => person.id === id), true);
+  assert.equal(gap.pending, pending);
+  snaps.roster({
+    docs: [
+      viejo,
+      { id, data: () => ({ name: 'López Visible Completo', holders: ['gustavo'], createdBy: 'Gustavo', createdByUid: 'gustavo', shortName: 'López' }) },
+    ],
+  });
+  assert.equal(seen.at(-1).includes(id), true);
+  const landed = withPendingRoster(store.state.roster, pending, Date.now());
+  assert.equal(landed.pending, null);
+  assert.equal(landed.roster.filter((person) => person.id === id).length, 1);
+  assert.equal(withPendingRoster([{ id: 'viejo' }], pending, pending.until).pending, null);
 });
 
 test('al conectar Firebase escucha las notas sin leer uid antes de crearlo', () => {

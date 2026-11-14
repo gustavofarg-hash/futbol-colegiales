@@ -198,6 +198,20 @@ export function rosterForOrganizer(roster, actor) {
   return (roster || []).filter((person) => rosterHeldBy(person, actor));
 }
 
+/**
+ * El alta de Firestore devuelve el id antes de que el snapshot traiga la ficha.
+ * Hasta que ese id llega, la lista sigue mostrando la ficha nueva. Cuando el
+ * snapshot ya la tiene, se suelta. Si el plazo se vence, también.
+ */
+export function withPendingRoster(roster, pending, now) {
+  const list = roster || [];
+  const id = String(pending?.id || '').trim();
+  if (!id || !pending?.person) return { roster: list, pending: null };
+  if ((Number(now) || 0) >= (Number(pending.until) || 0)) return { roster: list, pending: null };
+  if (list.some((person) => person.id === id)) return { roster: list, pending: null };
+  return { roster: list.concat(pending.person), pending };
+}
+
 export function searchRoster(roster, query) {
   const list = [...(roster || [])].sort((a, b) => foldText(a.name).localeCompare(foldText(b.name), 'es') || String(a.id).localeCompare(String(b.id)));
   const q = String(query || '').trim();
