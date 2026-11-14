@@ -2994,6 +2994,21 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
   await page.click('#roster-form button[type=submit]');
   await page.waitForSelector('#roster-list .slot.just-added:has-text("Visible Sin Filtro")');
   check('Con deuda y búsqueda, el alta limpia el filtro y muestra al jugador', (await page.inputValue('#roster-q')) === '' && await page.locator('#roster-debtors').getAttribute('aria-pressed') === 'false' && await page.locator('#roster-list .name', { hasText: 'Visible Sin Filtro' }).count() === 1);
+  const restored = await page.evaluate(() => {
+    const input = document.querySelector('#roster-q');
+    input.focus();
+    input.value = 'nadie-con-este-nombre';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    const names = [...document.querySelectorAll('#roster-list .name')].map((el) => el.textContent.trim());
+    return {
+      q: input.value,
+      state: window.__app.rosterQuery,
+      debt: document.querySelector('#roster-debtors')?.getAttribute('aria-pressed'),
+      visible: names.includes('Visible Sin Filtro'),
+      nobody: (document.querySelector('#roster-list')?.textContent || '').includes('Nadie coincide'),
+    };
+  });
+  check('Si el input recupera la búsqueda anterior, se vacía y el jugador sigue', restored.q === '' && restored.state === '' && restored.debt === 'false' && restored.visible && !restored.nobody, JSON.stringify(restored));
   await page.fill('#roster-q', 'López Visible Completo');
   await page.waitForSelector('#roster-add-new:not([hidden])');
   await page.click('#roster-add-new');
