@@ -3545,12 +3545,26 @@ function rosterDebtBox(person) {
 }
 
 function rosterQuery() {
-  // Al guardar un alta se fija la búsqueda vacía. Si se lee el input todavía
-  // montado, el texto viejo vuelve a filtrar y el jugador nuevo no entra.
-  if (app.rosterQueryPinned) return app.rosterQuery || '';
+  // Tras un alta la búsqueda queda vacía. No se lee el input: al cerrar la
+  // hoja el texto anterior puede volver y dejar la lista sin nadie.
+  if (app.rosterQueryPinned) return '';
   const live = $('#roster-q');
   if (live) return live.value;
   return app.rosterQuery || '';
+}
+
+/** El texto que había antes de guardar no vuelve a filtrar. Una búsqueda nueva sí. */
+function releasePinnedRosterQuery(input) {
+  if (!app.rosterQueryPinned) return;
+  const value = String(input?.value || '');
+  const blocked = String(app.rosterClearedText || '');
+  if (value && value !== blocked) {
+    app.rosterQueryPinned = false;
+    app.rosterClearedText = '';
+    return;
+  }
+  if (input && value) input.value = '';
+  app.rosterQuery = '';
 }
 
 function rosterRowsHtml(people) {
@@ -3622,14 +3636,15 @@ function stageNewRoster(id, fields) {
     app.rosterPending = { id, person, until };
     app.roster = app.roster.concat(person);
   }
+  const live = $('#roster-q');
+  app.rosterClearedText = live ? String(live.value || '') : '';
+  if (live) live.value = '';
   app.rosterQuery = '';
   app.rosterQueryPinned = true;
   app.rosterDebtors = false;
   app.rosterRevealId = id;
   app.rosterRevealUntil = until;
   app.rosterRevealScrolled = false;
-  const live = $('#roster-q');
-  if (live) live.value = '';
 }
 
 function bindRosterList() {
@@ -3685,6 +3700,7 @@ function bindRosterList() {
 function paintRosterBody() {
   const box = $('#roster-body');
   if (!box) return false;
+  releasePinnedRosterQuery($('#roster-q'));
   const { q, base } = rosterMatches();
   app.rosterQuery = q;
   box.innerHTML = rosterBodyHtml();
@@ -3696,11 +3712,11 @@ function paintRosterBody() {
 }
 
 function renderRoster() {
+  releasePinnedRosterQuery($('#roster-q'));
   const { q, debtOn, base } = rosterMatches();
   app.rosterQuery = q;
-  app.rosterQueryPinned = false;
   const showAdd = !!q.trim() && base.length === 0;
-  if (!replaceView(`
+  const html = `
     <h2 class="section">Jugadores</h2>
     ${app.rosterError ? `<div class="banner error roster-error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
     <label class="field roster-search"><span>Buscar</span><div class="find-row"><input id="roster-q" autocomplete="off" placeholder="Nombre o teléfono" value="${esc(q)}"><button type="button" class="btn find-add" id="roster-add-new"${showAdd ? '' : ' hidden'} aria-label="Agregar jugador">+</button></div></label>
@@ -3708,7 +3724,17 @@ function renderRoster() {
     <div id="roster-body">${rosterBodyHtml()}</div>
     <div class="actionbar"><div class="actionbar-inner">
       <button class="btn primary" id="btn-add-roster">${ICON.plus}Agregar jugador</button>
-    </div></div>`)) return;
+    </div></div>`;
+  if (!replaceView(html)) {
+    const debt = $('#roster-debtors');
+    if (debt) {
+      debt.classList.toggle('on', debtOn);
+      debt.setAttribute('aria-pressed', debtOn ? 'true' : 'false');
+    }
+    paintRosterBody();
+    revealRosterPlayer();
+    return;
+  }
   const input = $('#roster-q');
   bindComposedSearch(input, () => { paintRosterBody(); });
   $('#btn-add-roster').onclick = () => openRosterForm();
