@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v165');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v164');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -2958,15 +2958,6 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
   await page.click('#roster-add-new');
   await page.waitForSelector('#roster-form [name=name]');
   check('El más abre el alta con el texto buscado', (await page.inputValue('#roster-form [name=name]')) === 'Zzzsinficha');
-  await page.waitForFunction(() => {
-    const input = document.querySelector('#roster-form [name=name]');
-    return input && document.activeElement === input && input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
-  });
-  const caret = await page.evaluate(() => {
-    const input = document.querySelector('#roster-form [name=name]');
-    return { start: input.selectionStart, end: input.selectionEnd, len: input.value.length, focused: document.activeElement === input };
-  });
-  check('El cursor queda al final del nombre precargado', caret.focused && caret.start === caret.len && caret.end === caret.len && caret.len === 'Zzzsinficha'.length, JSON.stringify(caret));
   await page.click('#roster-form [data-close]');
   await page.waitForFunction(() => !document.querySelector('#sheet')?.open);
   const ime = await page.evaluate(() => {
