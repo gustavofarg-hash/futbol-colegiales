@@ -201,15 +201,38 @@ export function attendanceWhen(iso, now = new Date()) {
   return labelDate(iso);
 }
 
+function confirmDayWord(iso, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
+  const n = diffDays(todayISO(now), iso);
+  if (n === 0) return 'HOY';
+  if (n === 1) return 'mañana';
+  return DIAS[weekdayOf(iso)] || '';
+}
+
 /**
  * Horario de la página cuando hay más de un partido.
  * Hoy es HOY. Mañana va en minúscula. El resto, el día: "jueves 19:00".
  */
 export function confirmSlotLabel(iso, time, now = new Date()) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
   const hour = clockTime(time);
-  if (!hour) return '';
-  const n = diffDays(todayISO(now), iso);
-  const when = n === 0 ? 'HOY' : n === 1 ? 'mañana' : (DIAS[weekdayOf(iso)] || '');
-  return when ? `${when} ${hour}` : '';
+  const when = confirmDayWord(iso, now);
+  return when && hour ? `${when} ${hour}` : '';
+}
+
+/**
+ * Varios horarios para el WhatsApp. El mismo día junta las horas:
+ * «HOY 17:30 y 18:30». Días distintos: «HOY 17:30 y mañana 21:00».
+ */
+export function confirmScheduleText(slots, now = new Date()) {
+  const ordered = [...(slots || [])].sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')) || String(clockTime(a?.time)).localeCompare(String(clockTime(b?.time))));
+  const groups = [];
+  for (const slot of ordered) {
+    const time = clockTime(slot?.time);
+    const day = confirmDayWord(slot?.date, now);
+    if (!time || !day) continue;
+    const last = groups[groups.length - 1];
+    if (last && last.date === slot.date) last.times.push(time);
+    else groups.push({ date: slot.date, day, times: [time] });
+  }
+  return joinSpanish(groups.map((group) => `${group.day} ${joinSpanish(group.times)}`));
 }

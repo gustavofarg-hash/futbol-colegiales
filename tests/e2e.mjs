@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v178');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v179');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -7407,6 +7407,11 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const manyAsk = (await manyPage.locator('#confirm-ask').innerText()).trim();
   const manyBody = (await manyPage.locator('body').innerText()).replace(/\s+/g, ' ');
   check('Varios partidos listan HOY, mañana y jueves', manyAsk === '¿Confirmás que jugás estos partidos?' && manyLines.join('|') === 'HOY 20:00|mañana 21:00|jueves 19:00' && !manyBody.includes('18:00') && !manyBody.includes('Ocupa') && (await manyPage.locator('h1').innerText()) === 'Varios', `${manyAsk} ${manyLines.join('|')} ${manyBody.slice(0, 180)}`);
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, manyIds.matchId);
+  await page.waitForSelector('.slot:has-text("Varios López") .wa-btn');
+  const manyWa = decodeURIComponent((await page.getAttribute('.slot:has-text("Varios López") .wa-btn', 'href')).split('text=')[1] || '');
+  const manyLink = manyWa.split('Respondé en este link: ')[1] || '';
+  check('El WhatsApp lista los tres horarios con un solo link', manyWa === `¡Hola Varios! ¿Confirmás que jugás HOY 20:00, mañana 21:00 y jueves 19:00?\n\nRespondé en este link: ${manyLink}` && (manyWa.match(/https?:\/\//g) || []).length === 1, manyWa);
   await manyPage.click('#btn-si');
   await manyPage.waitForSelector('#thanks');
   check('Un sí confirma todos los partidos del link', (await manyPage.locator('#thanks').innerText()).includes('jugás') && await manyPage.locator('#btn-si').count() === 0);
@@ -7425,6 +7430,31 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   check('El organizador sigue pudiendo confirmar ese partido', (await page.locator('#pm-attendance').innerText()) === 'Quitar confirmación');
   await page.locator('dialog.sheet[open] [data-close]').click();
   await manyPage.close();
+  const noIds = await page.evaluate(async () => {
+    const app = window.__app;
+    const hoy = app.matches.find((match) => match.note === 'Varios hoy');
+    const manana = app.matches.find((match) => match.note === 'Varios mañana');
+    const phone = '11 7000-1783';
+    const a = await app.store.addPlayer(hoy, { name: 'Niega López', phone }, app.who);
+    const b = await app.store.addPlayer(manana, { name: 'Niega López', phone }, app.who);
+    const first = app.players.find((player) => player.id === a);
+    return { ids: [a, b], code: first?.shortCode || '', matchId: hoy?.id || '' };
+  });
+  const noPage = await ctx.newPage();
+  await noPage.clock.install({ time: NOW });
+  await noPage.goto(`${BASE}c/?k=${encodeURIComponent(noIds.code)}`);
+  await noPage.waitForSelector('#btn-no');
+  await noPage.click('#btn-no');
+  await noPage.waitForSelector('#thanks');
+  const noSaved = await page.evaluate((ids) => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    return ids.map((id) => db.players[id]?.confirmed || null);
+  }, noIds.ids);
+  check('No juego marca que no juega en todos esos partidos', (await noPage.locator('#thanks').innerText()).includes('no jugás') && noSaved.join(',') === 'no,no', `${noSaved.join(',')} ${(await noPage.locator('#thanks').innerText())}`);
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, noIds.matchId);
+  await page.waitForFunction(() => [...document.querySelectorAll('#slots .slot')].some((row) => row.innerText.includes('Niega López') && row.innerText.includes('No juega')));
+  check('En el partido, No se ve igual que en uno solo', (await page.locator('#slots .slot', { hasText: 'Niega López' }).innerText()).includes('No juega'));
+  await noPage.close();
 }
 
 {

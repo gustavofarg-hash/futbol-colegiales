@@ -11,7 +11,7 @@ import {
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerDayCash, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
-  attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
+  attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow, upcomingConfirmSlots,
   needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress, unconfirmedForReminder,
   reservationClearedByAnswer,
 } from './reminders.js';
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v178';
+const APP_VERSION = 'f7c-v179';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -2238,12 +2238,14 @@ function placeLine(m) {
   return court ? `${placeOf(m)} (${court})` : placeOf(m);
 }
 function waMessage(m, p) {
+  const slots = upcomingConfirmSlots({ players: app.players, matches: app.matches, player: p });
   return attendanceMessage({
     player: p,
     roster: app.roster,
     when: attendanceWhen(m?.date),
     time: m?.time,
     confirmUrl: confirmUrlFor(m, p),
+    slots,
   });
 }
 function listText(m) {
@@ -2414,8 +2416,11 @@ async function openReminders(m) {
     confirmToken: tokens.get(p.id) || p.confirmToken,
     shortCode: codes.get(p.id) || p.shortCode,
   }));
+  const rosterNow = new Map(app.players.map((player) => [player.id, player]));
+  for (const player of fresh) rosterNow.set(player.id, { ...rosterNow.get(player.id), ...player });
   const linkById = new Map(reminderLinks({
     match: m, players: fresh, venue: placeOf(m), roster: app.roster,
+    allPlayers: [...rosterNow.values()], matches: app.matches,
   }).map((row) => [row.id, row]));
   const externalById = new Map();
   const hrefFor = (link) => {
@@ -8133,7 +8138,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v178" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v179" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8170,7 +8175,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v178" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v179" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

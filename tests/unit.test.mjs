@@ -27,7 +27,7 @@ import { canonicalOrganizerName, organizerChoices, organizerNames, organizerSlug
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { tapChose } from '../js/tap.js';
-import { addDays, attendanceWhen, clockTime, compensationWhen, confirmSlotLabel, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, todayISO, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
+import { addDays, attendanceWhen, clockTime, compensationWhen, confirmScheduleText, confirmSlotLabel, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, todayISO, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
   attendanceMessage, cancelLinks, cancelMessage, confirmPageUrl, confirmSlotText, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
@@ -1171,6 +1171,28 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
   assert.equal(sharedConfirmAnswer(slots.map((slot) => ({ ...slot, confirmed: 'si' }))), 'si');
   assert.equal(visibleConfirmSlots(slots, before).length, 3);
   assert.equal(visibleConfirmSlots(slots, new Date('2026-11-15T13:00:00-03:00')).length, 0);
+  const manyUrl = 'https://spoo.me/XXXX';
+  const luciano = { name: 'Luciano Pérez' };
+  assert.equal(confirmScheduleText([
+    { date: '2026-10-19', time: '18:30' },
+    { date: '2026-10-19', time: '17:30' },
+  ], before), 'HOY 17:30 y 18:30');
+  assert.equal(confirmScheduleText([
+    { date: '2026-10-19', time: '21:00' },
+    { date: '2026-10-19', time: '17:30' },
+    { date: '2026-10-19', time: '18:30' },
+  ], before), 'HOY 17:30, 18:30 y 21:00');
+  assert.equal(attendanceMessage({
+    player: luciano, confirmUrl: manyUrl, now: before,
+    slots: [{ date: '2026-10-19', time: '17:30' }, { date: '2026-10-19', time: '18:30' }],
+  }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y 18:30?\n\nRespondé en este link: ${manyUrl}`);
+  assert.equal(attendanceMessage({
+    player: luciano, confirmUrl: manyUrl, now: before,
+    slots: [{ date: '2026-10-19', time: '17:30' }, { date: '2026-10-20', time: '21:00' }],
+  }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y mañana 21:00?\n\nRespondé en este link: ${manyUrl}`);
+  assert.equal(attendanceMessage({
+    player: luciano, when: 'Mañana', time: '18:00', confirmUrl: manyUrl,
+  }), `¡Hola Luciano! ¿Confirmás que jugás Mañana 18:00?\n\nRespondé en este link: ${manyUrl}`);
   const house = 'https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=Ab3x9Zk2';
   const swapped = named.split(house).join('https://spoo.me/ZXwB0uF');
   assert.equal(swapped.endsWith('https://spoo.me/ZXwB0uF'), true);
@@ -3746,7 +3768,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v178');
+  assert.equal(version, 'f7c-v179');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
