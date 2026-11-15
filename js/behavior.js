@@ -185,7 +185,7 @@ export function behaviorTimeline({ rosterId, entries, suspensions, suspensionHis
 export function behaviorLine(entry) {
   const date = numericDate(entry?.date) || (entry?.createdAt ? numericDate(dayOf(entry.createdAt)) : '');
   const comment = String(entry?.comment || '').trim();
-  let reason = bajaReasonText(entry?.reason);
+  let reason = entry?.type === 'falta' ? faltaReasonText(entry?.reason) : bajaReasonText(entry?.reason);
   if (entry?.type === 'suspension') reason = reason ? `Suspendido · ${reason}` : 'Suspendido';
   if (entry?.type === 'lift') reason = 'Suspensión levantada';
   const points = ADJUSTMENT.has(entry?.type) ? formatBehaviorPoints(entry?.points) : '';
@@ -232,6 +232,12 @@ const BAJA_REASON_ALIASES = {
 export function bajaReasonText(reason) {
   const text = String(reason || '').trim();
   return BAJA_REASON_ALIASES[text] || text;
+}
+
+/** Motivo de sancionar. «No avisó» viejo se lee «Faltó sin aviso». */
+export function faltaReasonText(reason) {
+  const text = bajaReasonText(reason);
+  return text === 'No avisó' ? 'Faltó sin aviso' : text;
 }
 
 function tierById(id) {
@@ -298,7 +304,8 @@ export function bajaPreview({ name, date, time, now = new Date() } = {}) {
 function pointText(n, signed) {
   const digits = Number.isInteger(n) ? 0 : 1;
   const abs = Math.abs(n).toLocaleString('es-AR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
-  if (signed && n < 0) return `-${abs}`;
+  if (signed && n < 0) return `−${abs}`;
+  if (signed && n > 0) return `+${abs}`;
   return abs;
 }
 

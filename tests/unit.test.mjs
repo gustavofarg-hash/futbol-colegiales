@@ -11,7 +11,7 @@ import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveCli
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
-import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, stepPointInput } from '../js/behavior.js';
+import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, stepPointInput } from '../js/behavior.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1566,9 +1566,10 @@ test('la baja calcula los puntos según la hora de Buenos Aires', () => {
   assert.equal(stepPointInput('0', -0.5), '0');
   assert.equal(stepPointInput('10', 0.5), '10');
   assert.equal(stepPointInput('9,5', 0.5), '10');
-  assert.equal(stepPointInput('-0,5', -0.5, { signed: true }), '-1');
-  assert.equal(stepPointInput('-10', -0.5, { signed: true }), '-10');
-  assert.equal(stepPointInput('10', 0.5, { signed: true }), '10');
+  assert.equal(stepPointInput('-0,5', -0.5, { signed: true }), '−1');
+  assert.equal(stepPointInput('-10', -0.5, { signed: true }), '−10');
+  assert.equal(stepPointInput('10', 0.5, { signed: true }), '+10');
+  assert.equal(faltaReasonText('No avisó'), 'Faltó sin aviso');
 });
 
 test('las notas de un jugador compartido las ve solo quien las escribió', async () => {
@@ -3661,7 +3662,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v170');
+  assert.equal(version, 'f7c-v171');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
