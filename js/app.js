@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v176';
+const APP_VERSION = 'f7c-v177';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -204,6 +204,7 @@ const ICON = {
   copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
+  cards: '<svg class="cards-icon" viewBox="0 0 24 24" aria-hidden="true"><rect class="card-back" x="8.2" y="2.6" width="11.2" height="15.4" rx="2" transform="rotate(12 13.8 10.3)"/><rect class="card-front" x="3.2" y="6.2" width="11.2" height="15.4" rx="2" transform="rotate(-8 8.8 13.9)"/></svg>',
   more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>',
 };
 
@@ -7470,7 +7471,6 @@ function openPlayerMenu(m, p) {
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? `<button class="btn" id="pm-attendance">${p.confirmed === 'si' ? 'Quitar confirmación' : 'Confirmó asistencia'}</button>` : ''}
-      ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? '<button class="btn" id="pm-falta">Sancionar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
       <button class="btn" id="pm-edit"${own || canAnnotate || canWritePlayer(p, actorWithRole()) ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
@@ -7478,6 +7478,7 @@ function openPlayerMenu(m, p) {
       ${!isWaiting(p) && !isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-wait">Bajar a lista de espera</button>' : ''}
       ${!isWaiting(p) && !isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-no-play">No jugó pero pagó</button>' : ''}
       ${isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-back">Volver al partido</button>' : ''}
+      ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? `<button class="btn" id="pm-falta">${ICON.cards}Sancionar</button>` : ''}
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
@@ -8132,7 +8133,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v176" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v177" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8169,7 +8170,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v176" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v177" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

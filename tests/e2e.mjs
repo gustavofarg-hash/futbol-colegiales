@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v176');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v177');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -5724,9 +5724,14 @@ async function assertGuestPromo(fix, visibleName, count) {
     const button = document.querySelector('#pm-no-play');
     const del = document.querySelector('#pm-del');
     const follows = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
-    return { label: button?.textContent || '', above: follows(button, del) && button?.nextElementSibling?.id === 'pm-del' };
+    const falta = document.querySelector('#pm-falta');
+    return {
+      label: button?.textContent?.trim() || '',
+      sancionar: falta?.textContent?.trim() || '',
+      above: follows(button, falta) && follows(falta, del) && falta?.nextElementSibling?.id === 'pm-del',
+    };
   });
-  check('No jugó pero pagó queda justo arriba de Quitar del partido', menuOrder.label === 'No jugó pero pagó' && menuOrder.above, JSON.stringify(menuOrder));
+  check('Sancionar queda justo arriba de Quitar del partido', menuOrder.label === 'No jugó pero pagó' && menuOrder.sancionar === 'Sancionar' && menuOrder.above, JSON.stringify(menuOrder));
   await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
   await page.locator('#pm-no-play').scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v91-menu-no-jugo.png' });
