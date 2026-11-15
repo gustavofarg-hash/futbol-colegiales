@@ -359,6 +359,8 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
   border: 1px solid var(--line); border-radius: 12px; background: var(--bg); padding: 4px 8px;
 }
 .stepper input:disabled { opacity: .7; }
+.points-step { margin-top: 2px; }
+.points-step .btn { min-width: 48px; padding: 0 12px; flex: none; }
 .slot .sub { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; max-width: 100%; }
 .slot .sub > * { max-width: 100%; }
 .slot .sub > .reserved-badge,
