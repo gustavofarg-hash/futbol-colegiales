@@ -15,7 +15,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate,
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { compensationDoneDates, countedGoals, currentMonthDiaDates, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
+import { compensationDoneDates, countedGoals, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
@@ -3571,7 +3571,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v166');
+  assert.equal(version, 'f7c-v167');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4272,19 +4272,29 @@ test('Jugador cuenta solo lo que se anotó con el organizador logueado', () => {
   assert.equal(seven[0].paid, 35000);
 });
 
-test('Día lista el mes en curso hasta el último cálculo guardado', () => {
+test('Día lista los partidos ya jugados del mes aunque no haya cálculo', () => {
   const today = '2026-10-19';
-  const done = compensationDoneDates([
-    { date: '2026-09-28' },
-    { id: '2026-10-05' },
-    { date: '2026-10-19' },
-    { date: '2026-10-20' },
-  ]);
-  assert.deepEqual(currentMonthDiaDates({ today, done }), ['2026-10-19', '2026-10-05']);
-  const withoutToday = compensationDoneDates([{ date: '2026-10-05' }, { date: '2026-09-02' }]);
-  assert.equal(currentMonthDiaDates({ today, done: withoutToday }).includes('2026-10-19'), false);
-  assert.deepEqual(currentMonthDiaDates({ today, done: withoutToday }), ['2026-10-05']);
-  assert.deepEqual(currentMonthDiaDates({ today, done: compensationDoneDates([{ date: '2026-09-28' }]) }), []);
+  const staff = [
+    { uid: 'gus', name: 'Gustavo', active: true },
+    { uid: 'mar', name: 'Martín', active: true },
+  ];
+  const matches = [
+    { id: 'a', date: '2026-10-05', adders: ['gus'], createdByUid: 'gus' },
+    { id: 'gus-name', date: '2026-10-18', adders: ['nadie'], createdBy: 'Gus' },
+    { id: 'hoy', date: '2026-10-19', adders: ['gus'], createdByUid: 'gus' },
+    { id: 'futuro', date: '2026-10-20', adders: ['gus'], createdByUid: 'gus' },
+    { id: 'viejo', date: '2026-09-28', adders: ['gus'], createdByUid: 'gus' },
+    { id: 'cancelado', date: '2026-10-12', adders: ['gus'], createdByUid: 'gus', cancelled: true },
+    { id: 'ajeno', date: '2026-10-08', adders: ['mar'], createdByUid: 'mar' },
+  ];
+  assert.deepEqual(
+    diaDatesForOrganizer({ today, matches, staff, who: { uid: 'gus', name: 'Gustavo' } }),
+    ['2026-10-18', '2026-10-05'],
+  );
+  assert.deepEqual(diaDatesForOrganizer({ today, matches, staff, who: { uid: 'mar', name: 'Martín' } }), ['2026-10-08']);
+  const done = compensationDoneDates([{ date: '2026-10-02' }]);
+  assert.equal(done.has('2026-10-02'), true);
+  assert.equal(diaDatesForOrganizer({ today, matches, staff, who: { uid: 'gus', name: 'Gustavo' } }).includes('2026-10-02'), false);
 });
 
 test('Día no muestra un día que no organizó quien está logueado', () => {
@@ -4306,7 +4316,7 @@ test('Día no muestra un día que no organizó quien está logueado', () => {
     { id: 'open', date: '2026-11-04', adders: ['*'], createdByUid: 'gus' },
   ];
   const forWho = (uid, name) => diaDatesForOrganizer({
-    today, done, matches, staff, who: { uid, name },
+    today, matches, staff, who: { uid, name },
   });
   assert.deepEqual(forWho('gus', 'Gustavo'), ['2026-11-04', '2026-11-01']);
   assert.deepEqual(forWho('mar', 'Martín'), ['2026-11-04', '2026-11-03']);

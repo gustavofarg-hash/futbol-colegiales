@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v166');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v167');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -564,7 +564,7 @@ await page.click('dialog.sheet [data-close]');
 
 const bad = await ctx.newPage();
 await bad.goto(`${BASE}confirmar.html?m=${encodeURIComponent(juan.matchId)}&p=${encodeURIComponent(juan.id)}&t=token-falso-que-no-coincide`);
-await bad.waitForSelector('text=Este link no es válido');
+await bad.waitForSelector('text=El link ya venció');
 check('Token incorrecto no confirma', (await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).players[id].confirmed, juan.id)) == null);
 await bad.close();
 
@@ -574,7 +574,8 @@ await shortPage.waitForSelector('#btn-si');
 check('El link corto abre la misma confirmación', (await shortPage.locator('h1').innerText()) === 'Juan' && !(await shortPage.locator('body').innerText()).includes('Pérez') && shortPage.url().includes('confirmar.html') && shortPage.url().includes(`t=${encodeURIComponent(juan.confirmToken)}`));
 const badShort = await ctx.newPage();
 await badShort.goto(`${BASE}c/?k=zzzzzzzz`);
-await badShort.waitForSelector('text=Este link no es válido');
+await badShort.waitForSelector('text=El link ya venció');
+check('El link vencido no pide que lo reenvíen', (await badShort.locator('body').innerText()).replace(/\s+/g, ' ').trim() === 'El link ya venció');
 check('Un código corto inexistente no confirma', true);
 await badShort.close();
 await shortPage.close();
@@ -3760,7 +3761,7 @@ await page.click('#pay-form [data-close]');
 const confirmSize = await ctx.newPage();
 await confirmSize.setViewportSize({ width: 360, height: 740 });
 await confirmSize.goto(`${BASE}confirmar.html?m=x&p=y&t=token-corto`);
-await confirmSize.waitForSelector('text=Este link no es válido');
+await confirmSize.waitForSelector('text=El link ya venció');
 check('confirmar.html no trae el tamaño ni los botones de la app', await confirmSize.evaluate(() => getComputedStyle(document.documentElement).fontSize === '16px' && !document.querySelector('#btn-text-smaller') && !document.querySelector('.topbar')));
 const overflowConfirm = await confirmSize.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('confirmar.html en 360px no desborda', overflowConfirm <= 1, String(overflowConfirm));
@@ -7753,14 +7754,9 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('#stats-day');
   const dayOpen = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
   check('El día abierto lista los dos horarios y el mismo total', (await page.locator('#stats-entitled').innerText()) === `Te correspondió: ${formatARS(octDaily)}` && dayOpen.includes('18:00') && dayOpen.includes('21:00') && (await page.locator('.stats-day-match').count()) === 2, dayOpen.slice(0, 240));
-  await page.evaluate(async () => {
-    await window.__app.store.saveCompensation('2026-10-19', {
-      date: '2026-10-19', rows: [], transfers: [], fingerprint: 'e2e-hoy', computedAt: Date.now(),
-    });
-  });
+  check('Un día ya jugado entra en Día aunque no tenga cálculo', listed.includes('2026-10-18') === true, listed.join(','));
   await page.evaluate(() => { location.hash = '#/estadisticas/dia'; });
-  await page.waitForSelector('#stats-days [data-date="2026-10-19"]');
-  check('Hoy con el cálculo guardado entra en Día', await page.locator('#stats-days [data-date="2026-10-19"]').count() === 1);
+  await page.waitForSelector('#stats-days [data-date="2026-10-07"]');
   await page.locator('#stats-days [data-date="2026-10-07"]').scrollIntoViewIfNeeded();
   await page.evaluate(() => {
     document.documentElement.classList.remove('dark');
