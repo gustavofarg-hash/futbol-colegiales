@@ -1534,6 +1534,23 @@ test('el comportamiento arranca en 10, el ajuste mueve el promedio y la suspensi
   assert.ok(logged.at > 0);
   store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
   await assert.rejects(() => store.addBehavior(id, { points: -0.5, reason: 'Otro' }), (error) => error?.code === 'edit-locked');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const [first, second] = await Promise.all([
+    store.addBehavior(id, { type: 'falta', points: -1, reason: 'discutió en el partido' }),
+    store.addBehavior(id, { type: 'falta', points: -1, reason: 'discutió en el partido' }),
+  ]);
+  assert.equal(first, second);
+  const doubled = JSON.parse(mem.get('f7c-test-behavior'));
+  assert.equal(Object.values(doubled.behavior).filter((row) => row.reason === 'discutió en el partido').length, 1);
+  await assert.rejects(() => {
+    store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+    return store.deleteBehavior(first);
+  }, (error) => error?.code === 'permission-denied');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  await store.deleteBehavior(first);
+  const gone = JSON.parse(mem.get('f7c-test-behavior'));
+  assert.equal(gone.behavior[first], undefined);
+  assert.ok(Object.values(gone.log).some((row) => row.type === 'entrada borrada' && row.actorName === 'Gustavo' && row.playerName === 'Ana Gómez'));
 });
 
 test('la baja calcula los puntos según la hora de Buenos Aires', () => {
@@ -3662,7 +3679,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v171');
+  assert.equal(version, 'f7c-v172');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

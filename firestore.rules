@@ -996,7 +996,8 @@ service cloud.firestore {
           && entryId == request.resource.data.rosterId + '_' + request.auth.uid + '_' + string(request.resource.data.createdAt)
           && exists(rosterPath(request.resource.data.rosterId))
           && get(rosterPath(request.resource.data.rosterId)).data.get('holders', []).hasAny([request.auth.uid]);
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isAdmin() || resource.data.createdByUid == request.auth.uid;
     }
 
     match /rosterRedirects/{fromId} {

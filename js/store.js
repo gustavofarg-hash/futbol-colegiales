@@ -111,7 +111,7 @@ import {
 } from './venues.js';
 import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, firestoreRestFields, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialMockToken, trialOpKey, trialPlayerPlan, trialShouldReplace } from './backup.js';
 import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
-import { behaviorLog, cleanBehaviorEntry } from './behavior.js';
+import { behaviorDeleteLog, behaviorLog, cleanBehaviorEntry } from './behavior.js';
 
 function reportBackupProgress(onProgress, done, total) {
   if (typeof onProgress !== 'function') return;
@@ -569,6 +569,21 @@ export function nextPlayerCount(delta, localCount) {
 
 function countPatch(_fs, _match, delta, localCount) {
   return { playerCount: nextPlayerCount(delta, localCount) };
+}
+
+function behaviorFlightKey(rosterId, input) {
+  return [rosterId, input?.type || 'manual', input?.points, String(input?.reason || '').trim(), input?.matchId || ''].join('\u0001');
+}
+
+function withBehaviorFlight(store, key, job) {
+  store._behaviorFlight ||= new Map();
+  const current = store._behaviorFlight.get(key);
+  if (current) return current;
+  const run = Promise.resolve().then(job).finally(() => {
+    if (store._behaviorFlight.get(key) === run) store._behaviorFlight.delete(key);
+  });
+  store._behaviorFlight.set(key, run);
+  return run;
 }
 
 function actorRecord(user) {
@@ -1518,6 +1533,9 @@ class LocalStore {
     this._save(db);
   }
   async addBehavior(id, input) {
+    return withBehaviorFlight(this, behaviorFlightKey(id, input), () => this._addBehavior(id, input));
+  }
+  async _addBehavior(id, input) {
     const db = this._load();
     const cur = db.roster[id];
     if (!cur) throw new Error('Jugador inexistente');
@@ -1537,6 +1555,20 @@ class LocalStore {
     this._pushLogs(db, [behaviorLog(this._actor(), { id, name: cur.name || '' }, { ...entry, matchLabel: input?.matchLabel })]);
     this._save(db);
     return docId;
+  }
+  async deleteBehavior(docId) {
+    const db = this._load();
+    db.behavior ||= {};
+    const row = db.behavior[docId];
+    if (!row) return;
+    const uid = this.actor?.uid || '';
+    if (this.actor?.role !== 'admin' && row.createdByUid !== uid) {
+      throw Object.assign(new Error('No podés borrar esta entrada.'), { code: 'permission-denied' });
+    }
+    delete db.behavior[docId];
+    const person = db.roster?.[row.rosterId];
+    this._pushLogs(db, [behaviorDeleteLog(this._actor(), { name: person?.name || '' }, row)]);
+    this._save(db);
   }
   async deleteRoster(id) {
     const db = this._load();
@@ -3711,6 +3743,9 @@ export class FirebaseStore {
     });
   }
   async addBehavior(id, input) {
+    return withBehaviorFlight(this, behaviorFlightKey(id, input), () => this._addBehavior(id, input));
+  }
+  async _addBehavior(id, input) {
     const cur = (this.state.roster || []).find((row) => row.id === id);
     if (!cur) throw new Error('Jugador inexistente');
     if (!rosterHeldBy(cur, this.actor)) throw editLockedError();
@@ -3728,6 +3763,18 @@ export class FirebaseStore {
     await setDoc(doc(this.db, 'behavior', docId), entry);
     await this._appendLogs([behaviorLog(this._actor(), cur, { ...entry, matchLabel: input?.matchLabel })]);
     return docId;
+  }
+  async deleteBehavior(docId) {
+    const row = (this.state.behavior || []).find((item) => item.id === docId);
+    if (!row) return;
+    const uid = this.actor?.uid || '';
+    if (this.actor?.role !== 'admin' && row.createdByUid !== uid) {
+      throw Object.assign(new Error('No podés borrar esta entrada.'), { code: 'permission-denied' });
+    }
+    const person = (this.state.roster || []).find((item) => item.id === row.rosterId);
+    const { doc, deleteDoc } = this.fs;
+    await deleteDoc(doc(this.db, 'behavior', docId));
+    await this._appendLogs([behaviorDeleteLog(this._actor(), { name: person?.name || '' }, row)]);
   }
   async deleteRoster(id) {
     const cur = (this.state.roster || []).find((row) => row.id === id);
