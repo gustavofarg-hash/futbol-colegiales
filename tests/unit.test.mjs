@@ -3679,7 +3679,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v174');
+  assert.equal(version, 'f7c-v175');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4623,10 +4623,13 @@ test('el recordatorio de deuda dice los partidos si debe más de uno', () => {
   const now = new Date('2026-10-19T13:00:00-03:00');
   assert.equal(transferReminderText('Ana', 'de hoy'), 'Qué tal Ana? No te olvides de transferirme el partido de hoy porfa');
   assert.equal(transferReminderText('Ana', 'de hoy', 2), 'Qué tal Ana? No te olvides de transferirme los partidos porfa');
-  const dates = ['2026-10-18', '2026-10-17', '2026-10-12', '2026-10-11'];
   assert.equal(
-    transferReminderText('Ana', 'de ayer', dates, now),
-    'Qué tal Ana? No te olvides de transferirme los partidos porfa\nel partido de ayer\nel partido del sábado\nel partido del lunes\nel partido del 11/10',
+    transferReminderText('Ana', 'del sábado', ['2026-10-17', '2026-10-17'], now),
+    'Qué tal Ana? No te olvides de transferirme los partidos del sábado porfa',
+  );
+  assert.equal(
+    transferReminderText('Ana', 'de ayer', ['2026-10-11', '2026-10-18', '2026-10-17', '2026-10-12', '2026-10-17'], now),
+    'Qué tal Ana? No te olvides de transferirme los partidos de ayer, del sábado, del lunes y del 11/10 porfa',
   );
 });
 
