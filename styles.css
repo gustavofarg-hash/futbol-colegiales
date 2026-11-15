@@ -525,7 +525,9 @@ dialog.sheet[open] > .tabbar {
 .score-btn {
   min-width: 40px; min-height: 40px; padding: 0 8px; border: 1px solid var(--line);
   border-radius: 10px; background: var(--bg); color: inherit; font: inherit; font-weight: 800;
+  touch-action: pan-y;
 }
+.points-step .btn { touch-action: pan-y; }
 .team-counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-count {
   min-width: 0; text-align: center; background: var(--card); border: 1px solid var(--line);

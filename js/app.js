@@ -39,14 +39,14 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { tapChose } from './tap.js';
+import { bindTap, tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v179';
+const APP_VERSION = 'f7c-v180';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -88,18 +88,8 @@ function queueScore(matchId, side, delta) {
   scoreWrites.set(matchId, prev.catch(() => {}).then(() => app.store.adjustScore(matchId, side, delta, app.who)));
 }
 function bindScoreTap(board, matchId) {
-  if (!board) return;
-  board.addEventListener('pointerdown', (e) => {
-    const btn = e.target.closest('[data-score]');
-    if (!btn || (e.button && e.button > 0)) return;
-    e.preventDefault();
+  bindTap(board, '[data-score]', (btn) => {
     goalTapAt = Date.now();
-    queueScore(matchId, btn.dataset.score, Number(btn.dataset.delta));
-  });
-  board.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-score]');
-    if (!btn) return;
-    if (Date.now() - goalTapAt < 700) return;
     queueScore(matchId, btn.dataset.score, Number(btn.dataset.delta));
   });
 }
@@ -7244,10 +7234,8 @@ function bindPointStepper(scope, input, { signed = false } = {}) {
   if (!scope || !input || !box || box.dataset.stepper === '1') return;
   box.dataset.stepper = '1';
   const paint = () => paintPointField(input, signed);
-  box.addEventListener('click', (event) => {
-    const btn = event.target.closest('[data-step]');
-    if (!btn || input.disabled) return;
-    event.preventDefault();
+  bindTap(box, '[data-step]', (btn) => {
+    if (input.disabled) return;
     input.value = stepPointInput(input.value, btn.dataset.step, { signed });
     paint();
   });
@@ -8138,7 +8126,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v179" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v180" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8175,7 +8163,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v179" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v180" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
