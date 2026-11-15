@@ -27,10 +27,11 @@ import { canonicalOrganizerName, organizerChoices, organizerNames, organizerSlug
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { tapChose } from '../js/tap.js';
-import { addDays, attendanceWhen, clockTime, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
+import { addDays, attendanceWhen, clockTime, compensationWhen, confirmSlotLabel, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, todayISO, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
-  attendanceMessage, cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
+  attendanceMessage, cancelLinks, cancelMessage, confirmPageUrl, confirmSlotText, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
+  sharedConfirmAnswer, upcomingConfirmSlots, visibleConfirmSlots,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderAudience, reminderLinks, reminderMessage, unconfirmedForReminder,
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
@@ -1140,6 +1141,36 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
     match: { date: '2026-10-19', time: '17:30', note: 'Cancha 2' },
   });
   assert.equal(named, today);
+  assert.equal(confirmSlotLabel('2026-10-19', '20:00', before), 'HOY 20:00');
+  assert.equal(confirmSlotLabel('2026-10-20', '21:00', before), 'mañana 21:00');
+  assert.equal(confirmSlotLabel('2026-10-22', '19:00', before), 'jueves 19:00');
+  const phone = 'ab'.repeat(32);
+  const group = [
+    { id: 'hoy', matchId: 'm1', confirmToken: 'token-hoy-largo-0001', phoneKey: phone },
+    { id: 'man', matchId: 'm2', confirmToken: 'token-man-largo-0002', phoneKey: phone },
+    { id: 'jue', matchId: 'm3', confirmToken: 'token-jue-largo-0003', phoneKey: phone },
+    { id: 'esp', matchId: 'm4', confirmToken: 'token-esp-largo-0004', phoneKey: phone, waiting: true },
+    { id: 'pas', matchId: 'm5', confirmToken: 'token-pas-largo-0005', phoneKey: phone },
+    { id: 'nop', matchId: 'm6', confirmToken: 'token-nop-largo-0006', phoneKey: phone, noPlay: true },
+    { id: 'can', matchId: 'm8', confirmToken: 'token-can-largo-0008', phoneKey: phone },
+    { id: 'otr', matchId: 'm7', confirmToken: 'token-otr-largo-0007', phoneKey: 'cd'.repeat(32) },
+  ];
+  const groupMatches = [
+    { id: 'm1', date: '2026-10-19', time: '20:00' },
+    { id: 'm2', date: '2026-10-20', time: '21:00' },
+    { id: 'm3', date: '2026-10-22', time: '19:00' },
+    { id: 'm4', date: '2026-10-21', time: '18:00' },
+    { id: 'm5', date: '2026-10-18', time: '20:00' },
+    { id: 'm6', date: '2026-10-23', time: '19:00' },
+    { id: 'm7', date: '2026-10-19', time: '22:00' },
+    { id: 'm8', date: '2026-10-24', time: '19:00', cancelled: true },
+  ];
+  const slots = upcomingConfirmSlots({ players: group, matches: groupMatches, player: group[0], now: before });
+  assert.deepEqual(slots.map((slot) => confirmSlotText(slot, before)), ['HOY 20:00', 'mañana 21:00', 'jueves 19:00']);
+  assert.equal(sharedConfirmAnswer(slots), null);
+  assert.equal(sharedConfirmAnswer(slots.map((slot) => ({ ...slot, confirmed: 'si' }))), 'si');
+  assert.equal(visibleConfirmSlots(slots, before).length, 3);
+  assert.equal(visibleConfirmSlots(slots, new Date('2026-11-15T13:00:00-03:00')).length, 0);
   const house = 'https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=Ab3x9Zk2';
   const swapped = named.split(house).join('https://spoo.me/ZXwB0uF');
   assert.equal(swapped.endsWith('https://spoo.me/ZXwB0uF'), true);
@@ -1819,6 +1850,42 @@ test('organizadores demo: siembra Gustavo y Martín y no duplica', async () => {
   await assert.rejects(() => store.addOrganizer('lucia'), /lista/);
   await assert.rejects(() => store.addOrganizer('LUCÍA'), /lista/);
   assert.equal(JSON.parse(mem.get('f7c-test-org')).organizers.lucia.name, 'Lucía');
+});
+
+test('la ficha de varios partidos próximos no incluye la espera', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-confirm-many';
+  await store.init();
+  const today = todayISO();
+  const tomorrow = addDays(today, 1);
+  const later = addDays(today, 3);
+  const phone = '5491170001781';
+  const first = await store.addMatch({ date: today, time: '20:00', capacity: 14 }, 'Gustavo');
+  const second = await store.addMatch({ date: tomorrow, time: '21:00', capacity: 14 }, 'Gustavo');
+  const third = await store.addMatch({ date: later, time: '19:00', capacity: 1 }, 'Gustavo');
+  await store.addPlayer({ id: third, date: later, capacity: 1 }, { name: 'Ocupa Lugar', phone: '5491170001782' }, 'Gustavo');
+  const ids = [];
+  for (const match of [
+    { id: first, date: today },
+    { id: second, date: tomorrow },
+  ]) {
+    ids.push(await store.addPlayer({ id: match.id, date: match.date, capacity: 14 }, { name: 'Ana López', phone }, 'Gustavo'));
+  }
+  ids.push(await store.addPlayer({ id: third, date: later, capacity: 1 }, { name: 'Ana López', phone }, 'Gustavo', { waiting: true }));
+  const db = JSON.parse(mem.get('f7c-test-confirm-many'));
+  const cards = ids.map((id) => db.confirmations[db.players[id].confirmToken]);
+  assert.equal(cards[0].also.length, 2);
+  assert.equal(cards[1].also.length, 2);
+  assert.equal(cards[2].also, undefined);
+  assert.deepEqual(cards[0].also.map((slot) => slot.time), ['20:00', '21:00']);
+  assert.equal(JSON.stringify(cards[0].also).includes('549'), false);
+  assert.equal(cards[0].also.some((slot) => slot.playerId === ids[2]), false);
 });
 
 test('la ficha de confirmación no lleva teléfono', () => {
@@ -3679,7 +3746,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v177');
+  assert.equal(version, 'f7c-v178');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

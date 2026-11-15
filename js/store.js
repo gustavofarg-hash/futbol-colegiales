@@ -95,7 +95,7 @@ import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { bumpGoals, bumpScore, dropPlayer, nextInGoalAt, scoreRecord, teamsRecord } from './teams.js';
-import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations } from './reminders.js';
+import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations, upcomingConfirmSlots } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
 import { acceptedExternalShort } from './shorten.js';
 import { ALREADY_IN_MATCH, alreadyInMatch, inviteBlock, isAutoGuestName, sameDayPromoGuestEditPatches, sameDayPromoGuestNickPatches } from './guests.js';
@@ -696,17 +696,22 @@ class LocalStore {
   }
   _touchConfirmations(db) {
     db.confirmations ||= {};
+    const players = Object.entries(db.players).map(([id, player]) => ({ id, ...player }));
+    const matches = Object.entries(db.matches).map(([id, match]) => ({ id, ...match }));
+    const now = new Date();
     const live = new Set();
-    for (const [pid, player] of Object.entries(db.players)) {
+    for (const player of players) {
       if (!player.confirmToken) continue;
       live.add(player.confirmToken);
       const prev = db.confirmations[player.confirmToken] || {};
-      const match = db.matches[player.matchId] || null;
+      const match = matches.find((item) => item.id === player.matchId) || null;
       const next = confirmationRecord({
-        playerId: pid,
+        playerId: player.id,
         player: { ...player, confirmed: prev.confirmed != null ? prev.confirmed : player.confirmed, confirmedAt: prev.confirmedAt != null ? prev.confirmedAt : player.confirmedAt },
         match,
       });
+      const slots = upcomingConfirmSlots({ players, matches, player, now });
+      if (slots.length >= 2 && slots.some((slot) => slot.token === player.confirmToken)) next.also = slots;
       db.confirmations[player.confirmToken] = next;
     }
     for (const token of Object.keys(db.confirmations)) if (!live.has(token)) delete db.confirmations[token];
@@ -2678,9 +2683,45 @@ export class FirebaseStore {
   }
   async _writeConfirmation(token, playerId, player, match) {
     if (!token) return;
+    await this._syncConfirmGroup(playerId, { ...player, id: playerId, confirmToken: token }, match);
+  }
+  async _putConfirmation(token, playerId, player, match, slots) {
+    if (!token) return;
     const { doc, setDoc } = this.fs;
     const body = confirmationIdentity({ playerId, player, match });
+    const listed = slots.some((slot) => slot.token === token);
+    body.also = listed && slots.length >= 2 ? slots : [];
     await setDoc(doc(this.db, 'confirmations', token), body, { merge: true });
+  }
+  async _syncConfirmGroup(focusId, player, matchHint, { skipId = '' } = {}) {
+    if (!player || this._syncingConfirm) return;
+    this._syncingConfirm = true;
+    try {
+      const current = { ...player, id: focusId || player.id, confirmToken: player.confirmToken || '' };
+      const players = (this.state.players || []).filter((row) => row.id !== skipId).map((row) => ({ ...row }));
+      if (!skipId) {
+        const idx = players.findIndex((row) => row.id === current.id);
+        if (idx >= 0) players[idx] = { ...players[idx], ...current };
+        else players.push(current);
+      }
+      let matches = (this.state.matches || []).map((row) => ({ ...row }));
+      if (matchHint?.id) {
+        const idx = matches.findIndex((row) => row.id === matchHint.id);
+        if (idx >= 0) matches[idx] = { ...matches[idx], ...matchHint };
+        else matches.push(matchHint);
+      }
+      const pool = players.some((row) => row.id === current.id) ? players : [...players, current];
+      const key = personKey(current, pool);
+      if (!key) return;
+      const slots = upcomingConfirmSlots({ players: pool, matches, player: current });
+      const related = players.filter((row) => row.confirmToken && personKey(row, pool) === key);
+      for (const row of related) {
+        const match = matches.find((item) => item.id === row.matchId) || null;
+        await this._putConfirmation(row.confirmToken, row.id, row, match, slots);
+      }
+    } finally {
+      this._syncingConfirm = false;
+    }
   }
   subscribe(fn) { this.listeners.add(fn); fn(this._view()); return () => this.listeners.delete(fn); }
   _ids() { return new Set(this.state.matches.map((m) => m.id)); }
@@ -3390,6 +3431,7 @@ export class FirebaseStore {
       this._linksLive = false;
       await commit(false);
     }
+    if (player) await this._syncConfirmGroup(id, { ...player, confirmToken: '' }, match, { skipId: id });
     if (!match) return;
     const { updateDoc } = this.fs;
     const patch = { ...countPatch(this.fs, match, -1, localCount), updatedAt: Date.now() };

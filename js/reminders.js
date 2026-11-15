@@ -1,8 +1,8 @@
 // Recordatorios y links de confirmación. Puro: lo usan la app, la página
 // confirmar.html y las pruebas. No abre WhatsApp ni escribe en Firestore.
-import { attendanceWhen, clockTime, labelDate, toEpoch } from './dates.js';
+import { attendanceWhen, clockTime, confirmSlotLabel, labelDate, todayISO, toEpoch } from './dates.js';
 import { sameOrganizer } from './organizers.js';
-import { givenName } from './roster.js';
+import { givenName, personKey } from './roster.js';
 import { playerAccess } from './access.js';
 import { waSendUrl } from './phone.js';
 import { isShortCode, shortConfirmUrl } from './short.js';
@@ -103,6 +103,63 @@ export function overlayConfirmations(players, cards) {
       confirmedAt: typeof card.confirmedAt === 'number' ? card.confirmedAt : (player.confirmedAt ?? null),
     };
   });
+}
+
+const CONFIRM_ALSO_MAX = 12;
+
+/** Partidos próximos en los que esta persona está anotada, sin lista de espera. */
+export function upcomingConfirmSlots({ players, matches, player, now = new Date() } = {}) {
+  const today = todayISO(now);
+  const key = personKey(player, players);
+  if (!key) return [];
+  const byId = new Map((matches || []).map((match) => [match.id, match]));
+  const rows = [];
+  for (const other of players || []) {
+    const token = String(other?.confirmToken || '');
+    if (token.length < 16 || !other?.id) continue;
+    if (other.waiting === true || other.noPlay === true) continue;
+    if (personKey(other, players) !== key) continue;
+    const match = byId.get(other.matchId);
+    if (!match || match.cancelled === true) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(match.date || '')) || match.date < today) continue;
+    const time = clockTime(match.time);
+    if (!time) continue;
+    rows.push({ token, playerId: other.id, date: match.date, time });
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.playerId.localeCompare(b.playerId));
+  return rows.slice(0, CONFIRM_ALSO_MAX);
+}
+
+/** Lo que la página puede mostrar: horarios de hoy en adelante, sin repetir el token. */
+export function visibleConfirmSlots(list, now = new Date()) {
+  const today = todayISO(now);
+  const out = [];
+  const seen = new Set();
+  for (const row of list || []) {
+    const token = String(row?.token || '');
+    const playerId = String(row?.playerId || '');
+    const date = String(row?.date || '');
+    const time = clockTime(row?.time);
+    if (token.length < 16 || token.length > 80 || !playerId || playerId.length > 80) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < today || !time) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    const confirmed = row?.confirmed === 'si' || row?.confirmed === 'no' ? row.confirmed : null;
+    out.push({ token, playerId, date, time, confirmed });
+  }
+  return out;
+}
+
+export function confirmSlotText(slot, now = new Date()) {
+  return confirmSlotLabel(slot?.date, slot?.time, now);
+}
+
+/** Si todos contestaron lo mismo, esa respuesta. Si falta alguna, null. */
+export function sharedConfirmAnswer(slots) {
+  if (!slots?.length) return null;
+  const first = slots[0]?.confirmed;
+  if (first !== 'si' && first !== 'no') return null;
+  return slots.every((slot) => slot?.confirmed === first) ? first : null;
 }
 
 /** El link solo vale si el token del jugador coincide y es de ese partido. */
