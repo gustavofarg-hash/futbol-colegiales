@@ -224,7 +224,10 @@ function activeDayMatches(matches) {
 /** Esta persona organiza el partido: puede anotar, igual que en la compensación. */
 export function matchOrganizedBy(match, staff, who) {
   const person = who && typeof who === 'object' ? who : { uid: '', name: '' };
-  return matchAdders(match, staff).some((adder) => isThisOrganizer(adder, person));
+  if (matchAdders(match, staff).some((adder) => isThisOrganizer(adder, person))) return true;
+  const names = [match?.createdBy];
+  if (Array.isArray(match?.adderNames)) names.push(...match.adderNames);
+  return names.some((name) => name && isThisOrganizer({ name }, person));
 }
 
 /** Organizadores del día: quienes pueden anotar en algún partido activo. */
@@ -283,9 +286,9 @@ export function compensationDoneDates(compensations) {
 }
 
 /**
- * Día: del 1 de este mes hasta el último día con cálculo guardado, inclusive.
- * Solo entran los días que tienen documento. Hoy sin documento no aparece.
- * Un día de un mes anterior tampoco, aunque tenga cálculo.
+ * Día: del 1 de este mes hasta ayer. Solo días con documento de compensación.
+ * Lo usa quien todavía mira el cálculo guardado. La lista de Estadísticas
+ * ya no pasa por acá: muestra los partidos jugados aunque no haya cálculo.
  */
 export function currentMonthDiaDates({ today, done } = {}) {
   if (!ISO_DAY.test(today || '')) return [];
@@ -295,22 +298,23 @@ export function currentMonthDiaDates({ today, done } = {}) {
 }
 
 /**
- * Día, para quien está logueado: la ventana de currentMonthDiaDates,
- * y solo un día en el que organiza al menos un partido.
- * Un día de otro organizador, o un cálculo sin partidos, no entra.
+ * Estadísticas > Día: todos los partidos ya jugados de este mes, no cancelados,
+ * en los que organiza quien está logueado. No hace falta un cálculo guardado.
+ * Hoy no entra: todavía no se jugó. Gus y Gustavo son el mismo organizador.
  */
-export function diaDatesForOrganizer({ today, done, matches, staff, who } = {}) {
+export function diaDatesForOrganizer({ today, matches, staff, who } = {}) {
   const person = who && typeof who === 'object' ? who : { uid: '', name: '' };
-  const byDay = new Map();
+  if (!ISO_DAY.test(today || '')) return [];
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const dates = new Set();
   for (const match of matches || []) {
     const date = String(match?.date || '');
-    if (!ISO_DAY.test(date)) continue;
-    if (!byDay.has(date)) byDay.set(date, []);
-    byDay.get(date).push(match);
+    if (!ISO_DAY.test(date) || date < monthStart || date >= today) continue;
+    if (match.cancelled === true) continue;
+    if (!matchOrganizedBy(match, staff, person)) continue;
+    dates.add(date);
   }
-  return currentMonthDiaDates({ today, done }).filter((date) => (
-    (byDay.get(date) || []).some((match) => matchOrganizedBy(match, staff, person))
-  ));
+  return [...dates].sort((a, b) => b.localeCompare(a));
 }
 
 /** Con quién se anotó. Si no hay uid, vale quien lo agregó. */

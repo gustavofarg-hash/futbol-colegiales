@@ -109,7 +109,7 @@ function render(state) {
   const root = $('#confirm');
   const { match, player, error } = state;
   if (error || !confirmationAllowed(player, matchId, token) || !match) {
-    root.innerHTML = `<div class="empty"><div class="big">🔗</div><p><b>Este link no es válido.</b></p><p class="small">Pedile a Gustavo o a Martín que te lo reenvíen.</p></div>`;
+    root.innerHTML = `<div class="empty"><p><b>El link ya venció</b></p></div>`;
     return;
   }
   const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
