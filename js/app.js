@@ -30,7 +30,7 @@ import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
-import { behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorScore, parseBehaviorPoints } from './behavior.js';
+import { BAJA_TIERS, bajaPreview, behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorScore, formatSignedPoints, parseBajaPoints, parseBehaviorPoints } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v168';
+const APP_VERSION = 'f7c-v169';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -4830,8 +4830,7 @@ function bindPartidos(person) {
     const match = player ? matchById(player.matchId) : null;
     if (!player || !match) return;
     if (!canAdd(match, actor().uid)) { toast('Este partido es de solo lectura.'); return; }
-    if (!(await askConfirm(`¿Quitar a ${person.name} de ${labelDate(match.date)} ${match.time || ''} hs?`, { danger: true }))) return;
-    removeMatchPlayer(match, player, { asked: true });
+    removeMatchPlayer(match, player);
   });
   button.onclick = async () => {
     const chosen = [];
@@ -7369,6 +7368,7 @@ function openPlayerMenu(m, p) {
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? `<button class="btn" id="pm-attendance">${p.confirmed === 'si' ? 'Quitar confirmación' : 'Confirmó asistencia'}</button>` : ''}
+      ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? '<button class="btn" id="pm-falta">Registrar falta</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
       <button class="btn" id="pm-edit"${own || canAnnotate || canWritePlayer(p, actorWithRole()) ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
@@ -7410,6 +7410,8 @@ function openPlayerMenu(m, p) {
     render();
     run(app.store.setAttendance(p.id, yes ? 'si' : null), yes ? 'Quedó confirmado' : 'Se quitó la confirmación');
   };
+  const faltaBtn = $('#pm-falta');
+  if (faltaBtn && match) faltaBtn.onclick = () => openFaltaForm(match, p);
   if (match && !$('#pm-edit').disabled) $('#pm-edit').onclick = () => openPlayerForm(match, p);
   const addGuest = $('#pm-friend');
   if (addGuest && match) addGuest.onclick = () => openFriendForm(match, p);
@@ -7706,17 +7708,195 @@ async function restoreNoPlay(m, p) {
   })(), `${shownName(p)} volvió al partido`);
 }
 
+function behaviorMatchLabel(match) {
+  if (!match?.date) return '';
+  return `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
+}
+
+function askPanel(html, { danger = false, okText = 'Aceptar', read } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let pushed = false;
+    const finish = (value, fromPop = false) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('popstate', onPop);
+      ask.removeEventListener('cancel', onCancel);
+      ask.removeEventListener('close', onClose);
+      ask.onclick = null;
+      if (ask.open) ask.close();
+      if (pushed && !fromPop) {
+        const done = () => {
+          window.removeEventListener('popstate', done);
+          resolve(value);
+        };
+        window.addEventListener('popstate', done);
+        history.back();
+        return;
+      }
+      resolve(value);
+    };
+    const onPop = () => finish(null, true);
+    const onCancel = (event) => { event.preventDefault(); finish(null); };
+    const onClose = () => finish(null);
+    ask.innerHTML = `<div class="ask-card" id="app-ask">${html}<div class="sheet-actions"><button type="button" class="btn" id="ask-cancel">Cancelar</button><button type="button" class="btn ${danger ? 'danger solid' : 'primary'}" id="ask-ok">${esc(okText)}</button></div></div>`;
+    const cancelBtn = ask.querySelector('#ask-cancel');
+    if (cancelBtn) cancelBtn.onclick = () => finish(null);
+    ask.querySelector('#ask-ok').onclick = () => {
+      if (!read) { finish(true); return; }
+      const value = read();
+      if (value == null) return;
+      finish(value);
+    };
+    ask.onclick = (event) => { if (event.target === ask) finish(null); };
+    ask.addEventListener('cancel', onCancel);
+    ask.addEventListener('close', onClose);
+    if (!ask.open) ask.showModal();
+    ask.querySelector('#ask-ok').focus();
+    history.pushState({ ask: 1 }, '');
+    pushed = true;
+    window.addEventListener('popstate', onPop);
+  });
+}
+
+function askBajaPoints(match, player, { note = '' } = {}) {
+  const preview = bajaPreview({ name: shownName(player), date: match?.date, time: match?.time });
+  const rows = BAJA_TIERS.map((row) => `<tr class="${row.id === preview.id ? 'on' : ''}"><td>${esc(row.label)}</td><td>${row.points === 0 ? '0' : esc(formatSignedPoints(row.points))}</td></tr>`).join('');
+  const html = `
+    <p id="app-ask-text">¿Esta baja resta puntos de Comportamiento?${note ? `\n${note}` : ''}</p>
+    <p class="hint" id="baja-who">${esc(preview.headline)}</p>
+    <p class="hint" id="baja-now">${esc(preview.nowLine)}</p>
+    <div class="baja-box" id="baja-box">${esc(preview.box)}</div>
+    <table class="baja-tiers" id="baja-tiers"><tbody>${rows}</tbody></table>
+    <label class="field"><span>Puntos a restar</span><input id="baja-points" inputmode="decimal" autocomplete="off" value="${esc(preview.points === 0 ? '0' : String(preview.points).replace('.', ','))}"><span class="hint">Valor calculado automáticamente; lo podés editar.</span></label>
+    <label class="checkline"><input type="checkbox" id="baja-suspend"${preview.suggestSuspend ? ' checked' : ''}><span>Suspender</span></label>
+    <label class="checkline"><input type="checkbox" id="baja-paid"><span>Pagó el partido igual (no resta)</span></label>
+    <div class="err" id="baja-err"></div>`;
+  const panel = askPanel(html, { danger: true, okText: 'Confirmar quita de puntos', read: () => {
+    const err = ask.querySelector('#baja-err');
+    const paid = ask.querySelector('#baja-paid')?.checked === true;
+    let points = 0;
+    if (!paid) {
+      const parsed = parseBajaPoints(ask.querySelector('#baja-points')?.value);
+      if (!parsed.ok) { if (err) err.textContent = parsed.error; return null; }
+      points = parsed.points;
+    }
+    if (err) err.textContent = '';
+    return {
+      points,
+      paid,
+      suspend: ask.querySelector('#baja-suspend')?.checked === true,
+      reason: preview.reason,
+      matchLabel: behaviorMatchLabel(match),
+    };
+  } });
+  queueMicrotask(() => {
+    const paid = ask.querySelector('#baja-paid');
+    const input = ask.querySelector('#baja-points');
+    if (!paid || !input) return;
+    paid.onchange = () => {
+      input.disabled = paid.checked;
+      if (paid.checked) input.value = '0';
+      else input.value = preview.points === 0 ? '0' : String(preview.points).replace('.', ',');
+    };
+  });
+  return panel;
+}
+
+async function commitBajaPenalty(match, player, choice) {
+  if (!choice) return false;
+  const rosterId = suspensionRosterId(player);
+  if ((choice.points !== 0 || choice.suspend) && !rosterId) {
+    toast('No se anotaron puntos: no tiene ficha en Jugadores.');
+    return true;
+  }
+  try {
+    if (choice.points !== 0 && rosterId) {
+      await app.store.addBehavior(rosterId, {
+        type: 'baja',
+        points: choice.points,
+        reason: choice.reason,
+        matchId: match?.id || '',
+        matchLabel: choice.matchLabel || '',
+      });
+    }
+    if (choice.suspend && rosterId) {
+      await app.store.setSuspension(rosterId, { note: choice.reason, date: todayISO() });
+    }
+    return true;
+  } catch (error) {
+    toast(error?.code === 'permission-denied'
+      ? 'Hay que publicar las reglas de Firestore para la colección behavior.'
+      : (error?.message || 'No se pudo guardar el puntaje.'));
+    return false;
+  }
+}
+
+function openFaltaForm(match, player) {
+  const rosterId = suspensionRosterId(player);
+  const reasons = ['Llegó tarde', 'No avisó', 'Mal comportamiento', 'Otro'];
+  openSheet(`
+    <form id="falta-form" novalidate>
+      <h3>Registrar falta</h3>
+      <label class="field"><span>Motivo</span><select id="falta-reason">${reasons.map((reason) => `<option>${esc(reason)}</option>`).join('')}</select></label>
+      <label class="field" id="falta-minutes-field" hidden><span>Minutos</span><input id="falta-minutes" inputmode="numeric" autocomplete="off" placeholder="Ej: 20"></label>
+      <label class="field"><span>Puntos</span><input id="falta-points" inputmode="decimal" autocomplete="off" value="-0,5"></label>
+      <label class="field"><span>Comentario (opcional)</span><input id="falta-comment" maxlength="300" autocomplete="off"></label>
+      <div class="field"><div class="err" id="falta-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#falta-form');
+  if (!form) return;
+  const reason = $('#falta-reason');
+  const minutesField = $('#falta-minutes-field');
+  const sync = () => { if (minutesField) minutesField.hidden = reason?.value !== 'Llegó tarde'; };
+  if (reason) reason.onchange = sync;
+  sync();
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const err = $('#falta-err');
+    if (!rosterId) { if (err) err.textContent = 'No tiene ficha en Jugadores.'; return; }
+    let text = reason?.value || '';
+    if (text === 'Llegó tarde') {
+      const mins = String($('#falta-minutes')?.value || '').trim();
+      if (!/^\d+$/.test(mins) || Number(mins) <= 0) { if (err) err.textContent = 'Poné los minutos.'; return; }
+      text = `Llegó tarde · ${mins} min`;
+    }
+    const parsed = parseBehaviorPoints($('#falta-points')?.value);
+    if (!parsed.ok) { if (err) err.textContent = parsed.error; return; }
+    try {
+      await app.store.addBehavior(rosterId, {
+        type: 'falta',
+        points: parsed.points,
+        reason: text,
+        comment: $('#falta-comment')?.value || '',
+        matchId: match?.id || '',
+        matchLabel: behaviorMatchLabel(match),
+      });
+      closeSheet();
+      toast('Falta registrada');
+    } catch (error) {
+      if (!err) return;
+      err.textContent = error?.code === 'permission-denied'
+        ? 'Hay que publicar las reglas de Firestore para la colección behavior.'
+        : (error?.message || 'No se pudo guardar.');
+    }
+  };
+}
+
 async function removeNoPlayPlayer(m, p) {
   if (!m || !p || !isNoPlay(p)) return;
-  if (!(await askConfirm(`¿Quitar a ${p.name} del partido? El pago no vuelve al saldo.`, { danger: true }))) return;
+  const choice = await askBajaPoints(m, p, { note: 'El pago no vuelve al saldo.' });
+  if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
   closeSheet();
   run(app.store.deletePlayer(p.id), `${p.name} quitado`);
 }
 
-async function removeMatchPlayer(m, p, { asked = false } = {}) {
+async function removeMatchPlayer(m, p) {
   const fromMain = !isWaiting(p);
   const friends = guestsOf(m.id, p.id);
-  if (!asked && !(await askConfirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`, { danger: true }))) return;
+  const choice = await askBajaPoints(m, p);
+  if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
   const dropFriends = friends.length > 0 && await askYesNo(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
@@ -7752,6 +7932,8 @@ async function removeMatchPlayer(m, p, { asked = false } = {}) {
 
 async function demoteToWait(m, p) {
   if (!p || isWaiting(p) || !canAdd(m, actor().uid)) return;
+  const choice = await askBajaPoints(m, p);
+  if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
   const guests = guestsOf(m.id, p.id).filter((item) => !isWaiting(item));
   const also = guests.length > 0 && await askYesNo(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
   const moving = [p, ...(also ? guests : [])];
@@ -7829,7 +8011,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v168" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v169" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7866,7 +8048,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v168" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v169" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

@@ -2,7 +2,7 @@
 // El promedio arranca en 10. Cada ajuste suma sus puntos y queda entre 0 y 10.
 // falta y baja son para anotar desde el partido; suspensión y levantamiento
 // se muestran acá aunque sigan guardados en su colección.
-import { todayISO, numericDate } from './dates.js';
+import { todayISO, numericDate, toEpoch, clockTime, labelDate, capitalize, TZ } from './dates.js';
 import { blankLog } from './log.js';
 
 export const BEHAVIOR_TYPES = Object.freeze(['manual', 'falta', 'baja', 'suspension', 'lift']);
@@ -193,15 +193,102 @@ export function behaviorLine(entry) {
   return [date, reason, points, comment, who].filter(Boolean).join(' · ');
 }
 
+const LOG_TYPES = { falta: 'falta', baja: 'puntos por baja' };
+
 export function behaviorLog(actor, person, entry) {
   const detail = [formatBehaviorPoints(entry?.points), entry?.reason, entry?.comment].filter(Boolean).join(' · ').slice(0, 200);
+  const matchLabel = String(entry?.matchLabel || '').trim().slice(0, 160);
   return blankLog({
     section: 'partidos',
-    type: 'ajuste de comportamiento',
+    type: LOG_TYPES[entry?.type] || 'ajuste de comportamiento',
     matchId: String(entry?.matchId || ''),
-    matchLabel: 'Comportamiento',
+    matchLabel: matchLabel || 'Comportamiento',
     playerName: person?.name || '',
     detail,
     editors: ['*'],
   }, actor);
+}
+
+const HOUR = 60 * 60 * 1000;
+
+export const BAJA_TIERS = Object.freeze([
+  { id: 'before', points: 0, label: 'Día anterior o antes' },
+  { id: 'over3', points: -0.5, label: 'Mismo día, más de 3 h antes' },
+  { id: 'h3to1', points: -2, label: 'Entre 3 h y 1 h antes' },
+  { id: 'under1', points: -4, label: 'Menos de 1 h antes' },
+  { id: 'started', points: -8, label: 'Después del inicio' },
+]);
+
+function tierById(id) {
+  return BAJA_TIERS.find((row) => row.id === id) || BAJA_TIERS[0];
+}
+
+function baClock(now) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now);
+  const hour = parts.find((part) => part.type === 'hour')?.value || '00';
+  const minute = parts.find((part) => part.type === 'minute')?.value || '00';
+  return `${hour}:${minute}`;
+}
+
+function gapText(ms) {
+  if (!(ms > 0)) return 'ya empezó';
+  const total = Math.round(ms / 60000);
+  const days = Math.floor(total / 1440);
+  const hours = Math.floor((total % 1440) / 60);
+  const mins = total % 60;
+  if (days >= 1) return `falta ${days} ${days === 1 ? 'día' : 'días'}`;
+  if (hours >= 1 && mins) return `falta ${hours} h ${mins} min`;
+  if (hours >= 1) return `falta ${hours} h`;
+  return `falta ${mins} min`;
+}
+
+export function formatSignedPoints(value) {
+  const n = Math.round(Number(value) * 10) / 10;
+  if (!Number.isFinite(n) || n === 0) return '0';
+  const digits = Number.isInteger(n) ? 0 : 1;
+  const abs = Math.abs(n).toLocaleString('es-AR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return n < 0 ? `−${abs}` : `+${abs}`;
+}
+
+/** Lo que se resta al quitar o bajar a la espera, según el inicio del partido en Buenos Aires. */
+export function bajaDeduction({ date, time, now = new Date() } = {}) {
+  const today = todayISO(now);
+  const day = String(date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day > today) return { ...tierById('before'), suggestSuspend: false };
+  if (day < today) return { ...tierById('started'), suggestSuspend: true };
+  const start = toEpoch(day, clockTime(time) || '00:00');
+  const ms = start - now.getTime();
+  if (!(ms > 0)) return { ...tierById('started'), suggestSuspend: true };
+  if (ms < HOUR) return { ...tierById('under1'), suggestSuspend: false };
+  if (ms <= 3 * HOUR) return { ...tierById('h3to1'), suggestSuspend: false };
+  return { ...tierById('over3'), suggestSuspend: false };
+}
+
+export function bajaPreview({ name, date, time, now = new Date() } = {}) {
+  const tier = bajaDeduction({ date, time, now });
+  const start = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? toEpoch(date, clockTime(time) || '00:00') : now.getTime();
+  const when = `${capitalize(labelDate(date) || '')} · ${clockTime(time) || '--:--'} hs`.trim();
+  const reason = tier.suggestSuspend ? `${tier.label}, conviene suspender` : tier.label;
+  return {
+    ...tier,
+    reason,
+    headline: [String(name || '').trim(), when].filter(Boolean).join(' · '),
+    nowLine: `Ahora son las ${baClock(now)} · ${gapText(start - now.getTime())}`,
+    box: `Corresponde: ${formatSignedPoints(tier.points)} (${reason})`,
+  };
+}
+
+/** Puntos a restar: 0 no anota. Un número positivo se toma como la resta. */
+export function parseBajaPoints(value) {
+  const raw = String(value ?? '').trim().replace('−', '-').replace(',', '.');
+  if (!raw) return { ok: false, error: 'Poné los puntos.' };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return { ok: false, error: 'Los puntos no son válidos.' };
+  const step = half(n);
+  if (step == null || Math.abs(step - n) > 0.001) return { ok: false, error: 'Los puntos van de a 0,5.' };
+  const points = step > 0 ? -step : step;
+  if (points < -10) return { ok: false, error: 'Los puntos van de 0 a −10.' };
+  return { ok: true, points };
 }

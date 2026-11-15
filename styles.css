@@ -819,6 +819,11 @@ dialog.ask::backdrop { background: rgba(0,0,0,.62); }
   box-shadow: 0 18px 50px rgba(0,0,0,.45);
 }
 .ask-card p { margin: 0 0 16px; font-size: 1.0625rem; font-weight: 700; line-height: 1.35; white-space: pre-line; }
+.ask-card { max-height: calc(100dvh - 32px); overflow: auto; }
+.baja-box { margin: 0 0 10px; padding: 8px 10px; border-radius: 12px; background: var(--promo-bg); font-weight: 800; }
+.baja-tiers { width: 100%; border-collapse: collapse; font-size: 0.75rem; margin: 0 0 10px; }
+.baja-tiers td { padding: 3px 4px; }
+.baja-tiers tr.on td { background: var(--promo-bg); font-weight: 800; }
 @keyframes up { from { transform: translateY(40px); opacity: .6; } to { transform: none; opacity: 1; } }
 .sheet-body {
   width: 100%; max-width: 640px; margin: 0 auto;
