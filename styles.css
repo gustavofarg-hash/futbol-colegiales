@@ -697,6 +697,7 @@ button.team-name {
 .profile-block { margin: 0 0 18px; }
 .profile-block h2 { margin: 0 0 8px; font-size: 0.9375rem; }
 .behavior-card {
+  margin-top: 18px;
   background: #162236; color: #eef3fb; border: 1px solid #2a3b55;
   border-radius: 24px; padding: 14px 14px 12px; box-shadow: var(--shadow);
 }
