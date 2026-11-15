@@ -200,3 +200,16 @@ export function attendanceWhen(iso, now = new Date()) {
   if (n === 1) return 'Mañana';
   return labelDate(iso);
 }
+
+/**
+ * Horario de la página cuando hay más de un partido.
+ * Hoy es HOY. Mañana va en minúscula. El resto, el día: "jueves 19:00".
+ */
+export function confirmSlotLabel(iso, time, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
+  const hour = clockTime(time);
+  if (!hour) return '';
+  const n = diffDays(todayISO(now), iso);
+  const when = n === 0 ? 'HOY' : n === 1 ? 'mañana' : (DIAS[weekdayOf(iso)] || '');
+  return when ? `${when} ${hour}` : '';
+}

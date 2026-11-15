@@ -817,6 +817,11 @@ html.dark .stats-entitled { background: #243312; color: var(--lime, #c6f432); }
 .confirm-page main { padding-top: calc(18px + env(safe-area-inset-top, 0px)); }
 .confirm-card { margin-top: 0; }
 .confirm-card .hint { margin: 14px 0 0; }
+.confirm-slots { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.confirm-slots li {
+  background: var(--bg); color: var(--text); border-radius: 14px;
+  padding: 12px 14px; font-weight: 800; font-size: 1.2rem; text-align: center;
+}
 .confirm-actions { display: grid; gap: 10px; margin-top: 14px; }
 .confirm-actions .btn { min-height: 64px; font-size: 1.25rem; }
 .confirm-actions .btn.chosen { outline: 3px solid var(--green-2); }
