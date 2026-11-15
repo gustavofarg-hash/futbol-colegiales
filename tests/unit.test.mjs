@@ -11,6 +11,7 @@ import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveCli
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
+import { behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, parseBehaviorPoints } from '../js/behavior.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1479,6 +1480,60 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   assert.equal(all.length, 13);
   assert.ok(all.some((item) => item.note === 'Vez 11' && item.liftNote === 'Se levantó 11'));
   assert.equal(JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`].history.length, 0);
+});
+
+test('el comportamiento arranca en 10, el ajuste mueve el promedio y la suspensión entra al historial', async () => {
+  assert.equal(formatBehaviorScore(behaviorScore([])), '10/10');
+  assert.equal(formatBehaviorScore(behaviorScore([{ points: -1.5 }])), '8,5/10');
+  assert.equal(formatBehaviorScore(behaviorScore([{ points: -20 }])), '0/10');
+  assert.equal(formatBehaviorScore(behaviorScore([{ points: 5 }])), '10/10');
+  assert.equal(formatBehaviorPoints(-0.5), '−0,5');
+  assert.equal(formatBehaviorPoints(0.5), '+0,5');
+  assert.equal(parseBehaviorPoints('-0,5').points, -0.5);
+  assert.equal(parseBehaviorPoints('0,3').ok, false);
+  assert.equal(parseBehaviorPoints('0').ok, false);
+  const rosterId = 'ana';
+  const lines = behaviorTimeline({
+    rosterId,
+    now: Date.parse('2026-10-19T13:00:00-03:00'),
+    entries: [{
+      id: 'e1', rosterId, type: 'manual', points: -0.5, reason: 'Llegó tarde', comment: 'Se fue',
+      createdByUid: 'gustavo', createdByName: 'Gustavo', createdAt: Date.parse('2026-10-19T15:00:00-03:00'),
+    }],
+    suspensions: [{ rosterId, ownerUid: 'gustavo', suspended: true, suspensionNote: 'No avisó', suspensionDate: '2026-10-18' }],
+    suspensionHistory: [{ rosterId, ownerUid: 'gustavo', date: '2026-10-01', note: 'Faltó', lifted: '2026-10-02', liftNote: 'Volvió', at: Date.parse('2026-10-02T12:00:00-03:00') }],
+    nameOf: () => 'Gustavo',
+  }).map(behaviorLine);
+  assert.match(lines[0], /19\/10\/2026 · Llegó tarde · −0,5 · Se fue · Gustavo/);
+  assert.ok(lines.some((line) => line.includes('Suspendido · No avisó') && line.includes('Gustavo')));
+  assert.ok(lines.some((line) => line.includes('Suspensión levantada') && line.includes('Volvió')));
+  assert.ok(lines.indexOf(lines.find((line) => line.includes('No avisó'))) < lines.indexOf(lines.find((line) => line.includes('Suspensión levantada'))));
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-behavior';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addRoster({ name: 'Ana Gómez', phone: '5491166669090' }, 'Gustavo');
+  await assert.rejects(() => store.addBehavior(id, { points: 0.3, reason: 'Raro' }), (error) => error?.code === 'invalid-behavior');
+  await store.addBehavior(id, { points: '-0,5', reason: 'Llegó tarde', comment: 'Se fue antes' });
+  const saved = JSON.parse(mem.get('f7c-test-behavior'));
+  const entry = Object.values(saved.behavior)[0];
+  assert.equal(entry.rosterId, id);
+  assert.equal(entry.type, 'manual');
+  assert.equal(entry.points, -0.5);
+  assert.equal(entry.createdByName, 'Gustavo');
+  assert.equal(entry.matchId, '');
+  const logged = Object.values(saved.log).find((row) => row.type === 'ajuste de comportamiento');
+  assert.equal(logged.actorName, 'Gustavo');
+  assert.equal(logged.playerName, 'Ana Gómez');
+  assert.match(logged.detail, /−0,5 · Llegó tarde · Se fue antes/);
+  assert.ok(logged.at > 0);
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await assert.rejects(() => store.addBehavior(id, { points: -0.5, reason: 'Otro' }), (error) => error?.code === 'edit-locked');
 });
 
 test('las notas de un jugador compartido las ve solo quien las escribió', async () => {
@@ -3571,7 +3626,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v167');
+  assert.equal(version, 'f7c-v168');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

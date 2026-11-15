@@ -977,6 +977,28 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    function behaviorOk(d) {
+      return d.keys().hasOnly(['rosterId', 'type', 'points', 'reason', 'comment', 'matchId', 'createdByUid', 'createdByName', 'createdAt'])
+          && d.rosterId is string && d.rosterId.size() > 0 && d.rosterId.size() <= 200
+          && (d.type == 'manual' || d.type == 'falta' || d.type == 'baja' || d.type == 'suspension' || d.type == 'lift')
+          && d.points is number && d.points >= -10 && d.points <= 10
+          && d.reason is string && d.reason.size() > 0 && d.reason.size() <= 200
+          && d.comment is string && d.comment.size() <= 300
+          && d.matchId is string && d.matchId.size() <= 80
+          && d.createdByUid is string && d.createdByUid == request.auth.uid && d.createdByUid.size() > 0 && d.createdByUid.size() <= 128
+          && d.createdByName is string && d.createdByName.size() > 0 && d.createdByName.size() <= 40
+          && d.createdAt is int && d.createdAt > 0;
+    }
+    match /behavior/{entryId} {
+      allow read, write: if isAdmin();
+      allow get, list: if isActiveStaff();
+      allow create: if isActiveStaff() && behaviorOk(request.resource.data)
+          && entryId == request.resource.data.rosterId + '_' + request.auth.uid + '_' + string(request.resource.data.createdAt)
+          && exists(rosterPath(request.resource.data.rosterId))
+          && get(rosterPath(request.resource.data.rosterId)).data.get('holders', []).hasAny([request.auth.uid]);
+      allow update, delete: if false;
+    }
+
     match /rosterRedirects/{fromId} {
       allow read, write: if isAdmin();
       allow get, list: if isActiveStaff();

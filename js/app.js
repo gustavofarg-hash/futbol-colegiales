@@ -30,6 +30,7 @@ import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
+import { behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorScore, parseBehaviorPoints } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -45,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v167';
+const APP_VERSION = 'f7c-v168';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -1349,7 +1350,7 @@ function oweBox(m) {
   const rows = debt.rows.map((row) => {
     const player = app.players.find((item) => item.id === row.id);
     const name = player ? shownName(player) : row.name;
-    return `<li><button type="button" class="owe-player${player ? suspendedClass(player) : ''}" data-owe-player="${esc(row.id)}"><span>${esc(name)}</span><b>${esc(formatARS(row.owed))}</b></button></li>`;
+    return `<li><button type="button" class="owe-player${player ? suspendedClass(player) : ''}" data-owe-player="${esc(row.id)}"><span>${player ? suspendedName(player, name) : esc(name)}</span><b>${esc(formatARS(row.owed))}</b></button></li>`;
   }).join('');
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
@@ -1465,7 +1466,7 @@ function renderTeams(id) {
         : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
       const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
       const controls = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
-      const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
+      const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${suspendedName(player, shownName(player))}</button>`;
       rows.push(readOnly
         ? `<li class="team-row" data-team-player="${esc(player.id)}">${name}<span class="team-side">${goalBox}${arco}</span></li>`
         : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}" data-team-player="${esc(player.id)}">${name}${controls}</li>`);
@@ -1473,7 +1474,7 @@ function renderTeams(id) {
     return rows.join('');
   };
   const freeRows = free.map((player) => {
-    const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
+    const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${suspendedName(player, shownName(player))}</button>`;
     return readOnly
       ? `<li class="team-row" data-team-player="${esc(player.id)}">${name}</li>`
       : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}" data-team-player="${esc(player.id)}">${name}<span class="team-tools"><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></span></li>`;
@@ -1992,7 +1993,7 @@ function usualSection(m) {
       ? `<a class="wa-btn" href="${esc(waSendUrl({ phone, text: '' }))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(row.name)}">${ICON.wa}</a>`
       : '';
     const times = `${row.count} ${row.count === 1 ? 'partido' : 'partidos'}`;
-    return `<li class="slot usual-row" data-usual="${esc(row.key)}"><div class="who"><div class="name">${esc(row.name)}</div><div class="sub"><span>${esc(times)}</span></div></div>${wa}</li>`;
+    return `<li class="slot usual-row" data-usual="${esc(row.key)}"><div class="who"><div class="name${suspendedClass(row.sample)}">${suspendedName(row.sample, row.name)}</div><div class="sub"><span>${esc(times)}</span></div></div>${wa}</li>`;
   }).join('');
   return `<h2 class="section" id="usual-title">Suelen anotarse para jugar este día y hora:</h2><ul class="slots" id="usual-list">${items}</ul>`;
 }
@@ -2259,7 +2260,8 @@ function listText(m) {
     const pay = p ? paymentStatusText(p) : '';
     const hold = p?.tentative === true ? 'a confirmar' : '';
     const bits = [pay, hold].filter(Boolean).join(' · ');
-    lines.push(`${i + 1}. ${p ? shownName(p) + friendSuffix(p) : ''}${bits ? ` — ${bits}` : ''}`);
+    const suspended = p && suspendedClass(p) ? ' (suspendido)' : '';
+    lines.push(`${i + 1}. ${p ? shownName(p) + suspended + friendSuffix(p) : ''}${bits ? ` — ${bits}` : ''}`);
   }
   lines.push('', ps.length >= cap ? '✅ ¡Completo!' : `Faltan ${cap - ps.length}`);
   const collected = collectedLine(ps);
@@ -2272,14 +2274,14 @@ function listText(m) {
     lines.push('', 'No jugó pero pagó:');
     aside.forEach((p, i) => {
       const pay = paymentStatusText(p);
-      lines.push(`${i + 1}. ${shownName(p)}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
+      lines.push(`${i + 1}. ${shownName(p)}${suspendedClass(p) ? ' (suspendido)' : ''}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
     });
   }
   if (wait.length) {
     lines.push('', 'Lista de espera:');
     wait.forEach((p, i) => {
       const pay = paymentStatusText(p);
-      lines.push(`${i + 1}. ${shownName(p)}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
+      lines.push(`${i + 1}. ${shownName(p)}${suspendedClass(p) ? ' (suspendido)' : ''}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
     });
   }
   return lines.join('\n');
@@ -2367,7 +2369,7 @@ function reminderBanners(matches) {
   return `<div class="remind-banners">${due.map((m) => {
     const mine = myReminderPlayers(m.id);
     const prog = reminderProgress(mine);
-    const missing = unconfirmedForReminder(mine).map((player) => `<li>${esc(shownName(player))}</li>`).join('');
+    const missing = unconfirmedForReminder(mine).map((player) => `<li class="${suspendedClass(player).trim()}">${suspendedName(player, shownName(player))}</li>`).join('');
     return `<button type="button" class="remind-banner" data-remind-banner="${esc(m.id)}">
       <strong>${REMINDER_BANNER}</strong>
       <small>${esc(capitalize(labelDate(m.date)))} · ${esc(m.time || '--:--')} hs · ${prog.sent} de ${prog.total} enviados</small>
@@ -2436,14 +2438,14 @@ async function openReminders(m) {
     const rows = visible.map((p) => {
       const link = linkById.get(p.id);
       if (phoneHidden(p)) {
-        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub private-wa">${esc(PRIVATE_WA_TEXT)}</div></div></li>`;
+        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${suspendedName(p, p.name)}</div><div class="sub private-wa">${esc(PRIVATE_WA_TEXT)}</div></div></li>`;
       }
       if (!link) {
-        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div><button type="button" class="btn" data-remind-phone="${esc(p.id)}">Cargar WhatsApp</button></li>`;
+        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${suspendedName(p, p.name)}</div><div class="sub">Sin número de WhatsApp</div></div><button type="button" class="btn" data-remind-phone="${esc(p.id)}">Cargar WhatsApp</button></li>`;
       }
       const sent = !!p.reminderSentAt;
       return `<li class="remind-row" data-remind="${esc(p.id)}">
-        <div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
+        <div class="who"><div class="name${suspendedClass(p)}">${suspendedName(p, p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
         <a class="btn primary" href="${esc(hrefFor(link))}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
       </li>`;
     }).join('');
@@ -4200,7 +4202,7 @@ function statsPlayerBody(id) {
       return `<li class="slot" data-month="${esc(row.key)}"><div class="who"><div class="name">${esc(row.label)}</div><div class="sub"><span>${count}</span><span>${esc(formatARS(row.paid))}</span></div></div></li>`;
     }).join('');
     months = `
-      <h2 class="section${suspendedClass(person)}" id="stats-player">${esc(person.name)}</h2>
+      <h2 class="section${fichaSuspended(person)}" id="stats-player">${fichaName(person, person.name)}</h2>
       <ul class="slots" id="stats-months">${monthRows || '<li class="empty-wait">No jugó ni pagó con vos.</li>'}</ul>`;
   }
   let list = '';
@@ -4209,7 +4211,7 @@ function statsPlayerBody(id) {
       list = '<p class="empty-wait" id="stats-hint">Buscá por nombre o teléfono.</p>';
     } else {
       const people = searchRoster(mine, q);
-      const rows = people.map((item) => `<li class="slot"><a class="who" href="${statsHash('jugador', item.id)}"><div class="name${suspendedClass(item)}">${esc(item.name)}</div></a></li>`).join('');
+      const rows = people.map((item) => `<li class="slot"><a class="who" href="${statsHash('jugador', item.id)}"><div class="name${fichaSuspended(item)}">${fichaName(item, item.name)}</div></a></li>`).join('');
       list = people.length
         ? `<ul class="slots" id="stats-players">${rows}</ul>`
         : `<p class="empty-wait" id="stats-players">${q ? 'Nadie coincide con esa búsqueda.' : 'No hay jugadores en tu agenda.'}</p>`;
@@ -4422,7 +4424,7 @@ function confirmQueueHtml() {
     <h2 class="section">Para confirmar</h2>
     <p class="hint" id="confirm-count">Tenés ${n} ${n === 1 ? 'pago' : 'pagos'} para confirmar.</p>
     <ul class="slots" id="confirm-list">${rows.map((row) => `<li class="slot confirm-row">
-      <label class="checkline"><input type="checkbox" data-confirm-pick="${esc(row.id)}" data-player="${esc(row.player.id)}"><span>${esc(row.player.name)} · ${esc(row.match ? fmtWhen(row.match) : '')} · ${kind(row)} ${esc(formatARS(row.amount))}</span></label>
+      <label class="checkline"><input type="checkbox" data-confirm-pick="${esc(row.id)}" data-player="${esc(row.player.id)}"><span class="${suspendedClass(row.player).trim()}">${suspendedName(row.player, row.player.name)} · ${esc(row.match ? fmtWhen(row.match) : '')} · ${kind(row)} ${esc(formatARS(row.amount))}</span></label>
       <div class="slot-actions"><button type="button" class="btn" data-confirm-ok="${esc(row.id)}" data-player="${esc(row.player.id)}">Confirmar</button><button type="button" class="btn" data-confirm-no="${esc(row.id)}" data-player="${esc(row.player.id)}">Rechazar</button></div>
     </li>`).join('')}</ul>
     <button type="button" class="btn primary" id="confirm-many">Confirmar seleccionados</button>
@@ -4560,9 +4562,9 @@ function renderProfile(id) {
   const own = canEditRoster(person, actor());
   const lockNote = own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`;
   const money = profileMoney(person);
+  const conduct = behaviorCard(person);
   const painted = replaceView(`
     <article id="profile">
-      ${suspensionControls(person).html}
       <div class="name-share">
         <h2 class="section${fichaSuspended(person)}">${fichaName(person, person.name)}</h2>
         ${playerShareButton('profile-share')}
@@ -4601,6 +4603,7 @@ function renderProfile(id) {
         ${record.confirmText ? `<p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>` : ''}
       </section>
       ${money.html}
+      ${conduct.html}
     </article>`);
   if (app.wantPhoneForm) {
     app.wantPhoneForm = false;
@@ -4608,8 +4611,8 @@ function renderProfile(id) {
   }
   if (!painted) return;
   bindPlayerPanel($('#profile'), null, person, PROFILE_PANEL, money.panel);
-  const profileSuspend = suspensionControls(person);
-  bindSuspensionControls($('#profile'), profileSuspend.rosterId, profileSuspend.card);
+  bindSuspensionControls($('#profile'), conduct.rosterId, conduct.card);
+  bindBehavior($('#profile'), person);
   const profileShare = $('#profile-share');
   if (profileShare) profileShare.onclick = () => copyPlayerLink(person.id);
   const addPhone = $('#profile-add-phone');
@@ -4956,7 +4959,7 @@ function bindGuestSuggest(field, hits, match) {
     hits.innerHTML = matches.map((person) => {
       const taken = match ? signupError(match.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]) : '';
       const detail = [cleanShortName(person.shortName), person.phone ? displayFromWa(person.phone) : phoneHidden(person) ? PRIVATE_WA_TEXT : 'Sin número'].filter(Boolean).join(' · ');
-      return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${esc(detail)}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+      return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${fichaSuspended(person)}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${fichaName(person, person.name)}</b><small>${esc(detail)}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
     }).join('');
   };
   const choose = (id) => {
@@ -5396,7 +5399,7 @@ function openPlayerForm(m, p, opts = {}) {
         const taken = signupError(m.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]);
         const detail = person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número';
         const on = person.id === pickedId;
-        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${on ? ' on' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${on ? ' aria-pressed="true"' : ''}${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${on ? ' on' : ''}${fichaSuspended(person)}" data-pick="${esc(person.id)}"${on ? ' aria-pressed="true"' : ''}${taken ? ' disabled' : ''}><b>${fichaName(person, person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
       }).join('');
     };
     let pickedPhone = '';
@@ -5940,7 +5943,7 @@ function openPaymentForm(m, p, opts = {}) {
       <h3>Pago</h3>
       <div class="pay-who" id="pay-who">
         <p class="pay-when" id="pay-when">${esc(fmtWhen(m))}</p>
-        <p class="pay-name" id="pay-name">${esc(p.name)}</p>
+        <p class="pay-name${suspendedClass(p)}" id="pay-name">${suspendedName(p, p.name)}</p>
       </div>
       <div id="pay-status"></div>
       <div id="pay-promo">${promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : ''}</div>
@@ -6323,7 +6326,7 @@ function openPaymentForm(m, p, opts = {}) {
       if (row.pending > 0) bits.push(`Transfiere después ${formatARS(row.pending)}`);
       if (row.credit > 0) bits.push(`Crédito ${formatARS(row.credit)}`);
       const money = bits.length ? bits.join(' · ') : 'sin pago';
-      return `<li><span class="${suspendedClass(row.person).trim()}">${esc(shownName(row.person))}</span><b>${esc(money)}</b></li>`;
+      return `<li><span class="${suspendedClass(row.person).trim()}">${suspendedName(row.person, shownName(row.person))}</span><b>${esc(money)}</b></li>`;
     }).join('');
     const notes = splitLeftoverCredit({
       playerName: shownName(p),
@@ -7113,6 +7116,83 @@ function openCreditReturnForm({ player, person, panel }) {
   };
 }
 
+function behaviorCard(person) {
+  const rosterId = person?.id || '';
+  const mine = (app.behavior || []).filter((row) => row.rosterId === rosterId);
+  const score = formatBehaviorScore(behaviorScore(mine));
+  const timeline = behaviorTimeline({
+    rosterId,
+    entries: app.behavior,
+    suspensions: app.suspensions,
+    suspensionHistory: app.suspensionHistory,
+    nameOf: organizerLabel,
+  });
+  const lines = timeline.length
+    ? timeline.map((row) => `<li>${esc(behaviorLine(row))}</li>`).join('')
+    : '<li>Sin movimientos.</li>';
+  const own = canEditRoster(person, actor());
+  const suspend = suspensionControls(person);
+  return {
+    ...suspend,
+    html: `<section class="profile-block" id="comportamiento">
+      <h2>Comportamiento</h2>
+      ${suspend.html}
+      <p class="stat-summary" id="behavior-score">${esc(score)}</p>
+      <button type="button" class="btn block" id="behavior-history-toggle" aria-expanded="false">Ver historial</button>
+      <ul class="ledger-list" id="behavior-history" hidden>${lines}</ul>
+      ${own ? '<button type="button" class="btn block" id="behavior-adjust">Ajuste manual</button>' : ''}
+    </section>`,
+  };
+}
+
+function bindBehavior(root, person) {
+  const toggle = root?.querySelector('#behavior-history-toggle');
+  const list = root?.querySelector('#behavior-history');
+  if (toggle && list) toggle.onclick = () => {
+    const show = list.hidden;
+    list.hidden = !show;
+    toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+  };
+  const adjust = root?.querySelector('#behavior-adjust');
+  if (adjust) adjust.onclick = () => openBehaviorForm(person);
+}
+
+function openBehaviorForm(person) {
+  openSheet(`
+    <form id="behavior-form" novalidate>
+      <h3>Ajuste manual</h3>
+      <label class="field"><span>Puntos</span><input id="behavior-points" inputmode="decimal" autocomplete="off" placeholder="Ej: -0,5"></label>
+      <label class="field"><span>Motivo</span><input id="behavior-reason" maxlength="200" autocomplete="off"></label>
+      <label class="field"><span>Comentario (opcional)</span><input id="behavior-comment" maxlength="300" autocomplete="off"></label>
+      <div class="field"><div class="err" id="behavior-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#behavior-form');
+  if (!form || !person) return;
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const err = $('#behavior-err');
+    const parsed = parseBehaviorPoints($('#behavior-points')?.value);
+    if (!parsed.ok) { if (err) err.textContent = parsed.error; return; }
+    const reason = String($('#behavior-reason')?.value || '').trim();
+    if (!reason) { if (err) err.textContent = 'Poné el motivo.'; return; }
+    try {
+      await app.store.addBehavior(person.id, {
+        type: 'manual',
+        points: parsed.points,
+        reason,
+        comment: $('#behavior-comment')?.value || '',
+      });
+      closeSheet();
+    } catch (error) {
+      if (!err) return;
+      if (error?.code === 'permission-denied') err.textContent = 'Hay que publicar las reglas de Firestore para la colección behavior.';
+      else if (error?.code === 'edit-locked') err.textContent = EDIT_LOCK_TEXT;
+      else err.textContent = error?.message || 'No se pudo guardar.';
+    }
+  };
+}
+
 function suspensionCard(source) {
   if (source && !source.matchId && rosterHeldBy(source, actor())) return source;
   return heldCard(source);
@@ -7280,7 +7360,7 @@ function openPlayerMenu(m, p) {
       ${playerShareButton('pm-share')}
     </div>
     <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.notesHtml}${panel.statsButton}</div>
-    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name" class="${suspendedClass(p).trim()}">${esc(p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name" class="${suspendedClass(p).trim()}">${suspendedName(p, p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
     ${canAnnotate ? signupFields(p, match) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
@@ -7749,7 +7829,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v167" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v168" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7786,7 +7866,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v167" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v168" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -7958,6 +8038,7 @@ async function boot() {
     app.suspensions = view.suspensions || [];
     app.suspensionHistory = view.suspensionHistory || [];
     app.payBatches = view.payBatches || [];
+    app.behavior = view.behavior || [];
     app.organizers = organizers || [];
     app.venues = venues || [];
     app.prices = prices || null;
@@ -7982,7 +8063,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();
