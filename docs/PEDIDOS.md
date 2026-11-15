@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v174** (15/11/2026): si el recordatorio de deuda abarca más de un partido, cada renglón dice «el partido de ayer», «el partido del lunes» o «el partido del 11/10», igual que cuando es uno solo. `firestore.rules` no cambió.
 **Actualizada para f7c-v173** (15/11/2026): en la ficha, Comportamiento queda separado de «Ver estadísticas» con el mismo aire que hay entre «Agregar nota» y ese botón. `firestore.rules` no cambió.
 **Actualizada para f7c-v172** (15/11/2026): un doble toque no guarda dos veces Sancionar, el ajuste manual ni la baja. En el historial, quien la creó o el admin puede borrar una entrada. `firestore.rules` permite borrar `behavior` al admin o a `createdByUid`: hay que pegarlas en mis-partidos-prueba.
 **Actualizada para f7c-v171** (15/11/2026): en el partido, «No jugó pero pagó» queda arriba de «Suelen anotarse para jugar este día y hora:». `firestore.rules` no cambió.

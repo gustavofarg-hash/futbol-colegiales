@@ -132,9 +132,24 @@ export function transferReminderWhen(iso, now = new Date()) {
   return dm ? `del ${dm}` : '';
 }
 
-/** Texto del chat. No lleva importe ni link: la persona aprieta Enviar en WhatsApp. Con 2 o más deudas, «los partidos». */
-export function transferReminderText(firstName, when, count = 1) {
-  const what = Number(count) >= 2 ? 'los partidos' : `el partido ${when}`;
+/**
+ * Texto del chat. No lleva importe ni link: la persona aprieta Enviar en WhatsApp.
+ * Un partido: «el partido de ayer». Varios: «los partidos» y un renglón por cada uno,
+ * con la misma referencia (de hoy, de ayer, del lunes, del 11/10).
+ */
+export function transferReminderText(firstName, when, matches = 1, now = new Date()) {
+  const dates = Array.isArray(matches) ? matches : [];
+  const whens = dates.map((item) => {
+    const iso = typeof item === 'string' ? item : item?.date;
+    if (/^(de |del )/.test(String(iso || ''))) return String(iso);
+    return transferReminderWhen(iso, now);
+  }).filter(Boolean);
+  if (whens.length >= 2) {
+    const lines = whens.map((item) => `el partido ${item}`);
+    return `Qué tal ${firstName}? No te olvides de transferirme los partidos porfa\n${lines.join('\n')}`;
+  }
+  const count = Array.isArray(matches) ? matches.length : Number(matches) || 0;
+  const what = count >= 2 ? 'los partidos' : `el partido ${when}`;
   return `Qué tal ${firstName}? No te olvides de transferirme ${what} porfa`;
 }
 
