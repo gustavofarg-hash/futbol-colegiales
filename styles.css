@@ -1067,6 +1067,11 @@ html.anon-lock #view .loading { display: none; }
 .toast.ok { background: var(--green); color: #fff; cursor: pointer; }
 .menu { display: grid; gap: 8px; }
 .menu .btn { justify-content: flex-start; }
+.cards-icon { overflow: visible; }
+.cards-icon .card-back,
+.cards-icon .card-front { stroke: #1a1408; stroke-width: 1.4; stroke-linejoin: round; }
+.cards-icon .card-back { fill: #FFC300; }
+.cards-icon .card-front { fill: #F03A3A; }
 .menu .btn small { margin-left: auto; color: var(--muted); font-weight: 600; }
 
 /* Preview de importación */

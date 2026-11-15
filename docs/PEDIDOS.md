@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v177** (15/11/2026): en el menú del jugador, Sancionar queda justo arriba de Quitar del partido, con un ícono de tarjeta amarilla y roja. `firestore.rules` no cambió.
 **Actualizada para f7c-v176** (15/11/2026): en claro, la tarjeta Comportamiento usa el mismo fondo, texto y borde que las otras tarjetas. El promedio es verde oscuro para que se lea. El oscuro no cambia. `firestore.rules` no cambió.
 **Actualizada para f7c-v175** (15/11/2026): si debe varios partidos el mismo día, el recordatorio dice «los partidos del sábado». Si son días distintos, los nombra en una sola línea, el más reciente primero, unidos con coma y «y». `firestore.rules` no cambió.
 **Actualizada para f7c-v174** (15/11/2026): si el recordatorio de deuda abarca más de un partido, cada renglón dice «el partido de ayer», «el partido del lunes» o «el partido del 11/10», igual que cuando es uno solo. `firestore.rules` no cambió.
