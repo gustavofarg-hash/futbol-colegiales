@@ -185,7 +185,7 @@ export function behaviorTimeline({ rosterId, entries, suspensions, suspensionHis
 export function behaviorLine(entry) {
   const date = numericDate(entry?.date) || (entry?.createdAt ? numericDate(dayOf(entry.createdAt)) : '');
   const comment = String(entry?.comment || '').trim();
-  let reason = String(entry?.reason || '').trim();
+  let reason = bajaReasonText(entry?.reason);
   if (entry?.type === 'suspension') reason = reason ? `Suspendido · ${reason}` : 'Suspendido';
   if (entry?.type === 'lift') reason = 'Suspensión levantada';
   const points = ADJUSTMENT.has(entry?.type) ? formatBehaviorPoints(entry?.points) : '';
@@ -212,12 +212,27 @@ export function behaviorLog(actor, person, entry) {
 const HOUR = 60 * 60 * 1000;
 
 export const BAJA_TIERS = Object.freeze([
-  { id: 'before', points: 0, label: 'Día anterior o antes' },
-  { id: 'over3', points: -0.5, label: 'Mismo día, más de 3 h antes' },
-  { id: 'h3to1', points: -2, label: 'Entre 3 h y 1 h antes' },
-  { id: 'under1', points: -4, label: 'Menos de 1 h antes' },
-  { id: 'started', points: -8, label: 'Después del inicio' },
+  { id: 'before', points: 0, label: 'Se bajó el día anterior o antes' },
+  { id: 'over3', points: -0.5, label: 'Se bajó el mismo día, más de 3 h antes' },
+  { id: 'h3to1', points: -2, label: 'Se bajó entre 3 h y 1 h antes' },
+  { id: 'under1', points: -4, label: 'Se bajó con menos de 1 h' },
+  { id: 'started', points: -8, label: 'No fue sin avisar' },
 ]);
+
+const BAJA_REASON_ALIASES = {
+  'Día anterior o antes': 'Se bajó el día anterior o antes',
+  'Mismo día, más de 3 h antes': 'Se bajó el mismo día, más de 3 h antes',
+  'Entre 3 h y 1 h antes': 'Se bajó entre 3 h y 1 h antes',
+  'Menos de 1 h antes': 'Se bajó con menos de 1 h',
+  'Después del inicio': 'No fue sin avisar',
+  'Después del inicio, conviene suspender': 'No fue sin avisar',
+};
+
+/** El texto nuevo, también si la entrada guardada todavía dice la frase vieja. */
+export function bajaReasonText(reason) {
+  const text = String(reason || '').trim();
+  return BAJA_REASON_ALIASES[text] || text;
+}
 
 function tierById(id) {
   return BAJA_TIERS.find((row) => row.id === id) || BAJA_TIERS[0];
@@ -270,7 +285,7 @@ export function bajaPreview({ name, date, time, now = new Date() } = {}) {
   const tier = bajaDeduction({ date, time, now });
   const start = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? toEpoch(date, clockTime(time) || '00:00') : now.getTime();
   const when = `${capitalize(labelDate(date) || '')} · ${clockTime(time) || '--:--'} hs`.trim();
-  const reason = tier.suggestSuspend ? `${tier.label}, conviene suspender` : tier.label;
+  const reason = tier.label;
   return {
     ...tier,
     reason,
