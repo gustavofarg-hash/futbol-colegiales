@@ -9,7 +9,7 @@ const code = new URLSearchParams(location.search).get('k') || '';
 
 function invalid() {
   const root = $('#go');
-  if (root) root.innerHTML = `<div class="empty"><div class="big">🔗</div><p><b>Este link no es válido.</b></p><p class="small">Pedile a Gustavo o a Martín que te lo reenvíen.</p></div>`;
+  if (root) root.innerHTML = `<div class="empty"><p><b>El link ya venció</b></p></div>`;
 }
 
 function go(link) {

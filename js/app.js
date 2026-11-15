@@ -25,7 +25,7 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
-import { compensationDoneDates, diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths } from './stats.js';
+import { diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
@@ -45,7 +45,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v166';
+const APP_VERSION = 'f7c-v167';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -738,7 +738,7 @@ async function saveNick(p, nick, rosterId) {
 }
 function nickField(p) {
   const value = nickOf(p, app.roster);
-  return `<label class="field"><span>Nombre corto (o apodo)</span><input id="player-nick" name="shortName" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Ej: Vini" value="${esc(value)}">
+  return `<label class="field"><span>Nombre corto (o apodo)</span><input id="player-nick" name="shortName" maxlength="40" autocomplete="off" autocapitalize="words" data-cap-words="1" placeholder="Ej: Vini" value="${esc(value)}">
         <div class="small muted" id="pf-nick">Es lo que se ve en la lista del partido y en Equipos.</div></label>`;
 }
 const addBlock = (m) => {
@@ -3627,6 +3627,32 @@ function rosterPersonDebt(person) {
   });
 }
 
+function applyWordCap(el) {
+  const next = capitalizeWords(el.value);
+  if (next === el.value) return;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  el.value = next;
+  try { if (start != null && end != null) el.setSelectionRange(start, end); } catch { /* el navegador puede rechazar el rango */ }
+}
+function bindWordCapitals() {
+  document.addEventListener('compositionstart', (event) => {
+    if (event.target?.dataset?.capWords === '1') event.target.dataset.composing = '1';
+  });
+  document.addEventListener('compositionend', (event) => {
+    const el = event.target;
+    if (el?.dataset?.capWords !== '1') return;
+    delete el.dataset.composing;
+    applyWordCap(el);
+  });
+  document.addEventListener('input', (event) => {
+    const el = event.target;
+    if (el?.dataset?.capWords !== '1' || el.dataset.composing === '1') return;
+    applyWordCap(el);
+  });
+}
+bindWordCapitals();
+
 function bindComposedSearch(input, apply) {
   if (!input || input.dataset.composed === '1') return;
   input.dataset.composed = '1';
@@ -3913,8 +3939,8 @@ function openRosterForm(person, opts = {}) {
       <h3>${person ? 'Editar jugador' : 'Agregar a Jugadores'}</h3>
       ${locked ? `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>` : ''}
       <p class="hint">Nombre completo. El WhatsApp es opcional. Si otro organizador ya tiene ese número, es el mismo jugador. Si lo tenés vos, no se duplica.</p>
-      <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" autocapitalize="words" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || presetName)}"></label>
-      <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
+      <label class="field"><span>Nombre</span><input name="name" required autofocus autocomplete="off" autocapitalize="words" data-cap-words="1" maxlength="60" placeholder="Ej: Ernesto Pereira" value="${esc(person?.name || presetName)}"></label>
+      <label class="field"><span>Nombre corto (o apodo)</span><input name="shortName" maxlength="40" autocomplete="off" autocapitalize="words" data-cap-words="1" placeholder="Ej: Tito" value="${esc(person?.shortName || '')}"></label>
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${person ? `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(displayFromWa(person.phone))}">` : `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="">${waShareControl('wa-share', { named: true })}</div>`}
         <div class="small muted" id="rf-phone">Característica + número. Sin 0 ni 15 también sirve.</div></label>`}
       <div class="field"><div class="err" id="rf-err"></div></div>
@@ -4219,13 +4245,12 @@ function statsDayBody(id) {
   const me = actor();
   const dates = diaDatesForOrganizer({
     today: todayISO(),
-    done: compensationDoneDates(app.compensations),
     matches,
     staff: staffUsers(app.users),
     who: { uid: me.uid, name: me.name },
   });
   const staff = staffUsers(app.users);
-  const mineOf = (rows) => (rows || []).filter((match) => matchOrganizedBy(match, staff, me));
+  const mineOf = (rows) => (rows || []).filter((match) => match.cancelled !== true && matchOrganizedBy(match, staff, me));
   if (!id) {
     const rows = dates.map((date) => {
       const dayMatches = byDay.get(date) || [];
@@ -4483,7 +4508,7 @@ function renderUsers() {
     <ul class="slots" id="user-list">${rows || '<li class="empty-wait">No hay usuarios.</li>'}</ul>
     <form id="user-form" class="user-form" novalidate>
       <h2 class="section">Nuevo organizador</h2>
-      <label class="field"><span>Nombre</span><input name="name" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Ej: Lucía"></label>
+      <label class="field"><span>Nombre</span><input name="name" maxlength="40" autocomplete="off" autocapitalize="words" data-cap-words="1" placeholder="Ej: Lucía"></label>
       <label class="field"><span>Mail</span><input name="email" type="email" autocomplete="off" placeholder="lucia@correo.com"></label>
       <label class="field"><span>Contraseña</span><input name="password" type="password" autocomplete="new-password" placeholder="Al menos 6 caracteres"></label>
       <div class="field"><div class="err" id="user-err"></div></div>
@@ -4543,7 +4568,7 @@ function renderProfile(id) {
         ${playerShareButton('profile-share')}
       </div>
       ${money.panel.nickHtml}
-      ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" value="${esc(person.name)}"></label>` : ''}
+      ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" autocapitalize="words" data-cap-words="1" value="${esc(person.name)}"></label>` : ''}
       <div class="phone-row">
         <p class="profile-phone" id="profile-phone">${person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número'}</p>
         ${person.phone && person.hasPhone && person.phoneOwnerUid === actor().uid ? waShareControl('phone-share', { checked: person.phoneShared === true }) : ''}
@@ -4969,7 +4994,7 @@ function bindGuestQty({ min = 0, value = 0, taken = [], match = null } = {}) {
     for (let i = 0; i < count; i++) {
       const row = document.createElement('div');
       row.className = 'friend-row';
-      row.innerHTML = `<input class="friend-name" type="text" maxlength="60" autocomplete="off" autocapitalize="words" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado ${i + 1}"><ul class="roster-hits friend-hits" hidden></ul>`;
+      row.innerHTML = `<input class="friend-name" type="text" maxlength="60" autocomplete="off" autocapitalize="words" data-cap-words="1" placeholder="Nombre, si lo sabés" aria-label="Nombre del invitado ${i + 1}"><ul class="roster-hits friend-hits" hidden></ul>`;
       rows.appendChild(row);
       const field = row.querySelector('input');
       field.value = kept[i]?.value || '';
@@ -5191,7 +5216,7 @@ function openPhoneForm(person) {
     <form id="phone-form" novalidate>
       <h3>WhatsApp de ${esc(person.name)}</h3>
       <p class="hint">Es opcional. Con el número se puede escribir y mandar el link de confirmación.</p>
-      <label class="field"><span>Nombre</span><input id="phone-name" name="name" maxlength="60" autocomplete="name" autocapitalize="words" value="${esc(person.name)}"></label>
+      <label class="field"><span>Nombre</span><input id="phone-name" name="name" maxlength="60" autocomplete="name" autocapitalize="words" data-cap-words="1" value="${esc(person.name)}"></label>
       <label class="field"><span>WhatsApp</span><input name="phone" type="tel" inputmode="tel" autofocus autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(person.phone ? displayFromWa(person.phone) : '')}">
         <div class="small muted" id="phone-hint">Característica + número. Sin 0 ni 15 también sirve.</div></label>
       <div class="field"><div class="err" id="phone-err"></div></div>
@@ -5301,9 +5326,9 @@ function openPlayerForm(m, p, opts = {}) {
       <p class="hint">${esc(fmtWhen(m))}${p ? '' : asWait ? ' · Queda al final de la lista de espera' : ` · Lo anota ${esc(app.who)}`}</p>
       ${signupFields(p, m)}
       ${editingFriend ? `<p class="hint" id="friend-stays">Sigue siendo invitado de ${esc(hostName || 'quien lo invitó')}.</p>` : ''}
-      ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
+      ${p ? '' : `<label class="field"><span>Buscar guardados</span><div class="find-row"><input id="roster-find" name="find" autocomplete="off" autocapitalize="words" data-cap-words="1" placeholder="ERN, Pereira o parte del teléfono"><button type="button" class="btn find-add" id="roster-add-new" hidden aria-label="Agregar como nuevo">+</button></div></label>
       <ul class="roster-hits" id="roster-hits" hidden></ul>`}
-      <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" autocapitalize="words" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
+      <label class="field"><span>Nombre</span><input id="player-name" name="name" ${p ? 'autofocus' : ''} autocomplete="off" autocapitalize="words" data-cap-words="1" maxlength="60" placeholder="Ej: Juan Pérez" value="${esc(p?.name || '')}"></label>
       ${p ? nickField(p) : ''}
       ${lockPhone ? `<p class="hint private-wa">${esc(PRIVATE_WA_TEXT)}</p>` : `<label class="field"><span>WhatsApp</span>${(!p || editingFriend) ? `<div class="phone-row"><input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">${waShareControl('wa-share', { named: true, checked: p?.phoneShared === true })}</div>` : `<input name="phone" type="tel" inputmode="tel" autocomplete="off" placeholder="Ej: 11 1234-5678" value="${esc(p ? displayFromWa(p.phone) : '')}">`}
         <div class="small muted" id="pf-phone">${esc(emptyPhoneHint)}</div></label>`}
@@ -6788,7 +6813,7 @@ function playerPanelPieces(player, person, ids, debtKey) {
     });
   } catch (error) { console.error(error); }
   const nick = panelNickState(player, person);
-  const nickHtml = `<label class="field nick-field"><span>Nombre corto (o apodo)</span><input id="${ids.nick}" maxlength="40" autocomplete="off" autocapitalize="words" placeholder="Ej: Vini" value="${esc(nick.value)}"${nick.editable ? '' : ' disabled'}><div class="small muted">${NICK_HINT}</div></label>`;
+  const nickHtml = `<label class="field nick-field"><span>Nombre corto (o apodo)</span><input id="${ids.nick}" maxlength="40" autocomplete="off" autocapitalize="words" data-cap-words="1" placeholder="Ej: Vini" value="${esc(nick.value)}"${nick.editable ? '' : ' disabled'}><div class="small muted">${NICK_HINT}</div></label>`;
   const debtHtml = debt.total > 0 ? `<p class="debt-total" id="${ids.debt}">${esc(debt.text)}</p>` : '';
   const err = app.creditsError ? `<p class="hint" id="${ids.err}">${esc(app.creditsError)}</p>` : '';
   const mine = credits.find((row) => row.organizerUid === me.uid);
@@ -7724,7 +7749,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v166" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v167" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7761,7 +7786,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v166" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v167" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
