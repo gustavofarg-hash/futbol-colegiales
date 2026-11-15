@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v168');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v169');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -3066,6 +3066,8 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
   await page.locator('.slot', { hasText: 'Titular Espera' }).locator('[data-menu]').click();
   await page.waitForSelector('#pm-wait');
   await page.click('#pm-wait');
+  await page.waitForSelector('#baja-points');
+  await page.click('#ask-ok');
   await page.waitForSelector('#wait-list .name:text-is("Titular Espera")');
   await page.click('#wait-list .promote-btn');
   await page.waitForSelector('#slots .name:text-is("Titular Espera")');
@@ -3547,7 +3549,7 @@ await page.evaluate(() => {
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("Zzz Nuevo")') }).locator('[data-menu]').click();
 await page.click('#pm-del');
 await page.waitForSelector('#app-ask-text');
-check('Quitar del partido pregunta en la app', (await page.locator('#app-ask-text').innerText()).trim() === '¿Quitar a Zzz Nuevo del partido?' && (await page.locator('#ask-cancel').innerText()) === 'Cancelar' && (await page.locator('#ask-ok').innerText()) === 'Aceptar');
+check('Quitar del partido pregunta en la app', (await page.locator('#app-ask-text').innerText()).includes('¿Esta baja resta puntos de Comportamiento?') && (await page.locator('#ask-cancel').innerText()) === 'Cancelar' && (await page.locator('#ask-ok').innerText()) === 'Confirmar quita de puntos');
 await page.click('#ask-ok');
 await page.waitForSelector('#ask-no');
 const askFriends = (await page.textContent('dialog.sheet h3')).trim();
@@ -3567,6 +3569,8 @@ await page.evaluate(() => { delete window.confirm; });
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("Después")') }).locator('[data-menu]').click();
 check('El menú ofrece bajar a la espera', await page.locator('#pm-wait').innerText() === 'Bajar a lista de espera');
 await page.click('#pm-wait');
+await page.waitForSelector('#baja-points');
+await page.click('#ask-ok');
 await page.waitForSelector('#wait-list .name:text-is("Después")');
 check('Bajar a la espera lo deja al final y no sube a nadie', await page.locator('#slots .name:text-is("Después")').count() === 0 && await page.locator('#wait-list .name:text-is("Después")').count() === 1);
 {
@@ -3585,6 +3589,8 @@ check('Bajar a la espera lo deja al final y no sube a nadie', await page.locator
   await page.waitForSelector('#slots .name:text-is("Baja Grupo")');
   await page.click('[aria-label="Opciones de Baja Grupo"]');
   await page.click('#pm-wait');
+  await page.waitForSelector('#baja-points');
+  await page.click('#ask-ok');
   await page.waitForSelector('#ask-yes');
   const askDown = (await page.textContent('dialog.sheet h3')).trim();
   check('Bajar con invitados pregunta con Sí y No', askDown === '¿Bajar también a sus invitados (Invitado 1)?' && (await page.locator('#ask-no').innerText()) === 'No', askDown);
@@ -5018,7 +5024,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   await openRemove();
   const askText = (await page.locator('#app-ask-text').innerText()).trim();
   const red = await page.locator('#ask-ok').evaluate((el) => el.classList.contains('danger') && getComputedStyle(el).backgroundColor === 'rgb(198, 40, 40)');
-  check('Quitar a Gonza pregunta en la app, sin el nombre del sitio', askText === '¿Quitar a Gonza del partido?' && (await page.locator('#ask-cancel').innerText()) === 'Cancelar' && (await page.locator('#ask-ok').innerText()) === 'Aceptar' && red && !(await page.locator('#app-ask').innerText()).includes('dice'), askText);
+  check('Quitar a Gonza pregunta en la app, sin el nombre del sitio', askText.includes('¿Esta baja resta puntos de Comportamiento?') && (await page.locator('#ask-cancel').innerText()) === 'Cancelar' && (await page.locator('#ask-ok').innerText()) === 'Confirmar quita de puntos' && red && !(await page.locator('#app-ask').innerText()).includes('dice'), askText);
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v82-despues-quitar.png' });
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('#ask')?.open && !history.state?.ask);
@@ -7993,6 +7999,44 @@ await fresh.close();
     return guest ? { rosterId: guest.rosterId || '' } : null;
   });
   check('Sin elegir una sugerencia queda el texto escrito', loose?.rosterId === '', JSON.stringify(loose));
+}
+
+{
+  await page.clock.setSystemTime(NOW);
+  const falta = await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Falta Pérez', phone: '5491166661717' }, app.who);
+    const mid = await app.store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14, note: 'Falta' }, app.who);
+    await app.store.addPlayer({ id: mid }, { name: 'Falta Pérez', phone: '5491166661717', rosterId }, app.who);
+    return { rosterId, mid };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, falta.mid);
+  await page.waitForSelector('.slot:has-text("Falta Pérez") .more-btn');
+  await page.click('.slot:has-text("Falta Pérez") .more-btn');
+  await page.click('#pm-falta');
+  await page.waitForSelector('#falta-form');
+  check('Registrar falta arranca en −0,5', (await page.locator('#falta-points').inputValue()) === '-0,5');
+  await page.selectOption('#falta-reason', 'Llegó tarde');
+  await page.fill('#falta-minutes', '20');
+  await page.fill('#falta-comment', 'Avisó en el camino');
+  await page.click('#falta-form button[type=submit]');
+  await page.waitForFunction((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).some((row) => row.rosterId === rid && row.type === 'falta' && row.points === -0.5 && String(row.reason).includes('20 min')), falta.rosterId);
+  const faltaLog = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).log || {}).find((row) => row.type === 'falta' && row.playerName === 'Falta Pérez') || null);
+  check('El registro anota la falta', !!faltaLog && faltaLog.actorName === 'Gustavo' && String(faltaLog.detail).includes('Llegó tarde') && String(faltaLog.detail).includes('20 min') && faltaLog.at > 0, JSON.stringify(faltaLog));
+  await page.click('.slot:has-text("Falta Pérez") .more-btn');
+  await page.click('#pm-del');
+  await page.waitForSelector('#baja-box');
+  const bajaText = (await page.locator('#app-ask').innerText()).replace(/\s+/g, ' ');
+  check('La baja del mismo día muestra −0,5', bajaText.includes('Corresponde: −0,5') && bajaText.includes('Mismo día, más de 3 h antes') && bajaText.includes('Ahora son las') && (await page.locator('#ask-ok').innerText()) === 'Confirmar quita de puntos', bajaText.slice(0, 360));
+  await page.click('#ask-cancel');
+  check('Cancelar la baja no lo quita', await page.locator('.slot:has-text("Falta Pérez")').count() === 1);
+  await page.click('#pm-wait');
+  await page.waitForSelector('#baja-paid');
+  await page.check('#baja-paid');
+  await page.click('#ask-ok');
+  await page.waitForSelector('#wait-list .name:text-is("Falta Pérez")');
+  const bajas = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja').length, falta.rosterId);
+  check('Si pagó igual, bajar a la espera no resta puntos', bajas === 0, String(bajas));
 }
 
 {

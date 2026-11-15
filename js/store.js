@@ -1534,7 +1534,7 @@ class LocalStore {
     }
     const entry = { ...parsed.entry, rosterId: id, createdAt: at };
     db.behavior[docId] = entry;
-    this._pushLogs(db, [behaviorLog(this._actor(), { id, name: cur.name || '' }, entry)]);
+    this._pushLogs(db, [behaviorLog(this._actor(), { id, name: cur.name || '' }, { ...entry, matchLabel: input?.matchLabel })]);
     this._save(db);
     return docId;
   }
@@ -3726,7 +3726,7 @@ export class FirebaseStore {
     const entry = { ...parsed.entry, rosterId: id, createdAt: at };
     const { doc, setDoc } = this.fs;
     await setDoc(doc(this.db, 'behavior', docId), entry);
-    await this._appendLogs([behaviorLog(this._actor(), cur, entry)]);
+    await this._appendLogs([behaviorLog(this._actor(), cur, { ...entry, matchLabel: input?.matchLabel })]);
     return docId;
   }
   async deleteRoster(id) {

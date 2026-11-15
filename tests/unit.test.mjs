@@ -11,7 +11,7 @@ import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveCli
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
-import { behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, parseBehaviorPoints } from '../js/behavior.js';
+import { bajaDeduction, bajaPreview, behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints } from '../js/behavior.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1534,6 +1534,29 @@ test('el comportamiento arranca en 10, el ajuste mueve el promedio y la suspensi
   assert.ok(logged.at > 0);
   store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
   await assert.rejects(() => store.addBehavior(id, { points: -0.5, reason: 'Otro' }), (error) => error?.code === 'edit-locked');
+});
+
+test('la baja calcula los puntos según la hora de Buenos Aires', () => {
+  const now = new Date('2026-10-19T13:00:00-03:00');
+  const at = (time, day = '2026-10-19') => bajaDeduction({ date: day, time, now });
+  assert.equal(at('21:00', '2026-10-20').points, 0);
+  assert.equal(at('21:00', '2026-10-18').id, 'started');
+  assert.equal(at('21:00').points, -0.5);
+  assert.equal(at('16:01').points, -0.5);
+  assert.equal(at('16:00').points, -2);
+  assert.equal(at('14:00').points, -2);
+  assert.equal(at('13:59').points, -4);
+  assert.equal(at('13:01').points, -4);
+  assert.equal(at('13:00').points, -8);
+  assert.equal(at('12:00').suggestSuspend, true);
+  const preview = bajaPreview({ name: 'Ana', date: '2026-10-19', time: '21:00', now });
+  assert.equal(preview.box, 'Corresponde: −0,5 (Mismo día, más de 3 h antes)');
+  assert.match(preview.headline, /Ana · Lunes 19\/10 · 21:00 hs/);
+  assert.match(preview.nowLine, /Ahora son las 13:00 · falta 8 h/);
+  assert.equal(parseBajaPoints('0').points, 0);
+  assert.equal(parseBajaPoints('2').points, -2);
+  assert.equal(parseBajaPoints('−0,5').points, -0.5);
+  assert.equal(parseBajaPoints('0,3').ok, false);
 });
 
 test('las notas de un jugador compartido las ve solo quien las escribió', async () => {
@@ -3626,7 +3649,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v168');
+  assert.equal(version, 'f7c-v169');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
