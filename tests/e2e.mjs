@@ -8033,7 +8033,7 @@ await fresh.close();
   await page.click('#pm-del');
   await page.waitForSelector('#baja-box');
   const bajaText = (await page.locator('#app-ask').innerText()).replace(/\s+/g, ' ');
-  check('La baja del mismo día muestra −0,5', bajaText.includes('Corresponde: −0,5') && bajaText.includes('Mismo día, más de 3 h antes') && bajaText.includes('Ahora son las') && (await page.locator('#ask-ok').innerText()) === 'Confirmar quita de puntos', bajaText.slice(0, 360));
+  check('La baja del mismo día muestra −0,5', bajaText.includes('Corresponde: −0,5') && bajaText.includes('Se bajó el mismo día, más de 3 h antes') && bajaText.includes('Ahora son las') && (await page.locator('#ask-ok').innerText()) === 'Confirmar quita de puntos', bajaText.slice(0, 400));
   await page.click('#ask-cancel');
   check('Cancelar la baja no lo quita', await page.locator('.slot:has-text("Falta Pérez")').count() === 1);
   await page.click('#pm-wait');

@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v170** (15/11/2026): el motivo de la baja empieza con «Se bajó». Si ya empezó, dice «No fue sin avisar». El historial viejo se lee con esas frases. `firestore.rules` no cambió.
 **Actualizada para f7c-v170** (15/11/2026): en Puntos a restar y en Registrar falta se escribe el número sin el menos; − y + lo mueven de a 0,5, entre 0 y 10. El ajuste manual también tiene − y + y conserva el signo. `firestore.rules` no cambió.
 **Actualizada para f7c-v170** (15/11/2026): Comportamiento en la ficha es una tarjeta oscura redondeada. El chevron abre el historial y Ajuste manual adentro. El promedio se ve grande, en lima. `firestore.rules` no cambió.
 **Actualizada para f7c-v169** (15/11/2026): en el menú del jugador, «Registrar falta» anota una falta con el partido. Al quitar o bajar a la espera, un diálogo calcula los puntos según la hora de Buenos Aires y se puede suspender o no restar si pagó igual. `firestore.rules` no cambió.

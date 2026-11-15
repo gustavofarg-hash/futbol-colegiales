@@ -11,7 +11,7 @@ import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveCli
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
-import { bajaDeduction, bajaPreview, behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, stepPointInput } from '../js/behavior.js';
+import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, stepPointInput } from '../js/behavior.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1550,7 +1550,10 @@ test('la baja calcula los puntos según la hora de Buenos Aires', () => {
   assert.equal(at('13:00').points, -8);
   assert.equal(at('12:00').suggestSuspend, true);
   const preview = bajaPreview({ name: 'Ana', date: '2026-10-19', time: '21:00', now });
-  assert.equal(preview.box, 'Corresponde: −0,5 (Mismo día, más de 3 h antes)');
+  assert.equal(preview.box, 'Corresponde: −0,5 (Se bajó el mismo día, más de 3 h antes)');
+  assert.equal(bajaDeduction({ date: '2026-10-19', time: '12:00', now }).label, 'No fue sin avisar');
+  assert.equal(bajaReasonText('Menos de 1 h antes'), 'Se bajó con menos de 1 h');
+  assert.equal(bajaReasonText('Después del inicio, conviene suspender'), 'No fue sin avisar');
   assert.match(preview.headline, /Ana · Lunes 19\/10 · 21:00 hs/);
   assert.match(preview.nowLine, /Ahora son las 13:00 · falta 8 h/);
   assert.equal(parseBajaPoints('0').points, 0);

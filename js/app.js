@@ -30,7 +30,7 @@ import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
-import { BAJA_TIERS, bajaPreview, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, stepPointInput } from './behavior.js';
+import { BAJA_TIERS, bajaPreview, bajaReasonText, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, stepPointInput } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -7116,7 +7116,7 @@ function openCreditReturnForm({ player, person, panel }) {
 }
 
 function behaviorReason(entry) {
-  const reason = String(entry?.reason || '').trim();
+  const reason = bajaReasonText(entry?.reason);
   if (entry?.type === 'suspension') return reason ? `Suspendido · ${reason}` : 'Suspendido';
   if (entry?.type === 'lift') return 'Suspensión levantada';
   return reason;
