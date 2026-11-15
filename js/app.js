@@ -30,7 +30,7 @@ import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
-import { BAJA_TIERS, bajaPreview, behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorScore, formatSignedPoints, parseBajaPoints, parseBehaviorPoints } from './behavior.js';
+import { BAJA_TIERS, bajaPreview, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, formatSignedPoints, parseBajaPoints, parseBehaviorPoints } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v169';
+const APP_VERSION = 'f7c-v170';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -7115,10 +7115,28 @@ function openCreditReturnForm({ player, person, panel }) {
   };
 }
 
+function behaviorReason(entry) {
+  const reason = String(entry?.reason || '').trim();
+  if (entry?.type === 'suspension') return reason ? `Suspendido · ${reason}` : 'Suspendido';
+  if (entry?.type === 'lift') return 'Suspensión levantada';
+  return reason;
+}
+
+function behaviorRow(entry) {
+  const showPoints = entry?.type === 'manual' || entry?.type === 'falta' || entry?.type === 'baja';
+  const points = showPoints ? formatBehaviorPoints(entry.points) : '';
+  const tone = Number(entry?.points) < 0 ? 'down' : 'up';
+  const comment = String(entry?.comment || '').trim();
+  return `<li class="behavior-row">
+    <div class="behavior-main"><span>${esc(numericDate(entry?.date) || '')}</span><span>${esc(behaviorReason(entry))}</span>${points ? `<b class="behavior-points ${tone}">${esc(points)}</b>` : ''}<span>${esc(entry?.createdByName || '')}</span></div>
+    ${comment ? `<p class="behavior-comment">${esc(comment)}</p>` : ''}
+  </li>`;
+}
+
 function behaviorCard(person) {
   const rosterId = person?.id || '';
   const mine = (app.behavior || []).filter((row) => row.rosterId === rosterId);
-  const score = formatBehaviorScore(behaviorScore(mine));
+  const score = formatBehaviorScore(behaviorScore(mine)).split('/')[0] || '10';
   const timeline = behaviorTimeline({
     rosterId,
     entries: app.behavior,
@@ -7126,30 +7144,36 @@ function behaviorCard(person) {
     suspensionHistory: app.suspensionHistory,
     nameOf: organizerLabel,
   });
-  const lines = timeline.length
-    ? timeline.map((row) => `<li>${esc(behaviorLine(row))}</li>`).join('')
-    : '<li>Sin movimientos.</li>';
+  const lines = timeline.length ? timeline.map(behaviorRow).join('') : '<li class="behavior-row">Sin movimientos.</li>';
   const own = canEditRoster(person, actor());
   const suspend = suspensionControls(person);
   return {
     ...suspend,
-    html: `<section class="profile-block" id="comportamiento">
-      <h2>Comportamiento</h2>
+    html: `<section class="profile-block behavior-card" id="comportamiento">
+      <div class="behavior-head">
+        <h2>Comportamiento</h2>
+        <button type="button" class="behavior-chev" id="behavior-history-toggle" aria-expanded="false" aria-label="Ver historial"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+      <p class="behavior-avg">Promedio: <b id="behavior-score">${esc(score)}</b> / 10</p>
       ${suspend.html}
-      <p class="stat-summary" id="behavior-score">${esc(score)}</p>
-      <button type="button" class="btn block" id="behavior-history-toggle" aria-expanded="false">Ver historial</button>
-      <ul class="ledger-list" id="behavior-history" hidden>${lines}</ul>
-      ${own ? '<button type="button" class="btn block" id="behavior-adjust">Ajuste manual</button>' : ''}
+      <div id="behavior-more" hidden>
+        <ul class="behavior-history" id="behavior-history" hidden>${lines}</ul>
+        ${own ? '<button type="button" class="btn" id="behavior-adjust">Ajuste manual</button>' : ''}
+      </div>
     </section>`,
   };
 }
 
 function bindBehavior(root, person) {
+  const card = root?.querySelector('#comportamiento');
   const toggle = root?.querySelector('#behavior-history-toggle');
+  const more = root?.querySelector('#behavior-more');
   const list = root?.querySelector('#behavior-history');
-  if (toggle && list) toggle.onclick = () => {
-    const show = list.hidden;
+  if (toggle && more && list) toggle.onclick = () => {
+    const show = more.hidden;
+    more.hidden = !show;
     list.hidden = !show;
+    card?.classList.toggle('open', show);
     toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
   };
   const adjust = root?.querySelector('#behavior-adjust');
@@ -8011,7 +8035,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v169" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v170" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8048,7 +8072,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v169" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v170" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
