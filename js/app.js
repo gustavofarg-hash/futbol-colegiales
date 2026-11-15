@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v171';
+const APP_VERSION = 'f7c-v172';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -7122,13 +7122,22 @@ function behaviorReason(entry) {
   return reason;
 }
 
+function canDeleteBehavior(entry) {
+  if (!entry?.id) return false;
+  const me = actor();
+  return app.role === 'admin' || (!!me.uid && entry.createdByUid === me.uid);
+}
+
 function behaviorRow(entry) {
   const showPoints = entry?.type === 'manual' || entry?.type === 'falta' || entry?.type === 'baja';
   const points = showPoints ? formatBehaviorPoints(entry.points) : '';
   const tone = Number(entry?.points) < 0 ? 'down' : 'up';
   const comment = String(entry?.comment || '').trim();
+  const trash = canDeleteBehavior(entry)
+    ? `<button type="button" class="behavior-del" data-behavior-del="${esc(entry.id)}" aria-label="Borrar esta entrada">${ICON.trash}</button>`
+    : '';
   return `<li class="behavior-row">
-    <div class="behavior-main"><span>${esc(numericDate(entry?.date) || '')}</span><span>${esc(behaviorReason(entry))}</span>${points ? `<b class="behavior-points ${tone}">${esc(points)}</b>` : ''}<span>${esc(entry?.createdByName || '')}</span></div>
+    <div class="behavior-main"><span>${esc(numericDate(entry?.date) || '')}</span><span>${esc(behaviorReason(entry))}</span>${points ? `<b class="behavior-points ${tone}">${esc(points)}</b>` : ''}<span>${esc(entry?.createdByName || '')}</span>${trash}</div>
     ${comment ? `<p class="behavior-comment">${esc(comment)}</p>` : ''}
   </li>`;
 }
@@ -7178,6 +7187,26 @@ function bindBehavior(root, person) {
   };
   const adjust = root?.querySelector('#behavior-adjust');
   if (adjust) adjust.onclick = () => openBehaviorForm(person);
+  if (list && list.dataset.bound !== '1') {
+    list.dataset.bound = '1';
+    list.onclick = async (event) => {
+      const btn = event.target.closest('[data-behavior-del]');
+      if (!btn || btn.disabled) return;
+      btn.disabled = true;
+      if (!(await askConfirm('¿Borrar esta entrada?', { danger: true }))) {
+        btn.disabled = false;
+        return;
+      }
+      try {
+        await app.store.deleteBehavior(btn.dataset.behaviorDel);
+      } catch (error) {
+        btn.disabled = false;
+        toast(error?.code === 'permission-denied'
+          ? 'Hay que publicar las reglas de Firestore para borrar una entrada de comportamiento.'
+          : (error?.message || 'No se pudo borrar.'));
+      }
+    };
+  }
 }
 
 function paintPointField(input, signed) {
@@ -7228,14 +7257,19 @@ function openBehaviorForm(person) {
   const form = $('#behavior-form');
   if (!form || !person) return;
   bindPointStepper(form, $('#behavior-points'), { signed: true });
+  let savingBehavior = false;
   form.onsubmit = async (e) => {
     e.preventDefault();
+    if (savingBehavior) return;
+    savingBehavior = true;
+    const submit = form.querySelector('button[type=submit]');
+    if (submit) submit.disabled = true;
     const err = $('#behavior-err');
+    try {
     const parsed = parseBehaviorPoints($('#behavior-points')?.value);
     if (!parsed.ok) { if (err) err.textContent = parsed.error; return; }
     const reason = String($('#behavior-reason')?.value || '').trim();
     if (!reason) { if (err) err.textContent = 'Poné el motivo.'; return; }
-    try {
       await app.store.addBehavior(person.id, {
         type: 'manual',
         points: parsed.points,
@@ -7248,6 +7282,9 @@ function openBehaviorForm(person) {
       if (error?.code === 'permission-denied') err.textContent = 'Hay que publicar las reglas de Firestore para la colección behavior.';
       else if (error?.code === 'edit-locked') err.textContent = EDIT_LOCK_TEXT;
       else err.textContent = error?.message || 'No se pudo guardar.';
+    } finally {
+      savingBehavior = false;
+      if (submit && form.isConnected) submit.disabled = false;
     }
   };
 }
@@ -7802,10 +7839,15 @@ function askPanel(html, { danger = false, okText = 'Aceptar', read } = {}) {
     ask.innerHTML = `<div class="ask-card" id="app-ask">${html}<div class="sheet-actions"><button type="button" class="btn" id="ask-cancel">Cancelar</button><button type="button" class="btn ${danger ? 'danger solid' : 'primary'}" id="ask-ok">${esc(okText)}</button></div></div>`;
     const cancelBtn = ask.querySelector('#ask-cancel');
     if (cancelBtn) cancelBtn.onclick = () => finish(null);
+    let savingAsk = false;
     ask.querySelector('#ask-ok').onclick = () => {
+      if (savingAsk) return;
       if (!read) { finish(true); return; }
       const value = read();
       if (value == null) return;
+      savingAsk = true;
+      const button = ask.querySelector('#ask-ok');
+      if (button) button.disabled = true;
       finish(value);
     };
     ask.onclick = (event) => { if (event.target === ask) finish(null); };
@@ -7917,9 +7959,15 @@ function openFaltaForm(match, player) {
   if (reason) reason.onchange = sync;
   sync();
   bindPointStepper(form, $('#falta-points'));
+  let savingBehavior = false;
   form.onsubmit = async (event) => {
     event.preventDefault();
+    if (savingBehavior) return;
+    savingBehavior = true;
+    const submit = form.querySelector('button[type=submit]');
+    if (submit) submit.disabled = true;
     const err = $('#falta-err');
+    try {
     if (!rosterId) { if (err) err.textContent = 'No tiene ficha en Jugadores.'; return; }
     let text = reason?.value || '';
     if (text === 'Llegó tarde') {
@@ -7930,7 +7978,6 @@ function openFaltaForm(match, player) {
     const parsed = parseBajaPoints($('#falta-points')?.value);
     if (!parsed.ok) { if (err) err.textContent = parsed.error; return; }
     if (parsed.points === 0) { if (err) err.textContent = 'Los puntos no pueden ser 0.'; return; }
-    try {
       await app.store.addBehavior(rosterId, {
         type: 'falta',
         points: parsed.points,
@@ -7946,6 +7993,9 @@ function openFaltaForm(match, player) {
       err.textContent = error?.code === 'permission-denied'
         ? 'Hay que publicar las reglas de Firestore para la colección behavior.'
         : (error?.message || 'No se pudo guardar.');
+    } finally {
+      savingBehavior = false;
+      if (submit && form.isConnected) submit.disabled = false;
     }
   };
 }
@@ -8077,7 +8127,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v171" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v172" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8114,7 +8164,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v171" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v172" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

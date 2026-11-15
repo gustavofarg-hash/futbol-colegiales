@@ -719,6 +719,12 @@ button.team-name {
 .behavior-points.down { color: #ff6b6b; }
 .behavior-points.up { color: #4ade80; }
 .behavior-comment { margin: 2px 0 0; color: #a9b6cb; font-size: 0.75rem; }
+.behavior-del {
+  margin-left: auto; width: 32px; height: 32px; min-height: 32px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: #ff8b9a;
+  display: grid; place-items: center; flex: none;
+}
+.behavior-del svg { width: 18px; height: 18px; }
 .behavior-card #behavior-adjust { margin-top: 4px; background: #eef3fb; color: #122033; border-color: transparent; }
 .stepper { display: flex; align-items: center; gap: 10px; }
 .stepper .val { min-width: 2.2ch; text-align: center; font-size: 1.75rem; font-weight: 800; }

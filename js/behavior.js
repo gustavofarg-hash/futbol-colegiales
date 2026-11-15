@@ -209,6 +209,19 @@ export function behaviorLog(actor, person, entry) {
   }, actor);
 }
 
+export function behaviorDeleteLog(actor, person, entry) {
+  const detail = [formatBehaviorPoints(entry?.points), faltaReasonText(entry?.type === 'falta' ? entry?.reason : bajaReasonText(entry?.reason))].filter(Boolean).join(' · ').slice(0, 200);
+  return blankLog({
+    section: 'partidos',
+    type: 'entrada borrada',
+    matchId: String(entry?.matchId || ''),
+    matchLabel: 'Comportamiento',
+    playerName: person?.name || '',
+    detail,
+    editors: ['*'],
+  }, actor);
+}
+
 const HOUR = 60 * 60 * 1000;
 
 export const BAJA_TIERS = Object.freeze([
