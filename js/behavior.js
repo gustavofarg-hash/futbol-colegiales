@@ -280,15 +280,38 @@ export function bajaPreview({ name, date, time, now = new Date() } = {}) {
   };
 }
 
-/** Puntos a restar: 0 no anota. Un número positivo se toma como la resta. */
-export function parseBajaPoints(value) {
+function pointText(n, signed) {
+  const digits = Number.isInteger(n) ? 0 : 1;
+  const abs = Math.abs(n).toLocaleString('es-AR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  if (signed && n < 0) return `-${abs}`;
+  return abs;
+}
+
+/** Lo que se muestra en «Puntos a restar»: de 0 a 10, sin signo. */
+export function formatPointMagnitude(points) {
+  const n = Math.abs(Number(points) || 0);
+  const clamped = Math.min(10, Math.max(0, Math.round(n * 2) / 2));
+  return pointText(clamped, false);
+}
+
+/** − y + mueven de a 0,5. Sin signo, queda entre 0 y 10. Con signo, entre −10 y 10. */
+export function stepPointInput(value, delta, { signed = false } = {}) {
   const raw = String(value ?? '').trim().replace('−', '-').replace(',', '.');
-  if (!raw) return { ok: false, error: 'Poné los puntos.' };
+  const n = Number(raw);
+  const base = Number.isFinite(n) ? (signed ? n : Math.abs(n)) : 0;
+  let next = Math.round((base + Number(delta || 0)) * 2) / 2;
+  next = signed ? Math.min(10, Math.max(-10, next)) : Math.min(10, Math.max(0, next));
+  return pointText(next, signed);
+}
+
+/** Puntos a restar: el campo es positivo. Se guarda en negativo. 0 no anota. */
+export function parseBajaPoints(value) {
+  const raw = String(value ?? '').trim().replace('−', '-').replace(',', '.').replace(/^\+/, '');
+  if (!raw || raw === '-') return { ok: false, error: 'Poné los puntos.' };
   const n = Number(raw);
   if (!Number.isFinite(n)) return { ok: false, error: 'Los puntos no son válidos.' };
-  const step = half(n);
-  if (step == null || Math.abs(step - n) > 0.001) return { ok: false, error: 'Los puntos van de a 0,5.' };
-  const points = step > 0 ? -step : step;
-  if (points < -10) return { ok: false, error: 'Los puntos van de 0 a −10.' };
-  return { ok: true, points };
+  const step = half(Math.abs(n));
+  if (step == null || Math.abs(step - Math.abs(n)) > 0.001) return { ok: false, error: 'Los puntos van de a 0,5.' };
+  if (step > 10) return { ok: false, error: 'Los puntos van de 0 a 10.' };
+  return { ok: true, points: step === 0 ? 0 : -step };
 }

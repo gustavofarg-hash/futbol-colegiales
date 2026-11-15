@@ -11,7 +11,7 @@ import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveCli
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
-import { bajaDeduction, bajaPreview, behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints } from '../js/behavior.js';
+import { bajaDeduction, bajaPreview, behaviorLine, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, stepPointInput } from '../js/behavior.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1555,8 +1555,17 @@ test('la baja calcula los puntos según la hora de Buenos Aires', () => {
   assert.match(preview.nowLine, /Ahora son las 13:00 · falta 8 h/);
   assert.equal(parseBajaPoints('0').points, 0);
   assert.equal(parseBajaPoints('2').points, -2);
+  assert.equal(parseBajaPoints('0,5').points, -0.5);
   assert.equal(parseBajaPoints('−0,5').points, -0.5);
   assert.equal(parseBajaPoints('0,3').ok, false);
+  assert.equal(parseBajaPoints('10,5').ok, false);
+  assert.equal(stepPointInput('0,5', 0.5), '1');
+  assert.equal(stepPointInput('0', -0.5), '0');
+  assert.equal(stepPointInput('10', 0.5), '10');
+  assert.equal(stepPointInput('9,5', 0.5), '10');
+  assert.equal(stepPointInput('-0,5', -0.5, { signed: true }), '-1');
+  assert.equal(stepPointInput('-10', -0.5, { signed: true }), '-10');
+  assert.equal(stepPointInput('10', 0.5, { signed: true }), '10');
 });
 
 test('las notas de un jugador compartido las ve solo quien las escribió', async () => {

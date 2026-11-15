@@ -30,7 +30,7 @@ import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
-import { BAJA_TIERS, bajaPreview, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, formatSignedPoints, parseBajaPoints, parseBehaviorPoints } from './behavior.js';
+import { BAJA_TIERS, bajaPreview, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, stepPointInput } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -7180,11 +7180,23 @@ function bindBehavior(root, person) {
   if (adjust) adjust.onclick = () => openBehaviorForm(person);
 }
 
+function bindPointStepper(scope, input, { signed = false } = {}) {
+  const box = input?.closest('.stepper');
+  if (!scope || !input || !box || box.dataset.stepper === '1') return;
+  box.dataset.stepper = '1';
+  box.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-step]');
+    if (!btn || input.disabled) return;
+    event.preventDefault();
+    input.value = stepPointInput(input.value, btn.dataset.step, { signed });
+  });
+}
+
 function openBehaviorForm(person) {
   openSheet(`
     <form id="behavior-form" novalidate>
       <h3>Ajuste manual</h3>
-      <label class="field"><span>Puntos</span><input id="behavior-points" inputmode="decimal" autocomplete="off" placeholder="Ej: -0,5"></label>
+      <label class="field"><span>Puntos</span><div class="stepper points-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><input id="behavior-points" inputmode="decimal" autocomplete="off" placeholder="Ej: -0,5"><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div></label>
       <label class="field"><span>Motivo</span><input id="behavior-reason" maxlength="200" autocomplete="off"></label>
       <label class="field"><span>Comentario (opcional)</span><input id="behavior-comment" maxlength="300" autocomplete="off"></label>
       <div class="field"><div class="err" id="behavior-err"></div></div>
@@ -7192,6 +7204,7 @@ function openBehaviorForm(person) {
     </form>`);
   const form = $('#behavior-form');
   if (!form || !person) return;
+  bindPointStepper(form, $('#behavior-points'), { signed: true });
   form.onsubmit = async (e) => {
     e.preventDefault();
     const err = $('#behavior-err');
@@ -7792,7 +7805,7 @@ function askBajaPoints(match, player, { note = '' } = {}) {
     <p class="hint" id="baja-now">${esc(preview.nowLine)}</p>
     <div class="baja-box" id="baja-box">${esc(preview.box)}</div>
     <table class="baja-tiers" id="baja-tiers"><tbody>${rows}</tbody></table>
-    <label class="field"><span>Puntos a restar</span><input id="baja-points" inputmode="decimal" autocomplete="off" value="${esc(preview.points === 0 ? '0' : String(preview.points).replace('.', ','))}"><span class="hint">Valor calculado automáticamente; lo podés editar.</span></label>
+    <label class="field"><span>Puntos a restar</span><div class="stepper points-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><input id="baja-points" inputmode="decimal" autocomplete="off" value="${esc(formatPointMagnitude(preview.points))}"><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div><span class="hint">Valor calculado automáticamente; lo podés editar.</span></label>
     <label class="checkline"><input type="checkbox" id="baja-suspend"${preview.suggestSuspend ? ' checked' : ''}><span>Suspender</span></label>
     <label class="checkline"><input type="checkbox" id="baja-paid"><span>Pagó el partido igual (no resta)</span></label>
     <div class="err" id="baja-err"></div>`;
@@ -7818,10 +7831,13 @@ function askBajaPoints(match, player, { note = '' } = {}) {
     const paid = ask.querySelector('#baja-paid');
     const input = ask.querySelector('#baja-points');
     if (!paid || !input) return;
+    const box = input.closest('.stepper');
+    const syncButtons = () => box?.querySelectorAll('[data-step]').forEach((btn) => { btn.disabled = input.disabled; });
+    bindPointStepper(ask, input);
     paid.onchange = () => {
       input.disabled = paid.checked;
-      if (paid.checked) input.value = '0';
-      else input.value = preview.points === 0 ? '0' : String(preview.points).replace('.', ',');
+      input.value = paid.checked ? '0' : formatPointMagnitude(preview.points);
+      syncButtons();
     };
   });
   return panel;
@@ -7864,7 +7880,7 @@ function openFaltaForm(match, player) {
       <h3>Registrar falta</h3>
       <label class="field"><span>Motivo</span><select id="falta-reason">${reasons.map((reason) => `<option>${esc(reason)}</option>`).join('')}</select></label>
       <label class="field" id="falta-minutes-field" hidden><span>Minutos</span><input id="falta-minutes" inputmode="numeric" autocomplete="off" placeholder="Ej: 20"></label>
-      <label class="field"><span>Puntos</span><input id="falta-points" inputmode="decimal" autocomplete="off" value="-0,5"></label>
+      <label class="field"><span>Puntos</span><div class="stepper points-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><input id="falta-points" inputmode="decimal" autocomplete="off" value="0,5"><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div></label>
       <label class="field"><span>Comentario (opcional)</span><input id="falta-comment" maxlength="300" autocomplete="off"></label>
       <div class="field"><div class="err" id="falta-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
@@ -7876,6 +7892,7 @@ function openFaltaForm(match, player) {
   const sync = () => { if (minutesField) minutesField.hidden = reason?.value !== 'Llegó tarde'; };
   if (reason) reason.onchange = sync;
   sync();
+  bindPointStepper(form, $('#falta-points'));
   form.onsubmit = async (event) => {
     event.preventDefault();
     const err = $('#falta-err');
@@ -7886,8 +7903,9 @@ function openFaltaForm(match, player) {
       if (!/^\d+$/.test(mins) || Number(mins) <= 0) { if (err) err.textContent = 'Poné los minutos.'; return; }
       text = `Llegó tarde · ${mins} min`;
     }
-    const parsed = parseBehaviorPoints($('#falta-points')?.value);
+    const parsed = parseBajaPoints($('#falta-points')?.value);
     if (!parsed.ok) { if (err) err.textContent = parsed.error; return; }
+    if (parsed.points === 0) { if (err) err.textContent = 'Los puntos no pueden ser 0.'; return; }
     try {
       await app.store.addBehavior(rosterId, {
         type: 'falta',
