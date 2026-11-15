@@ -3669,6 +3669,7 @@ test('el error del backup nombra la colección y el documento', () => {
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
   assert.equal(/input\.select\(/.test(app), false);
   assert.match(app, /id="app-version">Versión \$\{APP_VERSION\}/);
+  assert.ok(app.indexOf('${noPlaySection(m, readOnly)}') < app.indexOf('${usualSection(m)}'), 'No jugó pero pagó queda arriba de Suelen anotarse');
   assert.equal(app.includes('Crear cuenta de administrador'), false);
   assert.match(readFileSync(new URL('../js/auth.js', import.meta.url), 'utf8'), /async registerAdmin\(/);
 });
