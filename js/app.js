@@ -30,7 +30,7 @@ import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
-import { BAJA_TIERS, bajaPreview, bajaReasonText, behaviorScore, behaviorTimeline, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, stepPointInput } from './behavior.js';
+import { BAJA_TIERS, bajaPreview, bajaReasonText, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, stepPointInput } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v170';
+const APP_VERSION = 'f7c-v171';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -7116,7 +7116,7 @@ function openCreditReturnForm({ player, person, panel }) {
 }
 
 function behaviorReason(entry) {
-  const reason = bajaReasonText(entry?.reason);
+  const reason = entry?.type === 'falta' ? faltaReasonText(entry?.reason) : bajaReasonText(entry?.reason);
   if (entry?.type === 'suspension') return reason ? `Suspendido · ${reason}` : 'Suspendido';
   if (entry?.type === 'lift') return 'Suspensión levantada';
   return reason;
@@ -7180,23 +7180,46 @@ function bindBehavior(root, person) {
   if (adjust) adjust.onclick = () => openBehaviorForm(person);
 }
 
+function paintPointField(input, signed) {
+  if (!input) return;
+  if (signed) {
+    const raw = String(input.value || '').trim().replace('−', '-').replace('+', '').replace(',', '.');
+    const n = Number(raw);
+    const sign = !Number.isFinite(n) || n === 0 ? 0 : (String(input.value).trim().startsWith('-') || String(input.value).trim().startsWith('−') ? -1 : 1);
+    const value = sign * Math.abs(n);
+    input.classList.toggle('down', value < 0);
+    input.classList.toggle('up', value > 0);
+    return;
+  }
+  const mark = input.closest('.stepper')?.querySelector('.deduct-applied');
+  if (!mark) return;
+  const parsed = parseBajaPoints(input.value);
+  const points = parsed.ok ? parsed.points : 0;
+  mark.textContent = points === 0 ? '' : '−';
+  mark.classList.toggle('down', points < 0);
+}
+
 function bindPointStepper(scope, input, { signed = false } = {}) {
   const box = input?.closest('.stepper');
   if (!scope || !input || !box || box.dataset.stepper === '1') return;
   box.dataset.stepper = '1';
+  const paint = () => paintPointField(input, signed);
   box.addEventListener('click', (event) => {
     const btn = event.target.closest('[data-step]');
     if (!btn || input.disabled) return;
     event.preventDefault();
     input.value = stepPointInput(input.value, btn.dataset.step, { signed });
+    paint();
   });
+  input.addEventListener('input', paint);
+  paint();
 }
 
 function openBehaviorForm(person) {
   openSheet(`
     <form id="behavior-form" novalidate>
       <h3>Ajuste manual</h3>
-      <label class="field"><span>Puntos</span><div class="stepper points-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><input id="behavior-points" inputmode="decimal" autocomplete="off" placeholder="Ej: -0,5"><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div></label>
+      <label class="field"><span>Puntos</span><div class="stepper points-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><input id="behavior-points" inputmode="decimal" autocomplete="off" placeholder="Ej: −0,5"><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div></label>
       <label class="field"><span>Motivo</span><input id="behavior-reason" maxlength="200" autocomplete="off"></label>
       <label class="field"><span>Comentario (opcional)</span><input id="behavior-comment" maxlength="300" autocomplete="off"></label>
       <div class="field"><div class="err" id="behavior-err"></div></div>
@@ -7405,7 +7428,7 @@ function openPlayerMenu(m, p) {
       <button class="btn" id="pm-profile">Ver perfil</button>
       ${p.tentative === true ? '<button class="btn" id="pm-confirm-spot">Confirmar lugar</button>' : ''}
       ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? `<button class="btn" id="pm-attendance">${p.confirmed === 'si' ? 'Quitar confirmación' : 'Confirmó asistencia'}</button>` : ''}
-      ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? '<button class="btn" id="pm-falta">Registrar falta</button>' : ''}
+      ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? '<button class="btn" id="pm-falta">Sancionar</button>' : ''}
       ${p.tentative === true && p.confirmed === 'no' ? '<p class="hint">No juega · se puede liberar el lugar</p>' : ''}
       <button class="btn" id="pm-edit"${own || canAnnotate || canWritePlayer(p, actorWithRole()) ? '' : ' disabled'}>${ICON.edit}Editar</button>
       ${own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`}
@@ -7805,7 +7828,7 @@ function askBajaPoints(match, player, { note = '' } = {}) {
     <p class="hint" id="baja-now">${esc(preview.nowLine)}</p>
     <div class="baja-box" id="baja-box">${esc(preview.box)}</div>
     <table class="baja-tiers" id="baja-tiers"><tbody>${rows}</tbody></table>
-    <label class="field"><span>Puntos a restar</span><div class="stepper points-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><input id="baja-points" inputmode="decimal" autocomplete="off" value="${esc(formatPointMagnitude(preview.points))}"><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div><span class="hint">Valor calculado automáticamente; lo podés editar.</span></label>
+    <label class="field"><span>Descontar puntos</span><div class="stepper points-step deduct-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><span class="deduct-value"><b class="deduct-applied down">−</b><input id="baja-points" inputmode="decimal" autocomplete="off" value="${esc(formatPointMagnitude(preview.points))}"></span><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div><span class="hint">Valor calculado automáticamente; lo podés editar.</span></label>
     <label class="checkline"><input type="checkbox" id="baja-suspend"${preview.suggestSuspend ? ' checked' : ''}><span>Suspender</span></label>
     <label class="checkline"><input type="checkbox" id="baja-paid"><span>Pagó el partido igual (no resta)</span></label>
     <div class="err" id="baja-err"></div>`;
@@ -7837,6 +7860,7 @@ function askBajaPoints(match, player, { note = '' } = {}) {
     paid.onchange = () => {
       input.disabled = paid.checked;
       input.value = paid.checked ? '0' : formatPointMagnitude(preview.points);
+      paintPointField(input, false);
       syncButtons();
     };
   });
@@ -7874,13 +7898,13 @@ async function commitBajaPenalty(match, player, choice) {
 
 function openFaltaForm(match, player) {
   const rosterId = suspensionRosterId(player);
-  const reasons = ['Llegó tarde', 'No avisó', 'Mal comportamiento', 'Otro'];
+  const reasons = ['Llegó tarde', 'Faltó sin aviso', 'Mal comportamiento', 'Otro'];
   openSheet(`
     <form id="falta-form" novalidate>
-      <h3>Registrar falta</h3>
+      <h3>Sancionar</h3>
       <label class="field"><span>Motivo</span><select id="falta-reason">${reasons.map((reason) => `<option>${esc(reason)}</option>`).join('')}</select></label>
       <label class="field" id="falta-minutes-field" hidden><span>Minutos</span><input id="falta-minutes" inputmode="numeric" autocomplete="off" placeholder="Ej: 20"></label>
-      <label class="field"><span>Puntos</span><div class="stepper points-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><input id="falta-points" inputmode="decimal" autocomplete="off" value="0,5"><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div></label>
+      <label class="field"><span>Descontar puntos</span><div class="stepper points-step deduct-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><span class="deduct-value"><b class="deduct-applied down">−</b><input id="falta-points" inputmode="decimal" autocomplete="off" value="0,5"></span><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div></label>
       <label class="field"><span>Comentario (opcional)</span><input id="falta-comment" maxlength="300" autocomplete="off"></label>
       <div class="field"><div class="err" id="falta-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
@@ -7916,7 +7940,7 @@ function openFaltaForm(match, player) {
         matchLabel: behaviorMatchLabel(match),
       });
       closeSheet();
-      toast('Falta registrada');
+      toast('Sanción registrada');
     } catch (error) {
       if (!err) return;
       err.textContent = error?.code === 'permission-denied'
@@ -8053,7 +8077,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v170" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v171" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8090,7 +8114,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v170" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v171" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

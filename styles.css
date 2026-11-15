@@ -361,6 +361,12 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
 .stepper input:disabled { opacity: .7; }
 .points-step { margin-top: 2px; }
 .points-step .btn { min-width: 48px; padding: 0 12px; flex: none; }
+.points-step input.down { color: var(--danger); }
+.points-step input.up { color: #15803d; }
+html.dark .points-step input.up { color: #4ade80; }
+.deduct-value { display: inline-flex; align-items: center; color: var(--danger); font-weight: 800; font-size: 1.25rem; }
+.deduct-applied { color: var(--danger); font-weight: 800; }
+.deduct-value input { color: var(--danger); font-weight: 800; width: 4.2rem; }
 .slot .sub { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; max-width: 100%; }
 .slot .sub > * { max-width: 100%; }
 .slot .sub > .reserved-badge,
