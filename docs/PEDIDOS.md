@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v187** (16/11/2026): en el partido, «Anotados por mí» cuenta solo a quienes él anotó y están en la lista, no en la espera, y lo muestra sobre el cupo: «Anotados por mí: 10/14». `firestore.rules` no cambió.
 **Actualizada para f7c-v186** (16/11/2026): al importar un backup en /prueba/ solo cambia el uid del admin. El de Martín y el de los demás queda. Mes y Año usan el nombre de «Se anotó con» y de quien anota, así un backup ya importado no le suma a Gustavo lo de otro. `firestore.rules` no cambió.
 **Actualizada para f7c-v185** (16/11/2026): en Estadísticas, Mes y Año y «Te correspondió» cuentan solo partidos ya jugados, el mismo corte que el historial. Hoy y los que faltan no entran. Un cancelado sigue sin sumar. `firestore.rules` no cambió.
 **Actualizada para f7c-v184** (16/11/2026): Resetear base de datos en /prueba/ lista y borra por REST, muestra el avance y, si la base no responde, avisa en rojo. Antes el botón se quedaba mudo y los datos seguían. Las cuentas para entrar quedan. `firestore.rules` no cambió.

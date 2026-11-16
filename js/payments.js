@@ -658,6 +658,19 @@ export function organizerReceipts(players, who) {
   return { added, cash, cashPlayers, transfer, transferPlayers };
 }
 
+/**
+ * «Anotados por mí: 10/14». Solo quien está en la lista (no la espera ni
+ * «No jugó pero pagó») y se anotó con este organizador. El 14 es el cupo
+ * del partido (jugadores por equipo × 2).
+ */
+export function mineAddedLabel(players, who, capacity) {
+  const onList = (players || []).filter((player) => player && player.waiting !== true && player.noPlay !== true);
+  const count = organizerReceipts(onList, who).added;
+  const cap = Number(capacity);
+  const shown = Number.isInteger(cap) && cap > 0 ? cap : 0;
+  return `Anotados por mí: ${count}/${shown}`;
+}
+
 /** Efectivo cobrado por este organizador en todos los partidos de ese día. */
 export function organizerDayCash(players, matches, date, who) {
   const day = String(date || '');
