@@ -246,11 +246,27 @@ export function playingList(players, match) {
   return cap > 0 ? ordered.slice(0, cap) : ordered;
 }
 
+function hasPaid(player) {
+  const parts = paymentParts(player);
+  return (parts.received || 0) + (parts.pending || 0) > 0;
+}
+
+/**
+ * Quien entra en la plata del partido: los del cupo, más «No jugó pero pagó»
+ * si dejó plata (también Transfiere después). La espera no entra.
+ */
+export function countedForMoney(players, match) {
+  const list = playingList(players, match);
+  const extra = (players || []).filter((player) => player && player.matchId === match?.id && player.noPlay === true && player.waiting !== true && hasPaid(player));
+  return [...list, ...extra];
+}
+
 /**
  * Lo que anotó y lo que pagaron en un día, partido por partido.
- * Solo los de la lista (hasta el cupo) que se anotaron con él.
+ * Entran los del cupo que se anotaron con él, y también «No jugó pero pagó»
+ * si dejó plata. El tope del partido es el cupo más esos lugares.
  * Pagaron es lo que pusieron, lo cobre quien lo cobre, incluido Transfiere después.
- * Un cancelado no entra.
+ * La espera no entra. Un cancelado no entra.
  */
 export function daySignupSummary({ matches, players, prices, who } = {}) {
   const person = who && typeof who === 'object' ? who : null;
@@ -263,7 +279,7 @@ export function daySignupSummary({ matches, players, prices, who } = {}) {
   for (const match of ordered) {
     let matchSpots = 0;
     let matchPaid = 0;
-    for (const player of playingList(players, match)) {
+    for (const player of countedForMoney(players, match)) {
       if (!person || !signedUpBy(player, person)) continue;
       matchSpots += 1;
       const parts = paymentParts(player);

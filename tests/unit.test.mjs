@@ -16,7 +16,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate,
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { compensationDoneDates, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, playingList, signupOrganizerUid } from '../js/stats.js';
+import { compensationDoneDates, countedForMoney, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
@@ -3809,7 +3809,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v190');
+  assert.equal(version, 'f7c-v191');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4926,10 +4926,10 @@ test('el día cuenta los lugares que anotó y lo que pagaron, espera aparte', ()
   assert.deepEqual(summary.matches.map((row) => row.time), ['17:00', '18:00']);
   assert.equal(summary.matches[0].spots, 1);
   assert.equal(summary.matches[0].paid, 5000);
-  assert.equal(summary.matches[1].spots, 1);
-  assert.equal(summary.matches[1].paid, 0);
-  assert.equal(summary.spots, 2);
-  assert.equal(summary.paid, 5000);
+  assert.equal(summary.matches[1].spots, 2);
+  assert.equal(summary.matches[1].paid, 4000);
+  assert.equal(summary.spots, 3);
+  assert.equal(summary.paid, 9000);
 });
 
 test('el domingo 15/11 no pasa de 14 lugares por $5000', () => {
@@ -4969,13 +4969,13 @@ test('el domingo 15/11 no pasa de 14 lugares por $5000', () => {
   const mine = matches.filter((item) => item.id !== 'ajeno');
   const summary = daySignupSummary({ matches: mine, players, who });
   assert.equal(summary.matches.length, 2);
-  assert.equal(summary.matches[0].spots, 14);
-  assert.equal(summary.matches[0].paid, 70000);
-  assert.equal(summary.matches[1].spots, 14);
-  assert.equal(summary.matches[1].paid, 70000);
-  assert.equal(summary.spots, 28);
-  assert.equal(summary.paid, 140000);
-  const listed = mine.flatMap((item) => playingList(players, item));
+  assert.equal(summary.matches[0].spots, 17);
+  assert.equal(summary.matches[0].paid, 85000);
+  assert.equal(summary.matches[1].spots, 17);
+  assert.equal(summary.matches[1].paid, 85000);
+  assert.equal(summary.spots, 34);
+  assert.equal(summary.paid, 170000);
+  const listed = mine.flatMap((item) => countedForMoney(players, item));
   const share = organizerDayShare({
     matches: mine,
     players: listed,
@@ -4984,7 +4984,7 @@ test('el domingo 15/11 no pasa de 14 lugares por $5000', () => {
     name: 'Gustavo',
     now: new Date('2026-11-16T15:00:00-03:00'),
   });
-  assert.equal(share, 140000);
+  assert.equal(share, 170000);
   const withWait = matchTake({
     match: own('m1', '17:00'),
     players,
