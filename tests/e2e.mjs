@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v183');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v184');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -3968,9 +3968,39 @@ await page.fill('#reset-word', 'nada');
 check('Otra palabra no habilita el borrado', await page.locator('#reset-apply').isDisabled());
 await page.fill('#reset-word', 'BORRAR');
 check('Recién con BORRAR se puede borrar', await page.locator('#reset-apply').isEnabled());
+check('Resetear muestra el avance', await page.locator('#reset-status').count() === 1);
+await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  db.behavior = { b1: { rosterId: 'x', type: 'manual', points: -1, reason: 'seed', createdByUid: 'gustavo', createdAt: 1 } };
+  db.payBatches = { p1: { ownerUid: 'gustavo', at: 1, payload: '{}' } };
+  db.credits = { c1: { amount: 1000 } };
+  db.log = { l1: { at: 1, text: 'seed' } };
+  db.compensations = { k1: { amount: 1 } };
+  db.confirmations = { t1: { playerId: 'p', matchId: 'm' } };
+  db.links = { Abcd1234: { m: 'm', p: 'p', t: 't' } };
+  db.rosterNotes = { n1: { ownerUid: 'gustavo', notes: [] } };
+  db.rosterClaims = { q1: { rosterId: 'x' } };
+  db.rosterRedirects = { vieja: { intoId: 'x' } };
+  db.rosterSuspensions = { s1: { rosterId: 'x' } };
+  db.suspensionHistory = { h1: { rosterId: 'x' } };
+  db.settings = { prices: { matchPrice: 5000 } };
+  db.venues = { sede: { name: 'Sede', active: true, order: 1, createdAt: 1 } };
+  db.organizers = { gustavo: { name: 'Gustavo', createdAt: 1 } };
+  db.contacts = db.contacts || { players: {}, roster: {} };
+  db.contacts.players.seed = { phone: '5491111111111' };
+  db.contacts.roster.seed = { phone: '5491111111112' };
+  localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+});
 await page.click('#reset-apply');
-await page.waitForFunction(() => !document.querySelector('#sheet')?.open && window.__app.matches.length === 0);
-check('Resetear deja la base vacía', await page.evaluate(() => window.__app.matches.length === 0 && window.__app.players.length === 0 && window.__app.roster.length === 0));
+await page.waitForFunction(() => document.querySelector('#toast')?.textContent === 'Base de datos vacía' && !document.querySelector('#sheet')?.open);
+check('Resetear deja todas las colecciones vacías', await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const empty = (obj) => !!obj && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).length === 0;
+  const names = ['matches', 'players', 'roster', 'organizers', 'venues', 'confirmations', 'settings', 'links', 'credits', 'log', 'compensations', 'rosterNotes', 'rosterClaims', 'rosterRedirects', 'rosterSuspensions', 'suspensionHistory', 'payBatches', 'behavior'];
+  return names.every((name) => empty(db[name]))
+    && empty(db.contacts.players) && empty(db.contacts.roster)
+    && window.__app.matches.length === 0 && window.__app.players.length === 0 && window.__app.roster.length === 0;
+}));
 
 {
   const groupPay = async (note, amount, date, phone) => {
