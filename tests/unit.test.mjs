@@ -1187,6 +1187,7 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
   const phone = 'ab'.repeat(32);
   const group = [
     { id: 'hoy', matchId: 'm1', confirmToken: 'token-hoy-largo-0001', phoneKey: phone },
+    { id: 'tarde', matchId: 'm9', confirmToken: 'token-tarde-largo-009', phoneKey: phone },
     { id: 'man', matchId: 'm2', confirmToken: 'token-man-largo-0002', phoneKey: phone },
     { id: 'jue', matchId: 'm3', confirmToken: 'token-jue-largo-0003', phoneKey: phone },
     { id: 'esp', matchId: 'm4', confirmToken: 'token-esp-largo-0004', phoneKey: phone, waiting: true },
@@ -1197,6 +1198,7 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
   ];
   const groupMatches = [
     { id: 'm1', date: '2026-10-19', time: '20:00' },
+    { id: 'm9', date: '2026-10-19', time: '17:30' },
     { id: 'm2', date: '2026-10-20', time: '21:00' },
     { id: 'm3', date: '2026-10-22', time: '19:00' },
     { id: 'm4', date: '2026-10-21', time: '18:00' },
@@ -1206,10 +1208,14 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
     { id: 'm8', date: '2026-10-24', time: '19:00', cancelled: true },
   ];
   const slots = upcomingConfirmSlots({ players: group, matches: groupMatches, player: group[0], now: before });
-  assert.deepEqual(slots.map((slot) => confirmSlotText(slot, before)), ['HOY 20:00', 'mañana 21:00', 'jueves 19:00']);
+  assert.deepEqual(slots.map((slot) => confirmSlotText(slot, before)), ['HOY 17:30', 'HOY 20:00']);
+  const tomorrowSlots = upcomingConfirmSlots({ players: group, matches: groupMatches, player: group[2], now: before });
+  assert.deepEqual(tomorrowSlots.map((slot) => confirmSlotText(slot, before)), ['mañana 21:00']);
   assert.equal(sharedConfirmAnswer(slots), null);
   assert.equal(sharedConfirmAnswer(slots.map((slot) => ({ ...slot, confirmed: 'si' }))), 'si');
-  assert.equal(visibleConfirmSlots(slots, before).length, 3);
+  assert.equal(visibleConfirmSlots(slots, before).length, 2);
+  const stale = [...slots, ...tomorrowSlots, { token: 'token-jue-largo-0003', playerId: 'jue', date: '2026-10-22', time: '19:00' }];
+  assert.deepEqual(visibleConfirmSlots(stale, before, '2026-10-19').map((slot) => slot.date), ['2026-10-19', '2026-10-19']);
   assert.equal(visibleConfirmSlots(slots, new Date('2026-11-15T13:00:00-03:00')).length, 0);
   const manyUrl = 'https://spoo.me/XXXX';
   const luciano = { name: 'Luciano Pérez' };
@@ -1227,9 +1233,8 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
     slots: [{ date: '2026-10-19', time: '17:30' }, { date: '2026-10-19', time: '18:30' }],
   }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y 18:30?\n\nRespondé en este link: ${manyUrl}`);
   assert.equal(attendanceMessage({
-    player: luciano, confirmUrl: manyUrl, now: before,
-    slots: [{ date: '2026-10-19', time: '17:30' }, { date: '2026-10-20', time: '21:00' }],
-  }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y mañana 21:00?\n\nRespondé en este link: ${manyUrl}`);
+    player: luciano, confirmUrl: manyUrl, now: before, slots,
+  }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y 20:00?\n\nRespondé en este link: ${manyUrl}`);
   assert.equal(attendanceMessage({
     player: luciano, when: 'Mañana', time: '18:00', confirmUrl: manyUrl,
   }), `¡Hola Luciano! ¿Confirmás que jugás Mañana 18:00?\n\nRespondé en este link: ${manyUrl}`);
@@ -1918,7 +1923,7 @@ test('organizadores demo: siembra Gustavo y Martín y no duplica', async () => {
   assert.equal(JSON.parse(mem.get('f7c-test-org')).organizers.lucia.name, 'Lucía');
 });
 
-test('la ficha de varios partidos próximos no incluye la espera', async () => {
+test('la ficha de confirmación junta solo los partidos de ese día', async () => {
   const mem = new Map();
   globalThis.localStorage = {
     getItem: (k) => (mem.has(k) ? mem.get(k) : null),
@@ -1933,12 +1938,14 @@ test('la ficha de varios partidos próximos no incluye la espera', async () => {
   const later = addDays(today, 3);
   const phone = '5491170001781';
   const first = await store.addMatch({ date: today, time: '20:00', capacity: 14 }, 'Gustavo');
+  const same = await store.addMatch({ date: today, time: '18:30', capacity: 14 }, 'Gustavo');
   const second = await store.addMatch({ date: tomorrow, time: '21:00', capacity: 14 }, 'Gustavo');
   const third = await store.addMatch({ date: later, time: '19:00', capacity: 1 }, 'Gustavo');
   await store.addPlayer({ id: third, date: later, capacity: 1 }, { name: 'Ocupa Lugar', phone: '5491170001782' }, 'Gustavo');
   const ids = [];
   for (const match of [
     { id: first, date: today },
+    { id: same, date: today },
     { id: second, date: tomorrow },
   ]) {
     ids.push(await store.addPlayer({ id: match.id, date: match.date, capacity: 14 }, { name: 'Ana López', phone }, 'Gustavo'));
@@ -1949,9 +1956,12 @@ test('la ficha de varios partidos próximos no incluye la espera', async () => {
   assert.equal(cards[0].also.length, 2);
   assert.equal(cards[1].also.length, 2);
   assert.equal(cards[2].also, undefined);
-  assert.deepEqual(cards[0].also.map((slot) => slot.time), ['20:00', '21:00']);
+  assert.equal(cards[3].also, undefined);
+  assert.deepEqual(cards[0].also.map((slot) => slot.time), ['18:30', '20:00']);
+  assert.ok(cards[0].also.every((slot) => slot.date === today));
   assert.equal(JSON.stringify(cards[0].also).includes('549'), false);
-  assert.equal(cards[0].also.some((slot) => slot.playerId === ids[2]), false);
+  assert.equal(cards[0].also.some((slot) => slot.playerId === ids[3]), false);
+  assert.equal(cards[0].also.some((slot) => slot.date === tomorrow), false);
 });
 
 test('la ficha de confirmación no lleva teléfono', () => {
@@ -3813,7 +3823,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v192');
+  assert.equal(version, 'f7c-v193');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

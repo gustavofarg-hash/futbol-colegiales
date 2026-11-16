@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v192');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v193');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -7487,6 +7487,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const manyIds = await page.evaluate(async () => {
     const app = window.__app;
     const hoyM = await app.store.addMatch({ date: '2026-10-19', time: '20:00', capacity: 14, note: 'Varios hoy' }, app.who);
+    const tardeM = await app.store.addMatch({ date: '2026-10-19', time: '18:30', capacity: 14, note: 'Varios tarde' }, app.who);
     const mananaM = await app.store.addMatch({ date: '2026-10-20', time: '21:00', capacity: 14, note: 'Varios mañana' }, app.who);
     const juevesM = await app.store.addMatch({ date: '2026-10-22', time: '19:00', capacity: 14, note: 'Varios jueves' }, app.who);
     const esperaM = await app.store.addMatch({ date: '2026-10-21', time: '18:00', capacity: 1, note: 'Varios espera' }, app.who);
@@ -7494,7 +7495,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     await app.store.addPlayer(by(esperaM), { name: 'Ocupa Varios', phone: '11 7000-1780' }, app.who);
     const phone = '11 7000-1781';
     const ids = [];
-    for (const id of [hoyM, mananaM, juevesM]) {
+    for (const id of [hoyM, tardeM, mananaM, juevesM]) {
       ids.push(await app.store.addPlayer(by(id), { name: 'Varios López', phone }, app.who));
     }
     ids.push(await app.store.addPlayer(by(esperaM), { name: 'Varios López', phone }, app.who, { waiting: true }));
@@ -7508,23 +7509,23 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const manyLines = await manyPage.locator('#confirm-slots li').allInnerTexts();
   const manyAsk = (await manyPage.locator('#confirm-ask').innerText()).trim();
   const manyBody = (await manyPage.locator('body').innerText()).replace(/\s+/g, ' ');
-  check('Varios partidos listan HOY, mañana y jueves', manyAsk === '¿Confirmás que jugás estos partidos?' && manyLines.join('|') === 'HOY 20:00|mañana 21:00|jueves 19:00' && !manyBody.includes('18:00') && !manyBody.includes('Ocupa') && (await manyPage.locator('h1').innerText()) === 'Varios', `${manyAsk} ${manyLines.join('|')} ${manyBody.slice(0, 180)}`);
+  check('Varios partidos del día listan solo HOY', manyAsk === '¿Confirmás que jugás estos partidos?' && manyLines.join('|') === 'HOY 18:30|HOY 20:00' && !manyBody.includes('18:00') && !manyBody.includes('21:00') && !manyBody.includes('jueves') && !manyBody.includes('Ocupa') && (await manyPage.locator('h1').innerText()) === 'Varios', `${manyAsk} ${manyLines.join('|')} ${manyBody.slice(0, 220)}`);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, manyIds.matchId);
   await page.waitForSelector('.slot:has-text("Varios López") .wa-btn');
   const manyWa = decodeURIComponent((await page.getAttribute('.slot:has-text("Varios López") .wa-btn', 'href')).split('text=')[1] || '');
   const manyLink = manyWa.split('Respondé en este link: ')[1] || '';
-  check('El WhatsApp lista los tres horarios con un solo link', manyWa === `¡Hola Varios! ¿Confirmás que jugás HOY 20:00, mañana 21:00 y jueves 19:00?\n\nRespondé en este link: ${manyLink}` && (manyWa.match(/https?:\/\//g) || []).length === 1, manyWa);
+  check('El WhatsApp lista solo los horarios de hoy con un solo link', manyWa === `¡Hola Varios! ¿Confirmás que jugás HOY 18:30 y 20:00?\n\nRespondé en este link: ${manyLink}` && !manyWa.includes('mañana') && !manyWa.includes('jueves') && (manyWa.match(/https?:\/\//g) || []).length === 1, manyWa);
   await manyPage.click('#btn-si');
   await manyPage.waitForSelector('#thanks');
-  check('Un sí confirma todos los partidos del link', (await manyPage.locator('#thanks').innerText()).includes('jugás') && await manyPage.locator('#btn-si').count() === 0);
+  check('Un sí confirma los partidos de hoy del link', (await manyPage.locator('#thanks').innerText()).includes('jugás') && await manyPage.locator('#btn-si').count() === 0);
   const manySaved = await page.evaluate((ids) => {
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
     return ids.map((id) => db.players[id]?.confirmed || null);
   }, manyIds.ids);
-  check('El sí quedó en los tres partidos y no en la espera', manySaved.join(',') === 'si,si,si,', manySaved.join(','));
+  check('El sí quedó en los de hoy y no toca los otros días', manySaved.join(',') === 'si,si,,,', manySaved.join(','));
   await manyPage.reload();
   await manyPage.waitForSelector('#thanks');
-  check('Reabrir el link de varios sigue sin botones', await manyPage.locator('#btn-si').count() === 0 && (await manyPage.locator('#confirm-slots li').allInnerTexts()).join('|') === 'HOY 20:00|mañana 21:00|jueves 19:00');
+  check('Reabrir el link de varios sigue sin botones', await manyPage.locator('#btn-si').count() === 0 && (await manyPage.locator('#confirm-slots li').allInnerTexts()).join('|') === 'HOY 18:30|HOY 20:00');
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, manyIds.matchId);
   await page.waitForSelector('.slot:has-text("Varios López") .more-btn');
   await page.locator('.slot', { hasText: 'Varios López' }).locator('.more-btn').click();
@@ -7552,7 +7553,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
     return ids.map((id) => db.players[id]?.confirmed || null);
   }, noIds.ids);
-  check('No juego marca que no juega en todos esos partidos', (await noPage.locator('#thanks').innerText()).includes('no jugás') && noSaved.join(',') === 'no,no', `${noSaved.join(',')} ${(await noPage.locator('#thanks').innerText())}`);
+  check('No juego marca el de hoy y no toca el de mañana', (await noPage.locator('#thanks').innerText()).includes('no jugás') && noSaved.join(',') === 'no,', `${noSaved.join(',')} ${(await noPage.locator('#thanks').innerText())}`);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, noIds.matchId);
   await page.waitForFunction(() => [...document.querySelectorAll('#slots .slot')].some((row) => row.innerText.includes('Niega López') && row.innerText.includes('No juega')));
   check('En el partido, No se ve igual que en uno solo', (await page.locator('#slots .slot', { hasText: 'Niega López' }).innerText()).includes('No juega'));
