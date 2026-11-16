@@ -25,7 +25,7 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
-import { diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths } from './stats.js';
+import { daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, periodBuckets, playerOrganizerMonths } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v187';
+const APP_VERSION = 'f7c-v188';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -4121,18 +4121,6 @@ function moneyList(rows, empty) {
   return `<ul class="ledger-list">${rows.map((row) => `<li>${esc(row.label || row.name)}: ${esc(formatARS(row.amount))}</li>`).join('')}</ul>`;
 }
 
-function takeSummary(take) {
-  const goals = take.goalsTracked ? `Goles: ${take.goals}` : 'Sin goles cargados';
-  const pending = take.pending > 0 ? `<p class="pay-pending">Transfiere después ${esc(formatARS(take.pending))}</p>` : '';
-  return `
-    <p class="hint" id="stats-attendance">En la lista: ${take.main} · En espera: ${take.waiting} · No juega: ${take.noShows}</p>
-    <p class="hint" id="stats-goals">${esc(goals)}</p>
-    <p class="stat-summary" id="stats-collected">Cobrado ${esc(formatARS(take.collected))} de ${esc(formatARS(take.expected))}</p>
-    ${pending}
-    <h2>Por medio</h2>
-    ${moneyList(take.byMethod, 'Sin cobros.')}`;
-}
-
 function renderStats(r) {
   const mode = STATS_MODES.some((item) => item.id === r.mode) ? r.mode : 'jugador';
   const prev = $('#stats-q');
@@ -4276,22 +4264,31 @@ function statsDayBody(id) {
   const allDay = byDay.get(wanted) || [];
   const dayMatches = mineOf(allDay);
   if (!dayMatches.length) return `<div class="empty"><p><b>No hay partidos ese día.</b></p><p><a class="btn" href="${statsHash('dia')}">Volver a la lista</a></p></div>`;
-  const blocks = dayMatches.map((match) => {
-    const take = organizerViewTake({
-      match,
-      players: app.players,
-      matches,
-      prices: livePrices(),
-      who: { uid: me.uid, name: me.name },
-    });
-    const when = `${match.time || '--:--'} hs`;
-    return `<section class="profile-block stats-day-match"><h2>${esc(when)}</h2>${match.cancelled === true ? '<p class="hint">Cancelado: no suma plata.</p>' : ''}${takeSummary(take)}</section>`;
-  }).join('');
+  const who = { uid: me.uid, name: me.name };
+  const summary = daySignupSummary({
+    matches: dayMatches,
+    players: app.players,
+    prices: livePrices(),
+    who,
+  });
+  const blocks = summary.matches.map((row) => `
+    <section class="profile-block stats-day-match" data-time="${esc(row.time)}">
+      <h2>${esc(row.time)}</h2>
+      <p class="stats-match-signed">Anotaste: ${esc(spotCountLabel(row.spots))}</p>
+      <p class="stats-match-paid">Pagaron: ${esc(formatARS(row.paid))}</p>
+    </section>`).join('');
   return `
     <p class="hint"><a href="${statsHash('dia')}">Todos los días</a></p>
     <h2 class="section" id="stats-day">${esc(capitalize(labelDate(wanted)))}</h2>
     <p class="stats-entitled" id="stats-entitled">${esc(entitledLabel(dayShare(wanted, allDay)))}</p>
+    <p id="stats-day-signed">Anotaste en el día: ${esc(spotCountLabel(summary.spots))}</p>
+    <p id="stats-day-paid">Pagaron: ${esc(formatARS(summary.paid))}</p>
     ${blocks}`;
+}
+
+function spotCountLabel(n) {
+  const count = Math.max(0, Number(n) || 0);
+  return `${count} ${count === 1 ? 'jugador' : 'jugadores'}`;
 }
 
 function entitledLabel(amount) {
@@ -8198,7 +8195,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v187" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v188" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8235,7 +8232,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v187" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v188" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

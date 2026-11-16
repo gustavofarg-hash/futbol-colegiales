@@ -206,6 +206,38 @@ function emptyPeriod(key, grain) {
   };
 }
 
+/**
+ * Lo que anotó y lo que pagaron en un día, partido por partido.
+ * Misma regla que Mes: se anotó con él (uid o nombre), no está en la espera
+ * y el lugar tiene plata paga o adeudada. Pagaron es lo que pusieron,
+ * lo cobre quien lo cobre, incluido Transfiere después. Un cancelado no entra.
+ */
+export function daySignupSummary({ matches, players, prices, who } = {}) {
+  const person = who && typeof who === 'object' ? who : null;
+  const ordered = (matches || [])
+    .filter((match) => match?.id && match.cancelled !== true)
+    .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')) || String(a.id).localeCompare(String(b.id)));
+  const spotCtx = { players, matches: ordered, prices };
+  const rows = [];
+  let spots = 0;
+  let paid = 0;
+  for (const match of ordered) {
+    let matchSpots = 0;
+    let matchPaid = 0;
+    for (const player of players || []) {
+      if (!player || player.matchId !== match.id || player.waiting === true) continue;
+      if (!person || !signupIsMine(player, person)) continue;
+      if (signedSpot(player, spotCtx)) matchSpots += 1;
+      const parts = paymentParts(player);
+      matchPaid = roundARS(matchPaid + (parts.received || 0) + (parts.pending || 0));
+    }
+    spots += matchSpots;
+    paid = roundARS(paid + matchPaid);
+    rows.push({ id: match.id, time: match.time || '--:--', spots: matchSpots, paid: matchPaid });
+  }
+  return { spots, paid, matches: rows };
+}
+
 function signedMoney(groups) {
   let count = 0;
   let amount = 0;

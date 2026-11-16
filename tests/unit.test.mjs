@@ -16,7 +16,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate,
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { compensationDoneDates, countedGoals, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
+import { compensationDoneDates, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
@@ -3809,7 +3809,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v187');
+  assert.equal(version, 'f7c-v188');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4904,6 +4904,32 @@ test('un backup importado no le suma a Gustavo los lugares de Martín', () => {
   assert.equal(openDay, 8000);
   assert.equal(organizerDayShare({ matches: [matches[2]], players, staff, uid: trial, name: 'Gustavo', who, now }), 0);
   assert.equal(shares.get('2026-11'), ownDay + openDay);
+});
+
+test('el día cuenta los lugares que anotó y lo que pagaron, espera aparte', () => {
+  const who = { uid: 'gus', name: 'Gustavo' };
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const matches = [
+    { id: 'tarde', date: '2026-11-13', time: '18:00', price: 5000, cancelled: false },
+    { id: 'temprano', date: '2026-11-13', time: '17:00', price: 5000 },
+    { id: 'lluvia', date: '2026-11-13', time: '19:00', price: 5000, cancelled: true },
+  ];
+  const players = [
+    { id: 'a', matchId: 'temprano', name: 'Ana', phone: '5491190000401', signedUpWith: 'otro', signedUpWithName: 'Gustavo', paid: true, split: true, cash: 2000, pendingTransfer: 3000 },
+    { id: 'b', matchId: 'temprano', name: 'Beto', phone: '5491190000402', signedUpWith: 'mar', signedUpWithName: 'Martín', paid: true, split: true, cash: 8000 },
+    { id: 'c', matchId: 'temprano', name: 'Espera', phone: '5491190000403', signedUpWith: 'gus', waiting: true, paid: true, split: true, cash: 9000 },
+    { id: 'd', matchId: 'tarde', name: 'Ciro', phone: '5491190000404', signedUpWith: 'gus', addedByUid: 'gus', noPlay: true, paid: true, split: true, cash: 4000 },
+    { id: 'e', matchId: 'tarde', name: 'Dano', phone: '5491190000405', signedUpWith: 'gus', freePlay: true },
+    { id: 'f', matchId: 'lluvia', name: 'Eva', phone: '5491190000406', signedUpWith: 'gus', paid: true, split: true, cash: 7000 },
+  ];
+  const summary = daySignupSummary({ matches, players, prices, who });
+  assert.deepEqual(summary.matches.map((row) => row.time), ['17:00', '18:00']);
+  assert.equal(summary.matches[0].spots, 1);
+  assert.equal(summary.matches[0].paid, 5000);
+  assert.equal(summary.matches[1].spots, 1);
+  assert.equal(summary.matches[1].paid, 4000);
+  assert.equal(summary.spots, 2);
+  assert.equal(summary.paid, 9000);
 });
 
 test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
