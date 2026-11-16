@@ -318,79 +318,55 @@ function isUidToken(value) {
   return typeof value === 'string' && /^[A-Za-z0-9]{6,128}$/.test(value);
 }
 
-function rememberUid(set, value, target) {
-  if (!isUidToken(value) || value === target) return;
-  set.add(value);
+function trialSourceAdmin(collections) {
+  const users = collections?.users;
+  if (!isPlainObject(users)) return '';
+  for (const [id, doc] of Object.entries(users)) {
+    if (isUidToken(id) && doc && doc.role === 'admin') return id;
+  }
+  return '';
 }
 
-function collectTrialUids(backup, target) {
-  const found = new Set();
-  for (const id of Object.keys(backup.collections?.users || {})) rememberUid(found, id, target);
-  const walk = (value, key) => {
-    if (Array.isArray(value)) {
-      if (TRIAL_UID_LISTS.has(key)) {
-        for (const item of value) {
-          if (typeof item === 'string') rememberUid(found, item, target);
-          else walk(item, key);
-        }
-        return;
-      }
-      for (const item of value) walk(item, '');
-      return;
-    }
-    if (!isPlainObject(value)) return;
-    for (const [itemKey, item] of Object.entries(value)) {
-      if (TRIAL_UID_FIELDS.has(itemKey) && typeof item === 'string') rememberUid(found, item, target);
-      else walk(item, itemKey);
-    }
-  };
-  for (const docs of Object.values(backup.collections || {})) walk(docs, '');
-  walk(backup.subcollections, '');
-  return found;
-}
-
-function mapTrialUid(value, target) {
+function mapTrialUid(value, adminUid, target) {
   if (typeof value !== 'string' || value === '' || value === '*') return value;
+  if (!adminUid || value !== adminUid) return value;
   return target;
 }
 
-function mapTrialList(list, target) {
+function mapTrialList(list, adminUid, target) {
   const out = [];
   for (const item of list) {
     if (typeof item !== 'string') {
-      out.push(mapTrialValue(item, '', target));
+      out.push(mapTrialValue(item, '', adminUid, target));
       continue;
     }
-    const next = mapTrialUid(item, target);
+    const next = mapTrialUid(item, adminUid, target);
     if (next === '' || !out.includes(next)) out.push(next);
   }
   return out;
 }
 
-function mapTrialValue(value, key, target) {
+function mapTrialValue(value, key, adminUid, target) {
   if (Array.isArray(value)) {
-    if (TRIAL_UID_LISTS.has(key)) return mapTrialList(value, target);
-    return value.map((item) => mapTrialValue(item, '', target));
+    if (TRIAL_UID_LISTS.has(key)) return mapTrialList(value, adminUid, target);
+    return value.map((item) => mapTrialValue(item, '', adminUid, target));
   }
   if (!isPlainObject(value)) return value;
   const out = {};
   for (const [itemKey, item] of Object.entries(value)) {
-    if (TRIAL_UID_FIELDS.has(itemKey) && (typeof item === 'string' || item == null)) out[itemKey] = mapTrialUid(item, target);
-    else out[itemKey] = mapTrialValue(item, itemKey, target);
+    if (TRIAL_UID_FIELDS.has(itemKey) && (typeof item === 'string' || item == null)) out[itemKey] = mapTrialUid(item, adminUid, target);
+    else out[itemKey] = mapTrialValue(item, itemKey, adminUid, target);
   }
   return out;
 }
 
-function remapTrialDocId(collection, id, uids, target) {
-  if (collection === 'users') {
-    if (!id || id === target || id.includes('@')) return id;
-    return isUidToken(id) ? target : id;
-  }
-  if (!id || !uids.size) return id;
-  if (uids.has(id)) return target;
+function remapTrialDocId(collection, id, adminUid, target) {
+  if (!id || !adminUid || id === target || id.includes('@')) return id;
+  if (collection === 'users') return id === adminUid ? target : id;
+  if (id === adminUid) return target;
   let changed = false;
   const next = id.split('_').map((part) => {
-    if (uids.has(part)) { changed = true; return target; }
+    if (part === adminUid) { changed = true; return target; }
     return part;
   });
   return changed ? next.join('_') : id;
@@ -464,22 +440,23 @@ function alignTrialAccess(collections) {
 }
 
 /**
- * En la versión de prueba, todo uid del backup pasa a ser el admin logueado.
- * Así las reglas (isAdder, ownerUid, listados por viewers) lo aceptan.
- * Fuera de /prueba/ no se llama. '*' queda. Los id de jugador (invitedBy) quedan.
+ * En /prueba/ solo el uid del admin del backup pasa a ser el de quien importa.
+ * Así sus partidos siguen en su lista. Los demás organizadores conservan su uid
+ * y su nombre: si no, Estadísticas los cuenta como si fueran él.
+ * '*' queda. Los id de jugador (invitedBy) quedan.
  */
 export function remapTrialBackup(backup, uid) {
   const target = String(uid || '').trim();
   if (!target || !isPlainObject(backup?.collections)) return backup;
   const draft = structuredClone(backup);
   parkTrialPhones(draft.collections);
-  const found = collectTrialUids(draft, target);
+  const adminUid = trialSourceAdmin(draft.collections);
   const collections = {};
   for (const [name, docs] of Object.entries(draft.collections)) {
     const next = {};
     if (!isPlainObject(docs)) { collections[name] = docs; continue; }
     for (const [id, doc] of Object.entries(docs)) {
-      next[remapTrialDocId(name, id, found, target)] = mapTrialValue(doc, '', target);
+      next[remapTrialDocId(name, id, adminUid, target)] = mapTrialValue(doc, '', adminUid, target);
     }
     collections[name] = next;
   }
@@ -488,8 +465,8 @@ export function remapTrialBackup(backup, uid) {
   if (isPlainObject(draft.subcollections)) {
     for (const [path, doc] of Object.entries(draft.subcollections)) {
       const segments = String(path).split('/');
-      const mapped = segments.map((part, index) => (index % 2 === 1 ? remapTrialDocId(segments[index - 1] || '', part, found, target) : part));
-      subcollections[mapped.join('/')] = mapTrialValue(doc, '', target);
+      const mapped = segments.map((part, index) => (index % 2 === 1 ? remapTrialDocId(segments[index - 1] || '', part, adminUid, target) : part));
+      subcollections[mapped.join('/')] = mapTrialValue(doc, '', adminUid, target);
     }
   }
   return { ...draft, collections, subcollections };
