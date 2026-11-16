@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v189** (16/11/2026): en el detalle del día, Anotaste y Pagaron cuentan solo a quienes él anotó y entran en el cupo. La espera, «No jugó pero pagó» y los que sobran no suman. Te correspondió usa esa misma lista. `firestore.rules` no cambió.
 **Actualizada para f7c-v188** (16/11/2026): el detalle de Estadísticas > Día muestra solo «Te correspondió», «Anotaste en el día» y «Pagaron», y debajo cada horario con lo que anotó y lo que pagaron. La espera no entra. Transfiere después sí entra en Pagaron. `firestore.rules` no cambió.
 **Actualizada para f7c-v187** (16/11/2026): en el partido, «Anotados por mí» cuenta solo a quienes él anotó y están en la lista, no en la espera, y lo muestra sobre el cupo: «Anotados por mí: 10/14». `firestore.rules` no cambió.
 **Actualizada para f7c-v186** (16/11/2026): al importar un backup en /prueba/ solo cambia el uid del admin. El de Martín y el de los demás queda. Mes y Año usan el nombre de «Se anotó con» y de quien anota, así un backup ya importado no le suma a Gustavo lo de otro. `firestore.rules` no cambió.

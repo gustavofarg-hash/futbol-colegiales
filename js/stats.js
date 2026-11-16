@@ -1,12 +1,15 @@
 // Totales para la pestaña Estadísticas. Puro: no lee Firebase.
 // Un partido cancelado no suma plata ni cupo. La espera no debe.
 import { dayCompensation, matchAdders, matchCompensation } from './compensate.js';
+import { groupByInviter } from './guests.js';
 import { monthKeyOf, monthLabel } from './ledger.js';
-import { sameOrganizerIdentity, UNSPECIFIED } from './organizers.js';
+import { sameOrganizer, sameOrganizerIdentity, UNSPECIFIED } from './organizers.js';
 import { isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { priceOfMatch, promoForPlayer } from './prices.js';
 import { matchAlreadyPlayed } from './profile.js';
-import { personKey, playerMatchesPerson } from './roster.js';
+import { foldText, personKey, playerMatchesPerson } from './roster.js';
+import { matchCapacity } from './venues.js';
+import { rosterSplit } from './waiting.js';
 
 const METHOD_LABEL = {
   cash: 'Efectivo',
@@ -206,28 +209,62 @@ function emptyPeriod(key, grain) {
   };
 }
 
+/** Nombre igual, o el apodo corto (Gus / Gustavo). «Gustavo López» no es Gustavo. */
+function sameSignupName(a, b) {
+  if (sameOrganizer(a, b)) return true;
+  const ln = foldText(a);
+  const rn = foldText(b);
+  if (ln.length < 3 || rn.length < 3) return false;
+  const [short, long] = ln.length <= rn.length ? [ln, rn] : [rn, ln];
+  if (long.includes(' ')) return false;
+  return long.startsWith(short);
+}
+
+/**
+ * Se anotó con esta persona en el detalle del día.
+ * Si hay nombre, tiene que ser él (no alcanza un apellido que empiece igual).
+ * Si no hay nombre, manda el uid.
+ */
+function signedUpBy(player, who) {
+  const named = String(player?.signedUpWithName || '').trim();
+  const whoName = String(who?.name || '').trim();
+  if (named && whoName) return sameSignupName(named, whoName);
+  const uid = String(who?.uid || '').trim();
+  const signed = signupOrganizerUid(player);
+  if (uid && signed) return signed === uid;
+  const added = String(player?.addedBy || '').trim();
+  return !!(added && whoName && sameSignupName(added, whoName));
+}
+
+/** La lista que se ve en el partido: sin espera, sin «No jugó», y solo hasta el cupo. */
+export function playingList(players, match) {
+  if (!match?.id) return [];
+  const mine = (players || []).filter((player) => player && player.matchId === match.id && player.noPlay !== true && player.waiting !== true);
+  const ordered = groupByInviter(rosterSplit(mine).main, mine);
+  const cap = matchCapacity(match);
+  return cap > 0 ? ordered.slice(0, cap) : ordered;
+}
+
 /**
  * Lo que anotó y lo que pagaron en un día, partido por partido.
- * Misma regla que Mes: se anotó con él (uid o nombre), no está en la espera
- * y el lugar tiene plata paga o adeudada. Pagaron es lo que pusieron,
- * lo cobre quien lo cobre, incluido Transfiere después. Un cancelado no entra.
+ * Solo los de la lista (hasta el cupo) que se anotaron con él.
+ * Pagaron es lo que pusieron, lo cobre quien lo cobre, incluido Transfiere después.
+ * Un cancelado no entra.
  */
 export function daySignupSummary({ matches, players, prices, who } = {}) {
   const person = who && typeof who === 'object' ? who : null;
   const ordered = (matches || [])
     .filter((match) => match?.id && match.cancelled !== true)
     .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')) || String(a.id).localeCompare(String(b.id)));
-  const spotCtx = { players, matches: ordered, prices };
   const rows = [];
   let spots = 0;
   let paid = 0;
   for (const match of ordered) {
     let matchSpots = 0;
     let matchPaid = 0;
-    for (const player of players || []) {
-      if (!player || player.matchId !== match.id || player.waiting === true) continue;
-      if (!person || !signupIsMine(player, person)) continue;
-      if (signedSpot(player, spotCtx)) matchSpots += 1;
+    for (const player of playingList(players, match)) {
+      if (!person || !signedUpBy(player, person)) continue;
+      matchSpots += 1;
       const parts = paymentParts(player);
       matchPaid = roundARS(matchPaid + (parts.received || 0) + (parts.pending || 0));
     }
