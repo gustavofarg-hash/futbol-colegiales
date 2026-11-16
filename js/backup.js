@@ -25,6 +25,31 @@ export function backupProgressText(done, total) {
   return `Cargando… ${Math.min(n, all)}/${all}`;
 }
 
+/** Lo que se muestra si leer o borrar no contesta. El botón no puede quedar mudo. */
+export const RESET_STALLED = 'La base no respondió. No se terminó de borrar.';
+
+/** Texto del avance al resetear. Con total 0 todavía se están listando los documentos. */
+export function resetProgressText(done, total) {
+  const n = Math.max(0, Math.floor(Number(done) || 0));
+  const all = Math.max(0, Math.floor(Number(total) || 0));
+  if (!all) return 'Buscando datos…';
+  return `Borrando… ${Math.min(n, all)}/${all}`;
+}
+
+/** Corta un pedido que no resuelve ni rechaza. Sin esto el botón queda deshabilitado para siempre. */
+export function withDeadline(promise, ms, message) {
+  const limit = Math.max(0, Number(ms) || 0);
+  const job = Promise.resolve(promise);
+  if (!limit) return job;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error(message || RESET_STALLED), { code: 'deadline-exceeded' }));
+    }, limit);
+  });
+  return Promise.race([job, timeout]).finally(() => clearTimeout(timer));
+}
+
 export const BACKUP_COLLECTIONS = Object.freeze([
   'matches',
   'players',

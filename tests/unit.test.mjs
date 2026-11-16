@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, organizerDayCash, organizerReceipts, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, findPlayerPayBatch, formatARS, organizerDayCash, organizerReceipts, parseAmount, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
 import { RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
@@ -45,7 +45,7 @@ import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
-import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, COLLECTION_LABELS, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
+import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, COLLECTION_LABELS, RESET_STALLED, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup, resetProgressText, withDeadline } from '../js/backup.js';
 import { DRIVE_FOLDER, DRIVE_SCOPE, driveClientId, ensureBackupFolder, forgetDriveToken, multipartBody, requestDriveToken, shareableBackupName, uploadBackupToDrive } from '../js/drive.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
@@ -337,6 +337,46 @@ test('el apodo del menú se copia a los partidos del día y la promo no baja a p
   assert.equal(saved.players.find((row) => row.id === others[2]).name, 'Invitado 1');
   assert.equal(promoForPlayer({ player: saved.players.find((row) => row.id === guests[2]), ...saved, prices: null }).label, 'Promo 3 partidos por $12.000');
   assert.equal(amountOwed(saved.players.find((row) => row.id === guests[0]), saved), 4000);
+});
+
+test('el pendiente del anfitrión y sus invitados es un solo lote', () => {
+  const pending = (id) => ({
+    id,
+    paid: false,
+    split: true,
+    cash: 0,
+    transfer: 0,
+    pendingTransfer: 5000,
+    pendingTo: 'Gustavo',
+    fromCredit: 0,
+  });
+  const host = pending('h');
+  const guests = [pending('g1'), pending('g2')];
+  const before = (id) => ({ ...payBatchSnapshot({ id }), playerId: id });
+  const batch = {
+    at: 10,
+    payments: [host, ...guests].map((player) => ({
+      playerId: player.id,
+      before: before(player.id),
+      after: payBatchSnapshot(player),
+    })),
+    credits: [],
+  };
+  const players = [host, ...guests];
+  assert.equal(findPlayerPayBatch([batch], host), batch);
+  assert.equal(payBatchAddedPending(batch).length, 3);
+  const peers = payBatchPendingPeers(players, batch);
+  assert.deepEqual(peers.map((row) => row.player.id), ['h', 'g1', 'g2']);
+  const received = peers.map((row) => receivePendingTransfer(row.player, 'Gustavo', 20));
+  assert.equal(received.every((row) => row.ok && row.patch.pendingTransfer == null && row.patch.transfer === 5000), true);
+  const hostPaid = { ...host, ...received[0].patch };
+  const left = payBatchPendingPeers([hostPaid, ...guests], batch);
+  assert.deepEqual(left.map((row) => row.player.id), ['g1', 'g2']);
+  assert.equal(findPlayerPayBatch([batch], guests[0]), batch);
+  assert.equal(revertPayBatch([hostPaid, ...guests], batch).ok, false);
+  const cleared = paymentWithoutShare(guests[0], { kind: 'pending', amount: 5000, name: 'Gustavo' });
+  assert.equal(cleared.pendingTransfer, undefined);
+  assert.equal(cleared.paid, false);
 });
 
 test('anular un guardado deshace todos los partidos y el saldo de ese pago', () => {
@@ -3768,7 +3808,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v180');
+  assert.equal(version, 'f7c-v184');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3832,6 +3872,9 @@ test('la carga muestra el avance y deja el aviso de éxito hasta cerrarlo', asyn
   assert.equal(backupProgressText(120, 950), 'Cargando… 120/950');
   assert.equal(backupProgressText(0, 0), 'Cargando…');
   assert.equal(backupProgressText(5, 3), 'Cargando… 3/3');
+  assert.equal(resetProgressText(0, 0), 'Buscando datos…');
+  assert.equal(resetProgressText(2, 10), 'Borrando… 2/10');
+  assert.equal(resetProgressText(12, 4), 'Borrando… 4/4');
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   assert.match(app, /status\.textContent = BACKUP_LOADED_OK/);
@@ -4114,19 +4157,88 @@ test('resetear la base la deja vacía y un organizador no puede', async () => {
   store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
   await assert.rejects(() => store.resetDatabase(), (error) => error.code === 'admin-only');
   store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
-  await store.resetDatabase();
+  const before = JSON.parse(mem.get(store.key));
+  before.behavior = { b1: { rosterId: 'x', type: 'manual', points: -1 } };
+  before.payBatches = { p1: { ownerUid: 'gustavo' } };
+  before.credits = { c1: { amount: 1000 } };
+  before.log = { l1: { text: 'queda' } };
+  before.compensations = { k1: { amount: 1 } };
+  before.confirmations = { t1: { playerId: 'p' } };
+  before.links = { Abcd1234: { m: 'm' } };
+  before.rosterNotes = { n1: { notes: [] } };
+  before.rosterClaims = { q1: { rosterId: 'x' } };
+  before.rosterRedirects = { vieja: { intoId: 'x' } };
+  before.rosterSuspensions = { s1: { rosterId: 'x' } };
+  before.suspensionHistory = { h1: { rosterId: 'x' } };
+  mem.set(store.key, JSON.stringify(before));
+  const steps = [];
+  await store.resetDatabase(({ done, total }) => steps.push([done, total]));
+  assert.deepEqual(steps.at(-1), [1, 1]);
   const db = JSON.parse(mem.get(store.key));
-  assert.deepEqual(db.matches, {});
-  assert.deepEqual(db.players, {});
-  assert.deepEqual(db.roster, {});
-  assert.deepEqual(db.venues, {});
-  assert.deepEqual(db.organizers, {});
-  assert.deepEqual(db.settings, {});
+  for (const name of ['matches', 'players', 'roster', 'venues', 'organizers', 'settings', 'confirmations', 'links', 'credits', 'log', 'compensations', 'rosterNotes', 'rosterClaims', 'rosterRedirects', 'rosterSuspensions', 'suspensionHistory', 'payBatches', 'behavior']) {
+    assert.deepEqual(db[name], {}, name);
+  }
   assert.deepEqual(db.contacts.players, {});
   assert.deepEqual(db.contacts.roster, {});
   const again = await store.exportDatabase();
   assert.equal(again.collections.matches && Object.keys(again.collections.matches).length, 0);
   assert.equal(Object.keys(again.collections.players).length, 0);
+});
+
+test('un pedido que no responde corta y no se toma como éxito', async () => {
+  assert.equal(await withDeadline(Promise.resolve('ok'), 200, RESET_STALLED), 'ok');
+  await assert.rejects(
+    () => withDeadline(new Promise(() => {}), 30, RESET_STALLED),
+    (error) => error.code === 'deadline-exceeded' && error.message === RESET_STALLED,
+  );
+});
+
+test('si Firestore no responde, resetear avisa y no borra', async () => {
+  const store = new FirebaseStore();
+  store.actor = { uid: 'admin', name: 'Gustavo', role: 'admin' };
+  store.resetTimeoutMs = 40;
+  store.db = {};
+  store.fs = {
+    collection() { return {}; },
+    getDocs() { return new Promise(() => {}); },
+    doc() { return {}; },
+    writeBatch() { throw new Error('no debía escribir'); },
+  };
+  await assert.rejects(() => store.resetDatabase(), (error) => {
+    assert.equal(error.code, 'deadline-exceeded');
+    assert.match(error.message, /Links \(links\)/);
+    assert.match(error.message, /No se terminó de borrar/);
+    return true;
+  });
+});
+
+test('si el commit no responde, resetear nombra el documento', async () => {
+  const store = new FirebaseStore();
+  store.actor = { uid: 'admin', name: 'Gustavo', role: 'admin' };
+  store.resetTimeoutMs = 40;
+  store.db = {};
+  let commits = 0;
+  store.fs = {
+    collection() { return {}; },
+    getDocs() {
+      return { forEach(fn) { fn({ id: 'm1', data: () => ({ note: 'x' }) }); } };
+    },
+    doc() { return {}; },
+    writeBatch() {
+      return {
+        delete() {},
+        set() {},
+        commit() { commits += 1; return new Promise(() => {}); },
+      };
+    },
+  };
+  await assert.rejects(() => store.resetDatabase(), (error) => {
+    assert.equal(error.code, 'deadline-exceeded');
+    assert.match(error.message, /No se pudo borrar links\/m1/);
+    assert.match(error.message, /No se terminó de borrar/);
+    return true;
+  });
+  assert.equal(commits, 1);
 });
 
 test('Drive: ID de config, nombre para compartir y cuerpo multipart', () => {
@@ -4627,6 +4739,40 @@ test('Estadísticas no suma la plata de otro organizador', () => {
   assert.equal(oct.matches, 1);
   assert.equal(oct.collected, 5000);
   assert.equal(matchOrganizedBy(matches[1], staff, gus), false);
+});
+
+test('Mes cuenta lugares anotados por él y la promo una sola vez', () => {
+  const staff = [
+    { uid: 'gus', name: 'Gustavo', active: true },
+    { uid: 'mar', name: 'Martín', active: true },
+  ];
+  const gus = { uid: 'gus', name: 'Gustavo' };
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const phone = '5491190000181';
+  const matches = [
+    { id: 'm1', date: '2026-10-10', time: '18:00', price: 5000, adders: ['gus'], createdByUid: 'gus' },
+    { id: 'm2', date: '2026-10-10', time: '21:00', price: 5000, adders: ['gus'], createdByUid: 'gus' },
+    { id: 'ajeno', date: '2026-10-11', time: '19:00', price: 5000, adders: ['mar'], createdByUid: 'mar' },
+  ];
+  const players = [
+    { id: 'p1', matchId: 'm1', name: 'Luciano', phone, signedUpWith: 'gus', paid: true, split: true, cash: 9000, cashTo: 'Martín' },
+    { id: 'p2', matchId: 'm2', name: 'Luciano', phone, signedUpWith: 'gus' },
+    { id: 'espera', matchId: 'm1', name: 'Espera', phone: '5491190000182', signedUpWith: 'gus', waiting: true, paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'nojugo', matchId: 'm1', name: 'Nojugo', phone: '5491190000183', signedUpWith: 'gus', noPlay: true, paid: true, split: true, cash: 5000, cashTo: 'Martín' },
+    { id: 'bajado', matchId: 'm2', name: 'Bajado', phone: '5491190000184', signedUpWith: 'gus', confirmed: 'no', paid: true, split: true, transfer: 5000, transferTo: 'Martín' },
+    { id: 'otro', matchId: 'm1', name: 'Otro', phone: '5491190000185', signedUpWith: 'mar', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'gratis', matchId: 'm1', name: 'Gratis', phone: '5491190000186', signedUpWith: 'gus', freePlay: true },
+    { id: 'ajeno-jug', matchId: 'ajeno', name: 'Ajeno', phone: '5491190000187', signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+  ];
+  const months = periodBuckets({ matches, players, prices, grain: 'month', who: gus, staff });
+  const oct = months.find((row) => row.key === '2026-10');
+  assert.equal(oct.matches, 2);
+  assert.equal(oct.players, 4);
+  assert.equal(oct.signedAmount, 19000);
+  const year = periodBuckets({ matches, players, prices, grain: 'year', who: gus, staff });
+  assert.equal(year[0].players, 4);
+  assert.equal(year[0].signedAmount, 19000);
+  assert.equal(year[0].matches, 2);
 });
 
 test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {

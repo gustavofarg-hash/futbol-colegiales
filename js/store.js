@@ -109,7 +109,7 @@ import { canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer, editLo
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
-import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, firestoreRestFields, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialMockToken, trialOpKey, trialPlayerPlan, trialShouldReplace } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, COLLECTION_LABELS, RESET_STALLED, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, firestoreRestFields, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialMockToken, trialOpKey, trialPlayerPlan, trialShouldReplace, withDeadline } from './backup.js';
 import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 import { behaviorDeleteLog, behaviorLog, cleanBehaviorEntry } from './behavior.js';
 
@@ -1715,16 +1715,19 @@ class LocalStore {
     reportBackupProgress(onProgress, total, total);
     return parsed.summary;
   }
-  async resetDatabase() {
+  async resetDatabase(onProgress) {
     requireAdmin(this.actor);
+    reportBackupProgress(onProgress, 0, 1);
     const db = {
       matches: {}, players: {}, roster: {}, organizers: {}, venues: {},
       confirmations: {}, settings: {}, links: {}, credits: {}, log: {},
+      compensations: {},
       rosterNotes: {}, rosterClaims: {}, rosterRedirects: {}, rosterSuspensions: {}, suspensionHistory: {}, payBatches: {}, behavior: {},
       contacts: { players: {}, roster: {} },
     };
     localStorage.setItem(this.key, JSON.stringify(db));
     this._emit();
+    reportBackupProgress(onProgress, 1, 1);
   }
   async clearAll() {
     localStorage.removeItem(this.key);
@@ -1905,22 +1908,106 @@ export class FirebaseStore {
     const deletes = ops.filter((op) => op.kind === 'delete').length;
     return { ...parsed.summary, failures: skipped.concat(failures), ops: trial ? { writes, deletes } : undefined };
   }
-  async resetDatabase() {
+  _resetIoMs() {
+    const custom = Number(this.resetTimeoutMs);
+    return custom > 0 ? custom : 20000;
+  }
+  async resetDatabase(onProgress) {
     requireAdmin(this.actor);
-    const ops = [];
     // Primero lo que las reglas miran en otro documento (teléfono → jugador →
     // partido). El partido al final: borrarlo con jugadores hacía fallar el permiso.
+    // users no entra: las cuentas para entrar quedan.
     const order = [
       'links', 'log', 'compensations', 'credits', 'confirmations',
       'rosterNotes', 'rosterClaims', 'rosterRedirects', 'rosterSuspensions', 'suspensionHistory', 'payBatches', 'behavior',
       'playerContacts', 'rosterContacts', 'players', 'roster', 'organizers',
       'settings', 'venues', 'matches',
     ];
+    reportBackupProgress(onProgress, 0, 0);
+    const ops = [];
     for (const name of order) {
-      const current = await this._readCollection(name);
-      for (const id of Object.keys(current)) ops.push({ kind: 'delete', segments: [name, id] });
+      const ids = await this._listCollectionIds(name);
+      for (const id of ids) ops.push({ kind: 'delete', segments: [name, id] });
     }
-    await this._commitOps(ops);
+    // En /prueba/ el canal del SDK (persistencia y listeners) puede no resolver
+    // nunca getDocs ni writeBatch.commit. La carga ya usa REST con tope de 20 s.
+    const trial = isTrialPage();
+    const failures = await this._commitOps(ops, onProgress, trial
+      ? { parallel: TRIAL_WRITE_PARALLEL }
+      : { timeoutMs: this._resetIoMs() });
+    if (failures.length) {
+      const first = failures[0];
+      throw Object.assign(new Error(`No se pudo borrar ${first.path}. ${first.reason} No se terminó de borrar.`), {
+        code: 'backup-write',
+        path: first.path,
+      });
+    }
+    for (const name of order) {
+      const left = await this._listCollectionIds(name);
+      if (!left.length) continue;
+      const label = COLLECTION_LABELS[name] || name;
+      throw Object.assign(new Error(`Quedaron datos en ${label} (${name}). ${RESET_STALLED}`), {
+        code: 'backup-write',
+        path: name,
+      });
+    }
+  }
+  async _listCollectionIds(name) {
+    if (!isTrialPage()) {
+      const docs = await this._readCollection(name, this._resetIoMs());
+      return Object.keys(docs);
+    }
+    const label = COLLECTION_LABELS[name] || name;
+    const stalled = Object.assign(new Error(`No se pudo leer ${label} (${name}). ${RESET_STALLED}`), {
+      code: 'deadline-exceeded',
+      path: name,
+    });
+    const wire = this._firestoreWire();
+    const token = await withDeadline(this._trialToken(wire), this._resetIoMs(), stalled.message);
+    const ids = [];
+    let pageToken = '';
+    const seen = new Set();
+    do {
+      if (pageToken) {
+        if (seen.has(pageToken)) throw stalled;
+        seen.add(pageToken);
+      }
+      const root = `${wire.ssl ? 'https' : 'http'}://${wire.host}/v1/${['projects', wire.projectId, 'databases', wire.database].map(encodeURIComponent).join('/')}/documents/${encodeURIComponent(name)}`;
+      const url = new URL(root);
+      url.searchParams.set('pageSize', '300');
+      if (pageToken) url.searchParams.set('pageToken', pageToken);
+      if (wire.apiKey) url.searchParams.set('key', wire.apiKey);
+      let response;
+      try {
+        response = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'google-cloud-resource-prefix': `projects/${wire.projectId}/databases/${wire.database}`,
+          },
+          signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(this._resetIoMs()) : undefined,
+        });
+      } catch {
+        throw stalled;
+      }
+      if (!response.ok) {
+        let body = null;
+        try { body = await response.json(); } catch { body = null; }
+        if (Array.isArray(body)) body = body[0];
+        const message = body?.error?.message || response.statusText || 'Firebase rechazó el permiso';
+        const code = response.status === 403 ? 'permission-denied'
+          : response.status === 401 ? 'unauthenticated'
+          : 'backup-read';
+        throw backupReadError(name, Object.assign(new Error(message), { code, status: response.status }));
+      }
+      let body;
+      try { body = await response.json(); } catch { throw stalled; }
+      for (const doc of body.documents || []) {
+        const id = String(doc.name || '').split('/').filter(Boolean).pop();
+        if (id) ids.push(id);
+      }
+      pageToken = body.nextPageToken || '';
+    } while (pageToken);
+    return ids;
   }
   _firestoreWire() {
     const delegate = this.db?._delegate || this.db;
@@ -1992,7 +2079,9 @@ export class FirebaseStore {
   async _commitOps(ops, onProgress, trialOpts = null) {
     const { writeBatch, doc } = this.fs;
     const uid = this.actor?.uid || '';
-    const keepGoing = !!trialOpts;
+    // parallel activa REST. timeoutMs solo corta el commit del SDK: no es la carga de prueba.
+    const keepGoing = !!(trialOpts && trialOpts.parallel);
+    const timeoutMs = Math.max(0, Number(trialOpts?.timeoutMs) || 0);
     let work = ops.filter((op) => !isOwnUserDoc(op.segments, uid));
     if (trialOpts?.skip?.size) work = work.filter((op) => !trialOpts.skip.has(trialOpKey(op)));
     const total = work.length;
@@ -2005,12 +2094,19 @@ export class FirebaseStore {
       if (saved && trialOpts?.onDone) trialOpts.onDone(trialOpKey(op));
       reportBackupProgress(onProgress, done, reportTotal);
     };
-    const fail = (op, error) => failures.push({
-      path: Array.isArray(op?.segments) ? op.segments.join('/') : 'documento',
-      reason: /1000 expressions/i.test(String(error?.message || ''))
-        ? 'la regla de Firebase es demasiado larga'
-        : 'Firebase rechazó el permiso',
-    });
+    const fail = (op, error) => {
+      const text = String(error?.message || '');
+      const stalled = error?.code === 'deadline-exceeded'
+        || /no respondió|no se terminó de borrar|timed out|timeout|aborted/i.test(text);
+      failures.push({
+        path: Array.isArray(op?.segments) ? op.segments.join('/') : 'documento',
+        reason: /1000 expressions/i.test(text)
+          ? 'la regla de Firebase es demasiado larga'
+          : stalled
+            ? 'La base no respondió.'
+            : 'Firebase rechazó el permiso',
+      });
+    };
     const wire = keepGoing ? this._firestoreWire() : null;
     const token = keepGoing ? await this._trialToken(wire) : '';
     const send = (op) => (keepGoing ? this._commitRest(op, wire, token) : this._commitOne(op));
@@ -2052,8 +2148,16 @@ export class FirebaseStore {
             else if (op.merge) batch.set(ref, op.data, { merge: true });
             else batch.set(ref, op.data);
           }
-          await batch.commit();
+          await withDeadline(batch.commit(), timeoutMs, RESET_STALLED);
         } catch (error) {
+          if (error?.code === 'deadline-exceeded') {
+            const path = slice[0].segments.join('/');
+            const action = slice[0].kind === 'delete' ? 'borrar' : 'guardar';
+            throw Object.assign(new Error(`No se pudo ${action} ${path}. ${RESET_STALLED}`), {
+              code: 'deadline-exceeded',
+              path,
+            });
+          }
           throw error?.path ? error : backupWriteError(slice[0], error);
         }
         done += slice.length;
@@ -2076,14 +2180,20 @@ export class FirebaseStore {
     }
     return failures;
   }
-  async _readCollection(name) {
+  async _readCollection(name, timeoutMs = 0) {
     const { collection, getDocs } = this.fs;
+    const label = COLLECTION_LABELS[name] || name;
     try {
-      const snap = await getDocs(collection(this.db, name));
+      const snap = await withDeadline(
+        getDocs(collection(this.db, name)),
+        timeoutMs,
+        `No se pudo leer ${label} (${name}). ${RESET_STALLED}`,
+      );
       const out = {};
       snap.forEach((item) => { out[item.id] = plainValue(item.data()); });
       return out;
     } catch (error) {
+      if (error?.code === 'deadline-exceeded') throw error;
       throw backupReadError(name, error);
     }
   }

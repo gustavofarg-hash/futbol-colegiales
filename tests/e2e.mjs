@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v180');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v184');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -1606,7 +1606,7 @@ await page.click('#stats-mode a[href="#/estadisticas/mes"]');
 await page.waitForSelector('#stats-periods');
 await page.locator('#stats-periods .who').first().click();
 await page.waitForSelector('#stats-period-count');
-check('Por mes suma partidos, jugadores y cobrado', /partido/.test(await page.locator('#stats-period-count').innerText()) && /jugador/.test(await page.locator('#stats-period-count').innerText()) && (await page.locator('#stats-collected').innerText()).includes('Cobrado'));
+check('Por mes suma partidos, jugadores anotados y cobrado', /partido/.test(await page.locator('#stats-period-count').innerText()) && /jugadores anotados|jugador anotado/.test(await page.locator('#stats-period-count').innerText()) && (await page.locator('#stats-collected').innerText()).includes('Cobrado'));
 await page.click('#stats-mode a[href="#/estadisticas/anio"]');
 await page.waitForSelector('#stats-periods');
 check('Por año lista el período', (await page.locator('#stats-periods').innerText()).includes('2026'));
@@ -3968,9 +3968,111 @@ await page.fill('#reset-word', 'nada');
 check('Otra palabra no habilita el borrado', await page.locator('#reset-apply').isDisabled());
 await page.fill('#reset-word', 'BORRAR');
 check('Recién con BORRAR se puede borrar', await page.locator('#reset-apply').isEnabled());
+check('Resetear muestra el avance', await page.locator('#reset-status').count() === 1);
+await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  db.behavior = { b1: { rosterId: 'x', type: 'manual', points: -1, reason: 'seed', createdByUid: 'gustavo', createdAt: 1 } };
+  db.payBatches = { p1: { ownerUid: 'gustavo', at: 1, payload: '{}' } };
+  db.credits = { c1: { amount: 1000 } };
+  db.log = { l1: { at: 1, text: 'seed' } };
+  db.compensations = { k1: { amount: 1 } };
+  db.confirmations = { t1: { playerId: 'p', matchId: 'm' } };
+  db.links = { Abcd1234: { m: 'm', p: 'p', t: 't' } };
+  db.rosterNotes = { n1: { ownerUid: 'gustavo', notes: [] } };
+  db.rosterClaims = { q1: { rosterId: 'x' } };
+  db.rosterRedirects = { vieja: { intoId: 'x' } };
+  db.rosterSuspensions = { s1: { rosterId: 'x' } };
+  db.suspensionHistory = { h1: { rosterId: 'x' } };
+  db.settings = { prices: { matchPrice: 5000 } };
+  db.venues = { sede: { name: 'Sede', active: true, order: 1, createdAt: 1 } };
+  db.organizers = { gustavo: { name: 'Gustavo', createdAt: 1 } };
+  db.contacts = db.contacts || { players: {}, roster: {} };
+  db.contacts.players.seed = { phone: '5491111111111' };
+  db.contacts.roster.seed = { phone: '5491111111112' };
+  localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+});
 await page.click('#reset-apply');
-await page.waitForFunction(() => !document.querySelector('#sheet')?.open && window.__app.matches.length === 0);
-check('Resetear deja la base vacía', await page.evaluate(() => window.__app.matches.length === 0 && window.__app.players.length === 0 && window.__app.roster.length === 0));
+await page.waitForFunction(() => document.querySelector('#toast')?.textContent === 'Base de datos vacía' && !document.querySelector('#sheet')?.open);
+check('Resetear deja todas las colecciones vacías', await page.evaluate(() => {
+  const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+  const empty = (obj) => !!obj && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).length === 0;
+  const names = ['matches', 'players', 'roster', 'organizers', 'venues', 'confirmations', 'settings', 'links', 'credits', 'log', 'compensations', 'rosterNotes', 'rosterClaims', 'rosterRedirects', 'rosterSuspensions', 'suspensionHistory', 'payBatches', 'behavior'];
+  return names.every((name) => empty(db[name]))
+    && empty(db.contacts.players) && empty(db.contacts.roster)
+    && window.__app.matches.length === 0 && window.__app.players.length === 0 && window.__app.roster.length === 0;
+}));
+
+{
+  const groupPay = async (note, amount, date, phone) => {
+    await page.evaluate(async ({ note, amount, date, phone }) => {
+      const app = window.__app;
+      const id = await app.store.addMatch({ date, time: '21:00', note, capacity: 14, price: 5000 }, app.who);
+      const match = app.matches.find((item) => item.id === id);
+      const host = await app.store.addPlayer(match, { name: note, phone }, app.who);
+      await app.store.addPlayer(match, { name: 'Invitado 1', invitedBy: host, invitedByName: note, guestAuto: true }, app.who);
+      await app.store.addPlayer(match, { name: 'Invitado 2', invitedBy: host, invitedByName: note, guestAuto: true }, app.who);
+      location.hash = `#/partido/${encodeURIComponent(id)}`;
+    }, { note, amount, date, phone });
+    await page.waitForSelector(`#slots .name:text-is("${note}")`);
+    await page.locator('#slots .slot', { has: page.locator(`.name:text-is("${note}")`) }).locator('.pay-btn').click();
+    await page.waitForSelector('#pay-split-guests');
+    await page.locator('#pay-split-guests-line').click();
+    await page.fill('#pay-form [name=cash]', '0');
+    await page.fill('#pay-form [name=transfer]', '0');
+    await page.fill('#pay-form [name=pending]', String(amount));
+    await page.click('#pay-form button[type=submit]');
+    await page.waitForFunction(() => !document.querySelector('dialog.sheet[open]'));
+  };
+  const groupState = (note) => page.evaluate((note) => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    return Object.values(db.players)
+      .filter((player) => player.name === note || player.invitedByName === note)
+      .map((player) => ({ name: player.name, pending: player.pendingTransfer || 0, transfer: player.transfer || 0 }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, note);
+  await groupPay('Cobra Grupo', 15000, '2026-12-15', '11 5555-0182');
+  const splitPending = await groupState('Cobra Grupo');
+  check('El transfiere después de $15.000 se reparte entre él y los invitados', splitPending.length === 3 && splitPending.every((row) => row.pending === 5000), JSON.stringify(splitPending));
+  await page.locator('#slots .slot', { has: page.locator('.name:text-is("Cobra Grupo")') }).locator('.pay-btn').click();
+  await page.waitForSelector('#btn-receive-pending');
+  await page.click('#btn-receive-pending');
+  await page.waitForFunction(() => !document.querySelector('dialog.sheet[open]'));
+  const received = await groupState('Cobra Grupo');
+  check('Marcar la transferencia del anfitrión cobra también la de los invitados', received.every((row) => row.pending === 0 && row.transfer === 5000), JSON.stringify(received));
+  await groupPay('Anula Grupo', 15000, '2026-12-16', '11 5555-0183');
+  await page.locator('#slots .slot', { has: page.locator('.name:text-is("Anula Grupo")') }).locator('.pay-btn').click();
+  await page.waitForSelector('#pay-recorded .pay-pending-row .pay-x');
+  await page.click('#pay-recorded .pay-pending-row .pay-x');
+  await page.waitForSelector('#ask-ok');
+  const groupAsk = await page.locator('#app-ask-text').innerText();
+  check('Anular el pendiente del anfitrión avisa que saca el del grupo', groupAsk.includes('También anula lo cargado para los otros'), groupAsk);
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => !document.querySelector('#pay-recorded .pay-pending-row'));
+  const cleared = await groupState('Anula Grupo');
+  check('La X del anfitrión anula el transfiere después de todo el grupo', cleared.every((row) => row.pending === 0 && row.transfer === 0), JSON.stringify(cleared));
+  await page.locator('dialog.sheet[open] [data-close]').click();
+  await page.waitForFunction(() => !document.querySelector('dialog.sheet[open]'));
+  await groupPay('Desde Invitado', 15000, '2026-12-17', '11 5555-0184');
+  await page.evaluate(async () => {
+    const app = window.__app;
+    const host = app.players.find((player) => player.name === 'Desde Invitado' && !player.invitedBy);
+    await app.store.markTransferReceived(host.id, app.who);
+  });
+  await page.locator('#slots .slot', { hasText: 'invitado de Desde Invitado' }).first().locator('.pay-btn').click();
+  await page.waitForSelector('#pay-recorded .pay-pending-row .pay-x');
+  await page.click('#pay-recorded .pay-pending-row .pay-x');
+  await page.waitForSelector('#ask-ok');
+  await page.click('#ask-ok');
+  await page.waitForFunction(() => !document.querySelector('#pay-recorded .pay-pending-row'));
+  const fromGuest = await groupState('Desde Invitado');
+  const hostKept = fromGuest.find((row) => row.name === 'Desde Invitado');
+  const guestsClear = fromGuest.filter((row) => row.name !== 'Desde Invitado');
+  check('La X de un invitado anula el pendiente que quedó en el grupo', hostKept?.transfer === 5000 && hostKept?.pending === 0 && guestsClear.length === 2 && guestsClear.every((row) => row.pending === 0), JSON.stringify(fromGuest));
+  await page.locator('dialog.sheet[open] [data-close]').click();
+  await page.waitForFunction(() => !document.querySelector('dialog.sheet[open]'));
+  await page.evaluate(() => window.__app.store.resetDatabase());
+  await page.waitForFunction(() => window.__app.matches.length === 0 && window.__app.players.length === 0);
+}
 
 const saldoIds = await page.evaluate(async () => {
   const app = window.__app;
