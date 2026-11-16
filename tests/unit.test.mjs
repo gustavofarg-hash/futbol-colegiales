@@ -1487,8 +1487,8 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
     { id: 'ya', existing: true },
   ]), ['libre', 'lleno']);
   const ledger = paymentLedger({ phone, players, matches });
-  assert.equal(ledger.totalText, 'Pagó $19.000');
-  assert.equal(ledger.months[0].text, 'Oct 2026: $19.000');
+  assert.equal(ledger.totalText, 'Pagó $10.000');
+  assert.equal(ledger.months[0].text, 'Oct 2026: $10.000');
   assert.deepEqual(ledger.byOrganizer.map((row) => row.name), ['Sin especificar']);
   assert.equal(monthLabel('2026-10'), 'Oct 2026');
   const notes = sortedNotes([
@@ -1866,9 +1866,9 @@ test('pagos por organizador: mes, cobrador y veces anotado', () => {
     { matchId: 'oct', phone: '5491100000000', paid: true, amount: 9000, receivedBy: 'Martín', addedBy: 'Lucía' },
   ];
   const all = paymentLedger({ phone, players, matches });
-  assert.equal(all.total, 14000);
-  assert.deepEqual(all.months.map((row) => row.text), ['Nov 2026: $4.000', 'Oct 2026: $10.000']);
-  assert.deepEqual(all.byOrganizer.map((row) => [row.name, row.amount]), [['Gustavo', 5000], ['Martín', 5000], ['Sin especificar', 4000]]);
+  assert.equal(all.total, 9000);
+  assert.deepEqual(all.months.map((row) => row.text), ['Nov 2026: $4.000', 'Oct 2026: $5.000']);
+  assert.deepEqual(all.byOrganizer.map((row) => [row.name, row.amount]), [['Martín', 5000], ['Sin especificar', 4000]]);
   const martin = paymentLedger({ phone, players, matches, organizer: 'martín' });
   assert.equal(martin.totalText, 'Pagó $5.000');
   assert.equal(martin.months.length, 1);
@@ -3809,7 +3809,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v189');
+  assert.equal(version, 'f7c-v190');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4985,6 +4985,18 @@ test('el domingo 15/11 no pasa de 14 lugares por $5000', () => {
     now: new Date('2026-11-16T15:00:00-03:00'),
   });
   assert.equal(share, 140000);
+  const withWait = matchTake({
+    match: own('m1', '17:00'),
+    players,
+    matches,
+    prices: { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 },
+  });
+  assert.equal(withWait.collected, 120000);
+  assert.equal(withWait.pending, 0);
+  assert.equal(organizerReceipts([
+    { signedUpWith: 'gus', waiting: true, paid: true, split: true, cash: 9000, cashTo: 'Gustavo' },
+    { signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+  ], who).cash, 5000);
   const loose = daySignupSummary({
     matches: [own('uno', '17:00')],
     players: [
