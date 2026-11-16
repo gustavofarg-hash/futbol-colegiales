@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v181** (16/11/2026): en Estadísticas, Mes y Año dicen «N partidos · M jugadores anotados» y el monto de esos lugares. La promo 2×$9.000 cuenta 2 lugares y $9.000 una sola vez. La espera y lo que anotó otro no entran. «No jugó pero pagó» y quien pagó y se bajó sí. Te correspondió no cambia. `firestore.rules` no cambió.
 **Actualizada para f7c-v180** (15/11/2026): el − y el + del tanteador, y los de los puntos, solo cambian el número si el dedo se apoya y se suelta sin arrastrar. Deslizar la página no suma ni resta. `firestore.rules` no cambió.
 **Actualizada para f7c-v179** (15/11/2026): el WhatsApp de confirmación, si hay varios partidos, lista todos con un solo link. Mismo día: «HOY 17:30 y 18:30». Días distintos: «HOY 17:30 y mañana 21:00». En la página, No los marca en cada uno igual que en un solo partido. `firestore.rules` no cambió.
 **Actualizada para f7c-v178** (15/11/2026): si el jugador está anotado en más de un partido próximo, el link lista todos («HOY 20:00», «mañana 21:00», «jueves 19:00») y un solo sí o no confirma cada uno. Uno solo no cambia. La espera no entra. `firestore.rules` no cambió.

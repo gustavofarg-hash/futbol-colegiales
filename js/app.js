@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v180';
+const APP_VERSION = 'f7c-v181';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -4286,6 +4286,12 @@ function statsDayBody(id) {
 function entitledLabel(amount) {
   return `Te correspondió: ${formatARS(amount || 0)}`;
 }
+function periodCountLabel(bucket) {
+  const matches = `${bucket.matches} ${bucket.matches === 1 ? 'partido' : 'partidos'}`;
+  const n = bucket.players;
+  const players = `${n} ${n === 1 ? 'jugador anotado' : 'jugadores anotados'}`;
+  return `${matches} · ${players}`;
+}
 function periodShares(grain) {
   const me = actor();
   return organizerShareByPeriod({
@@ -4312,7 +4318,7 @@ function statsPeriodBody(grain, id) {
   if (!id) {
     const rows = buckets.map((bucket) => {
       const mine = `<span class="stats-entitled">${esc(entitledLabel(shares.get(bucket.key) || 0))}</span>`;
-      return `<li class="slot" data-period="${esc(bucket.key)}"><a class="who" href="${statsHash(mode, bucket.key)}"><div class="name">${esc(bucket.label)}</div><div class="sub"><span>${bucket.matches} ${bucket.matches === 1 ? 'partido' : 'partidos'} · ${bucket.players} ${bucket.players === 1 ? 'jugador' : 'jugadores'}</span><span>${esc(formatARS(bucket.collected))}</span></div>${mine}</a></li>`;
+      return `<li class="slot" data-period="${esc(bucket.key)}"><a class="who" href="${statsHash(mode, bucket.key)}"><div class="name">${esc(bucket.label)}</div><div class="sub"><span>${periodCountLabel(bucket)}</span><span>${esc(formatARS(bucket.signedAmount))}</span></div>${mine}</a></li>`;
     }).join('');
     return `<ul class="slots" id="stats-periods">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
   }
@@ -4323,7 +4329,7 @@ function statsPeriodBody(grain, id) {
   return `
     <p class="hint"><a href="${statsHash(mode)}">Todos</a></p>
     <h2 class="section" id="stats-period">${esc(bucket.label)}</h2>
-    <p class="stat-summary" id="stats-period-count">${bucket.matches} ${bucket.matches === 1 ? 'partido' : 'partidos'} · ${bucket.players} ${bucket.players === 1 ? 'jugador' : 'jugadores'}</p>
+    <p class="stat-summary" id="stats-period-count">${periodCountLabel(bucket)} <span id="stats-signed">${esc(formatARS(bucket.signedAmount))}</span></p>
     ${mine}
     ${cancelled}
     <section class="profile-block">
@@ -8126,7 +8132,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v180" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v181" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8163,7 +8169,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v180" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v181" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
