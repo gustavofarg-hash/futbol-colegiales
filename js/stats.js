@@ -149,11 +149,20 @@ export function organizerViewTake({ match, players, matches, prices, who } = {})
   };
 }
 
-/** Se anotó con esta persona. Sin uid, vale el nombre de quien lo agregó. */
+/**
+ * Se anotó con esta persona.
+ * Si hay nombre, manda el nombre: en un backup importado en /prueba/ el uid
+ * de todos puede haber quedado en el de quien importó, y el nombre no.
+ * Sin nombre, manda el uid. Sin uid, el nombre de quien lo agregó.
+ */
 function signupIsMine(player, who) {
+  const named = String(player?.signedUpWithName || '').trim();
+  const whoName = String(who?.name || '').trim();
+  if (named && whoName) return sameOrganizerIdentity(named, who);
   const uid = String(who?.uid || '').trim();
   const signed = signupOrganizerUid(player);
-  return (uid && signed === uid) || (!signed && sameOrganizerIdentity(player?.addedBy, who));
+  if (uid && signed) return signed === uid;
+  return sameOrganizerIdentity(player?.addedBy, who);
 }
 
 /**
@@ -210,12 +219,13 @@ function signedMoney(groups) {
 }
 
 /**
- * Mes o año. Los partidos son los que organiza quien está logueado, sin
- * cancelados. Los jugadores son los lugares que anotó él y que tienen plata
- * paga o adeudada. El monto es esa plata, sin importar quién la cobró.
+ * Mes o año. Los partidos son los que organiza quien está logueado, ya jugados
+ * (el mismo corte que el historial) y sin cancelados. Hoy y los que faltan no
+ * entran. Los jugadores son los lugares que anotó él y que tienen plata paga o
+ * adeudada. El monto es esa plata, sin importar quién la cobró.
  * Sin `who`, sigue el total del partido: gente distinta y lo cobrado.
  */
-export function periodBuckets({ matches, players, prices, grain = 'month', who, staff } = {}) {
+export function periodBuckets({ matches, players, prices, grain = 'month', who, staff, now = Date.now() } = {}) {
   const person = who && typeof who === 'object' ? who : null;
   const buckets = new Map();
   const source = matches || [];
@@ -223,6 +233,7 @@ export function periodBuckets({ matches, players, prices, grain = 'month', who, 
   const spotCtx = { players, matches: source, prices };
   for (const match of visible) {
     if (!match?.id || !/^\d{4}-\d{2}-\d{2}$/.test(match.date || '')) continue;
+    if (!matchAlreadyPlayed(match, now)) continue;
     const key = grain === 'year' ? match.date.slice(0, 4) : monthKeyOf(match.date);
     if (!key) continue;
     if (!buckets.has(key)) buckets.set(key, emptyPeriod(key, grain));
@@ -282,13 +293,89 @@ function activeDayMatches(matches) {
   return (matches || []).filter((match) => match && match.cancelled !== true);
 }
 
+function namedAdders(match) {
+  const raw = Array.isArray(match?.adderNames) ? match.adderNames : [];
+  const names = [];
+  for (const item of raw) {
+    const name = typeof item === 'string' ? item : item?.name;
+    const text = String(name || '').trim();
+    if (text && !names.some((have) => sameOrganizerIdentity(have, text))) names.push(text);
+  }
+  return names;
+}
+
+function nameUid(name) {
+  const slug = String(name || '').trim().toLowerCase().replace(/\s+/g, '-');
+  return slug ? `name:${slug}` : '';
+}
+
+function personByName(staff, name) {
+  return (staff || []).find((user) => user?.uid && sameOrganizerIdentity(user, { name })) || null;
+}
+
+/** Nombres que organizan ese día aunque su cuenta no esté en la lista. */
+function namedOrganizers(matches, players) {
+  const names = [];
+  const add = (name) => {
+    const text = String(name || '').trim();
+    if (!text || text === UNSPECIFIED || names.some((have) => sameOrganizerIdentity(have, text))) return;
+    names.push(text);
+  };
+  const ids = new Set();
+  for (const match of matches || []) {
+    if (!match || match.cancelled === true) continue;
+    ids.add(match.id);
+    for (const name of namedAdders(match)) add(name);
+    add(match.createdBy);
+  }
+  for (const player of players || []) {
+    if (!player || !ids.has(player.matchId) || player.waiting === true) continue;
+    add(player.signedUpWithName);
+    if (!player.signedUpWith && !player.signedUpWithName) add(player.addedBy);
+  }
+  return names;
+}
+
+function staffForShare(staff, matches, players) {
+  const people = (staff || [])
+    .filter((user) => user?.uid && user.active !== false)
+    .map((user) => ({ uid: user.uid, name: user.name || '', active: true }));
+  for (const name of namedOrganizers(matches, players)) {
+    if (personByName(people, name)) continue;
+    const uid = nameUid(name);
+    if (!uid) continue;
+    people.push({ uid, name, active: true });
+  }
+  return people;
+}
+
+/** Si el partido nombra quién anota, esos nombres mandan sobre un uid reescrito. */
+function matchForShare(match, staff) {
+  const names = namedAdders(match);
+  if (!names.length) return match;
+  const adders = [];
+  for (const name of names) {
+    const user = personByName(staff, name);
+    const uid = user?.uid || nameUid(name);
+    if (uid && !adders.includes(uid)) adders.push(uid);
+  }
+  if (!adders.length) return match;
+  return { ...match, adders, createdByUid: adders[0] };
+}
+
 /** Esta persona organiza el partido: puede anotar, igual que en la compensación. */
 export function matchOrganizedBy(match, staff, who) {
   const person = who && typeof who === 'object' ? who : { uid: '', name: '' };
+  const names = namedAdders(match);
+  if (names.length) return names.some((name) => sameOrganizerIdentity(name, person));
+  const created = String(match?.createdBy || '').trim();
+  const adders = Array.isArray(match?.adders) ? match.adders : [];
+  const open = !adders.length || adders.includes('*');
+  // Un partido cerrado creado por otro no es de él, aunque el import haya
+  // pisado el uid del creador con el de quien cargó el backup.
+  if (created && !open && !sameOrganizerIdentity(created, person)) return false;
   if (matchAdders(match, staff).some((adder) => isThisOrganizer(adder, person))) return true;
-  const names = [match?.createdBy];
-  if (Array.isArray(match?.adderNames)) names.push(...match.adderNames);
-  return names.some((name) => name && isThisOrganizer({ name }, person));
+  return !!(created && sameOrganizerIdentity(created, person));
 }
 
 /** Organizadores del día: quienes pueden anotar en algún partido activo. */
@@ -313,20 +400,25 @@ function dayCollected(matches, players, staff) {
 
 /**
  * Lo que le corresponde a esta persona en el día.
+ * Solo entran los partidos de ese día que ya se jugaron. Hoy y los que faltan
+ * no suman. Un cancelado tampoco.
  * Un solo organizador: todo lo cobrado.
  * Más de uno: su fila de dayCompensation («le corresponden»),
  * según el modo de cada partido (partes iguales o lo que anotó).
  * No es la suma de lo que cobraron todos.
  */
-export function organizerDayShare({ matches, players, staff, uid, name, who } = {}) {
+export function organizerDayShare({ matches, players, staff, uid, name, who, now = Date.now() } = {}) {
+  const played = (matches || []).filter((match) => matchAlreadyPlayed(match, now));
   const person = who && typeof who === 'object' ? who : { uid: uid || '', name: name || '' };
-  const organizers = dayOrganizers(matches, staff);
+  const people = staffForShare(staff, played, players);
+  const dayMatches = played.map((match) => matchForShare(match, people));
+  const organizers = dayOrganizers(dayMatches, people);
   if (organizers.length <= 1) {
     const only = organizers[0];
     if (!isThisOrganizer(only, person)) return 0;
-    return dayCollected(matches, players, staff);
+    return dayCollected(dayMatches, players, people);
   }
-  const calc = dayCompensation(matches || [], players, staff);
+  const calc = dayCompensation(dayMatches, players, people);
   const id = String(person.uid || '').trim();
   const row = (id && calc.rows.find((item) => item.uid === id))
     || calc.rows.find((item) => isThisOrganizer(item, person))
@@ -423,12 +515,13 @@ export function playerOrganizerMonths({ person, players, matches, who, now = Dat
 
 /**
  * Lo que le corresponde al organizador en cada mes (o año).
- * Cada día usa organizerDayShare, o sea el mismo cálculo de la hoja.
+ * Cada día usa organizerDayShare, o sea el mismo cálculo de la hoja, y solo
+ * con los partidos de ese día que ya se jugaron.
  * Un día con varios partidos entra una sola vez. Uno con un solo
  * organizador suma lo que esa función le asigna.
- * Mes y Año no recortan por el cálculo guardado: suman los días que hay.
+ * Mes y Año no recortan por el cálculo guardado: suman los días ya jugados.
  */
-export function organizerShareByPeriod({ matches, players, staff, uid, name, who, grain = 'month' } = {}) {
+export function organizerShareByPeriod({ matches, players, staff, uid, name, who, grain = 'month', now = Date.now() } = {}) {
   const byDay = new Map();
   for (const match of matches || []) {
     if (!match?.id || !/^\d{4}-\d{2}-\d{2}$/.test(match.date || '')) continue;
@@ -439,7 +532,7 @@ export function organizerShareByPeriod({ matches, players, staff, uid, name, who
   for (const [date, dayMatches] of byDay) {
     const key = grain === 'year' ? date.slice(0, 4) : monthKeyOf(date);
     if (!key) continue;
-    const share = organizerDayShare({ matches: dayMatches, players, staff, uid, name, who });
+    const share = organizerDayShare({ matches: dayMatches, players, staff, uid, name, who, now });
     totals.set(key, roundARS((totals.get(key) || 0) + share));
   }
   return totals;

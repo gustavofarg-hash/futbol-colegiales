@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, clockTime, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerDayCash, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, findPlayerPayBatch, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, mineAddedLabel, organizerDayCash, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, findPlayerPayBatch, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow, upcomingConfirmSlots,
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v184';
+const APP_VERSION = 'f7c-v187';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -1950,12 +1950,12 @@ function playerCountLabel(n) {
   return `${n} ${n === 1 ? 'jugador' : 'jugadores'}`;
 }
 
-function matchFactLines(players, mainPlayers, who) {
+function matchFactLines(players, mainPlayers, who, capacity) {
   const sum = confirmSummary(mainPlayers);
   const mine = organizerReceipts(players, who);
   return {
     confirm: `Confirmados: ${sum.si} - No juegan: ${sum.no} - Sin respuesta: ${sum.pending}`,
-    added: `Anotados por mí: ${mine.added}`,
+    added: mineAddedLabel(mainPlayers, who, capacity),
     cash: `Me dieron en efectivo: ${formatARS(mine.cash)} (${playerCountLabel(mine.cashPlayers)})`,
     transfer: `Me transfirieron: ${formatARS(mine.transfer)} (${playerCountLabel(mine.transferPlayers)})`,
   };
@@ -2084,7 +2084,7 @@ function renderMatch(id) {
       </li>`);
   }
   const full = everyone.length >= cap;
-  const facts = matchFactLines(app.players.filter((p) => p.matchId === id), everyone, who);
+  const facts = matchFactLines(app.players.filter((p) => p.matchId === id), everyone, who, cap);
   const assigned = normalizeTeams(m.teams, everyone.map((p) => p.id));
   const teamCount = assigned.bib.length + assigned.plain.length;
   const signed = everyone.length + waitingOf(id).length + noPlayOf(id).length;
@@ -4238,6 +4238,7 @@ function dayShare(date, dayMatches) {
     staff: staffUsers(app.users),
     uid: me.uid,
     name: me.name,
+    now: Date.now(),
   });
 }
 function statsDayBody(id) {
@@ -4311,6 +4312,7 @@ function periodShares(grain) {
     uid: me.uid,
     name: me.name,
     grain,
+    now: Date.now(),
   });
 }
 function statsPeriodBody(grain, id) {
@@ -4323,6 +4325,7 @@ function statsPeriodBody(grain, id) {
     grain,
     who: { uid: me.uid, name: me.name },
     staff: staffUsers(app.users),
+    now: Date.now(),
   });
   const shares = periodShares(grain);
   if (!id) {
@@ -8195,7 +8198,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v184" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v187" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8232,7 +8235,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v184" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v187" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, findPlayerPayBatch, formatARS, organizerDayCash, organizerReceipts, parseAmount, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, findPlayerPayBatch, formatARS, mineAddedLabel, organizerDayCash, organizerReceipts, parseAmount, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
 import { RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
@@ -3598,7 +3598,8 @@ test('estadísticas: cobrado contra lo que correspondía, por mes y por año', (
   assert.equal(take.byOrganizer.find((row) => row.name === 'Martín').amount, 3000);
   assert.equal(take.byMethod.find((row) => row.kind === 'cash').amount, 5000);
   assert.equal(take.byMethod.find((row) => row.kind === 'transfer').amount, 3000);
-  const months = periodBuckets({ matches, players, prices: null, grain: 'month' });
+  const played = new Date('2026-11-16T12:00:00-03:00');
+  const months = periodBuckets({ matches, players, prices: null, grain: 'month', now: played });
   const oct = months.find((row) => row.key === '2026-10');
   assert.equal(oct.matches, 1);
   assert.equal(oct.cancelled, 1);
@@ -3608,7 +3609,7 @@ test('estadísticas: cobrado contra lo que correspondía, por mes y por año', (
   assert.equal(nov.matches, 1);
   assert.equal(nov.players, 1);
   assert.equal(nov.collected, 5000);
-  const year = periodBuckets({ matches, players, prices: null, grain: 'year' });
+  const year = periodBuckets({ matches, players, prices: null, grain: 'year', now: played });
   assert.equal(year[0].key, '2026');
   assert.equal(year[0].matches, 2);
   assert.equal(year[0].players, 3);
@@ -3808,7 +3809,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v184');
+  assert.equal(version, 'f7c-v187');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4409,12 +4410,14 @@ test('el mes suma lo que le corresponde cada día al organizador', () => {
     const day = dayCompensation(matches.filter((item) => item.date === date), players, staff);
     return day.rows.find((row) => row.uid === uid)?.entitled || 0;
   };
-  const shares = organizerShareByPeriod({ matches, players, staff, uid: 'gus', grain: 'month' });
+  const played = new Date('2027-01-15T12:00:00-03:00');
+  const shares = organizerShareByPeriod({ matches, players, staff, uid: 'gus', grain: 'month', now: played });
   const dayOf = (date) => organizerDayShare({
     matches: matches.filter((item) => item.date === date),
     players,
     staff,
     uid: 'gus',
+    now: played,
   });
   assert.equal(daily('2026-11-03', 'gus'), 5000);
   assert.equal(daily('2026-11-10', 'gus'), 8000);
@@ -4422,12 +4425,12 @@ test('el mes suma lo que le corresponde cada día al organizador', () => {
   assert.equal(dayOf('2026-11-10'), daily('2026-11-10', 'gus'));
   assert.equal(shares.get('2026-11'), dayOf('2026-11-03') + dayOf('2026-11-10'));
   assert.equal(shares.get('2026-12'), dayOf('2026-12-01'));
-  const years = organizerShareByPeriod({ matches, players, staff, uid: 'gus', grain: 'year' });
+  const years = organizerShareByPeriod({ matches, players, staff, uid: 'gus', grain: 'year', now: played });
   const yearFromDays = dayOf('2026-11-03') + dayOf('2026-11-10') + dayOf('2026-12-01');
   const yearFromMonths = shares.get('2026-11') + shares.get('2026-12');
   assert.equal(years.get('2026'), yearFromDays);
   assert.equal(years.get('2026'), yearFromMonths);
-  const martin = organizerShareByPeriod({ matches, players, staff, uid: 'mar', grain: 'month' });
+  const martin = organizerShareByPeriod({ matches, players, staff, uid: 'mar', grain: 'month', now: played });
   assert.equal(martin.get('2026-11'), daily('2026-11-03', 'mar') + daily('2026-11-10', 'mar'));
   assert.equal(daily('2026-11-10', 'mar'), 0);
   const sameDay = [
@@ -4439,8 +4442,8 @@ test('el mes suma lo que le corresponde cada día al organizador', () => {
     { id: 'q2', matchId: 'd2', waiting: false, paid: true, split: true, cash: 6000, cashTo: 'Gustavo' },
   ];
   const together = dayCompensation(sameDay, people, staff).rows.find((row) => row.uid === 'gus').entitled;
-  assert.equal(organizerDayShare({ matches: sameDay, players: people, staff, uid: 'gus' }), together);
-  assert.equal(organizerShareByPeriod({ matches: sameDay, players: people, staff, uid: 'gus' }).get('2026-11'), together);
+  assert.equal(organizerDayShare({ matches: sameDay, players: people, staff, uid: 'gus', now: played }), together);
+  assert.equal(organizerShareByPeriod({ matches: sameDay, players: people, staff, uid: 'gus', now: played }).get('2026-11'), together);
 });
 
 test('te correspondió: solo el total, partes iguales o lo que anotó', () => {
@@ -4449,8 +4452,9 @@ test('te correspondió: solo el total, partes iguales o lo que anotó', () => {
     id, matchId, waiting: false, paid: true, split: true, cash, cashTo, transfer: 0, fromCredit: 0,
     ...(signed ? { signedUpWith: signed.uid, signedUpWithName: signed.name } : {}),
   });
+  const played = new Date('2026-11-16T12:00:00-03:00');
   const share = (matches, players) => organizerDayShare({
-    matches, players, staff, uid: 'gus', name: 'Gustavo',
+    matches, players, staff, uid: 'gus', name: 'Gustavo', now: played,
   });
   const collectedSum = (matches, players) => dayCompensation(matches, players, staff).rows
     .reduce((sum, row) => sum + row.collected, 0);
@@ -4500,6 +4504,7 @@ test('te correspondió: solo el total, partes iguales o lo que anotó', () => {
     staff,
     uid: 'gus',
     name: 'Gustavo',
+    now: played,
   });
   assert.equal(month.get('2026-11'), solo + equal + signed);
 });
@@ -4630,13 +4635,15 @@ test('Día no muestra un día que no organizó quien está logueado', () => {
   });
   assert.deepEqual(forWho('gus', 'Gustavo'), ['2026-11-04', '2026-11-01']);
   assert.deepEqual(forWho('mar', 'Martín'), ['2026-11-04', '2026-11-03']);
-  const month = organizerShareByPeriod({ matches, players: [], staff, uid: 'mar', name: 'Martín', grain: 'month' });
+  const played = new Date('2026-11-16T12:00:00-03:00');
+  const month = organizerShareByPeriod({ matches, players: [], staff, uid: 'mar', name: 'Martín', grain: 'month', now: played });
   const dayOf = (date) => organizerDayShare({
     matches: matches.filter((item) => item.date === date),
     players: [],
     staff,
     uid: 'mar',
     name: 'Martín',
+    now: played,
   });
   assert.equal(dayOf('2026-11-01'), 0);
   assert.equal(month.get('2026-11'), dayOf('2026-11-01') + dayOf('2026-11-03') + dayOf('2026-11-04'));
@@ -4652,6 +4659,11 @@ test('la ficha del partido cuenta solo lo que cobró quien está logueado', () =
   ];
   const mine = organizerReceipts(players, who);
   assert.equal(mine.added, 2);
+  assert.equal(mineAddedLabel([
+    ...players,
+    { id: 'w', name: 'Espera', signedUpWith: 'mar', waiting: true },
+    { id: 'x', name: 'Nojugo', signedUpWith: 'mar', noPlay: true },
+  ], who, matchCapacity({ perTeam: 7 })), 'Anotados por mí: 2/14');
   assert.equal(mine.cash, 4500);
   assert.equal(mine.cashPlayers, 1);
   assert.equal(mine.transfer, 0);
@@ -4764,15 +4776,134 @@ test('Mes cuenta lugares anotados por él y la promo una sola vez', () => {
     { id: 'gratis', matchId: 'm1', name: 'Gratis', phone: '5491190000186', signedUpWith: 'gus', freePlay: true },
     { id: 'ajeno-jug', matchId: 'ajeno', name: 'Ajeno', phone: '5491190000187', signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
   ];
-  const months = periodBuckets({ matches, players, prices, grain: 'month', who: gus, staff });
+  const played = new Date('2026-10-19T13:00:00-03:00');
+  const months = periodBuckets({ matches, players, prices, grain: 'month', who: gus, staff, now: played });
   const oct = months.find((row) => row.key === '2026-10');
   assert.equal(oct.matches, 2);
   assert.equal(oct.players, 4);
   assert.equal(oct.signedAmount, 19000);
-  const year = periodBuckets({ matches, players, prices, grain: 'year', who: gus, staff });
+  const year = periodBuckets({ matches, players, prices, grain: 'year', who: gus, staff, now: played });
   assert.equal(year[0].players, 4);
   assert.equal(year[0].signedAmount, 19000);
   assert.equal(year[0].matches, 2);
+});
+
+test('Mes y Año no cuentan un partido que todavía no se jugó', () => {
+  const now = new Date('2026-10-19T13:00:00-03:00');
+  const later = new Date('2026-11-16T13:00:00-03:00');
+  const staff = [
+    { uid: 'gus', name: 'Gustavo', active: true },
+    { uid: 'mar', name: 'Martín', active: true },
+  ];
+  const gus = { uid: 'gus', name: 'Gustavo' };
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const matches = [
+    { id: 'jugado', date: '2026-10-15', time: '21:00', price: 5000, adders: ['*'], splitMode: 'equal' },
+    { id: 'hoy', date: '2026-10-19', time: '21:00', price: 5000, adders: ['*'], splitMode: 'equal' },
+    { id: 'futuro', date: '2026-10-22', time: '21:00', price: 5000, adders: ['*'], splitMode: 'equal' },
+    { id: 'cancelado', date: '2026-10-12', time: '18:00', price: 5000, adders: ['*'], cancelled: true },
+    { id: 'otro-mes', date: '2026-11-02', time: '21:00', price: 5000, adders: ['gus'], splitMode: 'equal' },
+  ];
+  const players = [
+    { id: 'a', matchId: 'jugado', name: 'Ana', phone: '5491190000201', signedUpWith: 'gus', paid: true, split: true, cash: 6000, cashTo: 'Gustavo' },
+    { id: 'b', matchId: 'jugado', name: 'Beto', phone: '5491190000202', signedUpWith: 'mar', paid: true, split: true, cash: 4000, cashTo: 'Martín' },
+    { id: 'h', matchId: 'hoy', name: 'Hoy', phone: '5491190000203', signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'f', matchId: 'futuro', name: 'Futuro', phone: '5491190000204', signedUpWith: 'gus', paid: true, split: true, cash: 9000, cashTo: 'Gustavo' },
+    { id: 'c', matchId: 'cancelado', name: 'Ciro', phone: '5491190000205', signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'n', matchId: 'otro-mes', name: 'Nov', phone: '5491190000206', signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+  ];
+  const months = periodBuckets({ matches, players, prices, grain: 'month', who: gus, staff, now });
+  const oct = months.find((row) => row.key === '2026-10');
+  assert.equal(oct.matches, 1);
+  assert.equal(oct.cancelled, 1);
+  assert.equal(oct.players, 1);
+  assert.equal(oct.signedAmount, 6000);
+  assert.equal(months.some((row) => row.key === '2026-11'), false);
+  const year = periodBuckets({ matches, players, prices, grain: 'year', who: gus, staff, now });
+  assert.equal(year.length, 1);
+  assert.equal(year[0].matches, 1);
+  assert.equal(year[0].players, 1);
+  assert.equal(year[0].signedAmount, 6000);
+  const playedDay = organizerDayShare({
+    matches: matches.filter((match) => match.id === 'jugado'),
+    players, staff, uid: 'gus', name: 'Gustavo', now,
+  });
+  assert.equal(playedDay, 5000);
+  assert.equal(organizerDayShare({ matches, players, staff, uid: 'gus', name: 'Gustavo', now }), playedDay);
+  const shares = organizerShareByPeriod({ matches, players, staff, uid: 'gus', name: 'Gustavo', grain: 'month', now });
+  assert.equal(shares.get('2026-10'), playedDay);
+  assert.equal(shares.get('2026-11') || 0, 0);
+  const years = organizerShareByPeriod({ matches, players, staff, uid: 'gus', name: 'Gustavo', grain: 'year', now });
+  assert.equal(years.get('2026'), playedDay);
+  const mid = new Date('2026-10-20T13:00:00-03:00');
+  const midMonths = periodBuckets({ matches, players, prices, grain: 'month', who: gus, staff, now: mid });
+  const midOct = midMonths.find((row) => row.key === '2026-10');
+  assert.equal(midOct.matches, 2);
+  assert.equal(midOct.players, 2);
+  assert.equal(midOct.signedAmount, 11000);
+  assert.equal(midMonths.some((row) => row.key === '2026-11'), false);
+  const hoyShare = organizerDayShare({
+    matches: matches.filter((match) => match.id === 'hoy'),
+    players, staff, uid: 'gus', name: 'Gustavo', now: mid,
+  });
+  assert.equal(hoyShare, 2500);
+  assert.equal(organizerShareByPeriod({ matches, players, staff, uid: 'gus', name: 'Gustavo', grain: 'month', now: mid }).get('2026-10'), playedDay + hoyShare);
+  const laterMonths = periodBuckets({ matches, players, prices, grain: 'month', who: gus, staff, now: later });
+  const laterOct = laterMonths.find((row) => row.key === '2026-10');
+  assert.equal(laterOct.matches, 3);
+  assert.equal(laterOct.players, 3);
+  assert.equal(laterOct.signedAmount, 20000);
+  assert.equal(laterMonths.find((row) => row.key === '2026-11').matches, 1);
+  assert.equal(laterMonths.find((row) => row.key === '2026-11').players, 1);
+  assert.equal(laterMonths.find((row) => row.key === '2026-11').signedAmount, 5000);
+  const laterShare = organizerDayShare({
+    matches: matches.filter((match) => match.id === 'otro-mes'),
+    players, staff, uid: 'gus', name: 'Gustavo', now: later,
+  });
+  assert.equal(laterShare, 5000);
+  const laterMonthsShare = organizerShareByPeriod({ matches, players, staff, uid: 'gus', name: 'Gustavo', grain: 'month', now: later });
+  assert.equal(laterMonthsShare.get('2026-11'), laterShare);
+  const futuroShare = organizerDayShare({
+    matches: matches.filter((match) => match.id === 'futuro'),
+    players, staff, uid: 'gus', name: 'Gustavo', now: later,
+  });
+  assert.equal(futuroShare, 4500);
+  assert.equal(laterMonthsShare.get('2026-10'), playedDay + hoyShare + futuroShare);
+});
+
+test('un backup importado no le suma a Gustavo los lugares de Martín', () => {
+  const trial = 'trial-uid-gustavo';
+  const staff = [{ uid: trial, name: 'Gustavo', active: true }];
+  const who = { uid: trial, name: 'Gustavo' };
+  const now = new Date('2026-11-16T15:00:00-03:00');
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const matches = [
+    { id: 'mio', date: '2026-11-02', adders: [trial], adderNames: [{ uid: trial, name: 'Gustavo' }], createdBy: 'Gustavo', createdByUid: trial, price: 5000, splitMode: 'equal' },
+    { id: 'abierto', date: '2026-11-03', adders: ['*'], createdBy: 'Gustavo', createdByUid: trial, price: 5000, splitMode: 'equal' },
+    { id: 'ajeno', date: '2026-11-04', adders: [trial], adderNames: [{ uid: trial, name: 'Martín' }], createdBy: 'Martín', createdByUid: trial, price: 5000, splitMode: 'equal' },
+    { id: 'futuro', date: '2026-11-20', adders: [trial], adderNames: [{ uid: trial, name: 'Gustavo' }], createdBy: 'Gustavo', createdByUid: trial, price: 5000, splitMode: 'equal' },
+  ];
+  const players = [
+    { id: 'a', matchId: 'mio', name: 'Ana', phone: '5491190000301', signedUpWith: trial, signedUpWithName: 'Gustavo', addedBy: 'Gustavo', waiting: false, paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'b', matchId: 'abierto', name: 'Beto', phone: '5491190000302', signedUpWith: trial, signedUpWithName: 'Gustavo', addedBy: 'Gustavo', waiting: false, paid: true, split: true, cash: 8000, cashTo: 'Gustavo' },
+    { id: 'c', matchId: 'abierto', name: 'Ciro', phone: '5491190000303', signedUpWith: trial, signedUpWithName: 'Martín', addedBy: 'Martín', waiting: false, paid: true, split: true, cash: 8000, cashTo: 'Martín' },
+    { id: 'd', matchId: 'ajeno', name: 'Dano', phone: '5491190000304', signedUpWith: trial, signedUpWithName: 'Martín', addedBy: 'Martín', waiting: false, paid: true, split: true, cash: 9000, cashTo: 'Martín' },
+    { id: 'e', matchId: 'futuro', name: 'Eva', phone: '5491190000305', signedUpWith: trial, signedUpWithName: 'Gustavo', addedBy: 'Gustavo', waiting: false, paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+  ];
+  const months = periodBuckets({ matches, players, prices, grain: 'month', who, staff, now });
+  const nov = months.find((row) => row.key === '2026-11');
+  assert.equal(nov.matches, 2);
+  assert.equal(nov.players, 2);
+  assert.equal(nov.signedAmount, 13000);
+  assert.equal(matchOrganizedBy(matches[2], staff, who), false);
+  assert.equal(matchOrganizedBy(matches[0], staff, who), true);
+  const shares = organizerShareByPeriod({ matches, players, staff, uid: trial, name: 'Gustavo', who, grain: 'month', now });
+  const ownDay = organizerDayShare({ matches: [matches[0]], players, staff, uid: trial, name: 'Gustavo', who, now });
+  const openDay = organizerDayShare({ matches: [matches[1]], players, staff, uid: trial, name: 'Gustavo', who, now });
+  assert.equal(ownDay, 5000);
+  assert.equal(openDay, 8000);
+  assert.equal(organizerDayShare({ matches: [matches[2]], players, staff, uid: trial, name: 'Gustavo', who, now }), 0);
+  assert.equal(shares.get('2026-11'), ownDay + openDay);
 });
 
 test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
