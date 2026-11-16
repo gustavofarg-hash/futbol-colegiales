@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v186');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v187');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -874,7 +874,7 @@ await page2.close();
 check('Sin el filtro, Pedro sigue en el partido', (await page.locator('#slots .name', { hasText: 'Pedro Gómez' }).count()) === 1 && (await page.locator('#slots .name', { hasText: 'Nico R.' }).count()) === 1 && (await page.locator('#slots .name', { hasText: 'Juan Pérez' }).count()) === 1);
 check('El cupo sigue siendo el del partido', (await page.textContent('#slot-count')) === '3/14');
 const mineText = `${await page.textContent('#mine-added')} ${await page.textContent('#mine-cash')}`.replace(/\s+/g, ' ');
-check('Estadística propia del partido', mineText.includes('Anotados por mí: 2') && mineText.includes('Me dieron en efectivo: $4.500'), mineText);
+check('Estadística propia del partido', mineText.includes('Anotados por mí: 2/14') && mineText.includes('Me dieron en efectivo: $4.500'), mineText);
 
 // Lista de espera con lugares libres: queda al final, no ocupa un cupo
 await page.click('#btn-add-wait');
