@@ -45,7 +45,7 @@ import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
 } from '../js/auth.js';
-import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, COLLECTION_LABELS, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup } from '../js/backup.js';
+import { BACKUP_LOADED_OK, BACKUP_WRITE_BATCH, COLLECTION_LABELS, RESET_STALLED, backupFilename, backupProgressText, backupReadError, backupSurfaceMessage, backupWriteError, buildBackup, parseBackup, resetProgressText, withDeadline } from '../js/backup.js';
 import { DRIVE_FOLDER, DRIVE_SCOPE, driveClientId, ensureBackupFolder, forgetDriveToken, multipartBody, requestDriveToken, shareableBackupName, uploadBackupToDrive } from '../js/drive.js';
 
 // Referencia: lunes 19/10/2026 13:00 en Buenos Aires
@@ -3808,7 +3808,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v183');
+  assert.equal(version, 'f7c-v184');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3872,6 +3872,9 @@ test('la carga muestra el avance y deja el aviso de éxito hasta cerrarlo', asyn
   assert.equal(backupProgressText(120, 950), 'Cargando… 120/950');
   assert.equal(backupProgressText(0, 0), 'Cargando…');
   assert.equal(backupProgressText(5, 3), 'Cargando… 3/3');
+  assert.equal(resetProgressText(0, 0), 'Buscando datos…');
+  assert.equal(resetProgressText(2, 10), 'Borrando… 2/10');
+  assert.equal(resetProgressText(12, 4), 'Borrando… 4/4');
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   assert.match(app, /status\.textContent = BACKUP_LOADED_OK/);
@@ -4154,19 +4157,88 @@ test('resetear la base la deja vacía y un organizador no puede', async () => {
   store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
   await assert.rejects(() => store.resetDatabase(), (error) => error.code === 'admin-only');
   store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
-  await store.resetDatabase();
+  const before = JSON.parse(mem.get(store.key));
+  before.behavior = { b1: { rosterId: 'x', type: 'manual', points: -1 } };
+  before.payBatches = { p1: { ownerUid: 'gustavo' } };
+  before.credits = { c1: { amount: 1000 } };
+  before.log = { l1: { text: 'queda' } };
+  before.compensations = { k1: { amount: 1 } };
+  before.confirmations = { t1: { playerId: 'p' } };
+  before.links = { Abcd1234: { m: 'm' } };
+  before.rosterNotes = { n1: { notes: [] } };
+  before.rosterClaims = { q1: { rosterId: 'x' } };
+  before.rosterRedirects = { vieja: { intoId: 'x' } };
+  before.rosterSuspensions = { s1: { rosterId: 'x' } };
+  before.suspensionHistory = { h1: { rosterId: 'x' } };
+  mem.set(store.key, JSON.stringify(before));
+  const steps = [];
+  await store.resetDatabase(({ done, total }) => steps.push([done, total]));
+  assert.deepEqual(steps.at(-1), [1, 1]);
   const db = JSON.parse(mem.get(store.key));
-  assert.deepEqual(db.matches, {});
-  assert.deepEqual(db.players, {});
-  assert.deepEqual(db.roster, {});
-  assert.deepEqual(db.venues, {});
-  assert.deepEqual(db.organizers, {});
-  assert.deepEqual(db.settings, {});
+  for (const name of ['matches', 'players', 'roster', 'venues', 'organizers', 'settings', 'confirmations', 'links', 'credits', 'log', 'compensations', 'rosterNotes', 'rosterClaims', 'rosterRedirects', 'rosterSuspensions', 'suspensionHistory', 'payBatches', 'behavior']) {
+    assert.deepEqual(db[name], {}, name);
+  }
   assert.deepEqual(db.contacts.players, {});
   assert.deepEqual(db.contacts.roster, {});
   const again = await store.exportDatabase();
   assert.equal(again.collections.matches && Object.keys(again.collections.matches).length, 0);
   assert.equal(Object.keys(again.collections.players).length, 0);
+});
+
+test('un pedido que no responde corta y no se toma como éxito', async () => {
+  assert.equal(await withDeadline(Promise.resolve('ok'), 200, RESET_STALLED), 'ok');
+  await assert.rejects(
+    () => withDeadline(new Promise(() => {}), 30, RESET_STALLED),
+    (error) => error.code === 'deadline-exceeded' && error.message === RESET_STALLED,
+  );
+});
+
+test('si Firestore no responde, resetear avisa y no borra', async () => {
+  const store = new FirebaseStore();
+  store.actor = { uid: 'admin', name: 'Gustavo', role: 'admin' };
+  store.resetTimeoutMs = 40;
+  store.db = {};
+  store.fs = {
+    collection() { return {}; },
+    getDocs() { return new Promise(() => {}); },
+    doc() { return {}; },
+    writeBatch() { throw new Error('no debía escribir'); },
+  };
+  await assert.rejects(() => store.resetDatabase(), (error) => {
+    assert.equal(error.code, 'deadline-exceeded');
+    assert.match(error.message, /Links \(links\)/);
+    assert.match(error.message, /No se terminó de borrar/);
+    return true;
+  });
+});
+
+test('si el commit no responde, resetear nombra el documento', async () => {
+  const store = new FirebaseStore();
+  store.actor = { uid: 'admin', name: 'Gustavo', role: 'admin' };
+  store.resetTimeoutMs = 40;
+  store.db = {};
+  let commits = 0;
+  store.fs = {
+    collection() { return {}; },
+    getDocs() {
+      return { forEach(fn) { fn({ id: 'm1', data: () => ({ note: 'x' }) }); } };
+    },
+    doc() { return {}; },
+    writeBatch() {
+      return {
+        delete() {},
+        set() {},
+        commit() { commits += 1; return new Promise(() => {}); },
+      };
+    },
+  };
+  await assert.rejects(() => store.resetDatabase(), (error) => {
+    assert.equal(error.code, 'deadline-exceeded');
+    assert.match(error.message, /No se pudo borrar links\/m1/);
+    assert.match(error.message, /No se terminó de borrar/);
+    return true;
+  });
+  assert.equal(commits, 1);
 });
 
 test('Drive: ID de config, nombre para compartir y cuerpo multipart', () => {

@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v184** (16/11/2026): Resetear base de datos en /prueba/ lista y borra por REST, muestra el avance y, si la base no responde, avisa en rojo. Antes el botón se quedaba mudo y los datos seguían. Las cuentas para entrar quedan. `firestore.rules` no cambió.
 **Actualizada para f7c-v183** (16/11/2026): si Transfiere después se repartió entre el anfitrión y sus invitados, marcarlo cobrado o anularlo con la X vale para todo ese lote. La X de un invitado también lo anula, aunque el anfitrión ya se haya cobrado aparte. `firestore.rules` no cambió.
 **Actualizada para f7c-v181** (16/11/2026): en Estadísticas, Mes y Año dicen «N partidos · M jugadores anotados» y el monto de esos lugares. La promo 2×$9.000 cuenta 2 lugares y $9.000 una sola vez. La espera y lo que anotó otro no entran. «No jugó pero pagó» y quien pagó y se bajó sí. Te correspondió no cambia. `firestore.rules` no cambió.
 **Actualizada para f7c-v180** (15/11/2026): el − y el + del tanteador, y los de los puntos, solo cambian el número si el dedo se apoya y se suelta sin arrastrar. Deslizar la página no suma ni resta. `firestore.rules` no cambió.

@@ -40,13 +40,13 @@ import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLe
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
 import { bindTap, tapChose } from './tap.js';
-import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
+import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, resetProgressText, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v183';
+const APP_VERSION = 'f7c-v184';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -3024,6 +3024,7 @@ function openResetDb() {
     </div>
     <label class="field"><span>Escribí BORRAR para confirmar</span><input id="reset-word" autocomplete="off" autocapitalize="characters"></label>
     <p class="err" id="reset-err"></p>
+    <p class="backup-status" id="reset-status" aria-live="polite"></p>
     <div class="menu">
       <button type="button" class="btn danger" id="reset-apply" disabled>Borrar todo</button>
       <button type="button" class="btn ghost" data-close>Cerrar</button>
@@ -3035,12 +3036,21 @@ function openResetDb() {
   apply.onclick = () => {
     if (word.value.trim() !== 'BORRAR') return;
     apply.disabled = true;
-    app.store.resetDatabase().then(() => {
+    word.disabled = true;
+    const status = $('#reset-status');
+    status.className = 'backup-status';
+    status.textContent = resetProgressText(0, 0);
+    $('#reset-err').textContent = '';
+    app.store.resetDatabase(({ done, total }) => {
+      status.textContent = resetProgressText(done, total);
+    }).then(() => {
       closeSheet();
       toast('Base de datos vacía');
     }).catch((error) => {
-      apply.disabled = false;
-      const msg = backupSurfaceMessage(error, 'No se pudo borrar.');
+      apply.disabled = word.value.trim() !== 'BORRAR';
+      word.disabled = false;
+      status.textContent = '';
+      const msg = backupSurfaceMessage(error, 'No se pudo borrar. La base no respondió. No se terminó de borrar.');
       $('#reset-err').textContent = msg;
       toast(msg, 7000);
     });
@@ -8185,7 +8195,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v183" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v184" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8222,7 +8232,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v183" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v184" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
