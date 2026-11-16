@@ -30,7 +30,7 @@ import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
-import { BAJA_TIERS, bajaPreview, bajaReasonText, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, stepPointInput } from './behavior.js';
+import { BAJA_TIERS, bajaPreview, bajaReasonText, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v191';
+const APP_VERSION = 'f7c-v192';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -7985,6 +7985,7 @@ function askBajaPoints(match, player, { note = '' } = {}) {
 }
 
 async function commitBajaPenalty(match, player, choice) {
+  if (!removalDeducts(player)) return true;
   if (!choice) return false;
   const rosterId = suspensionRosterId(player);
   if ((choice.points !== 0 || choice.suspend) && !rosterId) {
@@ -8084,10 +8085,12 @@ async function removeNoPlayPlayer(m, p) {
 }
 
 async function removeMatchPlayer(m, p) {
-  const fromMain = !isWaiting(p);
+  const fromMain = removalDeducts(p);
   const friends = guestsOf(m.id, p.id);
-  const choice = await askBajaPoints(m, p);
-  if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
+  if (fromMain) {
+    const choice = await askBajaPoints(m, p);
+    if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
+  }
   const dropFriends = friends.length > 0 && await askYesNo(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
@@ -8202,7 +8205,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v191" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v192" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8239,7 +8242,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v191" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v192" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
