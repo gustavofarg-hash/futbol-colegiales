@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v192** (16/11/2026): quitar a alguien de la lista de espera, o que se baje él desde el perfil, no resta puntos de Comportamiento: no hay pregunta, no hay descuento y no queda entrada en el historial. Tampoco si se van sus invitados que ya estaban en la espera. Bajar de la lista del partido a la espera sí puede restar. `firestore.rules` no cambió.
 **Actualizada para f7c-v191** (16/11/2026): «No jugó pero pagó» vuelve a sumar en Día, Mes, Año, Te correspondió, el recaudo y los pagos, porque pagó. El tope del partido es el cupo más esos lugares. La espera sigue afuera. `firestore.rules` no cambió.
 **Actualizada para f7c-v190** (16/11/2026): la lista de espera no entra en ningún total de plata: Día, Mes, Año, Te correspondió, lo cobrado del partido y el registro de pagos. Quien está en espera no paga. `firestore.rules` no cambió.
 **Actualizada para f7c-v189** (16/11/2026): en el detalle del día, Anotaste y Pagaron cuentan solo a quienes él anotó y entran en el cupo. La espera, «No jugó pero pagó» y los que sobran no suman. Te correspondió usa esa misma lista. `firestore.rules` no cambió.
