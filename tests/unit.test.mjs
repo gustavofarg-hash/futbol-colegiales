@@ -16,7 +16,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate,
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { compensationDoneDates, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
+import { compensationDoneDates, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, playingList, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
@@ -3809,7 +3809,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v188');
+  assert.equal(version, 'f7c-v189');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4927,9 +4927,74 @@ test('el día cuenta los lugares que anotó y lo que pagaron, espera aparte', ()
   assert.equal(summary.matches[0].spots, 1);
   assert.equal(summary.matches[0].paid, 5000);
   assert.equal(summary.matches[1].spots, 1);
-  assert.equal(summary.matches[1].paid, 4000);
+  assert.equal(summary.matches[1].paid, 0);
   assert.equal(summary.spots, 2);
-  assert.equal(summary.paid, 9000);
+  assert.equal(summary.paid, 5000);
+});
+
+test('el domingo 15/11 no pasa de 14 lugares por $5000', () => {
+  const who = { uid: 'gus', name: 'Gustavo' };
+  const staff = [
+    { uid: 'gus', name: 'Gustavo', active: true },
+    { uid: 'mar', name: 'Martín', active: true },
+  ];
+  const own = (id, time) => ({
+    id, date: '2026-11-15', time, capacity: 14, perTeam: 7, price: 5000,
+    adders: ['gus'], adderNames: [{ uid: 'gus', name: 'Gustavo' }], createdBy: 'Gustavo', createdByUid: 'gus',
+  });
+  const matches = [
+    own('m1', '17:00'),
+    own('m2', '18:00'),
+    { id: 'ajeno', date: '2026-11-15', time: '19:00', capacity: 14, perTeam: 7, price: 5000, adders: ['mar'], adderNames: [{ uid: 'mar', name: 'Martín' }], createdBy: 'Martín', createdByUid: 'mar' },
+  ];
+  const players = [];
+  for (const id of ['m1', 'm2']) {
+    for (let i = 0; i < 14; i++) {
+      players.push({ id: `${id}-l${i}`, matchId: id, name: `Lista ${i}`, signedUpWith: 'gus', signedUpWithName: 'Gustavo', createdAt: i, paid: true, split: true, cash: 5000 });
+    }
+    for (let i = 0; i < 6; i++) {
+      players.push({ id: `${id}-x${i}`, matchId: id, name: `Sobra ${i}`, signedUpWith: 'gus', signedUpWithName: 'Gustavo', createdAt: 100 + i, paid: true, split: true, cash: 5000 });
+    }
+    for (let i = 0; i < 4; i++) {
+      players.push({ id: `${id}-w${i}`, matchId: id, name: `Espera ${i}`, signedUpWith: 'gus', signedUpWithName: 'Gustavo', waiting: true, createdAt: 200 + i, paid: true, split: true, cash: 5000 });
+    }
+    for (let i = 0; i < 3; i++) {
+      players.push({ id: `${id}-n${i}`, matchId: id, name: `Nojugo ${i}`, signedUpWith: 'gus', signedUpWithName: 'Gustavo', noPlay: true, createdAt: 300 + i, paid: true, split: true, cash: 5000 });
+    }
+    players.push({ id: `${id}-lopez`, matchId: id, name: 'Lopez', signedUpWith: 'gus', signedUpWithName: 'Gustavo López', createdAt: 400, paid: true, split: true, cash: 5000 });
+  }
+  for (let i = 0; i < 14; i++) {
+    players.push({ id: `aj-${i}`, matchId: 'ajeno', name: `Ajeno ${i}`, signedUpWith: 'mar', signedUpWithName: 'Martín', createdAt: i, paid: true, split: true, cash: 5000 });
+  }
+  const mine = matches.filter((item) => item.id !== 'ajeno');
+  const summary = daySignupSummary({ matches: mine, players, who });
+  assert.equal(summary.matches.length, 2);
+  assert.equal(summary.matches[0].spots, 14);
+  assert.equal(summary.matches[0].paid, 70000);
+  assert.equal(summary.matches[1].spots, 14);
+  assert.equal(summary.matches[1].paid, 70000);
+  assert.equal(summary.spots, 28);
+  assert.equal(summary.paid, 140000);
+  const listed = mine.flatMap((item) => playingList(players, item));
+  const share = organizerDayShare({
+    matches: mine,
+    players: listed,
+    staff,
+    uid: 'gus',
+    name: 'Gustavo',
+    now: new Date('2026-11-16T15:00:00-03:00'),
+  });
+  assert.equal(share, 140000);
+  const loose = daySignupSummary({
+    matches: [own('uno', '17:00')],
+    players: [
+      { id: 'g', matchId: 'uno', signedUpWith: 'otro', signedUpWithName: 'Gus', createdAt: 1, paid: true, split: true, cash: 5000 },
+      { id: 'gl', matchId: 'uno', signedUpWith: 'gus', signedUpWithName: 'Gustavo López', createdAt: 2, paid: true, split: true, cash: 5000 },
+    ],
+    who,
+  });
+  assert.equal(loose.spots, 1);
+  assert.equal(loose.paid, 5000);
 });
 
 test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
