@@ -49,7 +49,7 @@ function cardView(card) {
       confirmed: card.confirmed || null,
       confirmedAt: card.confirmedAt || null,
     },
-    slots: visibleConfirmSlots(card.also),
+    slots: visibleConfirmSlots(card.also, new Date(), card.date),
   };
 }
 
@@ -86,7 +86,7 @@ async function loadFirebase() {
         confirmed: answerOf(row.confirmed),
       });
     }
-    slots = visibleConfirmSlots(detailed);
+    slots = visibleConfirmSlots(detailed, new Date(), snap.data()?.date);
   }
   return { fs, db, match: view?.match || null, player: view?.player || null, slots };
 }
@@ -160,7 +160,8 @@ function saveDemo(answer, slots) {
 }
 
 function demoSlots(db, card) {
-  const slots = visibleConfirmSlots(card?.also);
+  const day = card?.date || '';
+  const slots = visibleConfirmSlots(card?.also, new Date(), day);
   if (slots.length < 2) return slots;
   return visibleConfirmSlots(slots.flatMap((slot) => {
     const player = db.players?.[slot.playerId];
@@ -174,7 +175,7 @@ function demoSlots(db, card) {
       time: row.time || slot.time,
       confirmed: answerOf(row.confirmed) || answerOf(player.confirmed),
     }];
-  }));
+  }), new Date(), day);
 }
 
 function publicName(player) {
@@ -201,7 +202,7 @@ function render(state) {
       </section>`;
     return;
   }
-  const many = visibleConfirmSlots(state.slots);
+  const many = visibleConfirmSlots(state.slots, new Date(), state.match?.date);
   if (many.length >= 2) {
     const answer = sharedConfirmAnswer(many);
     const thanks = answer === 'si'
@@ -261,7 +262,7 @@ async function choose(state, answer) {
   if (state.match?.cancelled === true) return;
   if (!confirmationAllowed(state.player, matchId, token)) return;
   try {
-    const many = visibleConfirmSlots(state.slots);
+    const many = visibleConfirmSlots(state.slots, new Date(), state.match?.date);
     if (state.firebase) await saveFirebase(state.fs, state.db, answer, many);
     else if (!saveDemo(answer, many)) return;
     const now = Date.now();
