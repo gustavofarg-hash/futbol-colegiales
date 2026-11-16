@@ -8,7 +8,7 @@ import {
   todayISO, weekdayOf, labelDate, numericDate, weekdayDate, matchSwitchLabel, matchTitleLabel, addDays, compensationWhen, shortHour, clockTime, capitalize, relativeLabel, attendanceWhen, toEpoch, transferReminderText, transferReminderWhen,
   DIAS_CORTOS, MESES_CORTOS,
 } from './dates.js';
-import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerDayCash, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
+import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerDayCash, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, findPlayerPayBatch, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
   attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow, upcomingConfirmSlots,
@@ -46,7 +46,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v181';
+const APP_VERSION = 'f7c-v183';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -5746,11 +5746,16 @@ function annulLogLines(before, after) {
 }
 
 function payBatchForShare(player) {
-  const batches = (app.payBatches || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
-  return batches.find((batch) => {
-    const row = (batch.payments || []).find((item) => item.playerId === player.id);
-    return row && samePaySnapshot(payBatchSnapshot(player), row.after);
-  }) || null;
+  return findPlayerPayBatch(app.payBatches, player);
+}
+
+function pendingPeersOf(player) {
+  const fresh = app.players.find((item) => item.id === player?.id) || player;
+  const batch = payBatchForShare(fresh);
+  if (!batch || payBatchAddedPending(batch).length < 2) return { batch: null, peers: [] };
+  const peers = payBatchPendingPeers(app.players, batch);
+  if (!peers.some((row) => row.player.id === fresh.id)) return { batch: null, peers: [] };
+  return { batch, peers };
 }
 
 function annulConfirmText(batch) {
@@ -5806,6 +5811,44 @@ function reopenAfterAnnul(player, input) {
 async function annulRecordedPayment(player, share) {
   const fresh = app.players.find((item) => item.id === player.id) || player;
   if (!canAnnulPayment(fresh, share)) return;
+  const grouped = share?.kind === 'pending' ? pendingPeersOf(fresh) : { batch: null, peers: [] };
+  if (grouped.batch && grouped.peers.length) {
+    const names = payBatchCollectorNames(grouped.batch);
+    if (names.some((name) => !sameOrganizerIdentity(name, actor()))) {
+      askNotice('Este pago se cargó junto con un cobro de otro organizador.');
+      return;
+    }
+    const intact = revertPayBatch(app.players, grouped.batch);
+    if (intact.ok) {
+      if (!(await askConfirm(annulConfirmText(grouped.batch), { danger: true, okText: 'Anular' }))) return;
+      const again = revertPayBatch(app.players, payBatchForShare(app.players.find((item) => item.id === fresh.id) || fresh) || grouped.batch);
+      if (!again.ok) {
+        askNotice('Este pago ya se modificó. No se puede anular.');
+        return;
+      }
+      const logs = again.payments.flatMap((row) => annulLogLines(row.before, row.after).map((entry) => ({ playerId: row.id, entry })));
+      const ok = await finishAnnul(again.credits, again.payments, logs, grouped.batch.id);
+      if (ok) reopenAfterAnnul(fresh, again.payments.find((row) => row.id === fresh.id)?.input);
+      return;
+    }
+    if (!(await askConfirm(annulConfirmText({ payments: grouped.peers.map((row) => ({ playerId: row.player.id })) }), { danger: true, okText: 'Anular' }))) return;
+    const writes = [];
+    const logs = [];
+    for (const row of grouped.peers) {
+      const current = app.players.find((item) => item.id === row.player.id) || row.player;
+      const before = payBatchSnapshot(current);
+      const input = paymentWithoutShare(current, {
+        kind: 'pending',
+        amount: paymentParts(current).pending,
+        name: String(current.pendingTo || current.paidUpdatedBy || '').trim(),
+      });
+      writes.push({ id: current.id, input });
+      logs.push(...annulLogLines(before, snapshotAfterFallback(current, input)).map((entry) => ({ playerId: current.id, entry })));
+    }
+    const ok = await finishAnnul([], writes, logs, '');
+    if (ok) reopenAfterAnnul(fresh, writes.find((row) => row.id === fresh.id)?.input);
+    return;
+  }
   const batch = payBatchForShare(fresh);
   if (batch) {
     const names = payBatchCollectorNames(batch);
@@ -6016,13 +6059,23 @@ function openPaymentForm(m, p, opts = {}) {
     });
     const receive = $('#btn-receive-pending');
     if (receive) receive.onclick = () => {
-      const job = Promise.resolve(app.store.markTransferReceived(fresh.id, app.who)).catch((error) => {
-        const fail = error instanceof Error ? error : new Error(String(error?.message || error));
-        fail.playerId = fresh.id;
-        fail.paymentWrite = true;
-        if (error?.code) fail.code = error.code;
-        throw fail;
-      });
+      const job = (async () => {
+        const current = app.players.find((item) => item.id === fresh.id) || fresh;
+        const peers = pendingPeersOf(current).peers;
+        const ids = peers.length ? peers.map((row) => row.player.id) : [current.id];
+        if (current.id !== ids[0]) ids.sort((a, b) => (a === current.id ? -1 : b === current.id ? 1 : 0));
+        for (const id of ids) {
+          try {
+            await app.store.markTransferReceived(id, app.who);
+          } catch (error) {
+            const fail = error instanceof Error ? error : new Error(String(error?.message || error));
+            fail.playerId = id;
+            fail.paymentWrite = true;
+            if (error?.code) fail.code = error.code;
+            throw fail;
+          }
+        }
+      })();
       leave(run(job, 'Transferencia marcada como cobrada'));
     };
   };
@@ -8132,7 +8185,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v181" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v183" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8169,7 +8222,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v181" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v183" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
