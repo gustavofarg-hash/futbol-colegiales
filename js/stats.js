@@ -85,7 +85,7 @@ export function matchTake({ match, players, matches, prices } = {}) {
     if (player.waiting === true) waiting += 1;
     else if (player.noPlay !== true) main += 1;
     if (player.confirmed === 'no') noShows += 1;
-    if (match?.cancelled === true) continue;
+    if (match?.cancelled === true || player.waiting === true) continue;
     expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
     const parts = paymentParts(player);
     collected = roundARS(collected + parts.received);
@@ -131,6 +131,7 @@ export function organizerViewTake({ match, players, matches, prices, who } = {})
   const byMethod = new Map();
   if (match?.cancelled !== true) {
     for (const player of rows) {
+      if (player.waiting === true) continue;
       if (signupIsMine(player, who)) expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
       for (const share of paymentShares(player)) {
         if (!(share.amount > 0) || !sameOrganizerIdentity(share.name, who)) continue;
@@ -548,7 +549,7 @@ export function signupOrganizerUid(player) {
 
 /** Lo cobrado de verdad: efectivo, transferencia y crédito. Transfiere después no entra. */
 function paidReceived(player) {
-  if (!player || isFreePlay(player)) return 0;
+  if (!player || player.waiting === true || isFreePlay(player)) return 0;
   return roundARS(paymentParts(player).received || 0);
 }
 

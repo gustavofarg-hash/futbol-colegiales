@@ -71,8 +71,8 @@ function matchOf(player, matches) {
 }
 
 /**
- * Plata cobrada a esta persona, titulares y lista de espera, pasados y futuros.
- * organizer filtra por quien cobró (o "Sin especificar").
+ * Plata cobrada a esta persona, pasados y futuros.
+ * La lista de espera no paga: no entra. organizer filtra por quien cobró.
  */
 function heldCreditByOrganizer(credits, personKeys) {
   const keys = new Set((personKeys || []).map((key) => String(key || '').trim()).filter(Boolean));
@@ -94,7 +94,7 @@ export function paymentLedger({ phone, phoneKey, rosterId, name, players, matche
   let total = 0;
   let count = 0;
   for (const player of ofPerson({ phone, phoneKey, rosterId, name }, players)) {
-    if (player.paid !== true) continue;
+    if (player.waiting === true || player.paid !== true) continue;
     const included = receivedShares(player).filter((share) => wants(shareLabel(share.name), organizer));
     if (!included.length) continue;
     const amount = included.reduce((sum, share) => sum + share.amount, 0);
@@ -181,6 +181,7 @@ export function paymentsSummary({ players, roster, organizer = null }) {
     if (!row) continue;
     const added = addedByLabel(player);
     if (wants(added, organizer)) row.signups.set(added, (row.signups.get(added) || 0) + 1);
+    if (player.waiting === true) continue;
     if (player.paid === true) {
       const seen = new Set();
       for (const share of receivedShares(player)) {
@@ -238,6 +239,7 @@ export function organizerTotals(players, credits = null) {
   };
   for (const player of players || []) {
     bump(addedByLabel(player)).added += 1;
+    if (player.waiting === true) continue;
     if (player.paid === true) {
       for (const share of receivedShares(player)) bump(shareLabel(share.name)).collected += share.amount;
     }
@@ -261,6 +263,7 @@ export function mineSummary(players, name) {
   let pending = 0;
   for (const player of players || []) {
     if (sameOrganizerIdentity(player.addedBy, name)) added += 1;
+    if (player.waiting === true) continue;
     if (player.paid === true) {
       for (const share of receivedShares(player)) if (sameOrganizerIdentity(share.name, name)) amount += share.amount;
     }
@@ -275,6 +278,7 @@ export function pendingTransfers({ players, roster, organizer = null }) {
   const people = new Map();
   let total = 0;
   for (const player of players || []) {
+    if (player?.waiting === true) continue;
     const shares = pendingShareList(player).filter((share) => wants(shareLabel(share.name), organizer));
     if (!shares.length) continue;
     const key = summaryKey(player, roster, players);
@@ -414,5 +418,5 @@ export function hasUnspecified({ players, phone = null, phoneKey = null, rosterI
   const scoped = phone || phoneKey || rosterId || name;
   const list = scoped ? ofPerson({ phone, phoneKey, rosterId, name }, players) : (players || []);
   return list.some((player) => addedByLabel(player) === UNSPECIFIED
-    || (player.paid === true && receivedShares(player).some((share) => shareLabel(share.name) === UNSPECIFIED)));
+    || (player.waiting !== true && player.paid === true && receivedShares(player).some((share) => shareLabel(share.name) === UNSPECIFIED)));
 }

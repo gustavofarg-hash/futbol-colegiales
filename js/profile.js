@@ -246,6 +246,7 @@ export function playerStats({ phone, phoneKey, rosterId, name, players, matches,
 }
 
 function paidShare(player, organizer) {
+  if (player?.waiting === true) return 0;
   if (!organizer) return player?.paid === true ? (Number(player.amount) || 0) : 0;
   const name = String(organizer.name || '').trim();
   if (!name) return 0;
