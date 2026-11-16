@@ -3768,7 +3768,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v180');
+  assert.equal(version, 'f7c-v181');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4627,6 +4627,40 @@ test('Estadísticas no suma la plata de otro organizador', () => {
   assert.equal(oct.matches, 1);
   assert.equal(oct.collected, 5000);
   assert.equal(matchOrganizedBy(matches[1], staff, gus), false);
+});
+
+test('Mes cuenta lugares anotados por él y la promo una sola vez', () => {
+  const staff = [
+    { uid: 'gus', name: 'Gustavo', active: true },
+    { uid: 'mar', name: 'Martín', active: true },
+  ];
+  const gus = { uid: 'gus', name: 'Gustavo' };
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const phone = '5491190000181';
+  const matches = [
+    { id: 'm1', date: '2026-10-10', time: '18:00', price: 5000, adders: ['gus'], createdByUid: 'gus' },
+    { id: 'm2', date: '2026-10-10', time: '21:00', price: 5000, adders: ['gus'], createdByUid: 'gus' },
+    { id: 'ajeno', date: '2026-10-11', time: '19:00', price: 5000, adders: ['mar'], createdByUid: 'mar' },
+  ];
+  const players = [
+    { id: 'p1', matchId: 'm1', name: 'Luciano', phone, signedUpWith: 'gus', paid: true, split: true, cash: 9000, cashTo: 'Martín' },
+    { id: 'p2', matchId: 'm2', name: 'Luciano', phone, signedUpWith: 'gus' },
+    { id: 'espera', matchId: 'm1', name: 'Espera', phone: '5491190000182', signedUpWith: 'gus', waiting: true, paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'nojugo', matchId: 'm1', name: 'Nojugo', phone: '5491190000183', signedUpWith: 'gus', noPlay: true, paid: true, split: true, cash: 5000, cashTo: 'Martín' },
+    { id: 'bajado', matchId: 'm2', name: 'Bajado', phone: '5491190000184', signedUpWith: 'gus', confirmed: 'no', paid: true, split: true, transfer: 5000, transferTo: 'Martín' },
+    { id: 'otro', matchId: 'm1', name: 'Otro', phone: '5491190000185', signedUpWith: 'mar', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'gratis', matchId: 'm1', name: 'Gratis', phone: '5491190000186', signedUpWith: 'gus', freePlay: true },
+    { id: 'ajeno-jug', matchId: 'ajeno', name: 'Ajeno', phone: '5491190000187', signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+  ];
+  const months = periodBuckets({ matches, players, prices, grain: 'month', who: gus, staff });
+  const oct = months.find((row) => row.key === '2026-10');
+  assert.equal(oct.matches, 2);
+  assert.equal(oct.players, 4);
+  assert.equal(oct.signedAmount, 19000);
+  const year = periodBuckets({ matches, players, prices, grain: 'year', who: gus, staff });
+  assert.equal(year[0].players, 4);
+  assert.equal(year[0].signedAmount, 19000);
+  assert.equal(year[0].matches, 2);
 });
 
 test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {

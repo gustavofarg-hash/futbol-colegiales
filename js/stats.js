@@ -128,9 +128,7 @@ export function organizerViewTake({ match, players, matches, prices, who } = {})
   const byMethod = new Map();
   if (match?.cancelled !== true) {
     for (const player of rows) {
-      const signed = signupOrganizerUid(player);
-      const mineSignup = (uid && signed === uid) || (!signed && sameOrganizerIdentity(player.addedBy, who));
-      if (mineSignup) expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
+      if (signupIsMine(player, who)) expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
       for (const share of paymentShares(player)) {
         if (!(share.amount > 0) || !sameOrganizerIdentity(share.name, who)) continue;
         if (share.kind === 'pending') pending = roundARS(pending + share.amount);
@@ -151,6 +149,38 @@ export function organizerViewTake({ match, players, matches, prices, who } = {})
   };
 }
 
+/** Se anotó con esta persona. Sin uid, vale el nombre de quien lo agregó. */
+function signupIsMine(player, who) {
+  const uid = String(who?.uid || '').trim();
+  const signed = signupOrganizerUid(player);
+  return (uid && signed === uid) || (!signed && sameOrganizerIdentity(player?.addedBy, who));
+}
+
+/**
+ * Un lugar que él anotó y que tiene plata paga o adeudada.
+ * La espera y el juega gratis no entran. «No jugó pero pagó» y quien
+ * pagó y después se bajó sí: el lugar sigue contando.
+ * Con promo, due es la parte de ese partido, no el total del día.
+ */
+function signedSpot(player, ctx) {
+  if (!player || player.waiting === true || isFreePlay(player)) return null;
+  const due = priceDue(player, ctx);
+  const parts = paymentParts(player);
+  const recorded = roundARS((parts.received || 0) + (parts.pending || 0));
+  if (!(due > 0) && !(recorded > 0)) return null;
+  const promo = promoForPlayer({ player, players: ctx.players, matches: ctx.matches, prices: ctx.prices });
+  const grouped = !!(promo && promo.count >= 2);
+  const match = (ctx.matches || []).find((item) => item.id === player.matchId);
+  const person = personKey(player, ctx.players) || player.id || '';
+  return {
+    due: due > 0 ? due : 0,
+    recorded,
+    promo: grouped,
+    total: grouped ? Number(promo.total) || 0 : 0,
+    group: grouped ? `promo:${person}|${match?.date || ''}` : `spot:${player.id || person}`,
+  };
+}
+
 function emptyPeriod(key, grain) {
   return {
     key,
@@ -158,6 +188,7 @@ function emptyPeriod(key, grain) {
     matches: 0,
     cancelled: 0,
     playerKeys: new Set(),
+    spotGroups: new Map(),
     expected: 0,
     collected: 0,
     pending: 0,
@@ -166,15 +197,30 @@ function emptyPeriod(key, grain) {
   };
 }
 
+function signedMoney(groups) {
+  let count = 0;
+  let amount = 0;
+  for (const group of groups.values()) {
+    count += group.count;
+    const raw = Math.max(group.due, group.recorded);
+    const money = group.promo && group.total > 0 ? Math.min(raw, group.total) : raw;
+    amount = roundARS(amount + money);
+  }
+  return { count, amount };
+}
+
 /**
- * Mes o año: cantidad de partidos, jugadores distintos y plata cobrada
- * por organizador y por medio. Los cancelados se cuentan aparte y no suman plata.
+ * Mes o año. Los partidos son los que organiza quien está logueado, sin
+ * cancelados. Los jugadores son los lugares que anotó él y que tienen plata
+ * paga o adeudada. El monto es esa plata, sin importar quién la cobró.
+ * Sin `who`, sigue el total del partido: gente distinta y lo cobrado.
  */
 export function periodBuckets({ matches, players, prices, grain = 'month', who, staff } = {}) {
   const person = who && typeof who === 'object' ? who : null;
   const buckets = new Map();
   const source = matches || [];
   const visible = person ? source.filter((match) => matchOrganizedBy(match, staff, person)) : source;
+  const spotCtx = { players, matches: source, prices };
   for (const match of visible) {
     if (!match?.id || !/^\d{4}-\d{2}-\d{2}$/.test(match.date || '')) continue;
     const key = grain === 'year' ? match.date.slice(0, 4) : monthKeyOf(match.date);
@@ -195,21 +241,36 @@ export function periodBuckets({ matches, players, prices, grain = 'month', who, 
     bucket.pending = roundARS(bucket.pending + take.pending);
     for (const row of take.byMethod) bump(bucket.byMethod, row.kind, row.amount);
     for (const row of take.byOrganizer) bump(bucket.byOrganizer, row.name, row.amount);
+    if (!person) continue;
+    for (const player of players || []) {
+      if (player?.matchId !== match.id || !signupIsMine(player, person)) continue;
+      const spot = signedSpot(player, spotCtx);
+      if (!spot) continue;
+      const group = bucket.spotGroups.get(spot.group) || { promo: spot.promo, total: spot.total, due: 0, recorded: 0, count: 0 };
+      group.count += 1;
+      group.due = roundARS(group.due + spot.due);
+      group.recorded = roundARS(group.recorded + spot.recorded);
+      bucket.spotGroups.set(spot.group, group);
+    }
   }
   return [...buckets.values()]
     .sort((a, b) => b.key.localeCompare(a.key))
-    .map((bucket) => ({
-      key: bucket.key,
-      label: bucket.label,
-      matches: bucket.matches,
-      cancelled: bucket.cancelled,
-      players: bucket.playerKeys.size,
-      expected: bucket.expected,
-      collected: bucket.collected,
-      pending: bucket.pending,
-      byMethod: methodRows(bucket.byMethod),
-      byOrganizer: organizerRows(bucket.byOrganizer),
-    }));
+    .map((bucket) => {
+      const signed = person ? signedMoney(bucket.spotGroups) : null;
+      return {
+        key: bucket.key,
+        label: bucket.label,
+        matches: bucket.matches,
+        cancelled: bucket.cancelled,
+        players: signed ? signed.count : bucket.playerKeys.size,
+        signedAmount: signed ? signed.amount : bucket.collected,
+        expected: bucket.expected,
+        collected: bucket.collected,
+        pending: bucket.pending,
+        byMethod: methodRows(bucket.byMethod),
+        byOrganizer: organizerRows(bucket.byOrganizer),
+      };
+    });
 }
 
 function isThisOrganizer(person, who) {
