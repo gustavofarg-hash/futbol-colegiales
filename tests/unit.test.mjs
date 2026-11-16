@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
-import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, formatARS, organizerDayCash, organizerReceipts, parseAmount, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
+import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, findPlayerPayBatch, formatARS, organizerDayCash, organizerReceipts, parseAmount, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
 import { RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
@@ -337,6 +337,46 @@ test('el apodo del menú se copia a los partidos del día y la promo no baja a p
   assert.equal(saved.players.find((row) => row.id === others[2]).name, 'Invitado 1');
   assert.equal(promoForPlayer({ player: saved.players.find((row) => row.id === guests[2]), ...saved, prices: null }).label, 'Promo 3 partidos por $12.000');
   assert.equal(amountOwed(saved.players.find((row) => row.id === guests[0]), saved), 4000);
+});
+
+test('el pendiente del anfitrión y sus invitados es un solo lote', () => {
+  const pending = (id) => ({
+    id,
+    paid: false,
+    split: true,
+    cash: 0,
+    transfer: 0,
+    pendingTransfer: 5000,
+    pendingTo: 'Gustavo',
+    fromCredit: 0,
+  });
+  const host = pending('h');
+  const guests = [pending('g1'), pending('g2')];
+  const before = (id) => ({ ...payBatchSnapshot({ id }), playerId: id });
+  const batch = {
+    at: 10,
+    payments: [host, ...guests].map((player) => ({
+      playerId: player.id,
+      before: before(player.id),
+      after: payBatchSnapshot(player),
+    })),
+    credits: [],
+  };
+  const players = [host, ...guests];
+  assert.equal(findPlayerPayBatch([batch], host), batch);
+  assert.equal(payBatchAddedPending(batch).length, 3);
+  const peers = payBatchPendingPeers(players, batch);
+  assert.deepEqual(peers.map((row) => row.player.id), ['h', 'g1', 'g2']);
+  const received = peers.map((row) => receivePendingTransfer(row.player, 'Gustavo', 20));
+  assert.equal(received.every((row) => row.ok && row.patch.pendingTransfer == null && row.patch.transfer === 5000), true);
+  const hostPaid = { ...host, ...received[0].patch };
+  const left = payBatchPendingPeers([hostPaid, ...guests], batch);
+  assert.deepEqual(left.map((row) => row.player.id), ['g1', 'g2']);
+  assert.equal(findPlayerPayBatch([batch], guests[0]), batch);
+  assert.equal(revertPayBatch([hostPaid, ...guests], batch).ok, false);
+  const cleared = paymentWithoutShare(guests[0], { kind: 'pending', amount: 5000, name: 'Gustavo' });
+  assert.equal(cleared.pendingTransfer, undefined);
+  assert.equal(cleared.paid, false);
 });
 
 test('anular un guardado deshace todos los partidos y el saldo de ese pago', () => {
@@ -3768,7 +3808,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v181');
+  assert.equal(version, 'f7c-v183');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

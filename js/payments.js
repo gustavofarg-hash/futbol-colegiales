@@ -368,6 +368,44 @@ export function payBatchSnapshot(player) {
   };
 }
 
+/** El lote de un Guardar. Primero el que coincide entero; si no, el pendiente que sigue igual. */
+export function findPlayerPayBatch(batches, player) {
+  const list = (batches || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0));
+  const snap = payBatchSnapshot(player);
+  const exact = list.find((batch) => {
+    const row = (batch.payments || []).find((item) => item.playerId === player.id);
+    return row && samePaySnapshot(snap, row.after);
+  });
+  if (exact) return exact;
+  const pending = paymentParts(player).pending;
+  if (!(pending > 0)) return null;
+  return list.find((batch) => {
+    const row = (batch.payments || []).find((item) => item.playerId === player.id);
+    if (!row) return false;
+    const added = roundARS((row.after?.pending || 0) - (row.before?.pending || 0));
+    return added > 0 && roundARS(row.after?.pending || 0) === pending;
+  }) || null;
+}
+
+/** Filas de ese Guardar a las que les sumó Transfiere después. */
+export function payBatchAddedPending(batch) {
+  return (batch?.payments || []).filter((row) => roundARS((row.after?.pending || 0) - (row.before?.pending || 0)) > 0);
+}
+
+/** Invitados (y el anfitrión) a quienes ese Guardar les dejó el Transfiere después que todavía tienen. */
+export function payBatchPendingPeers(players, batch) {
+  const peers = [];
+  for (const row of batch?.payments || []) {
+    const added = roundARS((row.after?.pending || 0) - (row.before?.pending || 0));
+    if (!(added > 0)) continue;
+    const player = (players || []).find((item) => item.id === row.playerId);
+    if (!player) continue;
+    if (roundARS(paymentParts(player).pending) !== roundARS(row.after?.pending || 0)) continue;
+    peers.push({ player, added });
+  }
+  return peers;
+}
+
 export function samePaySnapshot(a, b) {
   if (!a || !b) return false;
   const keys = ['cash', 'transfer', 'pending', 'credit'];
