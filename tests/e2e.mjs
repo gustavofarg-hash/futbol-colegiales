@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v167');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v180');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -3066,6 +3066,8 @@ check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name
   await page.locator('.slot', { hasText: 'Titular Espera' }).locator('[data-menu]').click();
   await page.waitForSelector('#pm-wait');
   await page.click('#pm-wait');
+  await page.waitForSelector('#baja-points');
+  await page.click('#ask-ok');
   await page.waitForSelector('#wait-list .name:text-is("Titular Espera")');
   await page.click('#wait-list .promote-btn');
   await page.waitForSelector('#slots .name:text-is("Titular Espera")');
@@ -3547,7 +3549,7 @@ await page.evaluate(() => {
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("Zzz Nuevo")') }).locator('[data-menu]').click();
 await page.click('#pm-del');
 await page.waitForSelector('#app-ask-text');
-check('Quitar del partido pregunta en la app', (await page.locator('#app-ask-text').innerText()).trim() === '¿Quitar a Zzz Nuevo del partido?' && (await page.locator('#ask-cancel').innerText()) === 'Cancelar' && (await page.locator('#ask-ok').innerText()) === 'Aceptar');
+check('Quitar del partido pregunta en la app', (await page.locator('#app-ask-text').innerText()).includes('¿Esta baja resta puntos de Comportamiento?') && (await page.locator('#ask-cancel').innerText()) === 'Cancelar' && (await page.locator('#ask-ok').innerText()) === 'Confirmar quita de puntos');
 await page.click('#ask-ok');
 await page.waitForSelector('#ask-no');
 const askFriends = (await page.textContent('dialog.sheet h3')).trim();
@@ -3567,6 +3569,8 @@ await page.evaluate(() => { delete window.confirm; });
 await page.locator('#slots .slot', { has: page.locator('.name:text-is("Después")') }).locator('[data-menu]').click();
 check('El menú ofrece bajar a la espera', await page.locator('#pm-wait').innerText() === 'Bajar a lista de espera');
 await page.click('#pm-wait');
+await page.waitForSelector('#baja-points');
+await page.click('#ask-ok');
 await page.waitForSelector('#wait-list .name:text-is("Después")');
 check('Bajar a la espera lo deja al final y no sube a nadie', await page.locator('#slots .name:text-is("Después")').count() === 0 && await page.locator('#wait-list .name:text-is("Después")').count() === 1);
 {
@@ -3585,6 +3589,8 @@ check('Bajar a la espera lo deja al final y no sube a nadie', await page.locator
   await page.waitForSelector('#slots .name:text-is("Baja Grupo")');
   await page.click('[aria-label="Opciones de Baja Grupo"]');
   await page.click('#pm-wait');
+  await page.waitForSelector('#baja-points');
+  await page.click('#ask-ok');
   await page.waitForSelector('#ask-yes');
   const askDown = (await page.textContent('dialog.sheet h3')).trim();
   check('Bajar con invitados pregunta con Sí y No', askDown === '¿Bajar también a sus invitados (Invitado 1)?' && (await page.locator('#ask-no').innerText()) === 'No', askDown);
@@ -5018,7 +5024,7 @@ async function assertGuestPromo(fix, visibleName, count) {
   await openRemove();
   const askText = (await page.locator('#app-ask-text').innerText()).trim();
   const red = await page.locator('#ask-ok').evaluate((el) => el.classList.contains('danger') && getComputedStyle(el).backgroundColor === 'rgb(198, 40, 40)');
-  check('Quitar a Gonza pregunta en la app, sin el nombre del sitio', askText === '¿Quitar a Gonza del partido?' && (await page.locator('#ask-cancel').innerText()) === 'Cancelar' && (await page.locator('#ask-ok').innerText()) === 'Aceptar' && red && !(await page.locator('#app-ask').innerText()).includes('dice'), askText);
+  check('Quitar a Gonza pregunta en la app, sin el nombre del sitio', askText.includes('¿Esta baja resta puntos de Comportamiento?') && (await page.locator('#ask-cancel').innerText()) === 'Cancelar' && (await page.locator('#ask-ok').innerText()) === 'Confirmar quita de puntos' && red && !(await page.locator('#app-ask').innerText()).includes('dice'), askText);
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v82-despues-quitar.png' });
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('#ask')?.open && !history.state?.ask);
@@ -5718,9 +5724,14 @@ async function assertGuestPromo(fix, visibleName, count) {
     const button = document.querySelector('#pm-no-play');
     const del = document.querySelector('#pm-del');
     const follows = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
-    return { label: button?.textContent || '', above: follows(button, del) && button?.nextElementSibling?.id === 'pm-del' };
+    const falta = document.querySelector('#pm-falta');
+    return {
+      label: button?.textContent?.trim() || '',
+      sancionar: falta?.textContent?.trim() || '',
+      above: follows(button, falta) && follows(falta, del) && falta?.nextElementSibling?.id === 'pm-del',
+    };
   });
-  check('No jugó pero pagó queda justo arriba de Quitar del partido', menuOrder.label === 'No jugó pero pagó' && menuOrder.above, JSON.stringify(menuOrder));
+  check('Sancionar queda justo arriba de Quitar del partido', menuOrder.label === 'No jugó pero pagó' && menuOrder.sancionar === 'Sancionar' && menuOrder.above, JSON.stringify(menuOrder));
   await page.evaluate(() => { const toast = document.querySelector('#toast'); if (toast) toast.hidden = true; });
   await page.locator('#pm-no-play').scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v91-menu-no-jugo.png' });
@@ -6369,12 +6380,16 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, made.id);
   await page.waitForSelector('#profile #suspend-note');
   check('Desde Jugadores también se puede suspender', (await page.locator('#profile #suspend-note').innerText()).trim() === 'Suspender' && !(await page.locator('#profile #suspend-flag').isChecked()));
-  const profileAbove = await page.evaluate(() => {
-    const box = document.querySelector('#pm-suspended').getBoundingClientRect();
-    const name = document.querySelector('#profile h2').getBoundingClientRect();
-    return box.top < name.top;
+  const profilePlace = await page.evaluate(() => {
+    const card = document.querySelector('#comportamiento');
+    const stats = document.querySelector('#profile-stats');
+    const box = document.querySelector('#comportamiento #pm-suspended');
+    const title = card?.querySelector('h2')?.textContent?.trim() || '';
+    const below = !!(card && stats && (card.compareDocumentPosition(stats) & Node.DOCUMENT_POSITION_PRECEDING));
+    return { below, inside: !!box, title, score: document.querySelector('#behavior-score')?.textContent || '' };
   });
-  check('Suspender está arriba del nombre en la ficha', profileAbove);
+  const avgLine = (await page.locator('#comportamiento .behavior-avg').innerText()).replace(/\s+/g, ' ').trim();
+  check('Comportamiento está debajo de Ver estadísticas y arranca en 10/10', profilePlace.below && profilePlace.inside && profilePlace.title === 'Comportamiento' && profilePlace.score === '10' && avgLine === 'Promedio: 10 / 10' && await page.locator('#behavior-more').isHidden() && !(await page.locator('#comportamiento').innerText()).includes('Ver historial'), JSON.stringify({ ...profilePlace, avgLine }));
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v115-suspender.png', clip: { x: 0, y: 0, width: 390, height: 280 } });
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, made.first);
   await page.waitForSelector('.slot:has-text("Suspendido Pérez") .more-btn');
@@ -6494,6 +6509,26 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.waitForSelector('#suspend-summary');
   check('Desde la ficha, tocar Suspender muestra el motivo', (await page.locator('#suspend-summary').innerText()).includes('No avisó') && await page.locator('#suspend-reason').count() === 0);
   await page.click('#suspend-view [data-close]');
+  check('Suspendido sigue en 10/10', (await page.locator('#behavior-score').innerText()) === '10');
+  await page.click('#behavior-history-toggle');
+  await page.click('#behavior-adjust');
+  await page.waitForSelector('#behavior-form');
+  await page.click('#behavior-form button[type=submit]');
+  check('Sin puntos no guarda el ajuste', (await page.locator('#behavior-err').innerText()) === 'Poné los puntos.');
+  await page.fill('#behavior-points', '-0,5');
+  await page.fill('#behavior-reason', 'Llegadas tarde');
+  await page.fill('#behavior-comment', 'Se fue antes');
+  await page.click('#behavior-form button[type=submit]');
+  await page.waitForFunction(() => document.querySelector('#behavior-score')?.textContent === '9,5');
+  check('El ajuste baja el promedio a 9,5/10', (await page.locator('#behavior-score').innerText()) === '9,5' && (await page.locator('#comportamiento .behavior-avg').innerText()).replace(/\s+/g, ' ').includes('Promedio: 9,5 / 10'));
+  await page.click('#behavior-history-toggle');
+  await page.waitForSelector('#behavior-history:not([hidden])');
+  const behaviorHistory = (await page.locator('#behavior-history').innerText()).replace(/\s+/g, ' ').trim();
+  check('El historial muestra el ajuste y la suspensión', behaviorHistory.includes('Llegadas tarde') && behaviorHistory.includes('−0,5') && behaviorHistory.includes('Se fue antes') && behaviorHistory.includes('Gustavo') && behaviorHistory.includes('Suspendido') && behaviorHistory.includes('No avisó'), behaviorHistory);
+  await page.evaluate(() => { location.hash = '#/registro'; });
+  await page.waitForSelector('#log-list');
+  const behaviorLog = (await page.locator('#log-list').innerText()).replace(/\s+/g, ' ');
+  check('El registro anota el ajuste con quién y cuándo', behaviorLog.includes('ajuste de comportamiento') && behaviorLog.includes('Gustavo') && behaviorLog.includes('Llegadas tarde') && /\d{2}\/\d{2}\/\d{4}/.test(behaviorLog), behaviorLog);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, made.first);
   await page.waitForSelector('.slot:has-text("Suspendido Pérez") .name.suspended');
   await page.locator('.slot:has-text("Suspendido Pérez")').screenshot({ path: '/opt/cursor/artifacts/screenshots/v111-rojo.png' });
@@ -7347,6 +7382,79 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const rolledLink = rolled.split('Respondé en este link: ')[1] || '';
   check('Pasada la medianoche de Buenos Aires ya no dice HOY', rolled === `¡Hola Ana! ¿Confirmás que jugás lunes 19/10 17:30?\n\nRespondé en este link: ${rolledLink}` && rolledLink === hoyLink, rolled);
   await page.clock.setSystemTime(NOW);
+  const manyIds = await page.evaluate(async () => {
+    const app = window.__app;
+    const hoyM = await app.store.addMatch({ date: '2026-10-19', time: '20:00', capacity: 14, note: 'Varios hoy' }, app.who);
+    const mananaM = await app.store.addMatch({ date: '2026-10-20', time: '21:00', capacity: 14, note: 'Varios mañana' }, app.who);
+    const juevesM = await app.store.addMatch({ date: '2026-10-22', time: '19:00', capacity: 14, note: 'Varios jueves' }, app.who);
+    const esperaM = await app.store.addMatch({ date: '2026-10-21', time: '18:00', capacity: 1, note: 'Varios espera' }, app.who);
+    const by = (id) => app.matches.find((match) => match.id === id) || { id };
+    await app.store.addPlayer(by(esperaM), { name: 'Ocupa Varios', phone: '11 7000-1780' }, app.who);
+    const phone = '11 7000-1781';
+    const ids = [];
+    for (const id of [hoyM, mananaM, juevesM]) {
+      ids.push(await app.store.addPlayer(by(id), { name: 'Varios López', phone }, app.who));
+    }
+    ids.push(await app.store.addPlayer(by(esperaM), { name: 'Varios López', phone }, app.who, { waiting: true }));
+    const first = app.players.find((player) => player.id === ids[0]);
+    return { ids, code: first?.shortCode || '', matchId: first?.matchId || '' };
+  });
+  const manyPage = await ctx.newPage();
+  await manyPage.clock.install({ time: NOW });
+  await manyPage.goto(`${BASE}c/?k=${encodeURIComponent(manyIds.code)}`);
+  await manyPage.waitForSelector('#confirm-slots');
+  const manyLines = await manyPage.locator('#confirm-slots li').allInnerTexts();
+  const manyAsk = (await manyPage.locator('#confirm-ask').innerText()).trim();
+  const manyBody = (await manyPage.locator('body').innerText()).replace(/\s+/g, ' ');
+  check('Varios partidos listan HOY, mañana y jueves', manyAsk === '¿Confirmás que jugás estos partidos?' && manyLines.join('|') === 'HOY 20:00|mañana 21:00|jueves 19:00' && !manyBody.includes('18:00') && !manyBody.includes('Ocupa') && (await manyPage.locator('h1').innerText()) === 'Varios', `${manyAsk} ${manyLines.join('|')} ${manyBody.slice(0, 180)}`);
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, manyIds.matchId);
+  await page.waitForSelector('.slot:has-text("Varios López") .wa-btn');
+  const manyWa = decodeURIComponent((await page.getAttribute('.slot:has-text("Varios López") .wa-btn', 'href')).split('text=')[1] || '');
+  const manyLink = manyWa.split('Respondé en este link: ')[1] || '';
+  check('El WhatsApp lista los tres horarios con un solo link', manyWa === `¡Hola Varios! ¿Confirmás que jugás HOY 20:00, mañana 21:00 y jueves 19:00?\n\nRespondé en este link: ${manyLink}` && (manyWa.match(/https?:\/\//g) || []).length === 1, manyWa);
+  await manyPage.click('#btn-si');
+  await manyPage.waitForSelector('#thanks');
+  check('Un sí confirma todos los partidos del link', (await manyPage.locator('#thanks').innerText()).includes('jugás') && await manyPage.locator('#btn-si').count() === 0);
+  const manySaved = await page.evaluate((ids) => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    return ids.map((id) => db.players[id]?.confirmed || null);
+  }, manyIds.ids);
+  check('El sí quedó en los tres partidos y no en la espera', manySaved.join(',') === 'si,si,si,', manySaved.join(','));
+  await manyPage.reload();
+  await manyPage.waitForSelector('#thanks');
+  check('Reabrir el link de varios sigue sin botones', await manyPage.locator('#btn-si').count() === 0 && (await manyPage.locator('#confirm-slots li').allInnerTexts()).join('|') === 'HOY 20:00|mañana 21:00|jueves 19:00');
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, manyIds.matchId);
+  await page.waitForSelector('.slot:has-text("Varios López") .more-btn');
+  await page.locator('.slot', { hasText: 'Varios López' }).locator('.more-btn').click();
+  await page.waitForSelector('#pm-attendance');
+  check('El organizador sigue pudiendo confirmar ese partido', (await page.locator('#pm-attendance').innerText()) === 'Quitar confirmación');
+  await page.locator('dialog.sheet[open] [data-close]').click();
+  await manyPage.close();
+  const noIds = await page.evaluate(async () => {
+    const app = window.__app;
+    const hoy = app.matches.find((match) => match.note === 'Varios hoy');
+    const manana = app.matches.find((match) => match.note === 'Varios mañana');
+    const phone = '11 7000-1783';
+    const a = await app.store.addPlayer(hoy, { name: 'Niega López', phone }, app.who);
+    const b = await app.store.addPlayer(manana, { name: 'Niega López', phone }, app.who);
+    const first = app.players.find((player) => player.id === a);
+    return { ids: [a, b], code: first?.shortCode || '', matchId: hoy?.id || '' };
+  });
+  const noPage = await ctx.newPage();
+  await noPage.clock.install({ time: NOW });
+  await noPage.goto(`${BASE}c/?k=${encodeURIComponent(noIds.code)}`);
+  await noPage.waitForSelector('#btn-no');
+  await noPage.click('#btn-no');
+  await noPage.waitForSelector('#thanks');
+  const noSaved = await page.evaluate((ids) => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    return ids.map((id) => db.players[id]?.confirmed || null);
+  }, noIds.ids);
+  check('No juego marca que no juega en todos esos partidos', (await noPage.locator('#thanks').innerText()).includes('no jugás') && noSaved.join(',') === 'no,no', `${noSaved.join(',')} ${(await noPage.locator('#thanks').innerText())}`);
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, noIds.matchId);
+  await page.waitForFunction(() => [...document.querySelectorAll('#slots .slot')].some((row) => row.innerText.includes('Niega López') && row.innerText.includes('No juega')));
+  check('En el partido, No se ve igual que en uno solo', (await page.locator('#slots .slot', { hasText: 'Niega López' }).innerText()).includes('No juega'));
+  await noPage.close();
 }
 
 {
@@ -7914,8 +8022,21 @@ await fresh.close();
   await page.waitForSelector('#btn-teams');
   await page.click('#btn-teams');
   await page.waitForSelector('#scoreboard [data-score="bib"][data-delta="1"]');
-  await page.dispatchEvent('#scoreboard [data-score="bib"][data-delta="1"]', 'pointerdown', { pointerType: 'touch' });
-  await page.dispatchEvent('#scoreboard [data-score="bib"][data-delta="1"]', 'pointerdown', { pointerType: 'touch' });
+  await page.locator('#scoreboard').scrollIntoViewIfNeeded();
+  await page.evaluate(() => {
+    const btn = document.querySelector('#scoreboard [data-score="bib"][data-delta="1"]');
+    const box = btn.getBoundingClientRect();
+    const x = box.left + box.width / 2;
+    const y = box.top + box.height / 2;
+    const base = { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: true };
+    btn.dispatchEvent(new PointerEvent('pointerdown', { ...base, clientX: x, clientY: y }));
+    btn.dispatchEvent(new PointerEvent('pointermove', { ...base, clientX: x, clientY: y + 30 }));
+    btn.dispatchEvent(new PointerEvent('pointerup', { ...base, clientX: x, clientY: y + 30 }));
+    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y + 30 }));
+  });
+  check('Deslizar sobre el más no cambia el tanteador', (await page.locator('#score-bib').innerText()) === '0');
+  await page.locator('#scoreboard [data-score="bib"][data-delta="1"]').click();
+  await page.locator('#scoreboard [data-score="bib"][data-delta="1"]').click();
   await page.waitForFunction(() => document.querySelector('#score-bib')?.textContent === '2');
   check('Cada toque del más suma un gol', (await page.locator('#score-bib').innerText()) === '2');
   await page.evaluate((id) => window.__app.store.cancelMatch(id, 'fin de la prueba'), soon).catch(() => {});
@@ -7971,6 +8092,50 @@ await fresh.close();
     return guest ? { rosterId: guest.rosterId || '' } : null;
   });
   check('Sin elegir una sugerencia queda el texto escrito', loose?.rosterId === '', JSON.stringify(loose));
+}
+
+{
+  await page.clock.setSystemTime(NOW);
+  const falta = await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Falta Pérez', phone: '5491166661717' }, app.who);
+    const mid = await app.store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14, note: 'Falta' }, app.who);
+    await app.store.addPlayer({ id: mid }, { name: 'Falta Pérez', phone: '5491166661717', rosterId }, app.who);
+    return { rosterId, mid };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, falta.mid);
+  await page.waitForSelector('.slot:has-text("Falta Pérez") .more-btn');
+  await page.click('.slot:has-text("Falta Pérez") .more-btn');
+  await page.waitForSelector('#pm-falta');
+  check('El menú dice Sancionar', (await page.locator('#pm-falta').innerText()).trim() === 'Sancionar');
+  await page.click('#pm-falta');
+  await page.waitForSelector('#falta-form');
+  check('Sancionar arranca en −0,5', (await page.locator('#falta-form h3').innerText()) === 'Sancionar' && (await page.locator('#falta-points').inputValue()) === '0,5' && (await page.locator('#falta-form .deduct-applied').innerText()) === '−');
+  await page.click('#falta-form [data-step="0.5"]');
+  check('El más de la falta suma 0,5', (await page.locator('#falta-points').inputValue()) === '1');
+  await page.click('#falta-form [data-step="-0.5"]');
+  check('El menos de la falta resta 0,5', (await page.locator('#falta-points').inputValue()) === '0,5');
+  await page.selectOption('#falta-reason', 'Llegó tarde');
+  await page.fill('#falta-minutes', '20');
+  await page.fill('#falta-comment', 'Avisó en el camino');
+  await page.click('#falta-form button[type=submit]');
+  await page.waitForFunction((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).some((row) => row.rosterId === rid && row.type === 'falta' && row.points === -0.5 && String(row.reason).includes('20 min')), falta.rosterId);
+  const faltaLog = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).log || {}).find((row) => row.type === 'falta' && row.playerName === 'Falta Pérez') || null);
+  check('El registro anota la falta', !!faltaLog && faltaLog.actorName === 'Gustavo' && String(faltaLog.detail).includes('Llegó tarde') && String(faltaLog.detail).includes('20 min') && faltaLog.at > 0, JSON.stringify(faltaLog));
+  await page.click('.slot:has-text("Falta Pérez") .more-btn');
+  await page.click('#pm-del');
+  await page.waitForSelector('#baja-box');
+  const bajaText = (await page.locator('#app-ask').innerText()).replace(/\s+/g, ' ');
+  check('La baja del mismo día muestra −0,5', bajaText.includes('Corresponde: −0,5') && bajaText.includes('Se bajó el mismo día, más de 3 h antes') && bajaText.includes('Ahora son las') && (await page.locator('#ask-ok').innerText()) === 'Confirmar quita de puntos', bajaText.slice(0, 400));
+  await page.click('#ask-cancel');
+  check('Cancelar la baja no lo quita', await page.locator('.slot:has-text("Falta Pérez")').count() === 1);
+  await page.click('#pm-wait');
+  await page.waitForSelector('#baja-paid');
+  await page.check('#baja-paid');
+  await page.click('#ask-ok');
+  await page.waitForSelector('#wait-list .name:text-is("Falta Pérez")');
+  const bajas = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja').length, falta.rosterId);
+  check('Si pagó igual, bajar a la espera no resta puntos', bajas === 0, String(bajas));
 }
 
 {

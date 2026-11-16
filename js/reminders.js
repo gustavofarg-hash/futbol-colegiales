@@ -1,8 +1,8 @@
 // Recordatorios y links de confirmación. Puro: lo usan la app, la página
 // confirmar.html y las pruebas. No abre WhatsApp ni escribe en Firestore.
-import { attendanceWhen, clockTime, labelDate, toEpoch } from './dates.js';
+import { attendanceWhen, clockTime, confirmScheduleText, confirmSlotLabel, labelDate, todayISO, toEpoch } from './dates.js';
 import { sameOrganizer } from './organizers.js';
-import { givenName } from './roster.js';
+import { givenName, personKey } from './roster.js';
 import { playerAccess } from './access.js';
 import { waSendUrl } from './phone.js';
 import { isShortCode, shortConfirmUrl } from './short.js';
@@ -30,22 +30,25 @@ export function confirmPageUrl({ matchId, playerId, token, origin = publicAppOri
 }
 
 /** WhatsApp para confirmar asistencia. El link es el de esa persona, corto o largo. */
-export function attendanceMessage({ player, roster, when, time, confirmUrl }) {
+export function attendanceMessage({ player, roster, when, time, confirmUrl, slots, now }) {
   const first = givenName(player, roster);
   const hello = first ? `¡Hola ${first}!` : '¡Hola!';
-  const slot = [String(when || '').trim(), clockTime(time)].filter(Boolean).join(' ');
+  const many = Array.isArray(slots) && slots.length >= 2 ? confirmScheduleText(slots, now) : '';
+  const slot = many || [String(when || '').trim(), clockTime(time)].filter(Boolean).join(' ');
   const ask = slot ? `¿Confirmás que jugás ${slot}?` : '¿Confirmás que jugás?';
   const link = String(confirmUrl || '').trim();
   return link ? `${hello} ${ask}\n\nRespondé en este link: ${link}` : `${hello} ${ask}`;
 }
 
-export function reminderMessage({ player, match, confirmUrl, roster, now }) {
+export function reminderMessage({ player, match, confirmUrl, roster, now, slots }) {
   return attendanceMessage({
     player,
     roster,
     when: attendanceWhen(match?.date, now),
     time: match?.time,
     confirmUrl,
+    slots,
+    now,
   });
 }
 
@@ -103,6 +106,63 @@ export function overlayConfirmations(players, cards) {
       confirmedAt: typeof card.confirmedAt === 'number' ? card.confirmedAt : (player.confirmedAt ?? null),
     };
   });
+}
+
+const CONFIRM_ALSO_MAX = 12;
+
+/** Partidos próximos en los que esta persona está anotada, sin lista de espera. */
+export function upcomingConfirmSlots({ players, matches, player, now = new Date() } = {}) {
+  const today = todayISO(now);
+  const key = personKey(player, players);
+  if (!key) return [];
+  const byId = new Map((matches || []).map((match) => [match.id, match]));
+  const rows = [];
+  for (const other of players || []) {
+    const token = String(other?.confirmToken || '');
+    if (token.length < 16 || !other?.id) continue;
+    if (other.waiting === true || other.noPlay === true) continue;
+    if (personKey(other, players) !== key) continue;
+    const match = byId.get(other.matchId);
+    if (!match || match.cancelled === true) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(match.date || '')) || match.date < today) continue;
+    const time = clockTime(match.time);
+    if (!time) continue;
+    rows.push({ token, playerId: other.id, date: match.date, time });
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.playerId.localeCompare(b.playerId));
+  return rows.slice(0, CONFIRM_ALSO_MAX);
+}
+
+/** Lo que la página puede mostrar: horarios de hoy en adelante, sin repetir el token. */
+export function visibleConfirmSlots(list, now = new Date()) {
+  const today = todayISO(now);
+  const out = [];
+  const seen = new Set();
+  for (const row of list || []) {
+    const token = String(row?.token || '');
+    const playerId = String(row?.playerId || '');
+    const date = String(row?.date || '');
+    const time = clockTime(row?.time);
+    if (token.length < 16 || token.length > 80 || !playerId || playerId.length > 80) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < today || !time) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    const confirmed = row?.confirmed === 'si' || row?.confirmed === 'no' ? row.confirmed : null;
+    out.push({ token, playerId, date, time, confirmed });
+  }
+  return out;
+}
+
+export function confirmSlotText(slot, now = new Date()) {
+  return confirmSlotLabel(slot?.date, slot?.time, now);
+}
+
+/** Si todos contestaron lo mismo, esa respuesta. Si falta alguna, null. */
+export function sharedConfirmAnswer(slots) {
+  if (!slots?.length) return null;
+  const first = slots[0]?.confirmed;
+  if (first !== 'si' && first !== 'no') return null;
+  return slots.every((slot) => slot?.confirmed === first) ? first : null;
 }
 
 /** El link solo vale si el token del jugador coincide y es de ese partido. */
@@ -257,9 +317,11 @@ export function cancelLinks({ match, players, venue, choice, android } = {}) {
  * Omite a quien no tenga teléfono o confirmToken: el token tiene que estar ya
  * guardado en el jugador (se crea al anotarlo).
  */
-export function reminderLinks({ match, players, venue, origin, choice, android, roster, now } = {}) {
+export function reminderLinks({ match, players, venue, origin, choice, android, roster, now, allPlayers, matches } = {}) {
   const out = [];
   if (!match?.id) return out;
+  const pool = allPlayers || players;
+  const calendar = matches || [match];
   for (const p of players || []) {
     if (p?.waiting === true) continue;
     const phone = String(p?.phone || '').trim();
@@ -268,7 +330,8 @@ export function reminderLinks({ match, players, venue, origin, choice, android, 
     const confirmUrl = isShortCode(p.shortCode)
       ? shortConfirmUrl(p.shortCode, origin)
       : confirmPageUrl({ matchId: match.id, playerId: p.id, token, origin });
-    const text = reminderMessage({ player: p, match, confirmUrl, roster, now });
+    const slots = upcomingConfirmSlots({ players: pool, matches: calendar, player: p, now });
+    const text = reminderMessage({ player: p, match, confirmUrl, roster, now, slots });
     out.push({ id: p.id, name: p.name, phone, text, waUrl: waSendUrl({ phone, text, choice, android }), confirmUrl });
   }
   return out;

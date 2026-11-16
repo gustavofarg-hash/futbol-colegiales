@@ -11,7 +11,7 @@ import {
 import { autoCreditExcess, autoCreditTake, awaitingItems, awaitingText, collectedLine, formatARS, isFreePlay, organizerDayCash, organizerReceipts, parseAmount, payBatchCollectorNames, payBatchSnapshot, paymentFailureText, paymentHeadline, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, revertPayBatch, samePaySnapshot, hasPaymentDirection, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder, annulCreditDeltas } from './payments.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from './waiting.js';
 import {
-  attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow,
+  attendanceMessage, cancelLinks, confirmPageUrl, confirmStatus, confirmSummary, matchesCrossingReminderWindow, upcomingConfirmSlots,
   needsReminderBanner, playersForOrganizer, promotionMessage, reminderDueAt, reminderLinks, reminderProgress, unconfirmedForReminder,
   reservationClearedByAnswer,
 } from './reminders.js';
@@ -30,6 +30,7 @@ import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
+import { BAJA_TIERS, bajaPreview, bajaReasonText, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, stepPointInput } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
@@ -38,14 +39,14 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { tapChose } from './tap.js';
+import { bindTap, tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_WRITE, capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, isVenueDenied, matchCapacity, matchVenueId, perTeamOf, perTeamOptions, venueChoices, venueLabel,
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v167';
+const APP_VERSION = 'f7c-v180';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -87,18 +88,8 @@ function queueScore(matchId, side, delta) {
   scoreWrites.set(matchId, prev.catch(() => {}).then(() => app.store.adjustScore(matchId, side, delta, app.who)));
 }
 function bindScoreTap(board, matchId) {
-  if (!board) return;
-  board.addEventListener('pointerdown', (e) => {
-    const btn = e.target.closest('[data-score]');
-    if (!btn || (e.button && e.button > 0)) return;
-    e.preventDefault();
+  bindTap(board, '[data-score]', (btn) => {
     goalTapAt = Date.now();
-    queueScore(matchId, btn.dataset.score, Number(btn.dataset.delta));
-  });
-  board.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-score]');
-    if (!btn) return;
-    if (Date.now() - goalTapAt < 700) return;
     queueScore(matchId, btn.dataset.score, Number(btn.dataset.delta));
   });
 }
@@ -203,6 +194,7 @@ const ICON = {
   copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>',
+  cards: '<svg class="cards-icon" viewBox="0 0 24 24" aria-hidden="true"><rect class="card-back" x="8.2" y="2.6" width="11.2" height="15.4" rx="2" transform="rotate(12 13.8 10.3)"/><rect class="card-front" x="3.2" y="6.2" width="11.2" height="15.4" rx="2" transform="rotate(-8 8.8 13.9)"/></svg>',
   more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg>',
 };
 
@@ -1349,7 +1341,7 @@ function oweBox(m) {
   const rows = debt.rows.map((row) => {
     const player = app.players.find((item) => item.id === row.id);
     const name = player ? shownName(player) : row.name;
-    return `<li><button type="button" class="owe-player${player ? suspendedClass(player) : ''}" data-owe-player="${esc(row.id)}"><span>${esc(name)}</span><b>${esc(formatARS(row.owed))}</b></button></li>`;
+    return `<li><button type="button" class="owe-player${player ? suspendedClass(player) : ''}" data-owe-player="${esc(row.id)}"><span>${player ? suspendedName(player, name) : esc(name)}</span><b>${esc(formatARS(row.owed))}</b></button></li>`;
   }).join('');
   return `<div class="owe-box${open ? ' open' : ''}" data-owe="${esc(m.id)}">
     <button type="button" class="owe-toggle" data-owe-toggle="${esc(m.id)}" aria-expanded="${open ? 'true' : 'false'}" aria-label="${open ? 'Ocultar quién falta pagar' : 'Ver quién falta pagar'}">
@@ -1465,7 +1457,7 @@ function renderTeams(id) {
         : `<button type="button" class="arco-btn${player.inGoal === true ? ' on' : ''}" data-arco aria-pressed="${player.inGoal === true ? 'true' : 'false'}" aria-label="${player.inGoal === true ? 'Ya fue al arco' : 'Marcar que fue al arco'}">${goalIco}${goalMark}</button>`;
       const tools = `<span class="team-tools"><button type="button" class="team-ico" data-assign="${other}" aria-label="${otherLabel} a ${esc(shownName(player))}">${otherIcon}</button><button type="button" class="team-x" data-assign="none" aria-label="Sacar a ${esc(shownName(player))} de este equipo">✕</button></span>`;
       const controls = `<span class="team-side">${goalBox}${tools}${arco}</span>`;
-      const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
+      const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${suspendedName(player, shownName(player))}</button>`;
       rows.push(readOnly
         ? `<li class="team-row" data-team-player="${esc(player.id)}">${name}<span class="team-side">${goalBox}${arco}</span></li>`
         : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}" data-team-player="${esc(player.id)}">${name}${controls}</li>`);
@@ -1473,7 +1465,7 @@ function renderTeams(id) {
     return rows.join('');
   };
   const freeRows = free.map((player) => {
-    const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${esc(shownName(player))}</button>`;
+    const name = `<button type="button" class="team-name${suspendedClass(player)}" data-team-name="${esc(player.id)}" draggable="false">${suspendedName(player, shownName(player))}</button>`;
     return readOnly
       ? `<li class="team-row" data-team-player="${esc(player.id)}">${name}</li>`
       : `<li class="team-row" draggable="true" data-drag-player="${esc(player.id)}" data-team-player="${esc(player.id)}">${name}<span class="team-tools"><button type="button" class="team-ico" data-assign="bib" aria-label="Con pechera para ${esc(shownName(player))}">${vest}</button><button type="button" class="team-ico" data-assign="plain" aria-label="Sin pechera para ${esc(shownName(player))}">${shirt}</button></span></li>`;
@@ -1992,7 +1984,7 @@ function usualSection(m) {
       ? `<a class="wa-btn" href="${esc(waSendUrl({ phone, text: '' }))}" target="_blank" rel="noopener" aria-label="WhatsApp a ${esc(row.name)}">${ICON.wa}</a>`
       : '';
     const times = `${row.count} ${row.count === 1 ? 'partido' : 'partidos'}`;
-    return `<li class="slot usual-row" data-usual="${esc(row.key)}"><div class="who"><div class="name">${esc(row.name)}</div><div class="sub"><span>${esc(times)}</span></div></div>${wa}</li>`;
+    return `<li class="slot usual-row" data-usual="${esc(row.key)}"><div class="who"><div class="name${suspendedClass(row.sample)}">${suspendedName(row.sample, row.name)}</div><div class="sub"><span>${esc(times)}</span></div></div>${wa}</li>`;
   }).join('');
   return `<h2 class="section" id="usual-title">Suelen anotarse para jugar este día y hora:</h2><ul class="slots" id="usual-list">${items}</ul>`;
 }
@@ -2139,8 +2131,8 @@ function renderMatch(id) {
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
     ${waitingSection(m, everyone.length >= cap, readOnly)}
-    ${usualSection(m)}
     ${noPlaySection(m, readOnly)}
+    ${usualSection(m)}
     ${canEdit && signed > 0 && !m.cancelled && !matchAlreadyPlayed(m) ? '<button type="button" class="btn danger solid block" id="btn-cancel-match">Cancelar partido</button>' : ''}
     ${showMatchCompensation(m) ? matchCompensationHtml(m.date) : ''}
     <div class="actionbar"><div class="actionbar-inner match-actions">
@@ -2236,12 +2228,14 @@ function placeLine(m) {
   return court ? `${placeOf(m)} (${court})` : placeOf(m);
 }
 function waMessage(m, p) {
+  const slots = upcomingConfirmSlots({ players: app.players, matches: app.matches, player: p });
   return attendanceMessage({
     player: p,
     roster: app.roster,
     when: attendanceWhen(m?.date),
     time: m?.time,
     confirmUrl: confirmUrlFor(m, p),
+    slots,
   });
 }
 function listText(m) {
@@ -2259,7 +2253,8 @@ function listText(m) {
     const pay = p ? paymentStatusText(p) : '';
     const hold = p?.tentative === true ? 'a confirmar' : '';
     const bits = [pay, hold].filter(Boolean).join(' · ');
-    lines.push(`${i + 1}. ${p ? shownName(p) + friendSuffix(p) : ''}${bits ? ` — ${bits}` : ''}`);
+    const suspended = p && suspendedClass(p) ? ' (suspendido)' : '';
+    lines.push(`${i + 1}. ${p ? shownName(p) + suspended + friendSuffix(p) : ''}${bits ? ` — ${bits}` : ''}`);
   }
   lines.push('', ps.length >= cap ? '✅ ¡Completo!' : `Faltan ${cap - ps.length}`);
   const collected = collectedLine(ps);
@@ -2272,14 +2267,14 @@ function listText(m) {
     lines.push('', 'No jugó pero pagó:');
     aside.forEach((p, i) => {
       const pay = paymentStatusText(p);
-      lines.push(`${i + 1}. ${shownName(p)}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
+      lines.push(`${i + 1}. ${shownName(p)}${suspendedClass(p) ? ' (suspendido)' : ''}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
     });
   }
   if (wait.length) {
     lines.push('', 'Lista de espera:');
     wait.forEach((p, i) => {
       const pay = paymentStatusText(p);
-      lines.push(`${i + 1}. ${shownName(p)}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
+      lines.push(`${i + 1}. ${shownName(p)}${suspendedClass(p) ? ' (suspendido)' : ''}${friendSuffix(p)}${pay ? ` — ${pay}` : ''}`);
     });
   }
   return lines.join('\n');
@@ -2367,7 +2362,7 @@ function reminderBanners(matches) {
   return `<div class="remind-banners">${due.map((m) => {
     const mine = myReminderPlayers(m.id);
     const prog = reminderProgress(mine);
-    const missing = unconfirmedForReminder(mine).map((player) => `<li>${esc(shownName(player))}</li>`).join('');
+    const missing = unconfirmedForReminder(mine).map((player) => `<li class="${suspendedClass(player).trim()}">${suspendedName(player, shownName(player))}</li>`).join('');
     return `<button type="button" class="remind-banner" data-remind-banner="${esc(m.id)}">
       <strong>${REMINDER_BANNER}</strong>
       <small>${esc(capitalize(labelDate(m.date)))} · ${esc(m.time || '--:--')} hs · ${prog.sent} de ${prog.total} enviados</small>
@@ -2411,8 +2406,11 @@ async function openReminders(m) {
     confirmToken: tokens.get(p.id) || p.confirmToken,
     shortCode: codes.get(p.id) || p.shortCode,
   }));
+  const rosterNow = new Map(app.players.map((player) => [player.id, player]));
+  for (const player of fresh) rosterNow.set(player.id, { ...rosterNow.get(player.id), ...player });
   const linkById = new Map(reminderLinks({
     match: m, players: fresh, venue: placeOf(m), roster: app.roster,
+    allPlayers: [...rosterNow.values()], matches: app.matches,
   }).map((row) => [row.id, row]));
   const externalById = new Map();
   const hrefFor = (link) => {
@@ -2436,14 +2434,14 @@ async function openReminders(m) {
     const rows = visible.map((p) => {
       const link = linkById.get(p.id);
       if (phoneHidden(p)) {
-        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub private-wa">${esc(PRIVATE_WA_TEXT)}</div></div></li>`;
+        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${suspendedName(p, p.name)}</div><div class="sub private-wa">${esc(PRIVATE_WA_TEXT)}</div></div></li>`;
       }
       if (!link) {
-        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub">Sin número de WhatsApp</div></div><button type="button" class="btn" data-remind-phone="${esc(p.id)}">Cargar WhatsApp</button></li>`;
+        return `<li class="remind-row"><div class="who"><div class="name${suspendedClass(p)}">${suspendedName(p, p.name)}</div><div class="sub">Sin número de WhatsApp</div></div><button type="button" class="btn" data-remind-phone="${esc(p.id)}">Cargar WhatsApp</button></li>`;
       }
       const sent = !!p.reminderSentAt;
       return `<li class="remind-row" data-remind="${esc(p.id)}">
-        <div class="who"><div class="name${suspendedClass(p)}">${esc(p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
+        <div class="who"><div class="name${suspendedClass(p)}">${suspendedName(p, p.name)}</div><div class="sub">${sent ? '<span class="sent">Enviado</span>' : 'Listo para enviar'}</div></div>
         <a class="btn primary" href="${esc(hrefFor(link))}" target="_blank" rel="noopener" data-send="${esc(p.id)}">${sent ? 'Enviar de nuevo' : 'Enviar'}</a>
       </li>`;
     }).join('');
@@ -4200,7 +4198,7 @@ function statsPlayerBody(id) {
       return `<li class="slot" data-month="${esc(row.key)}"><div class="who"><div class="name">${esc(row.label)}</div><div class="sub"><span>${count}</span><span>${esc(formatARS(row.paid))}</span></div></div></li>`;
     }).join('');
     months = `
-      <h2 class="section${suspendedClass(person)}" id="stats-player">${esc(person.name)}</h2>
+      <h2 class="section${fichaSuspended(person)}" id="stats-player">${fichaName(person, person.name)}</h2>
       <ul class="slots" id="stats-months">${monthRows || '<li class="empty-wait">No jugó ni pagó con vos.</li>'}</ul>`;
   }
   let list = '';
@@ -4209,7 +4207,7 @@ function statsPlayerBody(id) {
       list = '<p class="empty-wait" id="stats-hint">Buscá por nombre o teléfono.</p>';
     } else {
       const people = searchRoster(mine, q);
-      const rows = people.map((item) => `<li class="slot"><a class="who" href="${statsHash('jugador', item.id)}"><div class="name${suspendedClass(item)}">${esc(item.name)}</div></a></li>`).join('');
+      const rows = people.map((item) => `<li class="slot"><a class="who" href="${statsHash('jugador', item.id)}"><div class="name${fichaSuspended(item)}">${fichaName(item, item.name)}</div></a></li>`).join('');
       list = people.length
         ? `<ul class="slots" id="stats-players">${rows}</ul>`
         : `<p class="empty-wait" id="stats-players">${q ? 'Nadie coincide con esa búsqueda.' : 'No hay jugadores en tu agenda.'}</p>`;
@@ -4422,7 +4420,7 @@ function confirmQueueHtml() {
     <h2 class="section">Para confirmar</h2>
     <p class="hint" id="confirm-count">Tenés ${n} ${n === 1 ? 'pago' : 'pagos'} para confirmar.</p>
     <ul class="slots" id="confirm-list">${rows.map((row) => `<li class="slot confirm-row">
-      <label class="checkline"><input type="checkbox" data-confirm-pick="${esc(row.id)}" data-player="${esc(row.player.id)}"><span>${esc(row.player.name)} · ${esc(row.match ? fmtWhen(row.match) : '')} · ${kind(row)} ${esc(formatARS(row.amount))}</span></label>
+      <label class="checkline"><input type="checkbox" data-confirm-pick="${esc(row.id)}" data-player="${esc(row.player.id)}"><span class="${suspendedClass(row.player).trim()}">${suspendedName(row.player, row.player.name)} · ${esc(row.match ? fmtWhen(row.match) : '')} · ${kind(row)} ${esc(formatARS(row.amount))}</span></label>
       <div class="slot-actions"><button type="button" class="btn" data-confirm-ok="${esc(row.id)}" data-player="${esc(row.player.id)}">Confirmar</button><button type="button" class="btn" data-confirm-no="${esc(row.id)}" data-player="${esc(row.player.id)}">Rechazar</button></div>
     </li>`).join('')}</ul>
     <button type="button" class="btn primary" id="confirm-many">Confirmar seleccionados</button>
@@ -4560,9 +4558,9 @@ function renderProfile(id) {
   const own = canEditRoster(person, actor());
   const lockNote = own ? '' : `<p class="hint edit-lock" id="edit-lock">${esc(EDIT_LOCK_TEXT)}</p>`;
   const money = profileMoney(person);
+  const conduct = behaviorCard(person);
   const painted = replaceView(`
     <article id="profile">
-      ${suspensionControls(person).html}
       <div class="name-share">
         <h2 class="section${fichaSuspended(person)}">${fichaName(person, person.name)}</h2>
         ${playerShareButton('profile-share')}
@@ -4601,6 +4599,7 @@ function renderProfile(id) {
         ${record.confirmText ? `<p class="hint" id="stat-confirm">${esc(record.confirmText)}</p>` : ''}
       </section>
       ${money.html}
+      ${conduct.html}
     </article>`);
   if (app.wantPhoneForm) {
     app.wantPhoneForm = false;
@@ -4608,8 +4607,8 @@ function renderProfile(id) {
   }
   if (!painted) return;
   bindPlayerPanel($('#profile'), null, person, PROFILE_PANEL, money.panel);
-  const profileSuspend = suspensionControls(person);
-  bindSuspensionControls($('#profile'), profileSuspend.rosterId, profileSuspend.card);
+  bindSuspensionControls($('#profile'), conduct.rosterId, conduct.card);
+  bindBehavior($('#profile'), person);
   const profileShare = $('#profile-share');
   if (profileShare) profileShare.onclick = () => copyPlayerLink(person.id);
   const addPhone = $('#profile-add-phone');
@@ -4827,8 +4826,7 @@ function bindPartidos(person) {
     const match = player ? matchById(player.matchId) : null;
     if (!player || !match) return;
     if (!canAdd(match, actor().uid)) { toast('Este partido es de solo lectura.'); return; }
-    if (!(await askConfirm(`¿Quitar a ${person.name} de ${labelDate(match.date)} ${match.time || ''} hs?`, { danger: true }))) return;
-    removeMatchPlayer(match, player, { asked: true });
+    removeMatchPlayer(match, player);
   });
   button.onclick = async () => {
     const chosen = [];
@@ -4956,7 +4954,7 @@ function bindGuestSuggest(field, hits, match) {
     hits.innerHTML = matches.map((person) => {
       const taken = match ? signupError(match.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]) : '';
       const detail = [cleanShortName(person.shortName), person.phone ? displayFromWa(person.phone) : phoneHidden(person) ? PRIVATE_WA_TEXT : 'Sin número'].filter(Boolean).join(' · ');
-      return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${esc(detail)}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+      return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${fichaSuspended(person)}" data-pick="${esc(person.id)}"${taken ? ' disabled' : ''}><b>${fichaName(person, person.name)}</b><small>${esc(detail)}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
     }).join('');
   };
   const choose = (id) => {
@@ -5396,7 +5394,7 @@ function openPlayerForm(m, p, opts = {}) {
         const taken = signupError(m.id, [{ name: person.name, phone: person.phone || '', rosterId: person.id, phoneKey: person.phoneKey, hasPhone: person.hasPhone === true }]);
         const detail = person.phone ? esc(displayFromWa(person.phone)) : phoneHidden(person) ? esc(PRIVATE_WA_TEXT) : 'Sin número';
         const on = person.id === pickedId;
-        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${on ? ' on' : ''}${suspendedClass(person)}" data-pick="${esc(person.id)}"${on ? ' aria-pressed="true"' : ''}${taken ? ' disabled' : ''}><b>${esc(person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
+        return `<li><button type="button" class="roster-hit${taken ? ' taken' : ''}${on ? ' on' : ''}${fichaSuspended(person)}" data-pick="${esc(person.id)}"${on ? ' aria-pressed="true"' : ''}${taken ? ' disabled' : ''}><b>${fichaName(person, person.name)}</b><small>${detail}</small>${taken ? '<small class="taken">Ya anotado</small>' : ''}</button></li>`;
       }).join('');
     };
     let pickedPhone = '';
@@ -5874,7 +5872,12 @@ function pendingTransferReminderRow(m, p, pending) {
   const hidden = phoneHidden(view);
   const why = hidden ? PRIVATE_WA_TEXT : 'Sin número';
   const owed = playerDebt({ person: p, players: app.players, matches: knownMatches(), prices: livePrices(), organizer: actor(), playedOnly: true });
-  const text = transferReminderText(givenName(p, app.roster), transferReminderWhen(m?.date), owed.rows?.length || 0);
+  const debtDates = (owed.rows || []).map((row) => row.date);
+  const text = transferReminderText(
+    givenName(p, app.roster),
+    transferReminderWhen(m?.date),
+    debtDates.length >= 2 ? debtDates : (owed.rows?.length || 0),
+  );
   const remind = phone && !hidden
     ? `<a class="btn pay-remind" id="btn-pending-remind" href="${esc(waHref(phone, text))}" target="_blank" rel="noopener">${ICON.wa}<span>Enviar recordatorio</span></a>`
     : `<button type="button" class="btn pay-remind" id="btn-pending-remind" disabled>${ICON.wa}<span>Enviar recordatorio</span></button>`;
@@ -5940,7 +5943,7 @@ function openPaymentForm(m, p, opts = {}) {
       <h3>Pago</h3>
       <div class="pay-who" id="pay-who">
         <p class="pay-when" id="pay-when">${esc(fmtWhen(m))}</p>
-        <p class="pay-name" id="pay-name">${esc(p.name)}</p>
+        <p class="pay-name${suspendedClass(p)}" id="pay-name">${suspendedName(p, p.name)}</p>
       </div>
       <div id="pay-status"></div>
       <div id="pay-promo">${promo ? `<div class="promo-badge">${esc(promo.label)}</div>` : ''}</div>
@@ -6323,7 +6326,7 @@ function openPaymentForm(m, p, opts = {}) {
       if (row.pending > 0) bits.push(`Transfiere después ${formatARS(row.pending)}`);
       if (row.credit > 0) bits.push(`Crédito ${formatARS(row.credit)}`);
       const money = bits.length ? bits.join(' · ') : 'sin pago';
-      return `<li><span class="${suspendedClass(row.person).trim()}">${esc(shownName(row.person))}</span><b>${esc(money)}</b></li>`;
+      return `<li><span class="${suspendedClass(row.person).trim()}">${suspendedName(row.person, shownName(row.person))}</span><b>${esc(money)}</b></li>`;
     }).join('');
     const notes = splitLeftoverCredit({
       playerName: shownName(p),
@@ -7113,6 +7116,178 @@ function openCreditReturnForm({ player, person, panel }) {
   };
 }
 
+function behaviorReason(entry) {
+  const reason = entry?.type === 'falta' ? faltaReasonText(entry?.reason) : bajaReasonText(entry?.reason);
+  if (entry?.type === 'suspension') return reason ? `Suspendido · ${reason}` : 'Suspendido';
+  if (entry?.type === 'lift') return 'Suspensión levantada';
+  return reason;
+}
+
+function canDeleteBehavior(entry) {
+  if (!entry?.id) return false;
+  const me = actor();
+  return app.role === 'admin' || (!!me.uid && entry.createdByUid === me.uid);
+}
+
+function behaviorRow(entry) {
+  const showPoints = entry?.type === 'manual' || entry?.type === 'falta' || entry?.type === 'baja';
+  const points = showPoints ? formatBehaviorPoints(entry.points) : '';
+  const tone = Number(entry?.points) < 0 ? 'down' : 'up';
+  const comment = String(entry?.comment || '').trim();
+  const trash = canDeleteBehavior(entry)
+    ? `<button type="button" class="behavior-del" data-behavior-del="${esc(entry.id)}" aria-label="Borrar esta entrada">${ICON.trash}</button>`
+    : '';
+  return `<li class="behavior-row">
+    <div class="behavior-main"><span>${esc(numericDate(entry?.date) || '')}</span><span>${esc(behaviorReason(entry))}</span>${points ? `<b class="behavior-points ${tone}">${esc(points)}</b>` : ''}<span>${esc(entry?.createdByName || '')}</span>${trash}</div>
+    ${comment ? `<p class="behavior-comment">${esc(comment)}</p>` : ''}
+  </li>`;
+}
+
+function behaviorCard(person) {
+  const rosterId = person?.id || '';
+  const mine = (app.behavior || []).filter((row) => row.rosterId === rosterId);
+  const score = formatBehaviorScore(behaviorScore(mine)).split('/')[0] || '10';
+  const timeline = behaviorTimeline({
+    rosterId,
+    entries: app.behavior,
+    suspensions: app.suspensions,
+    suspensionHistory: app.suspensionHistory,
+    nameOf: organizerLabel,
+  });
+  const lines = timeline.length ? timeline.map(behaviorRow).join('') : '<li class="behavior-row">Sin movimientos.</li>';
+  const own = canEditRoster(person, actor());
+  const suspend = suspensionControls(person);
+  return {
+    ...suspend,
+    html: `<section class="profile-block behavior-card" id="comportamiento">
+      <div class="behavior-head">
+        <h2>Comportamiento</h2>
+        <button type="button" class="behavior-chev" id="behavior-history-toggle" aria-expanded="false" aria-label="Ver historial"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+      <p class="behavior-avg">Promedio: <b id="behavior-score">${esc(score)}</b> / 10</p>
+      ${suspend.html}
+      <div id="behavior-more" hidden>
+        <ul class="behavior-history" id="behavior-history" hidden>${lines}</ul>
+        ${own ? '<button type="button" class="btn" id="behavior-adjust">Ajuste manual</button>' : ''}
+      </div>
+    </section>`,
+  };
+}
+
+function bindBehavior(root, person) {
+  const card = root?.querySelector('#comportamiento');
+  const toggle = root?.querySelector('#behavior-history-toggle');
+  const more = root?.querySelector('#behavior-more');
+  const list = root?.querySelector('#behavior-history');
+  if (toggle && more && list) toggle.onclick = () => {
+    const show = more.hidden;
+    more.hidden = !show;
+    list.hidden = !show;
+    card?.classList.toggle('open', show);
+    toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+  };
+  const adjust = root?.querySelector('#behavior-adjust');
+  if (adjust) adjust.onclick = () => openBehaviorForm(person);
+  if (list && list.dataset.bound !== '1') {
+    list.dataset.bound = '1';
+    list.onclick = async (event) => {
+      const btn = event.target.closest('[data-behavior-del]');
+      if (!btn || btn.disabled) return;
+      btn.disabled = true;
+      if (!(await askConfirm('¿Borrar esta entrada?', { danger: true }))) {
+        btn.disabled = false;
+        return;
+      }
+      try {
+        await app.store.deleteBehavior(btn.dataset.behaviorDel);
+      } catch (error) {
+        btn.disabled = false;
+        toast(error?.code === 'permission-denied'
+          ? 'Hay que publicar las reglas de Firestore para borrar una entrada de comportamiento.'
+          : (error?.message || 'No se pudo borrar.'));
+      }
+    };
+  }
+}
+
+function paintPointField(input, signed) {
+  if (!input) return;
+  if (signed) {
+    const raw = String(input.value || '').trim().replace('−', '-').replace('+', '').replace(',', '.');
+    const n = Number(raw);
+    const sign = !Number.isFinite(n) || n === 0 ? 0 : (String(input.value).trim().startsWith('-') || String(input.value).trim().startsWith('−') ? -1 : 1);
+    const value = sign * Math.abs(n);
+    input.classList.toggle('down', value < 0);
+    input.classList.toggle('up', value > 0);
+    return;
+  }
+  const mark = input.closest('.stepper')?.querySelector('.deduct-applied');
+  if (!mark) return;
+  const parsed = parseBajaPoints(input.value);
+  const points = parsed.ok ? parsed.points : 0;
+  mark.textContent = points === 0 ? '' : '−';
+  mark.classList.toggle('down', points < 0);
+}
+
+function bindPointStepper(scope, input, { signed = false } = {}) {
+  const box = input?.closest('.stepper');
+  if (!scope || !input || !box || box.dataset.stepper === '1') return;
+  box.dataset.stepper = '1';
+  const paint = () => paintPointField(input, signed);
+  bindTap(box, '[data-step]', (btn) => {
+    if (input.disabled) return;
+    input.value = stepPointInput(input.value, btn.dataset.step, { signed });
+    paint();
+  });
+  input.addEventListener('input', paint);
+  paint();
+}
+
+function openBehaviorForm(person) {
+  openSheet(`
+    <form id="behavior-form" novalidate>
+      <h3>Ajuste manual</h3>
+      <label class="field"><span>Puntos</span><div class="stepper points-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><input id="behavior-points" inputmode="decimal" autocomplete="off" placeholder="Ej: −0,5"><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div></label>
+      <label class="field"><span>Motivo</span><input id="behavior-reason" maxlength="200" autocomplete="off"></label>
+      <label class="field"><span>Comentario (opcional)</span><input id="behavior-comment" maxlength="300" autocomplete="off"></label>
+      <div class="field"><div class="err" id="behavior-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#behavior-form');
+  if (!form || !person) return;
+  bindPointStepper(form, $('#behavior-points'), { signed: true });
+  let savingBehavior = false;
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    if (savingBehavior) return;
+    savingBehavior = true;
+    const submit = form.querySelector('button[type=submit]');
+    if (submit) submit.disabled = true;
+    const err = $('#behavior-err');
+    try {
+    const parsed = parseBehaviorPoints($('#behavior-points')?.value);
+    if (!parsed.ok) { if (err) err.textContent = parsed.error; return; }
+    const reason = String($('#behavior-reason')?.value || '').trim();
+    if (!reason) { if (err) err.textContent = 'Poné el motivo.'; return; }
+      await app.store.addBehavior(person.id, {
+        type: 'manual',
+        points: parsed.points,
+        reason,
+        comment: $('#behavior-comment')?.value || '',
+      });
+      closeSheet();
+    } catch (error) {
+      if (!err) return;
+      if (error?.code === 'permission-denied') err.textContent = 'Hay que publicar las reglas de Firestore para la colección behavior.';
+      else if (error?.code === 'edit-locked') err.textContent = EDIT_LOCK_TEXT;
+      else err.textContent = error?.message || 'No se pudo guardar.';
+    } finally {
+      savingBehavior = false;
+      if (submit && form.isConnected) submit.disabled = false;
+    }
+  };
+}
+
 function suspensionCard(source) {
   if (source && !source.matchId && rosterHeldBy(source, actor())) return source;
   return heldCard(source);
@@ -7280,7 +7455,7 @@ function openPlayerMenu(m, p) {
       ${playerShareButton('pm-share')}
     </div>
     <div class="player-panel" id="menu-panel">${panel.nickHtml}${panel.balance}${panel.err}${panel.notesHtml}${panel.statsButton}</div>
-    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name" class="${suspendedClass(p).trim()}">${esc(p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
+    <p class="hint">${fullNameBehind(p, app.roster) ? `<span id="menu-full-name" class="${suspendedClass(p).trim()}">${suspendedName(p, p.name)}</span> · ` : ''}${phoneView.phone ? esc(displayFromWa(phoneView.phone)) + ' · ' : phoneHidden(phoneView) ? esc(PRIVATE_WA_TEXT) + ' · ' : ''}Agregó: ${esc(p.addedBy || '?')}</p>
     <div class="menu-pay" id="menu-pay">${payLine}</div>
     ${canAnnotate ? signupFields(p, match) : (p.signedUpWithName ? `<p class="hint" id="signed-up-line">Se anotó con: ${esc(p.signedUpWithName)}</p>` : '')}
     <div class="menu">
@@ -7296,6 +7471,7 @@ function openPlayerMenu(m, p) {
       ${!isWaiting(p) && !isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-wait">Bajar a lista de espera</button>' : ''}
       ${!isWaiting(p) && !isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-no-play">No jugó pero pagó</button>' : ''}
       ${isNoPlay(p) && canAnnotate ? '<button class="btn" id="pm-back">Volver al partido</button>' : ''}
+      ${canAnnotate && !isWaiting(p) && !isNoPlay(p) ? `<button class="btn" id="pm-falta">${ICON.cards}Sancionar</button>` : ''}
       <button class="btn danger" id="pm-del">${ICON.trash}${isWaiting(p) ? 'Quitar de la espera' : 'Quitar del partido'}</button>
       <button class="btn ghost" data-close>Cancelar</button>
     </div>`);
@@ -7330,6 +7506,8 @@ function openPlayerMenu(m, p) {
     render();
     run(app.store.setAttendance(p.id, yes ? 'si' : null), yes ? 'Quedó confirmado' : 'Se quitó la confirmación');
   };
+  const faltaBtn = $('#pm-falta');
+  if (faltaBtn && match) faltaBtn.onclick = () => openFaltaForm(match, p);
   if (match && !$('#pm-edit').disabled) $('#pm-edit').onclick = () => openPlayerForm(match, p);
   const addGuest = $('#pm-friend');
   if (addGuest && match) addGuest.onclick = () => openFriendForm(match, p);
@@ -7626,17 +7804,214 @@ async function restoreNoPlay(m, p) {
   })(), `${shownName(p)} volvió al partido`);
 }
 
+function behaviorMatchLabel(match) {
+  if (!match?.date) return '';
+  return `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} hs`;
+}
+
+function askPanel(html, { danger = false, okText = 'Aceptar', read } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let pushed = false;
+    const finish = (value, fromPop = false) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('popstate', onPop);
+      ask.removeEventListener('cancel', onCancel);
+      ask.removeEventListener('close', onClose);
+      ask.onclick = null;
+      if (ask.open) ask.close();
+      if (pushed && !fromPop) {
+        const done = () => {
+          window.removeEventListener('popstate', done);
+          resolve(value);
+        };
+        window.addEventListener('popstate', done);
+        history.back();
+        return;
+      }
+      resolve(value);
+    };
+    const onPop = () => finish(null, true);
+    const onCancel = (event) => { event.preventDefault(); finish(null); };
+    const onClose = () => finish(null);
+    ask.innerHTML = `<div class="ask-card" id="app-ask">${html}<div class="sheet-actions"><button type="button" class="btn" id="ask-cancel">Cancelar</button><button type="button" class="btn ${danger ? 'danger solid' : 'primary'}" id="ask-ok">${esc(okText)}</button></div></div>`;
+    const cancelBtn = ask.querySelector('#ask-cancel');
+    if (cancelBtn) cancelBtn.onclick = () => finish(null);
+    let savingAsk = false;
+    ask.querySelector('#ask-ok').onclick = () => {
+      if (savingAsk) return;
+      if (!read) { finish(true); return; }
+      const value = read();
+      if (value == null) return;
+      savingAsk = true;
+      const button = ask.querySelector('#ask-ok');
+      if (button) button.disabled = true;
+      finish(value);
+    };
+    ask.onclick = (event) => { if (event.target === ask) finish(null); };
+    ask.addEventListener('cancel', onCancel);
+    ask.addEventListener('close', onClose);
+    if (!ask.open) ask.showModal();
+    ask.querySelector('#ask-ok').focus();
+    history.pushState({ ask: 1 }, '');
+    pushed = true;
+    window.addEventListener('popstate', onPop);
+  });
+}
+
+function askBajaPoints(match, player, { note = '' } = {}) {
+  const preview = bajaPreview({ name: shownName(player), date: match?.date, time: match?.time });
+  const rows = BAJA_TIERS.map((row) => `<tr class="${row.id === preview.id ? 'on' : ''}"><td>${esc(row.label)}</td><td>${row.points === 0 ? '0' : esc(formatSignedPoints(row.points))}</td></tr>`).join('');
+  const html = `
+    <p id="app-ask-text">¿Esta baja resta puntos de Comportamiento?${note ? `\n${note}` : ''}</p>
+    <p class="hint" id="baja-who">${esc(preview.headline)}</p>
+    <p class="hint" id="baja-now">${esc(preview.nowLine)}</p>
+    <div class="baja-box" id="baja-box">${esc(preview.box)}</div>
+    <table class="baja-tiers" id="baja-tiers"><tbody>${rows}</tbody></table>
+    <label class="field"><span>Descontar puntos</span><div class="stepper points-step deduct-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><span class="deduct-value"><b class="deduct-applied down">−</b><input id="baja-points" inputmode="decimal" autocomplete="off" value="${esc(formatPointMagnitude(preview.points))}"></span><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div><span class="hint">Valor calculado automáticamente; lo podés editar.</span></label>
+    <label class="checkline"><input type="checkbox" id="baja-suspend"${preview.suggestSuspend ? ' checked' : ''}><span>Suspender</span></label>
+    <label class="checkline"><input type="checkbox" id="baja-paid"><span>Pagó el partido igual (no resta)</span></label>
+    <div class="err" id="baja-err"></div>`;
+  const panel = askPanel(html, { danger: true, okText: 'Confirmar quita de puntos', read: () => {
+    const err = ask.querySelector('#baja-err');
+    const paid = ask.querySelector('#baja-paid')?.checked === true;
+    let points = 0;
+    if (!paid) {
+      const parsed = parseBajaPoints(ask.querySelector('#baja-points')?.value);
+      if (!parsed.ok) { if (err) err.textContent = parsed.error; return null; }
+      points = parsed.points;
+    }
+    if (err) err.textContent = '';
+    return {
+      points,
+      paid,
+      suspend: ask.querySelector('#baja-suspend')?.checked === true,
+      reason: preview.reason,
+      matchLabel: behaviorMatchLabel(match),
+    };
+  } });
+  queueMicrotask(() => {
+    const paid = ask.querySelector('#baja-paid');
+    const input = ask.querySelector('#baja-points');
+    if (!paid || !input) return;
+    const box = input.closest('.stepper');
+    const syncButtons = () => box?.querySelectorAll('[data-step]').forEach((btn) => { btn.disabled = input.disabled; });
+    bindPointStepper(ask, input);
+    paid.onchange = () => {
+      input.disabled = paid.checked;
+      input.value = paid.checked ? '0' : formatPointMagnitude(preview.points);
+      paintPointField(input, false);
+      syncButtons();
+    };
+  });
+  return panel;
+}
+
+async function commitBajaPenalty(match, player, choice) {
+  if (!choice) return false;
+  const rosterId = suspensionRosterId(player);
+  if ((choice.points !== 0 || choice.suspend) && !rosterId) {
+    toast('No se anotaron puntos: no tiene ficha en Jugadores.');
+    return true;
+  }
+  try {
+    if (choice.points !== 0 && rosterId) {
+      await app.store.addBehavior(rosterId, {
+        type: 'baja',
+        points: choice.points,
+        reason: choice.reason,
+        matchId: match?.id || '',
+        matchLabel: choice.matchLabel || '',
+      });
+    }
+    if (choice.suspend && rosterId) {
+      await app.store.setSuspension(rosterId, { note: choice.reason, date: todayISO() });
+    }
+    return true;
+  } catch (error) {
+    toast(error?.code === 'permission-denied'
+      ? 'Hay que publicar las reglas de Firestore para la colección behavior.'
+      : (error?.message || 'No se pudo guardar el puntaje.'));
+    return false;
+  }
+}
+
+function openFaltaForm(match, player) {
+  const rosterId = suspensionRosterId(player);
+  const reasons = ['Llegó tarde', 'Faltó sin aviso', 'Mal comportamiento', 'Otro'];
+  openSheet(`
+    <form id="falta-form" novalidate>
+      <h3>Sancionar</h3>
+      <label class="field"><span>Motivo</span><select id="falta-reason">${reasons.map((reason) => `<option>${esc(reason)}</option>`).join('')}</select></label>
+      <label class="field" id="falta-minutes-field" hidden><span>Minutos</span><input id="falta-minutes" inputmode="numeric" autocomplete="off" placeholder="Ej: 20"></label>
+      <label class="field"><span>Descontar puntos</span><div class="stepper points-step deduct-step"><button type="button" class="btn" data-step="-0.5" aria-label="Restar 0,5">−</button><span class="deduct-value"><b class="deduct-applied down">−</b><input id="falta-points" inputmode="decimal" autocomplete="off" value="0,5"></span><button type="button" class="btn" data-step="0.5" aria-label="Sumar 0,5">+</button></div></label>
+      <label class="field"><span>Comentario (opcional)</span><input id="falta-comment" maxlength="300" autocomplete="off"></label>
+      <div class="field"><div class="err" id="falta-err"></div></div>
+      <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">Guardar</button></div>
+    </form>`);
+  const form = $('#falta-form');
+  if (!form) return;
+  const reason = $('#falta-reason');
+  const minutesField = $('#falta-minutes-field');
+  const sync = () => { if (minutesField) minutesField.hidden = reason?.value !== 'Llegó tarde'; };
+  if (reason) reason.onchange = sync;
+  sync();
+  bindPointStepper(form, $('#falta-points'));
+  let savingBehavior = false;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    if (savingBehavior) return;
+    savingBehavior = true;
+    const submit = form.querySelector('button[type=submit]');
+    if (submit) submit.disabled = true;
+    const err = $('#falta-err');
+    try {
+    if (!rosterId) { if (err) err.textContent = 'No tiene ficha en Jugadores.'; return; }
+    let text = reason?.value || '';
+    if (text === 'Llegó tarde') {
+      const mins = String($('#falta-minutes')?.value || '').trim();
+      if (!/^\d+$/.test(mins) || Number(mins) <= 0) { if (err) err.textContent = 'Poné los minutos.'; return; }
+      text = `Llegó tarde · ${mins} min`;
+    }
+    const parsed = parseBajaPoints($('#falta-points')?.value);
+    if (!parsed.ok) { if (err) err.textContent = parsed.error; return; }
+    if (parsed.points === 0) { if (err) err.textContent = 'Los puntos no pueden ser 0.'; return; }
+      await app.store.addBehavior(rosterId, {
+        type: 'falta',
+        points: parsed.points,
+        reason: text,
+        comment: $('#falta-comment')?.value || '',
+        matchId: match?.id || '',
+        matchLabel: behaviorMatchLabel(match),
+      });
+      closeSheet();
+      toast('Sanción registrada');
+    } catch (error) {
+      if (!err) return;
+      err.textContent = error?.code === 'permission-denied'
+        ? 'Hay que publicar las reglas de Firestore para la colección behavior.'
+        : (error?.message || 'No se pudo guardar.');
+    } finally {
+      savingBehavior = false;
+      if (submit && form.isConnected) submit.disabled = false;
+    }
+  };
+}
+
 async function removeNoPlayPlayer(m, p) {
   if (!m || !p || !isNoPlay(p)) return;
-  if (!(await askConfirm(`¿Quitar a ${p.name} del partido? El pago no vuelve al saldo.`, { danger: true }))) return;
+  const choice = await askBajaPoints(m, p, { note: 'El pago no vuelve al saldo.' });
+  if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
   closeSheet();
   run(app.store.deletePlayer(p.id), `${p.name} quitado`);
 }
 
-async function removeMatchPlayer(m, p, { asked = false } = {}) {
+async function removeMatchPlayer(m, p) {
   const fromMain = !isWaiting(p);
   const friends = guestsOf(m.id, p.id);
-  if (!asked && !(await askConfirm(`¿Quitar a ${p.name}${fromMain ? ' del partido' : ' de la lista de espera'}?`, { danger: true }))) return;
+  const choice = await askBajaPoints(m, p);
+  if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
   const dropFriends = friends.length > 0 && await askYesNo(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
@@ -7672,6 +8047,8 @@ async function removeMatchPlayer(m, p, { asked = false } = {}) {
 
 async function demoteToWait(m, p) {
   if (!p || isWaiting(p) || !canAdd(m, actor().uid)) return;
+  const choice = await askBajaPoints(m, p);
+  if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
   const guests = guestsOf(m.id, p.id).filter((item) => !isWaiting(item));
   const also = guests.length > 0 && await askYesNo(`¿Bajar también a sus invitados (${guests.map((item) => item.name).join(', ')})?`);
   const moving = [p, ...(also ? guests : [])];
@@ -7749,7 +8126,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v167" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v180" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -7786,7 +8163,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v167" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v180" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -7958,6 +8335,7 @@ async function boot() {
     app.suspensions = view.suspensions || [];
     app.suspensionHistory = view.suspensionHistory || [];
     app.payBatches = view.payBatches || [];
+    app.behavior = view.behavior || [];
     app.organizers = organizers || [];
     app.venues = venues || [];
     app.prices = prices || null;
@@ -7982,7 +8360,7 @@ async function boot() {
     if (pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

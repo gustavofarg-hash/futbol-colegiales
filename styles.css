@@ -359,6 +359,14 @@ button.who, a.who { text-align: left; background: none; border: 0; color: inheri
   border: 1px solid var(--line); border-radius: 12px; background: var(--bg); padding: 4px 8px;
 }
 .stepper input:disabled { opacity: .7; }
+.points-step { margin-top: 2px; }
+.points-step .btn { min-width: 48px; padding: 0 12px; flex: none; }
+.points-step input.down { color: var(--danger); }
+.points-step input.up { color: #15803d; }
+html.dark .points-step input.up { color: #4ade80; }
+.deduct-value { display: inline-flex; align-items: center; color: var(--danger); font-weight: 800; font-size: 1.25rem; }
+.deduct-applied { color: var(--danger); font-weight: 800; }
+.deduct-value input { color: var(--danger); font-weight: 800; width: 4.2rem; }
 .slot .sub { font-size: 0.8125rem; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; max-width: 100%; }
 .slot .sub > * { max-width: 100%; }
 .slot .sub > .reserved-badge,
@@ -517,7 +525,9 @@ dialog.sheet[open] > .tabbar {
 .score-btn {
   min-width: 40px; min-height: 40px; padding: 0 8px; border: 1px solid var(--line);
   border-radius: 10px; background: var(--bg); color: inherit; font: inherit; font-weight: 800;
+  touch-action: pan-y;
 }
+.points-step .btn { touch-action: pan-y; }
 .team-counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .team-count {
   min-width: 0; text-align: center; background: var(--card); border: 1px solid var(--line);
@@ -688,6 +698,48 @@ button.team-name {
 .profile-add-phone { width: 100%; margin-bottom: 16px; }
 .profile-block { margin: 0 0 18px; }
 .profile-block h2 { margin: 0 0 8px; font-size: 0.9375rem; }
+.behavior-card {
+  margin-top: 18px;
+  background: var(--card); color: var(--text); border: 1px solid var(--line);
+  border-radius: 24px; padding: 14px 14px 12px; box-shadow: var(--shadow);
+}
+.behavior-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.behavior-card h2 { margin: 0; color: var(--text); font-weight: 800; font-size: 1rem; }
+.behavior-chev {
+  width: 40px; height: 40px; min-height: 40px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  display: grid; place-items: center; flex: none;
+}
+.behavior-chev svg { width: 20px; height: 20px; transition: transform .15s ease; }
+.behavior-card.open .behavior-chev svg { transform: rotate(180deg); }
+.behavior-avg { margin: 10px 0 8px; color: var(--muted); font-weight: 700; }
+.behavior-avg b { font-size: 1.85rem; font-weight: 800; color: #3f6f12; letter-spacing: -.03em; }
+.behavior-card .checkline { color: inherit; }
+.behavior-history { list-style: none; margin: 8px 0 10px; padding: 0; }
+.behavior-row { padding: 6px 0; border-top: 1px solid var(--line); font-size: 0.8125rem; }
+.behavior-main { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.behavior-points { font-weight: 800; }
+.behavior-points.down { color: var(--danger); }
+.behavior-points.up { color: #15803d; }
+.behavior-comment { margin: 2px 0 0; color: var(--muted); font-size: 0.75rem; }
+.behavior-del {
+  margin-left: auto; width: 32px; height: 32px; min-height: 32px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: var(--danger);
+  display: grid; place-items: center; flex: none;
+}
+.behavior-del svg { width: 18px; height: 18px; }
+.behavior-card #behavior-adjust { margin-top: 4px; }
+html.dark .behavior-card { background: #162236; color: #eef3fb; border-color: #2a3b55; }
+html.dark .behavior-card h2 { color: #fff; }
+html.dark .behavior-chev { border-color: #2a3b55; background: #0e1a2b; color: #eef3fb; }
+html.dark .behavior-avg { color: #a9b6cb; }
+html.dark .behavior-avg b { color: var(--lime, #c6f432); }
+html.dark .behavior-row { border-top-color: #2a3b55; }
+html.dark .behavior-points.down { color: #ff6b6b; }
+html.dark .behavior-points.up { color: #4ade80; }
+html.dark .behavior-comment { color: #a9b6cb; }
+html.dark .behavior-del { color: #ff8b9a; }
+html.dark .behavior-card #behavior-adjust { background: #eef3fb; color: #122033; border-color: transparent; }
 .stepper { display: flex; align-items: center; gap: 10px; }
 .stepper .val { min-width: 2.2ch; text-align: center; font-size: 1.75rem; font-weight: 800; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -767,6 +819,11 @@ html.dark .stats-entitled { background: #243312; color: var(--lime, #c6f432); }
 .confirm-page main { padding-top: calc(18px + env(safe-area-inset-top, 0px)); }
 .confirm-card { margin-top: 0; }
 .confirm-card .hint { margin: 14px 0 0; }
+.confirm-slots { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.confirm-slots li {
+  background: var(--bg); color: var(--text); border-radius: 14px;
+  padding: 12px 14px; font-weight: 800; font-size: 1.2rem; text-align: center;
+}
 .confirm-actions { display: grid; gap: 10px; margin-top: 14px; }
 .confirm-actions .btn { min-height: 64px; font-size: 1.25rem; }
 .confirm-actions .btn.chosen { outline: 3px solid var(--green-2); }
@@ -819,6 +876,11 @@ dialog.ask::backdrop { background: rgba(0,0,0,.62); }
   box-shadow: 0 18px 50px rgba(0,0,0,.45);
 }
 .ask-card p { margin: 0 0 16px; font-size: 1.0625rem; font-weight: 700; line-height: 1.35; white-space: pre-line; }
+.ask-card { max-height: calc(100dvh - 32px); overflow: auto; }
+.baja-box { margin: 0 0 10px; padding: 8px 10px; border-radius: 12px; background: var(--promo-bg); font-weight: 800; }
+.baja-tiers { width: 100%; border-collapse: collapse; font-size: 0.75rem; margin: 0 0 10px; }
+.baja-tiers td { padding: 3px 4px; }
+.baja-tiers tr.on td { background: var(--promo-bg); font-weight: 800; }
 @keyframes up { from { transform: translateY(40px); opacity: .6; } to { transform: none; opacity: 1; } }
 .sheet-body {
   width: 100%; max-width: 640px; margin: 0 auto;
@@ -1012,6 +1074,11 @@ html.anon-lock #view .loading { display: none; }
 .toast.ok { background: var(--green); color: #fff; cursor: pointer; }
 .menu { display: grid; gap: 8px; }
 .menu .btn { justify-content: flex-start; }
+.cards-icon { overflow: visible; }
+.cards-icon .card-back,
+.cards-icon .card-front { stroke: #1a1408; stroke-width: 1.4; stroke-linejoin: round; }
+.cards-icon .card-back { fill: #FFC300; }
+.cards-icon .card-front { fill: #F03A3A; }
 .menu .btn small { margin-left: auto; color: var(--muted); font-weight: 600; }
 
 /* Preview de importación */

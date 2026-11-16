@@ -11,6 +11,7 @@ import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveCli
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
+import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, stepPointInput } from '../js/behavior.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -26,10 +27,11 @@ import { canonicalOrganizerName, organizerChoices, organizerNames, organizerSlug
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster } from '../js/edit-lock.js';
 import { allocateGuestPromo, normalizePrices, parsePriceInput, playerPromoKey, priceOfMatch, promoForPlayer, promoOffer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, splitEven, splitPaymentAcross } from '../js/prices.js';
 import { tapChose } from '../js/tap.js';
-import { addDays, attendanceWhen, clockTime, compensationWhen, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
+import { addDays, attendanceWhen, clockTime, compensationWhen, confirmScheduleText, confirmSlotLabel, dayMonth, matchSwitchLabel, matchTitleLabel, numericDate, shortHour, shortWeekday, todayISO, toEpoch, transferReminderText, transferReminderWhen, weekdayDate } from '../js/dates.js';
 import { capacityFor, cleanCourt, courtLabel, courtMark, defaultVenueId, filterHistoryByVenues, footballLabel, footballPhrase, historyVenueOptions, matchCapacity, matchSize, matchVenueId, perTeamOf, venueChoices, venueLabel } from '../js/venues.js';
 import {
-  attendanceMessage, cancelLinks, cancelMessage, confirmPageUrl, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
+  attendanceMessage, cancelLinks, cancelMessage, confirmPageUrl, confirmSlotText, confirmStatus, confirmSummary, confirmationAllowed, confirmationIdentity, confirmationRecord, matchesCrossingReminderWindow,
+  sharedConfirmAnswer, upcomingConfirmSlots, visibleConfirmSlots,
   needsReminderBanner, newConfirmToken, overlayConfirmations, playersForOrganizer, promotionMessage, reminderAudience, reminderLinks, reminderMessage, unconfirmedForReminder,
   reservationClearedByAnswer, waReminderUrl, withinReminderWindow,
 } from '../js/reminders.js';
@@ -1139,6 +1141,58 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
     match: { date: '2026-10-19', time: '17:30', note: 'Cancha 2' },
   });
   assert.equal(named, today);
+  assert.equal(confirmSlotLabel('2026-10-19', '20:00', before), 'HOY 20:00');
+  assert.equal(confirmSlotLabel('2026-10-20', '21:00', before), 'mañana 21:00');
+  assert.equal(confirmSlotLabel('2026-10-22', '19:00', before), 'jueves 19:00');
+  const phone = 'ab'.repeat(32);
+  const group = [
+    { id: 'hoy', matchId: 'm1', confirmToken: 'token-hoy-largo-0001', phoneKey: phone },
+    { id: 'man', matchId: 'm2', confirmToken: 'token-man-largo-0002', phoneKey: phone },
+    { id: 'jue', matchId: 'm3', confirmToken: 'token-jue-largo-0003', phoneKey: phone },
+    { id: 'esp', matchId: 'm4', confirmToken: 'token-esp-largo-0004', phoneKey: phone, waiting: true },
+    { id: 'pas', matchId: 'm5', confirmToken: 'token-pas-largo-0005', phoneKey: phone },
+    { id: 'nop', matchId: 'm6', confirmToken: 'token-nop-largo-0006', phoneKey: phone, noPlay: true },
+    { id: 'can', matchId: 'm8', confirmToken: 'token-can-largo-0008', phoneKey: phone },
+    { id: 'otr', matchId: 'm7', confirmToken: 'token-otr-largo-0007', phoneKey: 'cd'.repeat(32) },
+  ];
+  const groupMatches = [
+    { id: 'm1', date: '2026-10-19', time: '20:00' },
+    { id: 'm2', date: '2026-10-20', time: '21:00' },
+    { id: 'm3', date: '2026-10-22', time: '19:00' },
+    { id: 'm4', date: '2026-10-21', time: '18:00' },
+    { id: 'm5', date: '2026-10-18', time: '20:00' },
+    { id: 'm6', date: '2026-10-23', time: '19:00' },
+    { id: 'm7', date: '2026-10-19', time: '22:00' },
+    { id: 'm8', date: '2026-10-24', time: '19:00', cancelled: true },
+  ];
+  const slots = upcomingConfirmSlots({ players: group, matches: groupMatches, player: group[0], now: before });
+  assert.deepEqual(slots.map((slot) => confirmSlotText(slot, before)), ['HOY 20:00', 'mañana 21:00', 'jueves 19:00']);
+  assert.equal(sharedConfirmAnswer(slots), null);
+  assert.equal(sharedConfirmAnswer(slots.map((slot) => ({ ...slot, confirmed: 'si' }))), 'si');
+  assert.equal(visibleConfirmSlots(slots, before).length, 3);
+  assert.equal(visibleConfirmSlots(slots, new Date('2026-11-15T13:00:00-03:00')).length, 0);
+  const manyUrl = 'https://spoo.me/XXXX';
+  const luciano = { name: 'Luciano Pérez' };
+  assert.equal(confirmScheduleText([
+    { date: '2026-10-19', time: '18:30' },
+    { date: '2026-10-19', time: '17:30' },
+  ], before), 'HOY 17:30 y 18:30');
+  assert.equal(confirmScheduleText([
+    { date: '2026-10-19', time: '21:00' },
+    { date: '2026-10-19', time: '17:30' },
+    { date: '2026-10-19', time: '18:30' },
+  ], before), 'HOY 17:30, 18:30 y 21:00');
+  assert.equal(attendanceMessage({
+    player: luciano, confirmUrl: manyUrl, now: before,
+    slots: [{ date: '2026-10-19', time: '17:30' }, { date: '2026-10-19', time: '18:30' }],
+  }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y 18:30?\n\nRespondé en este link: ${manyUrl}`);
+  assert.equal(attendanceMessage({
+    player: luciano, confirmUrl: manyUrl, now: before,
+    slots: [{ date: '2026-10-19', time: '17:30' }, { date: '2026-10-20', time: '21:00' }],
+  }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y mañana 21:00?\n\nRespondé en este link: ${manyUrl}`);
+  assert.equal(attendanceMessage({
+    player: luciano, when: 'Mañana', time: '18:00', confirmUrl: manyUrl,
+  }), `¡Hola Luciano! ¿Confirmás que jugás Mañana 18:00?\n\nRespondé en este link: ${manyUrl}`);
   const house = 'https://gustavofarg-hash.github.io/futbol-colegiales/c/?k=Ab3x9Zk2';
   const swapped = named.split(house).join('https://spoo.me/ZXwB0uF');
   assert.equal(swapped.endsWith('https://spoo.me/ZXwB0uF'), true);
@@ -1481,6 +1535,113 @@ test('un suspendido no se anota, ni el otro organizador, y el partido donde ya e
   assert.equal(JSON.parse(mem.get('f7c-test-susp')).rosterSuspensions[`${id}_gustavo`].history.length, 0);
 });
 
+test('el comportamiento arranca en 10, el ajuste mueve el promedio y la suspensión entra al historial', async () => {
+  assert.equal(formatBehaviorScore(behaviorScore([])), '10/10');
+  assert.equal(formatBehaviorScore(behaviorScore([{ points: -1.5 }])), '8,5/10');
+  assert.equal(formatBehaviorScore(behaviorScore([{ points: -20 }])), '0/10');
+  assert.equal(formatBehaviorScore(behaviorScore([{ points: 5 }])), '10/10');
+  assert.equal(formatBehaviorPoints(-0.5), '−0,5');
+  assert.equal(formatBehaviorPoints(0.5), '+0,5');
+  assert.equal(parseBehaviorPoints('-0,5').points, -0.5);
+  assert.equal(parseBehaviorPoints('0,3').ok, false);
+  assert.equal(parseBehaviorPoints('0').ok, false);
+  const rosterId = 'ana';
+  const lines = behaviorTimeline({
+    rosterId,
+    now: Date.parse('2026-10-19T13:00:00-03:00'),
+    entries: [{
+      id: 'e1', rosterId, type: 'manual', points: -0.5, reason: 'Llegó tarde', comment: 'Se fue',
+      createdByUid: 'gustavo', createdByName: 'Gustavo', createdAt: Date.parse('2026-10-19T15:00:00-03:00'),
+    }],
+    suspensions: [{ rosterId, ownerUid: 'gustavo', suspended: true, suspensionNote: 'No avisó', suspensionDate: '2026-10-18' }],
+    suspensionHistory: [{ rosterId, ownerUid: 'gustavo', date: '2026-10-01', note: 'Faltó', lifted: '2026-10-02', liftNote: 'Volvió', at: Date.parse('2026-10-02T12:00:00-03:00') }],
+    nameOf: () => 'Gustavo',
+  }).map(behaviorLine);
+  assert.match(lines[0], /19\/10\/2026 · Llegó tarde · −0,5 · Se fue · Gustavo/);
+  assert.ok(lines.some((line) => line.includes('Suspendido · No avisó') && line.includes('Gustavo')));
+  assert.ok(lines.some((line) => line.includes('Suspensión levantada') && line.includes('Volvió')));
+  assert.ok(lines.indexOf(lines.find((line) => line.includes('No avisó'))) < lines.indexOf(lines.find((line) => line.includes('Suspensión levantada'))));
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-behavior';
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const id = await store.addRoster({ name: 'Ana Gómez', phone: '5491166669090' }, 'Gustavo');
+  await assert.rejects(() => store.addBehavior(id, { points: 0.3, reason: 'Raro' }), (error) => error?.code === 'invalid-behavior');
+  await store.addBehavior(id, { points: '-0,5', reason: 'Llegó tarde', comment: 'Se fue antes' });
+  const saved = JSON.parse(mem.get('f7c-test-behavior'));
+  const entry = Object.values(saved.behavior)[0];
+  assert.equal(entry.rosterId, id);
+  assert.equal(entry.type, 'manual');
+  assert.equal(entry.points, -0.5);
+  assert.equal(entry.createdByName, 'Gustavo');
+  assert.equal(entry.matchId, '');
+  const logged = Object.values(saved.log).find((row) => row.type === 'ajuste de comportamiento');
+  assert.equal(logged.actorName, 'Gustavo');
+  assert.equal(logged.playerName, 'Ana Gómez');
+  assert.match(logged.detail, /−0,5 · Llegó tarde · Se fue antes/);
+  assert.ok(logged.at > 0);
+  store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+  await assert.rejects(() => store.addBehavior(id, { points: -0.5, reason: 'Otro' }), (error) => error?.code === 'edit-locked');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  const [first, second] = await Promise.all([
+    store.addBehavior(id, { type: 'falta', points: -1, reason: 'discutió en el partido' }),
+    store.addBehavior(id, { type: 'falta', points: -1, reason: 'discutió en el partido' }),
+  ]);
+  assert.equal(first, second);
+  const doubled = JSON.parse(mem.get('f7c-test-behavior'));
+  assert.equal(Object.values(doubled.behavior).filter((row) => row.reason === 'discutió en el partido').length, 1);
+  await assert.rejects(() => {
+    store.setActor({ uid: 'martin', name: 'Martín', role: 'organizer' });
+    return store.deleteBehavior(first);
+  }, (error) => error?.code === 'permission-denied');
+  store.setActor({ uid: 'gustavo', name: 'Gustavo', role: 'admin' });
+  await store.deleteBehavior(first);
+  const gone = JSON.parse(mem.get('f7c-test-behavior'));
+  assert.equal(gone.behavior[first], undefined);
+  assert.ok(Object.values(gone.log).some((row) => row.type === 'entrada borrada' && row.actorName === 'Gustavo' && row.playerName === 'Ana Gómez'));
+});
+
+test('la baja calcula los puntos según la hora de Buenos Aires', () => {
+  const now = new Date('2026-10-19T13:00:00-03:00');
+  const at = (time, day = '2026-10-19') => bajaDeduction({ date: day, time, now });
+  assert.equal(at('21:00', '2026-10-20').points, 0);
+  assert.equal(at('21:00', '2026-10-18').id, 'started');
+  assert.equal(at('21:00').points, -0.5);
+  assert.equal(at('16:01').points, -0.5);
+  assert.equal(at('16:00').points, -2);
+  assert.equal(at('14:00').points, -2);
+  assert.equal(at('13:59').points, -4);
+  assert.equal(at('13:01').points, -4);
+  assert.equal(at('13:00').points, -8);
+  assert.equal(at('12:00').suggestSuspend, true);
+  const preview = bajaPreview({ name: 'Ana', date: '2026-10-19', time: '21:00', now });
+  assert.equal(preview.box, 'Corresponde: −0,5 (Se bajó el mismo día, más de 3 h antes)');
+  assert.equal(bajaDeduction({ date: '2026-10-19', time: '12:00', now }).label, 'No fue sin avisar');
+  assert.equal(bajaReasonText('Menos de 1 h antes'), 'Se bajó con menos de 1 h');
+  assert.equal(bajaReasonText('Después del inicio, conviene suspender'), 'No fue sin avisar');
+  assert.match(preview.headline, /Ana · Lunes 19\/10 · 21:00 hs/);
+  assert.match(preview.nowLine, /Ahora son las 13:00 · falta 8 h/);
+  assert.equal(parseBajaPoints('0').points, 0);
+  assert.equal(parseBajaPoints('2').points, -2);
+  assert.equal(parseBajaPoints('0,5').points, -0.5);
+  assert.equal(parseBajaPoints('−0,5').points, -0.5);
+  assert.equal(parseBajaPoints('0,3').ok, false);
+  assert.equal(parseBajaPoints('10,5').ok, false);
+  assert.equal(stepPointInput('0,5', 0.5), '1');
+  assert.equal(stepPointInput('0', -0.5), '0');
+  assert.equal(stepPointInput('10', 0.5), '10');
+  assert.equal(stepPointInput('9,5', 0.5), '10');
+  assert.equal(stepPointInput('-0,5', -0.5, { signed: true }), '−1');
+  assert.equal(stepPointInput('-10', -0.5, { signed: true }), '−10');
+  assert.equal(stepPointInput('10', 0.5, { signed: true }), '+10');
+  assert.equal(faltaReasonText('No avisó'), 'Faltó sin aviso');
+});
+
 test('las notas de un jugador compartido las ve solo quien las escribió', async () => {
   const mem = new Map();
   globalThis.localStorage = {
@@ -1711,6 +1872,42 @@ test('organizadores demo: siembra Gustavo y Martín y no duplica', async () => {
   await assert.rejects(() => store.addOrganizer('lucia'), /lista/);
   await assert.rejects(() => store.addOrganizer('LUCÍA'), /lista/);
   assert.equal(JSON.parse(mem.get('f7c-test-org')).organizers.lucia.name, 'Lucía');
+});
+
+test('la ficha de varios partidos próximos no incluye la espera', async () => {
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-confirm-many';
+  await store.init();
+  const today = todayISO();
+  const tomorrow = addDays(today, 1);
+  const later = addDays(today, 3);
+  const phone = '5491170001781';
+  const first = await store.addMatch({ date: today, time: '20:00', capacity: 14 }, 'Gustavo');
+  const second = await store.addMatch({ date: tomorrow, time: '21:00', capacity: 14 }, 'Gustavo');
+  const third = await store.addMatch({ date: later, time: '19:00', capacity: 1 }, 'Gustavo');
+  await store.addPlayer({ id: third, date: later, capacity: 1 }, { name: 'Ocupa Lugar', phone: '5491170001782' }, 'Gustavo');
+  const ids = [];
+  for (const match of [
+    { id: first, date: today },
+    { id: second, date: tomorrow },
+  ]) {
+    ids.push(await store.addPlayer({ id: match.id, date: match.date, capacity: 14 }, { name: 'Ana López', phone }, 'Gustavo'));
+  }
+  ids.push(await store.addPlayer({ id: third, date: later, capacity: 1 }, { name: 'Ana López', phone }, 'Gustavo', { waiting: true }));
+  const db = JSON.parse(mem.get('f7c-test-confirm-many'));
+  const cards = ids.map((id) => db.confirmations[db.players[id].confirmToken]);
+  assert.equal(cards[0].also.length, 2);
+  assert.equal(cards[1].also.length, 2);
+  assert.equal(cards[2].also, undefined);
+  assert.deepEqual(cards[0].also.map((slot) => slot.time), ['20:00', '21:00']);
+  assert.equal(JSON.stringify(cards[0].also).includes('549'), false);
+  assert.equal(cards[0].also.some((slot) => slot.playerId === ids[2]), false);
 });
 
 test('la ficha de confirmación no lleva teléfono', () => {
@@ -3571,13 +3768,14 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v167');
+  assert.equal(version, 'f7c-v180');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
   assert.match(app, new RegExp(`const APP_VERSION = '${version}'`));
   assert.equal(/input\.select\(/.test(app), false);
   assert.match(app, /id="app-version">Versión \$\{APP_VERSION\}/);
+  assert.ok(app.indexOf('${noPlaySection(m, readOnly)}') < app.indexOf('${usualSection(m)}'), 'No jugó pero pagó queda arriba de Suelen anotarse');
   assert.equal(app.includes('Crear cuenta de administrador'), false);
   assert.match(readFileSync(new URL('../js/auth.js', import.meta.url), 'utf8'), /async registerAdmin\(/);
 });
@@ -4511,8 +4709,17 @@ test('el nombre capitaliza cada palabra sin tocar el resto', () => {
 });
 
 test('el recordatorio de deuda dice los partidos si debe más de uno', () => {
+  const now = new Date('2026-10-19T13:00:00-03:00');
   assert.equal(transferReminderText('Ana', 'de hoy'), 'Qué tal Ana? No te olvides de transferirme el partido de hoy porfa');
   assert.equal(transferReminderText('Ana', 'de hoy', 2), 'Qué tal Ana? No te olvides de transferirme los partidos porfa');
+  assert.equal(
+    transferReminderText('Ana', 'del sábado', ['2026-10-17', '2026-10-17'], now),
+    'Qué tal Ana? No te olvides de transferirme los partidos del sábado porfa',
+  );
+  assert.equal(
+    transferReminderText('Ana', 'de ayer', ['2026-10-11', '2026-10-18', '2026-10-17', '2026-10-12', '2026-10-17'], now),
+    'Qué tal Ana? No te olvides de transferirme los partidos de ayer, del sábado, del lunes y del 11/10 porfa',
+  );
 });
 
 test('confirmar a mano es el mismo sí que el link y se puede deshacer', async () => {

@@ -132,9 +132,42 @@ export function transferReminderWhen(iso, now = new Date()) {
   return dm ? `del ${dm}` : '';
 }
 
-/** Texto del chat. No lleva importe ni link: la persona aprieta Enviar en WhatsApp. Con 2 o más deudas, «los partidos». */
-export function transferReminderText(firstName, when, count = 1) {
-  const what = Number(count) >= 2 ? 'los partidos' : `el partido ${when}`;
+function reminderDayRefs(matches, now) {
+  const items = (Array.isArray(matches) ? matches : []).map((item) => {
+    const text = typeof item === 'string' ? item : String(item?.date || '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return { date: text, when: '' };
+    if (/^(de |del )/.test(text)) return { date: '', when: text };
+    return null;
+  }).filter(Boolean);
+  items.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const seen = new Set();
+  const whens = [];
+  for (const item of items) {
+    const when = item.when || transferReminderWhen(item.date, now);
+    if (!when || seen.has(when)) continue;
+    seen.add(when);
+    whens.push(when);
+  }
+  return whens;
+}
+
+function joinSpanish(parts) {
+  if (parts.length <= 1) return parts[0] || '';
+  if (parts.length === 2) return `${parts[0]} y ${parts[1]}`;
+  return `${parts.slice(0, -1).join(', ')} y ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Texto del chat. No lleva importe ni link: la persona aprieta Enviar en WhatsApp.
+ * Un partido: «el partido de ayer». Varios el mismo día: «los partidos del sábado».
+ * Varios días: «los partidos de ayer, del sábado y del lunes», el más reciente primero.
+ */
+export function transferReminderText(firstName, when, matches = 1, now = new Date()) {
+  const many = Array.isArray(matches) ? matches.length >= 2 : Number(matches) >= 2;
+  const whens = reminderDayRefs(matches, now);
+  const what = many && whens.length
+    ? `los partidos ${joinSpanish(whens)}`
+    : (many ? 'los partidos' : `el partido ${when}`);
   return `Qué tal ${firstName}? No te olvides de transferirme ${what} porfa`;
 }
 
@@ -166,4 +199,40 @@ export function attendanceWhen(iso, now = new Date()) {
   if (n === 0) return 'HOY';
   if (n === 1) return 'Mañana';
   return labelDate(iso);
+}
+
+function confirmDayWord(iso, now = new Date()) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
+  const n = diffDays(todayISO(now), iso);
+  if (n === 0) return 'HOY';
+  if (n === 1) return 'mañana';
+  return DIAS[weekdayOf(iso)] || '';
+}
+
+/**
+ * Horario de la página cuando hay más de un partido.
+ * Hoy es HOY. Mañana va en minúscula. El resto, el día: "jueves 19:00".
+ */
+export function confirmSlotLabel(iso, time, now = new Date()) {
+  const hour = clockTime(time);
+  const when = confirmDayWord(iso, now);
+  return when && hour ? `${when} ${hour}` : '';
+}
+
+/**
+ * Varios horarios para el WhatsApp. El mismo día junta las horas:
+ * «HOY 17:30 y 18:30». Días distintos: «HOY 17:30 y mañana 21:00».
+ */
+export function confirmScheduleText(slots, now = new Date()) {
+  const ordered = [...(slots || [])].sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')) || String(clockTime(a?.time)).localeCompare(String(clockTime(b?.time))));
+  const groups = [];
+  for (const slot of ordered) {
+    const time = clockTime(slot?.time);
+    const day = confirmDayWord(slot?.date, now);
+    if (!time || !day) continue;
+    const last = groups[groups.length - 1];
+    if (last && last.date === slot.date) last.times.push(time);
+    else groups.push({ date: slot.date, day, times: [time] });
+  }
+  return joinSpanish(groups.map((group) => `${group.day} ${joinSpanish(group.times)}`));
 }

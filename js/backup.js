@@ -46,6 +46,7 @@ export const BACKUP_COLLECTIONS = Object.freeze([
   'rosterSuspensions',
   'suspensionHistory',
   'payBatches',
+  'behavior',
 ]);
 
 export const COLLECTION_LABELS = Object.freeze({
@@ -69,6 +70,7 @@ export const COLLECTION_LABELS = Object.freeze({
   rosterSuspensions: 'Suspensiones',
   suspensionHistory: 'Historial de suspensiones',
   payBatches: 'Pagos guardados',
+  behavior: 'Comportamiento',
 });
 
 const ID_MAX = 700;
