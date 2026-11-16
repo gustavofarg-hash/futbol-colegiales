@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v184');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v185');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -7828,16 +7828,18 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
       players: app.players.filter((item) => ['Mes Ana', 'Mes Eva', 'Mes Beto', 'Mes Dano'].includes(item.name)),
     };
   });
+  const playedNow = new Date('2027-03-01T13:00:00-03:00');
   const daily = (date) => organizerDayShare({
     matches: built.matches.filter((item) => item.date === date),
     players: built.players,
     staff: built.staff,
     uid: built.uid,
+    now: playedNow,
   });
   const sameCalc = dayCompensation(built.matches.filter((item) => item.date === '2027-01-07'), built.players, built.staff)
     .rows.find((row) => row.uid === built.uid)?.entitled || 0;
-  const shares = organizerShareByPeriod({ matches: built.matches, players: built.players, staff: built.staff, uid: built.uid, grain: 'month' });
-  const years = organizerShareByPeriod({ matches: built.matches, players: built.players, staff: built.staff, uid: built.uid, grain: 'year' });
+  const shares = organizerShareByPeriod({ matches: built.matches, players: built.players, staff: built.staff, uid: built.uid, grain: 'month', now: playedNow });
+  const years = organizerShareByPeriod({ matches: built.matches, players: built.players, staff: built.staff, uid: built.uid, grain: 'year', now: playedNow });
   const january = daily('2027-01-07') + daily('2027-01-14');
   check('El mes suma los días, y dos partidos del mismo día cuentan una vez', shares.get('2027-01') === january && daily('2027-01-07') === sameCalc && daily('2027-01-14') === 8000 && built.matches.filter((item) => item.date === '2027-01-07' && item.cancelled !== true).length === 2, `ene=${shares.get('2027-01')} dia7=${daily('2027-01-07')} dia14=${daily('2027-01-14')}`);
   const luna = await page.evaluate(async () => {
@@ -7957,6 +7959,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     players: octShare.players,
     staff: octShare.staff,
     uid: octShare.uid,
+    now: NOW,
   });
   const grouped = dayRows.filter((row) => row.date === '2026-10-07');
   check('Día agrupa los dos partidos del 07/10 y muestra lo que correspondió', grouped.length === 1 && grouped[0].text.includes('2 partidos') && grouped[0].text.includes(`Te correspondió: ${formatARS(octDaily)}`), JSON.stringify(grouped));
@@ -7982,6 +7985,16 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     document.documentElement.classList.remove('dark');
     document.documentElement.dataset.theme = 'light';
   });
+  await page.evaluate(async () => {
+    const app = window.__app;
+    const name = app.who;
+    const uid = app.uid;
+    const access = { viewers: ['*'], adders: ['*'], viewerNames: [], adderNames: [], limits: [], createdByUid: uid, solo: false };
+    const id = await app.store.addMatch({ date: '2027-04-04', time: '21:00', capacity: 14, splitMode: 'equal', access, note: 'Mes futuro' }, name);
+    const playerId = await app.store.addPlayer(app.matches.find((item) => item.id === id), { name: 'Mes Futuro' }, name);
+    await app.store.setPayment(playerId, { paid: true, split: true, freePlay: false, cash: 7000, transfer: 0, pendingTransfer: 0, fromCredit: 0, cashTo: name }, name);
+  });
+  await page.clock.setFixedTime(new Date('2027-03-01T13:00:00-03:00'));
   await page.evaluate(() => { location.hash = '#/estadisticas/mes'; });
   await page.waitForSelector('#stats-periods');
   const novRow = page.locator('#stats-periods .slot', { hasText: 'Ene 2027' });
@@ -8012,6 +8025,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     period: el.dataset.period,
     text: el.innerText.replace(/\s+/g, ' '),
   })));
+  check('Mes no lista un partido que todavía no se jugó', monthRows.every((row) => row.period < '2027-04') && !monthRows.some((row) => row.text.includes('Mes Futuro')), monthRows.map((row) => row.period).join(','));
   const yearFromMonths = monthRows.filter((row) => row.period.startsWith('2027-')).reduce((sum, row) => sum + parseARS(row.text), 0);
   const yearFromDays = years.get('2027');
   await page.evaluate(() => { location.hash = '#/estadisticas/anio'; });
@@ -8035,6 +8049,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     document.documentElement.classList.remove('dark');
     document.documentElement.dataset.theme = 'light';
   });
+  await page.clock.setFixedTime(NOW);
 }
 
 const fresh = await ctx.newPage();

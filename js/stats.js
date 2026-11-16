@@ -210,12 +210,13 @@ function signedMoney(groups) {
 }
 
 /**
- * Mes o año. Los partidos son los que organiza quien está logueado, sin
- * cancelados. Los jugadores son los lugares que anotó él y que tienen plata
- * paga o adeudada. El monto es esa plata, sin importar quién la cobró.
+ * Mes o año. Los partidos son los que organiza quien está logueado, ya jugados
+ * (el mismo corte que el historial) y sin cancelados. Hoy y los que faltan no
+ * entran. Los jugadores son los lugares que anotó él y que tienen plata paga o
+ * adeudada. El monto es esa plata, sin importar quién la cobró.
  * Sin `who`, sigue el total del partido: gente distinta y lo cobrado.
  */
-export function periodBuckets({ matches, players, prices, grain = 'month', who, staff } = {}) {
+export function periodBuckets({ matches, players, prices, grain = 'month', who, staff, now = Date.now() } = {}) {
   const person = who && typeof who === 'object' ? who : null;
   const buckets = new Map();
   const source = matches || [];
@@ -223,6 +224,7 @@ export function periodBuckets({ matches, players, prices, grain = 'month', who, 
   const spotCtx = { players, matches: source, prices };
   for (const match of visible) {
     if (!match?.id || !/^\d{4}-\d{2}-\d{2}$/.test(match.date || '')) continue;
+    if (!matchAlreadyPlayed(match, now)) continue;
     const key = grain === 'year' ? match.date.slice(0, 4) : monthKeyOf(match.date);
     if (!key) continue;
     if (!buckets.has(key)) buckets.set(key, emptyPeriod(key, grain));
@@ -313,20 +315,23 @@ function dayCollected(matches, players, staff) {
 
 /**
  * Lo que le corresponde a esta persona en el día.
+ * Solo entran los partidos de ese día que ya se jugaron. Hoy y los que faltan
+ * no suman. Un cancelado tampoco.
  * Un solo organizador: todo lo cobrado.
  * Más de uno: su fila de dayCompensation («le corresponden»),
  * según el modo de cada partido (partes iguales o lo que anotó).
  * No es la suma de lo que cobraron todos.
  */
-export function organizerDayShare({ matches, players, staff, uid, name, who } = {}) {
+export function organizerDayShare({ matches, players, staff, uid, name, who, now = Date.now() } = {}) {
+  const played = (matches || []).filter((match) => matchAlreadyPlayed(match, now));
   const person = who && typeof who === 'object' ? who : { uid: uid || '', name: name || '' };
-  const organizers = dayOrganizers(matches, staff);
+  const organizers = dayOrganizers(played, staff);
   if (organizers.length <= 1) {
     const only = organizers[0];
     if (!isThisOrganizer(only, person)) return 0;
-    return dayCollected(matches, players, staff);
+    return dayCollected(played, players, staff);
   }
-  const calc = dayCompensation(matches || [], players, staff);
+  const calc = dayCompensation(played, players, staff);
   const id = String(person.uid || '').trim();
   const row = (id && calc.rows.find((item) => item.uid === id))
     || calc.rows.find((item) => isThisOrganizer(item, person))
@@ -423,12 +428,13 @@ export function playerOrganizerMonths({ person, players, matches, who, now = Dat
 
 /**
  * Lo que le corresponde al organizador en cada mes (o año).
- * Cada día usa organizerDayShare, o sea el mismo cálculo de la hoja.
+ * Cada día usa organizerDayShare, o sea el mismo cálculo de la hoja, y solo
+ * con los partidos de ese día que ya se jugaron.
  * Un día con varios partidos entra una sola vez. Uno con un solo
  * organizador suma lo que esa función le asigna.
- * Mes y Año no recortan por el cálculo guardado: suman los días que hay.
+ * Mes y Año no recortan por el cálculo guardado: suman los días ya jugados.
  */
-export function organizerShareByPeriod({ matches, players, staff, uid, name, who, grain = 'month' } = {}) {
+export function organizerShareByPeriod({ matches, players, staff, uid, name, who, grain = 'month', now = Date.now() } = {}) {
   const byDay = new Map();
   for (const match of matches || []) {
     if (!match?.id || !/^\d{4}-\d{2}-\d{2}$/.test(match.date || '')) continue;
@@ -439,7 +445,7 @@ export function organizerShareByPeriod({ matches, players, staff, uid, name, who
   for (const [date, dayMatches] of byDay) {
     const key = grain === 'year' ? date.slice(0, 4) : monthKeyOf(date);
     if (!key) continue;
-    const share = organizerDayShare({ matches: dayMatches, players, staff, uid, name, who });
+    const share = organizerDayShare({ matches: dayMatches, players, staff, uid, name, who, now });
     totals.set(key, roundARS((totals.get(key) || 0) + share));
   }
   return totals;
