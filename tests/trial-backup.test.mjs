@@ -11,7 +11,7 @@ test('fuera de /prueba/ no hay página de prueba', () => {
   assert.equal(isTrialPage(), false);
 });
 
-test('el backup de prueba pasa los uid al admin y conserva * y el anfitrión', () => {
+test('el backup de prueba pasa el uid del admin y conserva el de los otros', () => {
   const backup = {
     format: 'mis-partidos-backup',
     collections: {
@@ -50,10 +50,10 @@ test('el backup de prueba pasa los uid al admin y conserva * y el anfitrión', (
   };
   const out = remapTrialBackup(backup, TRIAL);
   assert.deepEqual(out.collections.matches.solo.viewers, [TRIAL]);
-  assert.deepEqual(out.collections.matches.solo.adders, [TRIAL]);
+  assert.deepEqual(out.collections.matches.solo.adders, [TRIAL, MARTIN]);
   assert.equal(out.collections.matches.solo.viewerNames[0].name, 'Gustavo');
   assert.equal(out.collections.matches.solo.viewerNames[0].uid, TRIAL);
-  assert.equal(out.collections.matches.solo.limits[0].uid, TRIAL);
+  assert.equal(out.collections.matches.solo.limits[0].uid, MARTIN);
   assert.equal(out.collections.matches.solo.limits[0].max, 3);
   assert.deepEqual(out.collections.matches.abierto.viewers, ['*']);
   assert.deepEqual(out.collections.matches.abierto.adders, ['*']);
@@ -64,15 +64,16 @@ test('el backup de prueba pasa los uid al admin y conserva * y el anfitrión', (
   assert.equal(out.collections.playerContacts.host.phone, '5491155556666');
   assert.equal(out.collections.playerContacts.host.ownerUid, TRIAL);
   assert.deepEqual(out.collections.players.zzz.viewers, [TRIAL]);
-  assert.equal(out.collections.players.host.signedUpWith, TRIAL);
+  assert.equal(out.collections.players.host.signedUpWith, MARTIN);
   assert.equal(out.collections.players.zzz.invitedBy, 'host');
   assert.equal(out.collections.players.zzz.invitedByName, 'Luis');
-  assert.equal(out.collections.players.zzz.addedByUid, TRIAL);
-  assert.deepEqual(Object.keys(out.collections.users).sort(), [TRIAL, 'gustavof.arg@gmail.com'].sort());
+  assert.equal(out.collections.players.zzz.addedByUid, MARTIN);
+  assert.equal(out.collections.users[MARTIN].name, 'Martín');
+  assert.deepEqual(Object.keys(out.collections.users).sort(), [TRIAL, MARTIN, 'gustavof.arg@gmail.com'].sort());
   assert.equal(out.collections.credits[`${TRIAL}__ana`].organizerUid, TRIAL);
   assert.equal(out.collections.credits[`${TRIAL}__ana`].organizerName, 'Gustavo');
   assert.equal(out.collections.rosterNotes[`ficha_${TRIAL}`].ownerUid, TRIAL);
-  assert.equal(out.collections.rosterNotes[`ficha_${TRIAL}`].notes[0].authorUid, TRIAL);
+  assert.equal(out.collections.rosterNotes[`ficha_${TRIAL}`].notes[0].authorUid, MARTIN);
   assert.equal(out.collections.rosterNotes[`ficha_${TRIAL}`].notes[0].text, 'nota');
   assert.deepEqual(out.collections.log.e1.editors, [TRIAL, '*']);
   assert.equal(out.collections.log.e1.actorName, 'Gustavo');

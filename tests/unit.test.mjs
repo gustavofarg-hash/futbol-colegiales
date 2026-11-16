@@ -3809,7 +3809,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v185');
+  assert.equal(version, 'f7c-v186');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4864,6 +4864,41 @@ test('Mes y Año no cuentan un partido que todavía no se jugó', () => {
   });
   assert.equal(futuroShare, 4500);
   assert.equal(laterMonthsShare.get('2026-10'), playedDay + hoyShare + futuroShare);
+});
+
+test('un backup importado no le suma a Gustavo los lugares de Martín', () => {
+  const trial = 'trial-uid-gustavo';
+  const staff = [{ uid: trial, name: 'Gustavo', active: true }];
+  const who = { uid: trial, name: 'Gustavo' };
+  const now = new Date('2026-11-16T15:00:00-03:00');
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const matches = [
+    { id: 'mio', date: '2026-11-02', adders: [trial], adderNames: [{ uid: trial, name: 'Gustavo' }], createdBy: 'Gustavo', createdByUid: trial, price: 5000, splitMode: 'equal' },
+    { id: 'abierto', date: '2026-11-03', adders: ['*'], createdBy: 'Gustavo', createdByUid: trial, price: 5000, splitMode: 'equal' },
+    { id: 'ajeno', date: '2026-11-04', adders: [trial], adderNames: [{ uid: trial, name: 'Martín' }], createdBy: 'Martín', createdByUid: trial, price: 5000, splitMode: 'equal' },
+    { id: 'futuro', date: '2026-11-20', adders: [trial], adderNames: [{ uid: trial, name: 'Gustavo' }], createdBy: 'Gustavo', createdByUid: trial, price: 5000, splitMode: 'equal' },
+  ];
+  const players = [
+    { id: 'a', matchId: 'mio', name: 'Ana', phone: '5491190000301', signedUpWith: trial, signedUpWithName: 'Gustavo', addedBy: 'Gustavo', waiting: false, paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+    { id: 'b', matchId: 'abierto', name: 'Beto', phone: '5491190000302', signedUpWith: trial, signedUpWithName: 'Gustavo', addedBy: 'Gustavo', waiting: false, paid: true, split: true, cash: 8000, cashTo: 'Gustavo' },
+    { id: 'c', matchId: 'abierto', name: 'Ciro', phone: '5491190000303', signedUpWith: trial, signedUpWithName: 'Martín', addedBy: 'Martín', waiting: false, paid: true, split: true, cash: 8000, cashTo: 'Martín' },
+    { id: 'd', matchId: 'ajeno', name: 'Dano', phone: '5491190000304', signedUpWith: trial, signedUpWithName: 'Martín', addedBy: 'Martín', waiting: false, paid: true, split: true, cash: 9000, cashTo: 'Martín' },
+    { id: 'e', matchId: 'futuro', name: 'Eva', phone: '5491190000305', signedUpWith: trial, signedUpWithName: 'Gustavo', addedBy: 'Gustavo', waiting: false, paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+  ];
+  const months = periodBuckets({ matches, players, prices, grain: 'month', who, staff, now });
+  const nov = months.find((row) => row.key === '2026-11');
+  assert.equal(nov.matches, 2);
+  assert.equal(nov.players, 2);
+  assert.equal(nov.signedAmount, 13000);
+  assert.equal(matchOrganizedBy(matches[2], staff, who), false);
+  assert.equal(matchOrganizedBy(matches[0], staff, who), true);
+  const shares = organizerShareByPeriod({ matches, players, staff, uid: trial, name: 'Gustavo', who, grain: 'month', now });
+  const ownDay = organizerDayShare({ matches: [matches[0]], players, staff, uid: trial, name: 'Gustavo', who, now });
+  const openDay = organizerDayShare({ matches: [matches[1]], players, staff, uid: trial, name: 'Gustavo', who, now });
+  assert.equal(ownDay, 5000);
+  assert.equal(openDay, 8000);
+  assert.equal(organizerDayShare({ matches: [matches[2]], players, staff, uid: trial, name: 'Gustavo', who, now }), 0);
+  assert.equal(shares.get('2026-11'), ownDay + openDay);
 });
 
 test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
