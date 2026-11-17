@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v198');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v199');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -249,8 +249,8 @@ await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/header-agenda.p
 check('La lista no muestra sede y formato al pie', await page.locator('#view .footer-note').count() === 0 && !(await page.locator('#view').innerText()).includes('Fútbol 7 contra 7'));
 check('El header no muestra Mis ni el nombre', (await page.locator('#btn-mine, #btn-who').count()) === 0 && await page.isVisible('#btn-text-smaller') && await page.isVisible('#btn-text-bigger'));
 const tabLabels = await page.$$eval('#tabbar a', (els) => els.map((el) => el.textContent.trim()));
-const sixTabs = ['Próximos', 'Jugadores', 'Jugadores a confirmar', 'Historial', 'Estadísticas', 'Registro'];
-check('Seis pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(sixTabs), tabLabels.join(' | '));
+const fiveTabs = ['Próximos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro'];
+check('Cinco pestañas fijas', JSON.stringify(tabLabels) === JSON.stringify(fiveTabs), tabLabels.join(' | '));
 const tabFit = await page.evaluate(() => ({
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   right: Math.max(...[...document.querySelectorAll('#tabbar a')].map((el) => el.getBoundingClientRect().right)),
@@ -271,7 +271,7 @@ const settingsBars = await page.evaluate(() => {
     inDialog: document.querySelector('#tabbar').parentElement?.id === 'sheet',
   };
 });
-check('En Ajustes las pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos', 'Jugadores', 'Jugadores a confirmar', 'Historial', 'Estadísticas', 'Registro']), JSON.stringify(settingsBars));
+check('En Ajustes las pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro']), JSON.stringify(settingsBars));
 check('La hoja de Ajustes no queda debajo de las pestañas', settingsBars.sheetBelow, JSON.stringify(settingsBars));
 await page.click('#btn-historial');
 await page.waitForSelector('#history-filter');
@@ -8328,7 +8328,7 @@ await fresh.close();
     const row = [...document.querySelectorAll('#slots .slot')].find((el) => el.innerText.includes('Auto López'));
     return row && !row.querySelector('.confirm-spot');
   });
-  check('Confirmar lugar lo deja como el resto', (await page.textContent('#slot-count')).replace(/\s/g, '') === '1/14' && await page.locator('#confirm-badge').count() === 1 && (await page.locator('#confirm-badge').innerText()) === '');
+  check('Confirmar lugar lo deja como el resto', (await page.textContent('#slot-count')).replace(/\s/g, '') === '1/14' && await page.locator('#slots .confirm-spot').count() === 0);
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
   const fullRow = page.locator(`#self-list .self-row[data-match="${self.full}"]`);
   await fullRow.locator('button', { hasText: 'Lista de espera' }).click();
@@ -8356,23 +8356,35 @@ await fresh.close();
     const match = app.matches.find((row) => row.id === id);
     return app.store.selfJoin(match, person, { waiting: false });
   });
-  await page.waitForFunction(() => document.querySelector('#confirm-badge')?.textContent === '1');
-  await page.click('#tab-confirmar');
-  await page.waitForSelector('#pending-signups');
+  await page.evaluate(() => { location.hash = '#/'; });
+  await page.waitForSelector('#jugadores-a-confirmar');
   const pendingText = (await page.locator('#pending-signups').innerText()).replace(/\s+/g, ' ');
-  check('La pestaña lista el pendiente con el partido', pendingText.includes('Auto López') && pendingText.includes('22:30') && pendingText.includes('Aceptar') && pendingText.includes('Rechazar'), pendingText);
+  check('Arriba del inicio está el pendiente', pendingText.includes('Auto López') && pendingText.includes('22:30') && pendingText.includes('Aceptar') && pendingText.includes('Rechazar') && (await page.locator('#tab-confirmar').count()) === 0, pendingText);
   await page.click('#pending-signups [data-accept]');
-  await page.waitForSelector('#pending-empty');
-  check('Aceptar vacía la lista', (await page.locator('#confirm-badge').getAttribute('hidden')) !== null || (await page.locator('#confirm-badge').innerText()) === '');
+  await page.waitForFunction(() => !document.querySelector('#jugadores-a-confirmar'));
+  check('Aceptar saca la lista de arriba', await page.locator('#jugadores-a-confirmar').count() === 0);
   const still = await page.evaluate((id) => {
     const row = JSON.parse(localStorage.getItem('f7c-demo-db')).players[id];
     return row ? row.tentative === true : false;
   }, pendingId);
   check('Aceptar lo deja en el partido', still === false);
   await page.evaluate(() => sessionStorage.clear());
+  await page.evaluate(async () => {
+    const app = window.__app;
+    const person = app.roster.find((row) => row.name === 'Auto López');
+    const id = await app.store.addMatch({ date: '2026-10-19', time: '23:00', capacity: 14, note: 'Auto aviso' }, app.who);
+    const match = app.matches.find((row) => row.id === id);
+    await app.store.selfJoin(match, person, { waiting: false });
+  });
+  await page.evaluate(() => sessionStorage.clear());
   await page.goto(`${BASE}#/a-confirmar`);
-  await page.waitForSelector('#pending-empty, #pending-signups');
-  check('Abrir el aviso de un alta entra en Jugadores a confirmar', (await page.evaluate(() => location.hash)) === '#/a-confirmar' && await page.getAttribute('#tab-confirmar', 'aria-current') === 'page');
+  await page.waitForSelector('#jugadores-a-confirmar');
+  const focused = await page.evaluate(() => ({
+    hash: location.hash,
+    tab: document.querySelector('#tabbar a[aria-current="page"]')?.dataset.tab || '',
+    top: document.getElementById('jugadores-a-confirmar')?.getBoundingClientRect().top ?? 999,
+  }));
+  check('El aviso de un alta abre el inicio y muestra la lista', focused.hash === '#/a-confirmar' && focused.tab === 'home' && focused.top < 220, JSON.stringify(focused));
 }
 
 {
