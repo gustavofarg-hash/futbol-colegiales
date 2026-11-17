@@ -95,6 +95,7 @@ import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { canSelfCancel, isSelfPending, occupiesSpot, signupRateDecision } from './self-signup.js';
+import { tokenDocId } from './push.js';
 import { bumpGoals, bumpScore, dropPlayer, nextInGoalAt, scoreRecord, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations, upcomingConfirmSlots } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
@@ -994,7 +995,7 @@ class LocalStore {
     const db = this._load();
     this._chargeSignupRate(db, rosterId);
     this._save(db);
-    return this.addPlayer(match, {
+    const id = await this.addPlayer(match, {
       name: person?.name || '',
       rosterId,
       phone: person?.phone || '',
@@ -1004,6 +1005,36 @@ class LocalStore {
       waiting: waiting === true,
       selfSignup: true,
     });
+    const saved = this._load();
+    const player = { id, ...(saved.players[id] || {}) };
+    this._queueSignupPing(saved, waiting ? 'espera' : 'alta', player, saved.matches[player.matchId] || match);
+    this._save(saved);
+    return id;
+  }
+  _queueSignupPing(db, kind, player, match) {
+    db.signupPings ||= {};
+    const id = rid();
+    db.signupPings[id] = {
+      kind,
+      name: String(player?.name || '').slice(0, 60),
+      rosterId: String(player?.rosterId || ''),
+      matchId: String(match?.id || player?.matchId || ''),
+      date: String(match?.date || ''),
+      time: String(match?.time || ''),
+      venueName: String(match?.venueName || 'Polideportivo Colegiales').slice(0, 80),
+      createdAt: Date.now(),
+    };
+    return id;
+  }
+  async savePushToken(token) {
+    const uid = this.actor?.uid || '';
+    const id = tokenDocId(uid, token);
+    if (!id) return '';
+    const db = this._load();
+    db.organizerTokens ||= {};
+    db.organizerTokens[id] = { uid, token: String(token), updatedAt: Date.now() };
+    this._save(db);
+    return id;
   }
   async selfCancel(playerId, now = Date.now()) {
     const db = this._load();
@@ -1014,6 +1045,7 @@ class LocalStore {
       throw Object.assign(new Error('Avisale al organizador para bajarte.'), { code: 'too-late' });
     }
     this._chargeSignupRate(db, player.rosterId || playerId, now);
+    this._queueSignupPing(db, 'baja', { id: playerId, ...player }, match);
     this._save(db);
     await this.deletePlayer(playerId);
   }
@@ -3170,7 +3202,7 @@ export class FirebaseStore {
     if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
     const id = rid();
     await this._chargeSignupRate(rosterId, id);
-    return this.addPlayer(match, {
+    const playerId = await this.addPlayer(match, {
       name: person?.name || '',
       rosterId,
       phone: person?.phone || '',
@@ -3181,6 +3213,30 @@ export class FirebaseStore {
       waiting: waiting === true,
       selfSignup: true,
     });
+    const player = this.state.players.find((row) => row.id === playerId) || { id: playerId, name: person?.name || '', rosterId };
+    await this._writeSignupPing(waiting ? 'espera' : 'alta', player, match);
+    return playerId;
+  }
+  async _writeSignupPing(kind, player, match) {
+    const { collection, addDoc } = this.fs;
+    await addDoc(collection(this.db, 'signupPings'), {
+      kind,
+      name: String(player?.name || '').slice(0, 60),
+      rosterId: String(player?.rosterId || ''),
+      matchId: String(match?.id || player?.matchId || ''),
+      date: String(match?.date || ''),
+      time: String(match?.time || ''),
+      venueName: String(match?.venueName || 'Polideportivo Colegiales').slice(0, 80),
+      createdAt: Date.now(),
+    });
+  }
+  async savePushToken(token) {
+    const uid = this.actor?.uid || '';
+    const id = tokenDocId(uid, token);
+    if (!id) return '';
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'organizerTokens', id), { uid, token: String(token), updatedAt: Date.now() });
+    return id;
   }
   async selfCancel(playerId, now = Date.now()) {
     const player = this.state.players.find((row) => row.id === playerId);
@@ -3190,6 +3246,7 @@ export class FirebaseStore {
       throw Object.assign(new Error('Avisale al organizador para bajarte.'), { code: 'too-late' });
     }
     await this._chargeSignupRate(player.rosterId || playerId, playerId);
+    await this._writeSignupPing('baja', player, match);
     await this.deletePlayer(playerId);
   }
   async confirmSelf(playerId) {

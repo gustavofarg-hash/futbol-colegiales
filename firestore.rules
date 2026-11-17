@@ -715,6 +715,39 @@ service cloud.firestore {
           || (isActiveStaff() && (!('adders' in resource.data) || (resource.data.adders is list && resource.data.adders.hasAny([request.auth.uid, '*']))));
     }
 
+    match /organizerTokens/{tokenId} {
+      allow get: if isActiveStaff() && resource.data.uid == request.auth.uid;
+      allow list: if isActiveStaff() && resource.data.uid == request.auth.uid;
+      allow create, update: if isActiveStaff()
+          && tokenId.matches('^[A-Za-z0-9]{1,40}_[A-Za-z0-9]{8,40}$')
+          && request.resource.data.keys().hasOnly(['uid', 'token', 'updatedAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.token is string
+          && request.resource.data.token.size() >= 20
+          && request.resource.data.token.size() <= 4096
+          && request.resource.data.updatedAt is number;
+      allow delete: if isActiveStaff() && resource.data.uid == request.auth.uid;
+    }
+
+    match /signupPings/{pingId} {
+      allow create: if signedIn()
+          && holdsRoster(request.resource.data.rosterId)
+          && request.resource.data.keys().hasOnly(['kind', 'name', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt'])
+          && (request.resource.data.kind == 'alta' || request.resource.data.kind == 'espera' || request.resource.data.kind == 'baja')
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 60
+          && request.resource.data.matchId is string
+          && request.resource.data.matchId.size() > 0
+          && request.resource.data.matchId.size() <= 80
+          && request.resource.data.date is string
+          && request.resource.data.time is string
+          && request.resource.data.venueName is string
+          && request.resource.data.venueName.size() <= 80
+          && request.resource.data.createdAt is number;
+      allow read, update, delete: if isAdmin();
+    }
+
     match /signupRates/{rosterId} {
       allow get: if signedIn() && (holdsRoster(rosterId) || isActiveStaff());
       allow create, update: if signedIn() && holdsRoster(rosterId) && signupRateOk();

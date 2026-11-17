@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { classifySelfSignup, organizerUids, pushCopy } = require('../functions/logic.js');
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, findPlayerPayBatch, formatARS, mineAddedLabel, organizerDayCash, organizerReceipts, parseAmount, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
@@ -12,7 +15,7 @@ import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, 
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
 import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from '../js/behavior.js';
-import { isSelfPending, matchOpenToRoster, occupiesSpot, selfRowAction, selfSignupRows, signupRateDecision } from '../js/self-signup.js';
+import { isSelfPending, matchOpenToRoster, occupiesSpot, pendingSelfSignups, selfRowAction, selfSignupRows, signupRateDecision } from '../js/self-signup.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1989,6 +1992,30 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   }
   const blocked = await store.addMatch({ date: '2026-10-23', time: '12:00', capacity: 14 }, 'Gustavo');
   await assert.rejects(() => store.selfJoin({ id: blocked, date: '2026-10-23', time: '12:00', capacity: 14 }, person, {}), /rato/);
+  const pings = Object.values(db().signupPings || {});
+  assert.ok(pings.some((row) => row.kind === 'alta' && row.name === 'Ana Sola'));
+  assert.ok(pings.some((row) => row.kind === 'baja' && row.name === 'Ana Sola'));
+  const listed = pendingSelfSignups({
+    uid: 'gustavo',
+    matches: [
+      { id: 'nuevo', date: '2026-10-19', time: '21:00', createdByUid: 'gustavo' },
+      { id: 'viejo', date: '2026-10-18', time: '18:00', createdByUid: 'gustavo' },
+    ],
+    players: [
+      { id: 'p2', name: 'Viejo', matchId: 'viejo', selfPending: true, createdAt: 1 },
+      { id: 'p1', name: 'Nuevo', matchId: 'nuevo', selfPending: true, createdAt: 5 },
+      { id: 'p3', name: 'Ajeno', matchId: 'nuevo', selfPending: true, waiting: true, createdAt: 9 },
+    ],
+  });
+  assert.deepEqual(listed.map((row) => row.player.name), ['Nuevo', 'Viejo']);
+  assert.equal(classifySelfSignup(null, { selfPending: true }), 'alta');
+  assert.equal(classifySelfSignup(null, { selfSignup: true, waiting: true }), 'espera');
+  assert.equal(classifySelfSignup({ selfPending: true }, null), '');
+  const copy = pushCopy('alta', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Colegiales' });
+  assert.match(copy.body, /Ana se anotó y espera confirmación\. 19\/10 · 21:00 · Colegiales/);
+  assert.match(copy.url, /#\/partido\/m1$/);
+  assert.deepEqual(organizerUids({ createdByUid: 'gus', adders: ['*'] }, ['otro']), ['gus']);
+  assert.deepEqual(organizerUids({}, ['titular']), ['titular']);
 });
 
 test('la ficha de confirmación junta solo los partidos de ese día', async () => {
@@ -3891,7 +3918,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v194');
+  assert.equal(version, 'f7c-v195');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

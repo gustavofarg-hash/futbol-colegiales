@@ -1,11 +1,11 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v194';
+const VERSION = 'f7c-v195';
 const TRIAL = self.location.pathname.includes('/prueba/');
 const CACHE = (TRIAL ? 'prueba-' : '') + VERSION;
 const SHELL = [
   './', 'index.html', 'confirmar.html', 'c/index.html', 'styles.css', 'config.js', 'manifest.webmanifest',
-  'js/trial-boot.js', 'js/trial.js', 'js/theme.js', 'js/tap.js', 'js/app.js', 'js/store.js', 'js/backup.js', 'js/drive.js', 'js/parser.js', 'js/phone.js', 'js/dates.js', 'js/payments.js', 'js/waiting.js', 'js/reminders.js', 'js/confirm.js', 'js/roster.js', 'js/behavior.js', 'js/guests.js', 'js/profile.js', 'js/organizers.js', 'js/venues.js', 'js/ledger.js', 'js/auth.js', 'js/text-size.js', 'js/prices.js', 'js/access.js', 'js/teams.js', 'js/privacy.js', 'js/short.js', 'js/shorten.js', 'js/short-go.js', 'js/edit-lock.js', 'js/credit.js', 'js/compensate.js', 'js/stats.js', 'js/log.js', 'js/notify.js',
+  'js/trial-boot.js', 'js/trial.js', 'js/theme.js', 'js/tap.js', 'js/app.js', 'js/store.js', 'js/backup.js', 'js/drive.js', 'js/parser.js', 'js/phone.js', 'js/dates.js', 'js/payments.js', 'js/waiting.js', 'js/reminders.js', 'js/confirm.js', 'js/roster.js', 'js/behavior.js', 'js/guests.js', 'js/profile.js', 'js/organizers.js', 'js/venues.js', 'js/ledger.js', 'js/auth.js', 'js/text-size.js', 'js/prices.js', 'js/access.js', 'js/teams.js', 'js/privacy.js', 'js/short.js', 'js/shorten.js', 'js/short-go.js', 'js/edit-lock.js', 'js/credit.js', 'js/compensate.js', 'js/stats.js', 'js/log.js', 'js/notify.js', 'js/self-signup.js', 'js/push.js',
   'icons/favicon.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/maskable-512.png',
 ];
 
@@ -37,13 +37,44 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const target = event.notification?.data?.url || './';
   event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-    const open = clients.find((client) => client.url && client.url.includes(self.registration.scope)) || clients[0];
-    if (open) return open.focus();
-    if (self.clients.openWindow) return self.clients.openWindow('./');
+    const open = clients.find((client) => client.url && client.url.includes(self.registration.scope));
+    if (open) {
+      open.postMessage({ type: 'open', url: target });
+      return open.focus();
+    }
+    if (self.clients.openWindow) return self.clients.openWindow(target);
     return undefined;
   }));
 });
+
+if (TRIAL) {
+  try {
+    importScripts('https://www.gstatic.com/firebasejs/13.0.0/firebase-app-compat.js');
+    importScripts('https://www.gstatic.com/firebasejs/13.0.0/firebase-messaging-compat.js');
+    firebase.initializeApp({
+      apiKey: 'AIzaSyCRdic552hOtfmVnR2LIQVNZOi2dub_2DU',
+      authDomain: 'mis-partidos-prueba.firebaseapp.com',
+      projectId: 'mis-partidos-prueba',
+      storageBucket: 'mis-partidos-prueba.firebasestorage.app',
+      messagingSenderId: '131662006103',
+      appId: '1:131662006103:web:37bdf25201ab3465742012',
+    });
+    firebase.messaging().onBackgroundMessage((payload) => {
+      const data = payload.data || {};
+      const title = data.title || payload.notification?.title || 'Mis Partidos';
+      const body = data.body || payload.notification?.body || '';
+      return self.registration.showNotification(title, {
+        body,
+        data: { url: data.url || './' },
+        tag: data.tag || 'f7c-push',
+      });
+    });
+  } catch (error) {
+    // Sin el script de mensajería la app sigue. El aviso con la app cerrada no llega.
+  }
+}
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;

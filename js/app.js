@@ -39,7 +39,8 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { isSelfPending, selfSignupRows } from './self-signup.js';
+import { isSelfPending, pendingSelfSignups, selfSignupRows } from './self-signup.js';
+import { registerOrganizerPush } from './push.js';
 import { bindTap, tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, resetProgressText, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
@@ -47,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v194';
+const APP_VERSION = 'f7c-v195';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -982,6 +983,7 @@ function route() {
   }
   if (name === 'registro') return { name: 'registro', section: id === 'pagos' ? 'pagos' : 'partidos' };
   if (name === 'jugadores' || name === 'pagos') return { name: 'roster' };
+  if (name === 'a-confirmar') return { name: 'pending' };
   if (name === 'usuarios') return { name: 'users' };
   if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
   return { name: 'home' };
@@ -1063,7 +1065,7 @@ function openOnUpcoming() {
     sessionStorage.removeItem('f7c-tab');
     sessionStorage.removeItem('f7c-later');
     const name = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean)[0] || '';
-    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial' || name === 'estadisticas' || name === 'registro';
+    const section = name === '' || name === 'jugadores' || name === 'pagos' || name === 'historial' || name === 'estadisticas' || name === 'registro' || name === 'a-confirmar';
     if (section && location.hash && location.hash !== '#/' && location.hash !== '#') {
       history.replaceState(null, '', `${location.pathname}${location.search}#/`);
     }
@@ -1075,7 +1077,7 @@ openOnUpcoming();
 function savedTab() {
   try {
     const value = sessionStorage.getItem('f7c-tab');
-    if (value === 'roster' || value === 'history' || value === 'home' || value === 'stats' || value === 'registro') return value;
+    if (value === 'roster' || value === 'history' || value === 'home' || value === 'stats' || value === 'registro' || value === 'pending') return value;
   } catch {}
   return 'home';
 }
@@ -1084,6 +1086,7 @@ function hashForTab(tab) {
   if (tab === 'roster') return '#/jugadores';
   if (tab === 'stats') return '#/estadisticas';
   if (tab === 'registro') return '#/registro';
+  if (tab === 'pending') return '#/a-confirmar';
   return '#/';
 }
 function tabFor(r) {
@@ -1091,6 +1094,7 @@ function tabFor(r) {
   if (r.name === 'roster') return 'roster';
   if (r.name === 'stats') return 'stats';
   if (r.name === 'registro') return 'registro';
+  if (r.name === 'pending') return 'pending';
   if (r.name === 'home') return 'home';
   if (r.name === 'match' || r.name === 'teams') {
     const match = matchById(r.id);
@@ -1107,7 +1111,7 @@ function tabFor(r) {
 }
 function paintTabs(r) {
   const tab = tabFor(r);
-  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats' || r.name === 'registro') {
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats' || r.name === 'registro' || r.name === 'pending') {
     try { sessionStorage.setItem('f7c-tab', tab); } catch {}
   }
   document.querySelectorAll('#tabbar a').forEach((link) => {
@@ -1116,7 +1120,7 @@ function paintTabs(r) {
     else link.removeAttribute('aria-current');
   });
   document.querySelector('#tabbar a[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro' || (r.name === 'stats' && !r.id);
+  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro' || r.name === 'pending' || (r.name === 'stats' && !r.id);
   $('#btn-back').hidden = root || !app.loaded;
   requestAnimationFrame(placeBars);
 }
@@ -1178,11 +1182,14 @@ function render() {
   else if (r.name === 'history') renderHistory();
   else if (r.name === 'stats') renderStats(r);
   else if (r.name === 'registro') renderRegistro(r);
+  else if (r.name === 'pending') renderPending();
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'users') renderUsers();
   else renderHome();
   paintActivity();
+  paintConfirmBadge();
+  armOrganizerPush();
   requestAnimationFrame(placeBars);
   if (app.revealPlayerId && !app.revealShown) settleRevealedPlayer();
   const revealingHere = !!(app.revealPlayerId && !app.revealShown && addedPlayerRow(app.revealPlayerId));
@@ -2917,7 +2924,7 @@ function openSettings() {
       <button type="button" class="btn danger" id="set-reset-db">Resetear base de datos</button>
     </div>` : ''}
     <label class="checkline" id="set-activity"><input type="checkbox" id="set-activity-on"${notifyEnabled() ? ' checked' : ''}><span>Notificaciones</span></label>
-    <p class="hint">Cuando otro organizador anota, da de baja o crea un partido que podés ver.</p>
+    <p class="hint">Cuando otro organizador anota, da de baja o crea un partido que podés ver. En la prueba, con el permiso del teléfono, también avisa si alguien se anota, se baja o entra en la espera aunque la app esté cerrada.</p>
     <div class="menu">
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -2962,6 +2969,12 @@ function openSettings() {
     localStorage.setItem(notifyOnKey(uid), on ? '1' : '0');
     if (on) localStorage.setItem(notifySeenKey(uid), String(Date.now()));
     paintActivity();
+    if (on) {
+      registerOrganizerPush(app.store).then((result) => {
+        if (result.reason === 'no-vapid') toast('Falta la clave de avisos. Con la app abierta igual te enterás.');
+        else if (result.reason === 'denied') toast('Sin permiso del teléfono no llega el aviso con la app cerrada.');
+      }).catch(() => toast('No se pudo guardar el aviso del teléfono.'));
+    }
   };
   $('#set-notify').onclick = async () => {
     if (typeof Notification === 'undefined') { toast('Este navegador no muestra avisos'); return; }
@@ -4814,6 +4827,52 @@ function bindSelfSignup(person) {
     const msg = kind === 'join' ? 'Quedó pendiente de confirmación' : (kind === 'wait' ? 'Quedaste en la lista de espera' : 'Listo');
     run(job, msg);
   };
+}
+
+function myPendingSignups() {
+  return pendingSelfSignups({ players: app.players, matches: knownMatches(), uid: actor().uid });
+}
+
+function paintConfirmBadge() {
+  const badge = $('#confirm-badge');
+  if (!badge) return;
+  const count = app.loaded ? myPendingSignups().length : 0;
+  badge.hidden = count <= 0;
+  badge.textContent = count > 0 ? String(count) : '';
+}
+
+function renderPending() {
+  const rows = myPendingSignups();
+  const items = rows.map(({ player, match }) => {
+    const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} · ${placeOf(match)}`;
+    return `<li class="self-row pending-row" data-player="${esc(player.id)}">
+      <span class="self-when"><b>${esc(shownName(player))}</b> · ${esc(when)}</span>
+      <span class="self-side">
+        <button type="button" class="btn self-btn" data-accept="${esc(player.id)}">Aceptar</button>
+        <button type="button" class="btn self-btn" data-reject="${esc(player.id)}">Rechazar</button>
+      </span>
+    </li>`;
+  }).join('');
+  if (!replaceView(`
+    <h2 class="section">Jugadores a confirmar</h2>
+    ${rows.length ? `<ul class="slots" id="pending-signups">${items}</ul>` : '<p class="empty-wait" id="pending-empty">Nadie esperando confirmación.</p>'}
+  `)) return;
+  const list = $('#pending-signups');
+  if (!list) return;
+  list.onclick = (event) => {
+    const accept = event.target.closest('[data-accept]');
+    if (accept) return run(app.store.confirmSelf(accept.dataset.accept), 'Aceptado');
+    const reject = event.target.closest('[data-reject]');
+    if (reject) return run(app.store.rejectSelf(reject.dataset.reject), 'Rechazado');
+  };
+}
+
+let pushArmStarted = false;
+function armOrganizerPush() {
+  if (pushArmStarted || !notifyEnabled() || !isTrialPage()) return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  pushArmStarted = true;
+  registerOrganizerPush(app.store).catch(() => { pushArmStarted = false; });
 }
 
 function selfPendingSection(match, readOnly) {
@@ -8287,7 +8346,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v194" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v195" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8324,7 +8383,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v194" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v195" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -8733,10 +8792,10 @@ sheet.addEventListener('close', () => {
   });
 });
 
-const MAIN_TABS = ['home', 'roster', 'history', 'stats', 'registro'];
+const MAIN_TABS = ['home', 'roster', 'pending', 'history', 'stats', 'registro'];
 function swipeTab() {
   const r = route();
-  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro') return r.name;
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'pending' || r.name === 'history' || r.name === 'registro') return r.name;
   if (r.name === 'stats' && !r.id) return 'stats';
   return '';
 }
@@ -8774,6 +8833,14 @@ function goSwipeTab(delta) {
   }
   location.hash = hashForTab(MAIN_TABS[next]);
 }
+if (navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const url = String(event.data?.url || '');
+    const hash = url.includes('#') ? url.slice(url.indexOf('#')) : '';
+    if (hash.startsWith('#/')) location.hash = hash;
+  });
+}
+
 function bindTabSwipe() {
   if (document.body.dataset.swipe) return;
   document.body.dataset.swipe = '1';
