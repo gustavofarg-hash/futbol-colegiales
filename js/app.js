@@ -4973,7 +4973,7 @@ function selfSignupSection(person) {
     const lockHtml = lock ? `<p class="self-note">${esc(lock)}</p>` : '';
     let control = '';
     if (action === 'join') control = `<button type="button" class="btn primary self-btn" data-self="join" data-match="${esc(match.id)}">Anotarme</button>`;
-    else if (action === 'wait') control = `<button type="button" class="btn self-btn" data-self="wait" data-match="${esc(match.id)}">Lista de espera</button>`;
+    else if (action === 'wait') control = `<button type="button" class="btn self-btn" data-self="wait" data-match="${esc(match.id)}">Anotarme en lista de espera</button>`;
     else if (action === 'cancel') control = `<button type="button" class="btn self-btn" data-self="cancel" data-match="${esc(match.id)}" data-player="${esc(player?.id || '')}">Anular</button>`;
     else if (action === 'locked') {
       const phone = organizerDropPhone(match);
