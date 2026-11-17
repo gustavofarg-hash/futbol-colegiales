@@ -1867,6 +1867,7 @@ export class FirebaseStore {
     this._datedUnindexed = false;
     this._compUnscoped = false;
     this._named = {};
+    this._unsubs = [];
     this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
     this._noteMoves = new Set();
     this._rosterReady = false;
@@ -2308,7 +2309,10 @@ export class FirebaseStore {
     this._guestRosterId = String(opts.guestRosterId || '').trim();
     if (this._guestRosterId) {
       this._guest = true;
-      this._listenGuest(this._guestRosterId);
+      // Un fallo al armar las escuchas no puede tirar Firebase abajo: si no,
+      // la ficha cae al demo y el id del enlace no existe.
+      try { this._listenGuest(this._guestRosterId); }
+      catch (error) { console.error(error); }
       return;
     }
     this._listen();
@@ -2352,6 +2356,7 @@ export class FirebaseStore {
     }
     this._named = this._named || {};
     this._named[name] = un || null;
+    if (!Array.isArray(this._unsubs)) this._unsubs = [];
     if (un) this._unsubs.push(un);
   }
   _accessIds() {

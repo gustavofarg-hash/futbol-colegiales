@@ -10,12 +10,13 @@ import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTak
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
 import { RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
-import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
+import { ADMIN_EMAIL as trialAdminEmail, FCM_VAPID_KEY as trialVapid, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
 import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from '../js/behavior.js';
 import { isSelfPending, matchOpenToRoster, occupiesSpot, pendingSelfSignups, selfRowAction, selfSignupRows, signupRateDecision } from '../js/self-signup.js';
+import { registerOrganizerPush } from '../js/push.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -3931,7 +3932,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v202');
+  assert.equal(version, 'f7c-v203');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3941,6 +3942,48 @@ test('el error del backup nombra la colección y el documento', () => {
   assert.ok(app.indexOf('${noPlaySection(m, readOnly)}') < app.indexOf('${usualSection(m)}'), 'No jugó pero pagó queda arriba de Suelen anotarse');
   assert.equal(app.includes('Crear cuenta de administrador'), false);
   assert.match(readFileSync(new URL('../js/auth.js', import.meta.url), 'utf8'), /async registerAdmin\(/);
+});
+
+test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => {
+  assert.equal(trialConfig.projectId, 'mis-partidos-prueba');
+  assert.equal(trialVapid, '');
+  const prev = globalThis.location;
+  globalThis.location = { pathname: '/futbol-colegiales/prueba/', origin: 'https://gustavofarg-hash.github.io' };
+  try {
+    const push = await registerOrganizerPush({ savePushToken() { throw new Error('no hay token'); } });
+    assert.deepEqual(push, { ok: false, reason: 'no-vapid' });
+  } finally {
+    if (prev === undefined) delete globalThis.location;
+    else globalThis.location = prev;
+  }
+  const store = new FirebaseStore();
+  store._unsubs = undefined;
+  const calls = [];
+  store.fs = {
+    doc(_db, col, id) { return { path: `${col}/${id}` }; },
+    collection(_db, col) { return { path: col }; },
+    query(ref, ...parts) { return { path: ref.path, parts }; },
+    where(field, op, value) { return { field, op, value }; },
+    onSnapshot(ref, next) {
+      calls.push(ref.path);
+      queueMicrotask(() => {
+        if (String(ref.path).startsWith('roster/')) next({ exists: () => true, id: 'NZpoLFKUUh044kfNGSmR', data: () => ({ name: 'Ángel', holders: ['org'] }) });
+        else next({ docs: [], metadata: { fromCache: false } });
+      });
+      return () => {};
+    },
+  };
+  assert.equal(store.fs.getMessaging, undefined);
+  store._listenGuest('NZpoLFKUUh044kfNGSmR');
+  assert.equal(store._unsubs.length, 3);
+  assert.deepEqual(calls, ['roster/NZpoLFKUUh044kfNGSmR', 'matches', 'players']);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(store.state.roster[0].name, 'Ángel');
+  assert.equal(store.serverOk, true);
+  const organizer = new FirebaseStore();
+  organizer._unsubs = undefined;
+  organizer._stop();
+  assert.deepEqual(organizer._unsubs, []);
 });
 
 test('el service worker revalida la app y no mezcla las cachés', () => {
