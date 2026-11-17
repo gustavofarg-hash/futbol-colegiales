@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v216';
+const APP_VERSION = 'f7c-v217';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -304,7 +304,7 @@ function run(p, okMsg, deniedMsg) {
     if (okMsg) toast(okMsg);
     return value;
   }).catch((e) => {
-    console.error(e);
+    console.error(e?.code || 'sin-codigo', e);
     if (e?.code === 'already-in-match') toast(e.message || ALREADY_IN_MATCH);
     else if (e?.code === 'suspended') askNotice(e.message || SUSPENDED_TEXT);
     else if (e?.paymentWrite) toast(paymentFailureText(e, e.playerId), 4500);
@@ -5042,7 +5042,7 @@ function bindSelfSignup(person) {
       await job;
       app.selfSignupError = null;
     } catch (e) {
-      console.error(e);
+      console.error(e?.code || 'sin-codigo', e);
       app.selfSignupError = { matchId: match.id, text: selfSignupFailureText(kind, e) };
       renderPlayerSignup(person);
     } finally {

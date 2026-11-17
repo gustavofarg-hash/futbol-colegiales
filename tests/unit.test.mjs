@@ -8,7 +8,7 @@ import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/par
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, findPlayerPayBatch, formatARS, mineAddedLabel, organizerDayCash, organizerReceipts, parseAmount, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
-import { RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
+import { CONFIRM_LISTEN, PLAYER_LISTEN, RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
 import { firebaseConfig as productionConfig } from '../config.js';
 import { ADMIN_EMAIL as trialAdminEmail, FCM_VAPID_KEY as trialVapid, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
@@ -4039,7 +4039,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v216');
+  assert.equal(version, 'f7c-v217');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -5583,7 +5583,12 @@ test('al abrir no se reescriben los contadores y el límite diario se avisa', as
   assert.deepEqual(playerCountSweep(), []);
   assert.equal(RECENT_LISTEN_DAYS, 120);
   assert.equal(recentCutoff('2026-11-10'), '2026-07-13');
+  assert.equal(PLAYER_LISTEN, 400);
+  assert.equal(CONFIRM_LISTEN, 200);
   assert.equal(writeFailureText({ code: 'resource-exhausted' }), 'No se pudo guardar: se alcanzó el límite diario de Firebase');
+  assert.equal(writeFailureText({ code: 'resource_exhausted' }), 'No se pudo guardar: se alcanzó el límite diario de Firebase');
+  assert.equal(writeFailureText({ code: 'permission-denied', message: 'resource-exhausted' }), 'No se pudo guardar: Firebase rechazó el permiso');
+  assert.equal(writeFailureText({ code: 'failed-precondition', message: 'falta índice' }), 'No se pudo guardar: failed-precondition: falta índice');
   assert.equal(writeFailureText({ code: 'permission-denied' }), 'No se pudo guardar: Firebase rechazó el permiso');
   assert.equal(writeFailureText({ code: 'deadline-exceeded' }), 'No se pudo guardar: la base no respondió.');
   assert.equal(nextPlayerCount(-1, 1), 0);
