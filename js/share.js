@@ -45,6 +45,12 @@ export function isPlayerDeepLink(hash) {
   return !!playerLinkParts(hash);
 }
 
+/** «Próximos partidos de Gustavo». Vacío si no hay nombre. */
+export function organizerMatchesTitle(name) {
+  const first = String(name || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean)[0] || '';
+  return first ? `Próximos partidos de ${first}` : '';
+}
+
 export function appShareMessage() {
   return `Anotate con Mis Partidos. Instalá la app desde acá.\n${appInstallUrl()}`;
 }

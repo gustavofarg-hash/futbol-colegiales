@@ -45,7 +45,7 @@ import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, indexFromStored, readTextSize, stepTextSize, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, compensationApplies, importAccess, isRestricted, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from '../js/access.js';
 import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, nextInGoalAt, normalizeScore, normalizeTeams, orderByGoal, orderTeamsByGoal, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
-import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, playerLink } from '../js/share.js';
+import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, organizerMatchesTitle, playerLink } from '../js/share.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -3369,6 +3369,9 @@ test('el enlace del jugador abre esa ficha', () => {
   assert.equal(isPlayerDeepLink('#/jugadores'), false);
   assert.equal(isPlayerDeepLink('#/'), false);
   assert.equal(isPlayerDeepLink('#/jugador/abc/tok_en-1234567890abcd'), true);
+  assert.equal(organizerMatchesTitle('Gustavo Pérez'), 'Próximos partidos de Gustavo');
+  assert.equal(organizerMatchesTitle('Martín'), 'Próximos partidos de Martín');
+  assert.equal(organizerMatchesTitle('  '), '');
 });
 
 test('el enlace de un organizador solo muestra sus partidos y la anotación es de él', async () => {
@@ -3996,7 +3999,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v206');
+  assert.equal(version, 'f7c-v207');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
