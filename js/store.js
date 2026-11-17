@@ -87,7 +87,7 @@
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
-import { USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, usageFlushDecision, UsageMeter } from './usage.js';
+import { COMP_LISTEN, CONFIRM_LISTEN, PLAYER_LISTEN, USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, usageFlushDecision, UsageMeter } from './usage.js';
 import { guestListenPlan, historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, playerVisibleBackfill, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { creditDocId, nextCredit } from './credit.js';
@@ -145,6 +145,25 @@ function pagePath() {
 }
 
 /** Una sola app de Firebase. La sesión y el store la comparten. */
+const BACKFILL_KEY = 'f7c-backfill-ids';
+
+function loadBackfillIds() {
+  try {
+    if (typeof sessionStorage === 'undefined') return new Set();
+    const raw = JSON.parse(sessionStorage.getItem(BACKFILL_KEY) || '[]');
+    return new Set(Array.isArray(raw) ? raw.map((id) => String(id || '')).filter(Boolean) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveBackfillIds(ids) {
+  try {
+    if (typeof sessionStorage === 'undefined') return;
+    sessionStorage.setItem(BACKFILL_KEY, JSON.stringify([...ids].slice(-200)));
+  } catch { /* modo privado */ }
+}
+
 export async function initFirebase() {
   if (blocksProductionFirebase(pagePath(), firebaseConfig.projectId)) {
     throw new Error('La versión de prueba no puede usar el Firebase de producción');
@@ -1961,7 +1980,7 @@ export class FirebaseStore {
     this.actor = null;
     this._buckets = { matches: {}, players: {}, confirmations: {} };
     this._contactBuckets = { playerOwner: [], playerShared: [], rosterOwner: [], rosterShared: [], rosterReaders: [] };
-    this._backfilled = new Set();
+    this._backfilled = loadBackfillIds();
     this._migrated = new Set();
     this._migrating = false;
     this._contactsLive = false;
@@ -2603,7 +2622,7 @@ export class FirebaseStore {
     const today = this._queryDay || todayISO();
     const q = this._applyMatchPlan(matchQueryPlan('upcoming', null, today));
     const { onSnapshot } = this.fs;
-    const un = onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
+    const un = onSnapshot(q, (snap) => {
       if (!snap.metadata.fromCache) this.serverOk = true;
       this._noteSnap(snap);
       this._buckets.matches.upcoming = this._takeMatchSnap(snap);
@@ -2704,13 +2723,14 @@ export class FirebaseStore {
     this._listenCompensations();
   }
   _listenDated(kind, field) {
-    const { collection, query, where, onSnapshot } = this.fs;
+    const { collection, query, where, orderBy, limit, onSnapshot } = this.fs;
     const accessIds = [EVERYONE];
     if (this.actor?.uid) accessIds.unshift(this.actor.uid);
     const cutoff = this._datedCutoff;
-    const unindexed = this._datedUnindexed === true;
+    const cap = kind === 'players' ? PLAYER_LISTEN : CONFIRM_LISTEN;
     const constraints = [where('viewers', 'array-contains-any', accessIds)];
-    if (!unindexed && cutoff) constraints.push(where(field, '>=', cutoff));
+    if (cutoff) constraints.push(where(field, '>=', cutoff));
+    constraints.push(orderBy(field, 'desc'), limit(cap));
     const q = query(collection(this.db, kind), ...constraints);
     const un = onSnapshot(q, (snap) => {
       this._noteSnap(snap);
@@ -2817,11 +2837,11 @@ export class FirebaseStore {
     }
   }
   _listenCompensations() {
-    const { collection, query, where, onSnapshot } = this.fs;
     const cutoff = this._compUnscoped ? '' : this._datedCutoff;
+    const { collection, query, where, orderBy, limit, onSnapshot } = this.fs;
     const ref = cutoff
-      ? query(collection(this.db, 'compensations'), where('date', '>=', cutoff))
-      : collection(this.db, 'compensations');
+      ? query(collection(this.db, 'compensations'), where('date', '>=', cutoff), orderBy('date', 'desc'), limit(COMP_LISTEN))
+      : query(collection(this.db, 'compensations'), orderBy('date', 'desc'), limit(COMP_LISTEN));
     const un = onSnapshot(ref, (snap) => {
       this.state.compensations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
@@ -2832,8 +2852,8 @@ export class FirebaseStore {
     this._swap('compensations', un);
   }
   _backfillMatches(docs) {
-    // Una vez por partido, en esta sesión. El historial no entra: solo próximos.
-    // No pasa por updateMatch, así que el Registro no anota nada.
+    // Una vez por partido y por pestaña. No pide otra lectura: usa el snapshot
+    // de próximos. El historial no entra. El Registro no anota nada.
     if (this._guest || !this.actor?.uid || !this.fs?.writeBatch || !this.db) return;
     const today = this._queryDay || todayISO();
     const rows = [];
@@ -2844,11 +2864,12 @@ export class FirebaseStore {
       this._backfilled.add(row.id);
       rows.push(row);
     }
+    saveBackfillIds(this._backfilled);
     if (!rows.length) return;
     const { doc, writeBatch } = this.fs;
     const batch = writeBatch(this.db);
     for (const row of rows) batch.update(doc(this.db, 'matches', row.id), row.patch);
-    Promise.resolve(batch.commit()).catch((error) => console.error(error));
+    Promise.resolve(batch.commit()).catch((error) => console.error(error?.code || 'sin-codigo', error));
   }
   _listen() {
     this._stop();
@@ -3503,11 +3524,12 @@ export class FirebaseStore {
   }
   watchConfirmSeen(rosterId) {
     const id = String(rosterId || '').trim();
-    if (!id || !this.fs || this._seenRoster === id) return;
+    // La ficha ya escucha confirmSeen con tope. Otra suscripción lo leería de nuevo.
+    if (!id || !this.fs || this._guest || this._seenRoster === id) return;
     this._seenRoster = id;
-    const { collection, query, where, onSnapshot } = this.fs;
+    const { collection, query, where, limit, onSnapshot } = this.fs;
     this._swap('confirm-seen', onSnapshot(
-      query(collection(this.db, 'confirmSeen'), where('rosterId', '==', id)),
+      query(collection(this.db, 'confirmSeen'), where('rosterId', '==', id), limit(24)),
       (snap) => {
         this.state.confirmSeen = snap.docs.filter((item) => item.data()?.seen === true).map((item) => item.id);
         this._emit();
