@@ -8429,6 +8429,39 @@ await fresh.close();
   await openRow.waitFor();
   const openText = (await openRow.innerText()).replace(/\s+/g, ' ');
   check('La fila del jugador no muestra cupo ni puesto', openText.includes('Anotarme') && openText.includes('Polideportivo') && !openText.includes('23:40') && !/\d+\/14/.test(openText) && !/Quedan|posición/i.test(openText), openText);
+  const selfCardBox = (id) => page.evaluate((matchId) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${matchId}"]`);
+    const main = row.querySelector('.self-main');
+    const actions = row.querySelector('.self-actions');
+    const when = row.querySelector('.self-when');
+    const place = row.querySelector('.self-place');
+    const placeText = place?.querySelector('span span');
+    const status = row.querySelector('.self-status');
+    const rb = row.getBoundingClientRect();
+    const mb = main.getBoundingClientRect();
+    const ab = actions.getBoundingClientRect();
+    const tops = [...when.children].map((el) => el.getBoundingClientRect().top);
+    const placeStyle = placeText ? getComputedStyle(placeText) : null;
+    const statusStyle = status ? getComputedStyle(status) : null;
+    const check = row.querySelector('.self-check');
+    return {
+      overflow: Math.max(0, Math.ceil(row.scrollWidth - row.clientWidth)),
+      pageOverflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+      buttonRight: ab.left >= mb.right - 2 && ab.right <= rb.right + 1,
+      centered: Math.abs((ab.top + ab.height / 2) - (mb.top + mb.height / 2)) <= 8,
+      sameLine: tops.every((top) => Math.abs(top - tops[0]) < 3),
+      placeBelow: place.getBoundingClientRect().top >= when.getBoundingClientRect().bottom - 2,
+      placeShown: placeStyle ? placeStyle.textOverflow !== 'ellipsis' && placeStyle.whiteSpace !== 'nowrap' && placeText.scrollWidth <= placeText.clientWidth + 1 : false,
+      statusAlign: statusStyle?.textAlign || '',
+      statusColor: statusStyle?.color || '',
+      checkColor: check ? getComputedStyle(check).color : '',
+    };
+  }, id);
+  await page.setViewportSize({ width: 360, height: 800 });
+  const joinBox = await selfCardBox(self.open);
+  const waitBox = await selfCardBox(self.full);
+  check('A 360px la ficha queda en dos columnas sin cortarse', joinBox.overflow <= 1 && joinBox.pageOverflow <= 1 && joinBox.buttonRight && joinBox.centered && joinBox.sameLine && joinBox.placeBelow && joinBox.placeShown && waitBox.buttonRight && waitBox.overflow <= 1 && waitBox.sameLine, JSON.stringify({ joinBox, waitBox }));
+  await page.setViewportSize({ width: 390, height: 844 });
   await openRow.locator('button', { hasText: 'Anotarme' }).click();
   await page.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
@@ -8451,6 +8484,16 @@ await fresh.close();
     return row && row.innerText.includes('Confirmado') && row.querySelector('.self-check') && row.innerText.includes('21:00');
   }, self.open);
   check('El jugador ve el tilde verde de confirmado', (await page.locator(`#self-list .self-row[data-match="${self.open}"] .self-status`).innerText()) === 'Confirmado');
+  await page.setViewportSize({ width: 360, height: 800 });
+  const confirmedBox = await selfCardBox(self.open);
+  const isGreen = (color) => {
+    const bits = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color || '');
+    if (!bits) return false;
+    const [r, g, b] = [bits[1], bits[2], bits[3]].map(Number);
+    return g > r + 20 && g > b + 20;
+  };
+  check('Confirmado es verde y queda a la izquierda', confirmedBox.statusAlign === 'left' && isGreen(confirmedBox.statusColor) && isGreen(confirmedBox.checkColor) && confirmedBox.buttonRight && confirmedBox.overflow <= 1, JSON.stringify(confirmedBox));
+  await page.setViewportSize({ width: 390, height: 844 });
   const moved = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).log || {})
     .filter((row) => row.playerName === 'Auto López' || row.actorName === 'Auto López')
     .map((row) => `${row.type}|${row.actorName}|${row.detail}`)

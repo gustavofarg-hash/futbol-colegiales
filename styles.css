@@ -435,17 +435,18 @@ html.dark .points-step input.up { color: #4ade80; }
 .signup-check input { width: 1.375rem; height: 1.375rem; margin: 0; }
 .signup-block { position: absolute; inset: -6px; border: 0; background: transparent; }
 .signup-row .btn { flex: none; min-height: 40px; padding: 0 10px; }
-#self-list, #self-pending { gap: 12px; }
+#self-list, #self-pending { gap: 8px; }
 #self-list .self-card {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 14px; background: var(--card); border: 1px solid var(--line);
+  display: flex; flex-direction: row; align-items: center; gap: 8px;
+  padding: 8px 10px; background: var(--card); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow); overflow: visible;
+  text-align: left;
 }
-#self-list .self-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+#self-list .self-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 #self-list .self-when {
-  display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0;
-  white-space: normal; overflow: visible; text-overflow: unset;
-  font-size: 0.95rem; font-weight: 700;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 8px; margin: 0;
+  white-space: nowrap; overflow: visible; text-overflow: unset;
+  font-size: 0.8125rem; font-weight: 700; line-height: 1.2;
 }
 .self-row {
   display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
@@ -456,13 +457,26 @@ html.dark .points-step input.up { color: #4ade80; }
 .self-bit span { white-space: normal; overflow-wrap: anywhere; }
 .self-ico, .self-check { width: 18px; height: 18px; flex: none; }
 .self-check { color: var(--green); margin-top: 2px; }
-.self-status { margin: 0; font-weight: 800; }
-.self-error { margin: 0; color: var(--danger); font-weight: 700; font-size: 0.875rem; line-height: 1.3; }
-.self-status.confirmed { color: var(--green); }
+.self-status { margin: 0; font-weight: 800; text-align: left; }
+.self-error { margin: 0; color: var(--danger); font-weight: 700; font-size: 0.8125rem; line-height: 1.25; text-align: left; }
+#self-list .self-ico, #self-list .self-check { width: 16px; height: 16px; }
+#self-list .self-bit { gap: 4px; }
+#self-list .self-when .self-bit { flex: none; align-items: center; min-width: max-content; }
+#self-list .self-when .self-bit span { white-space: nowrap; }
+#self-list .self-status.confirmed,
+#self-list .self-check { color: #15803d; margin-top: 0; }
+html.dark #self-list .self-status.confirmed,
+html.dark #self-list .self-check { color: #4ade80; }
 .self-status.pending, .self-status.wait { color: var(--muted); }
-#self-list .self-note { white-space: normal; overflow: visible; text-overflow: unset; }
-#self-list .self-actions { display: flex; }
-#self-list .self-btn { min-height: 44px; }
+#self-list .self-place { margin: 0; min-width: 0; font-size: 0.8125rem; line-height: 1.25; }
+#self-list .self-status { font-size: 0.8125rem; line-height: 1.25; }
+#self-list .self-place .self-bit { align-items: flex-start; }
+#self-list .self-place .self-bit span {
+  white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: anywhere;
+}
+#self-list .self-note { white-space: normal; overflow: visible; text-overflow: unset; text-align: left; }
+#self-list .self-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; margin-left: auto; }
+#self-list .self-btn { min-height: 36px; padding: 0 8px; font-size: 0.8125rem; }
 .self-side { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 72%; }
 .self-side:has(.self-btn) { flex: none; max-width: none; }
 .self-note { font-size: 0.75rem; line-height: 1.1; color: var(--muted, #667); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -962,7 +976,8 @@ html.anon-lock #toast,
 html.anon-lock #sheet,
 html.anon-lock #ask { display: none !important; }
 html.anon-lock #view { max-width: none; min-height: 100dvh; margin: 0; padding: 24px; display: grid; place-items: center; }
-html.anon-lock #view:has(#player-signup) { display: block; overflow-x: hidden; }
+html.anon-lock #view:has(#player-signup) { display: block; overflow-x: hidden; padding: 16px 12px; }
+#player-signup { text-align: left; }
 html:has(#player-signup),
 html:has(#player-signup) body { overflow-x: hidden; max-width: 100%; }
 html:has(#player-signup) .topstack,
