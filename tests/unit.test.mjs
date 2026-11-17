@@ -12,6 +12,7 @@ import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, 
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
 import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from '../js/behavior.js';
+import { isSelfPending, matchOpenToRoster, occupiesSpot, selfRowAction, selfSignupRows, signupRateDecision } from '../js/self-signup.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1923,6 +1924,73 @@ test('organizadores demo: siembra Gustavo y Martín y no duplica', async () => {
   assert.equal(JSON.parse(mem.get('f7c-test-org')).organizers.lucia.name, 'Lucía');
 });
 
+test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', async () => {
+  assert.equal(occupiesSpot({ waiting: true }), false);
+  assert.equal(occupiesSpot({ selfPending: true }), false);
+  assert.equal(occupiesSpot({ name: 'Ana' }), true);
+  assert.equal(isSelfPending({ selfPending: true, waiting: true }), false);
+  assert.equal(selfRowAction({ full: false }).action, 'join');
+  assert.equal(selfRowAction({ full: true }).action, 'wait');
+  assert.equal(selfRowAction({ player: { selfPending: true } }).note, 'Pendiente de confirmación');
+  assert.equal(selfRowAction({ player: { waiting: true } }).action, 'cancel');
+  const kick = Date.parse('2026-10-19T21:00:00-03:00');
+  const early = Date.parse('2026-10-19T13:00:00-03:00');
+  const late = Date.parse('2026-10-19T18:00:00-03:00');
+  assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: early }).action, 'cancel');
+  assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: late }).action, 'locked');
+  assert.equal(signupRateDecision(null, 1000).count, 1);
+  assert.equal(signupRateDecision({ windowStart: 1000, count: 5 }, 1000 + 10 * 60 * 1000).ok, false);
+  assert.equal(signupRateDecision({ windowStart: 1000, count: 5 }, 1000 + 31 * 60 * 1000).ok, true);
+  assert.equal(matchOpenToRoster({ createdByUid: 'gus', cancelled: false }, { holders: ['gus'] }), true);
+  assert.equal(matchOpenToRoster({ createdByUid: 'martin' }, { holders: ['gus'] }), false);
+  const rows = selfSignupRows({
+    person: { id: 'r1', holders: ['gus'], name: 'Ana' },
+    matches: [
+      { id: 'm1', date: '2026-10-19', time: '21:00', capacity: 14, createdByUid: 'gus' },
+      { id: 'm2', date: '2026-10-20', time: '18:00', capacity: 14, createdByUid: 'martin' },
+    ],
+    players: [],
+    now: early,
+  });
+  assert.deepEqual(rows.map((row) => row.match.id), ['m1']);
+  assert.equal(rows[0].action, 'join');
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-self';
+  store.actor = { uid: 'gustavo', name: 'Gustavo' };
+  await store.init();
+  const rosterId = await store.addRoster({ name: 'Ana Sola', phone: '5491170001940' }, 'Gustavo');
+  const open = await store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14 }, 'Gustavo');
+  const full = await store.addMatch({ date: '2026-10-19', time: '18:00', capacity: 1 }, 'Gustavo');
+  await store.addPlayer({ id: full, date: '2026-10-19', capacity: 1 }, { name: 'Ocupa Sola', phone: '5491170001941' }, 'Gustavo');
+  const person = { id: rosterId, name: 'Ana Sola', phone: '5491170001940' };
+  const pendingId = await store.selfJoin({ id: open, date: '2026-10-19', time: '21:00', capacity: 14 }, person, { waiting: false });
+  const db = () => JSON.parse(mem.get('f7c-test-self'));
+  assert.equal(db().players[pendingId].selfPending, true);
+  assert.equal(db().players[pendingId].waiting, false);
+  assert.equal(occupiesSpot(db().players[pendingId]), false);
+  await store.confirmSelf(pendingId);
+  assert.equal(db().players[pendingId].selfPending, false);
+  assert.equal(occupiesSpot({ ...db().players[pendingId], id: pendingId }), true);
+  const waitId = await store.selfJoin({ id: full, date: '2026-10-19', time: '18:00', capacity: 1 }, person, { waiting: true });
+  assert.equal(db().players[waitId].waiting, true);
+  assert.equal(db().players[waitId].selfSignup, true);
+  await store.selfCancel(waitId, early);
+  assert.equal(db().players[waitId], undefined);
+  assert.equal(Object.values(db().behavior || {}).some((row) => row.type === 'baja'), false);
+  for (let i = 0; i < 2; i += 1) {
+    const extra = await store.addMatch({ date: '2026-10-22', time: `1${i}:00`, capacity: 14 }, 'Gustavo');
+    await store.selfJoin({ id: extra, date: '2026-10-22', time: `1${i}:00`, capacity: 14 }, person, {});
+  }
+  const blocked = await store.addMatch({ date: '2026-10-23', time: '12:00', capacity: 14 }, 'Gustavo');
+  await assert.rejects(() => store.selfJoin({ id: blocked, date: '2026-10-23', time: '12:00', capacity: 14 }, person, {}), /rato/);
+});
+
 test('la ficha de confirmación junta solo los partidos de ese día', async () => {
   const mem = new Map();
   globalThis.localStorage = {
@@ -3823,7 +3891,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v193');
+  assert.equal(version, 'f7c-v194');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

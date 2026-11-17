@@ -163,7 +163,7 @@ service cloud.firestore {
           'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo', 'autoCredit', 'awaiting'];
     }
     function waitKeys() {
-      return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt', 'noPlay'];
+      return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt', 'noPlay', 'selfPending', 'selfSignup'];
     }
     function confirmKeys() {
       return ['confirmToken', 'confirmed', 'confirmedAt', 'reminderSentAt'];
@@ -208,7 +208,9 @@ service cloud.firestore {
           && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
           && (!('tentative' in d) || d.tentative == null || d.tentative is bool)
           && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number)
-          && (!('noPlay' in d) || d.noPlay is bool);
+          && (!('noPlay' in d) || d.noPlay is bool)
+          && (!('selfPending' in d) || d.selfPending is bool)
+          && (!('selfSignup' in d) || d.selfSignup is bool);
     }
     function validConfirm(d) {
       return (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
@@ -602,9 +604,76 @@ service cloud.firestore {
       return !('invitedBy' in request.resource.data) || invitedByUnchanged() || hostIsMainPlayer();
     }
 
+    function rosterDoc(rosterId) {
+      return get(/databases/$(database)/documents/roster/$(rosterId)).data;
+    }
+    function holdsRoster(rosterId) {
+      return rosterId is string && rosterId.size() > 0 && rosterId.size() <= 80
+          && exists(/databases/$(database)/documents/roster/$(rosterId))
+          && rosterDoc(rosterId).get('holders', []).hasAny([request.auth.uid]);
+    }
+    function ratePath(rosterId) {
+      return /databases/$(database)/documents/signupRates/$(rosterId);
+    }
+    function selfRateOk(rosterId) {
+      return exists(ratePath(rosterId))
+          && get(ratePath(rosterId)).data.lastId == playerId
+          && get(ratePath(rosterId)).data.count is int
+          && get(ratePath(rosterId)).data.count >= 1
+          && get(ratePath(rosterId)).data.count <= 5
+          && get(ratePath(rosterId)).data.windowStart is timestamp
+          && request.time < get(ratePath(rosterId)).data.windowStart + duration.value(30, 'm');
+    }
+    function selfMatchForHolder(matchId, rosterId) {
+      let m = matchData(matchId);
+      let holders = rosterDoc(rosterId).get('holders', []);
+      return (m.get('createdByUid', '') is string && m.createdByUid.size() > 0 && holders.hasAny([m.createdByUid]))
+          || (m.keys().hasAny(['adders']) && m.adders is list && holders.hasAny(m.adders))
+          || ((!m.keys().hasAny(['createdByUid']) || m.get('createdByUid', '') == '')
+              && (!m.keys().hasAny(['adders']) || m.adders.size() == 0 || m.adders.hasAny(['*'])));
+    }
+    function selfSignupShape(d) {
+      return d.selfSignup == true
+          && d.rosterId is string
+          && d.addedByUid == request.auth.uid
+          && d.name == rosterDoc(d.rosterId).get('name', '')
+          && selfMatchForHolder(d.matchId, d.rosterId)
+          && d.get('paid', false) != true
+          && d.get('amount', null) == null
+          && d.get('cash', null) == null
+          && d.get('transfer', null) == null
+          && d.get('pendingTransfer', null) == null
+          && d.get('fromCredit', null) == null
+          && (
+            (d.selfPending == true && d.waiting == false)
+            || (d.waiting == true && d.get('selfPending', false) != true)
+          );
+    }
+    function signupRateOk() {
+      let next = request.resource.data;
+      let fresh = resource == null || request.time > resource.data.windowStart + duration.value(30, 'm');
+      return next.keys().hasOnly(['windowStart', 'count', 'lastId'])
+          && next.lastId is string && next.lastId.size() > 0 && next.lastId.size() <= 80
+          && next.count is int && next.count >= 1 && next.count <= 5
+          && next.windowStart is timestamp
+          && (fresh
+              ? next.count == 1 && next.windowStart == request.time
+              : next.count == resource.data.count + 1
+                  && next.windowStart == resource.data.windowStart
+                  && resource.data.count < 5);
+    }
+
     match /players/{playerId} {
       allow get: if isActiveStaff() && canReadListed(resource.data);
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
+      // El jugador (quien tiene la ficha) solo puede crear SU alta: pendiente o espera.
+      allow create: if signedIn()
+          && selfSignupShape(request.resource.data)
+          && holdsRoster(request.resource.data.rosterId)
+          && selfRateOk(request.resource.data.rosterId)
+          && validPlayer(request.resource.data)
+          && invitedByOk()
+          && playerListsOk(request.resource.data.matchId);
       allow create: if isActiveStaff() && validPlayer(request.resource.data)
           && invitedByOk()
           && isAdder(matchData(request.resource.data.matchId))
@@ -637,8 +706,19 @@ service cloud.firestore {
             )
             || playerFollowsMatch()
           );
+      allow delete: if signedIn()
+          && resource.data.selfSignup == true
+          && (resource.data.selfPending == true || resource.data.waiting == true)
+          && holdsRoster(resource.data.rosterId)
+          && selfRateOk(resource.data.rosterId);
       allow delete: if isAdmin()
           || (isActiveStaff() && (!('adders' in resource.data) || (resource.data.adders is list && resource.data.adders.hasAny([request.auth.uid, '*']))));
+    }
+
+    match /signupRates/{rosterId} {
+      allow get: if signedIn() && (holdsRoster(rosterId) || isActiveStaff());
+      allow create, update: if signedIn() && holdsRoster(rosterId) && signupRateOk();
+      allow delete: if isAdmin();
     }
 
     match /roster/{rosterId} {

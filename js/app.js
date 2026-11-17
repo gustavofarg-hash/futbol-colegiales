@@ -39,6 +39,7 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
+import { isSelfPending, selfSignupRows } from './self-signup.js';
 import { bindTap, tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, resetProgressText, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
@@ -46,7 +47,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v193';
+const APP_VERSION = 'f7c-v194';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -744,7 +745,7 @@ const addBlock = (m) => {
 const isWaiting = (p) => p.waiting === true;
 const isNoPlay = (p) => p?.noPlay === true;
 const playersOf = (matchId) => {
-  const all = app.players.filter((p) => p.matchId === matchId && !isNoPlay(p));
+  const all = app.players.filter((p) => p.matchId === matchId && !isNoPlay(p) && !isSelfPending(p));
   return groupByInviter(rosterSplit(all).main, all);
 };
 const noPlayOf = (matchId) => app.players.filter((p) => p.matchId === matchId && isNoPlay(p)).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es') || String(a.id).localeCompare(String(b.id)));
@@ -2130,6 +2131,8 @@ function renderMatch(id) {
     ${readOnly || m.cancelled ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
+    ${selfPendingSection(m, readOnly)}
+    ${selfWaitNotices(m)}
     ${waitingSection(m, everyone.length >= cap, readOnly)}
     ${noPlaySection(m, readOnly)}
     ${usualSection(m)}
@@ -2148,6 +2151,13 @@ function renderMatch(id) {
     event.preventDefault();
     event.stopPropagation();
     if (!block) openAddPlayer(m);
+  };
+  const pendingList = $('#self-pending');
+  if (pendingList) pendingList.onclick = (event) => {
+    const ok = event.target.closest('[data-self-ok]');
+    if (ok) return run(app.store.confirmSelf(ok.dataset.selfOk), 'Confirmado');
+    const no = event.target.closest('[data-self-no]');
+    if (no) return run(app.store.rejectSelf(no.dataset.selfNo), 'Rechazado');
   };
   if ($('#btn-add-wait')) $('#btn-add-wait').onclick = (event) => {
     event.preventDefault();
@@ -4588,6 +4598,7 @@ function renderProfile(id) {
         <h2 class="section${fichaSuspended(person)}">${fichaName(person, person.name)}</h2>
         ${playerShareButton('profile-share')}
       </div>
+      ${selfSignupSection(person)}
       ${money.panel.nickHtml}
       ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" autocapitalize="words" data-cap-words="1" value="${esc(person.name)}"></label>` : ''}
       <div class="phone-row">
@@ -4749,6 +4760,77 @@ function renderProfile(id) {
     saveProfile(person.id, { positions: POSITIONS.filter((item) => next.has(item)) });
   };
   bindPartidos(person);
+  bindSelfSignup(person);
+}
+
+function selfSignupSection(person) {
+  const rows = selfSignupRows({ person, matches: app.matches, players: app.players, now: Date.now() });
+  if (!rows.length) return '<ul class="slots" id="self-list"></ul>';
+  const items = rows.map(({ match, player, action, note }) => {
+    const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} · ${placeOf(match)}`;
+    const noteHtml = note ? `<span class="self-note">${esc(note)}</span>` : '';
+    let control = '';
+    if (action === 'join') control = `<button type="button" class="btn self-btn" data-self="join" data-match="${esc(match.id)}">Anotarme</button>`;
+    else if (action === 'wait') control = `<button type="button" class="btn self-btn" data-self="wait" data-match="${esc(match.id)}">Lista de espera</button>`;
+    else if (action === 'cancel') control = `<button type="button" class="btn self-btn" data-self="cancel" data-match="${esc(match.id)}" data-player="${esc(player?.id || '')}">Anular</button>`;
+    else if (action === 'locked') {
+      const phone = organizerDropPhone(match);
+      control = phone
+        ? `<a class="self-wa" href="${esc(waHref(phone))}" target="_blank" rel="noopener">WhatsApp</a>`
+        : '';
+    }
+    return `<li class="self-row" data-match="${esc(match.id)}"><span class="self-when">${esc(when)}</span><span class="self-side">${noteHtml}${control}</span></li>`;
+  }).join('');
+  return `<ul class="slots" id="self-list">${items}</ul>`;
+}
+
+function organizerDropPhone(match) {
+  const uid = String(match?.createdByUid || '').trim();
+  const name = foldText(match?.createdBy || '');
+  if (!uid && !name) return '';
+  const hit = app.roster.find((person) => {
+    const phone = String(person?.phone || '').trim();
+    if (!phone) return false;
+    const sameName = name && foldText(person.name) === name;
+    if (uid && person.createdByUid === uid && sameName) return true;
+    if (uid && Array.isArray(person.holders) && person.holders.includes(uid) && sameName) return true;
+    return !uid && sameName;
+  });
+  return hit?.phone || '';
+}
+
+function bindSelfSignup(person) {
+  const list = $('#self-list');
+  if (!list) return;
+  list.onclick = (event) => {
+    const btn = event.target.closest('[data-self]');
+    if (!btn || !person) return;
+    const match = matchById(btn.dataset.match);
+    if (!match) return;
+    const kind = btn.dataset.self;
+    const job = kind === 'cancel'
+      ? app.store.selfCancel(btn.dataset.player)
+      : app.store.selfJoin(match, person, { waiting: kind === 'wait' });
+    const msg = kind === 'join' ? 'Quedó pendiente de confirmación' : (kind === 'wait' ? 'Quedaste en la lista de espera' : 'Listo');
+    run(job, msg);
+  };
+}
+
+function selfPendingSection(match, readOnly) {
+  const rows = app.players.filter((player) => player.matchId === match.id && isSelfPending(player));
+  if (!rows.length) return '';
+  const items = rows.map((player) => `
+    <li class="self-row" data-player="${esc(player.id)}">
+      <span class="self-when">${esc(shownName(player))}</span>
+      ${readOnly ? '<span class="self-note">Pendiente de confirmación</span>' : `<span class="self-side"><button type="button" class="btn self-btn" data-self-ok="${esc(player.id)}">Confirmar</button><button type="button" class="btn self-btn" data-self-no="${esc(player.id)}">Rechazar</button></span>`}
+    </li>`).join('');
+  return `<h2 class="section">Para confirmar</h2><ul class="slots" id="self-pending">${items}</ul>`;
+}
+
+function selfWaitNotices(match) {
+  const rows = app.players.filter((player) => player.matchId === match.id && player.waiting === true && player.selfSignup === true);
+  if (!rows.length) return '';
+  return `<div id="self-wait-notice">${rows.map((player) => `<p>${esc(shownName(player))} se anotó en la lista de espera.</p>`).join('')}</div>`;
 }
 
 function signupDraft(person) {
@@ -8205,7 +8287,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v193" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v194" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8242,7 +8324,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v193" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v194" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

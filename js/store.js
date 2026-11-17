@@ -94,6 +94,7 @@ import { creditDocId, nextCredit } from './credit.js';
 import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
+import { canSelfCancel, isSelfPending, occupiesSpot, signupRateDecision } from './self-signup.js';
 import { bumpGoals, bumpScore, dropPlayer, nextInGoalAt, scoreRecord, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations, upcomingConfirmSlots } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
@@ -404,6 +405,13 @@ function refusePlayedCancel(match, data) {
   if (matchAlreadyPlayed({ date })) {
     throw Object.assign(new Error('Este partido ya se jugó. No se puede cancelar.'), { code: 'already-played' });
   }
+}
+
+function selfSignupDetail(player, waiting) {
+  if (player?.selfPending === true) return 'Pendiente de confirmación';
+  if (waiting && player?.selfSignup === true) return 'Se anotó solo en la lista de espera';
+  if (waiting) return 'En la lista de espera';
+  return '';
 }
 
 function storedMatchPrice(data) {
@@ -934,8 +942,10 @@ class LocalStore {
       data,
     );
     const cap = match.capacity || 14;
-    const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
-    const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
+    const mainCount = mates.filter((p) => occupiesSpot(p)).length;
+    const pending = opts.selfPending === true;
+    if (pending && mainCount >= cap) throw Object.assign(new Error('El partido se completó.'), { code: 'match-full' });
+    const waiting = pending || opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
     const player = {
@@ -951,6 +961,8 @@ class LocalStore {
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
       ...signupWith(data, this.actor),
       ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
+      ...(pending ? { selfPending: true, selfSignup: true, rosterAt: null } : {}),
+      ...(opts.selfSignup === true && waiting ? { selfSignup: true } : {}),
     };
     db.players[id] = player;
     const person = playerLogFields({ id, ...player }, [...mates, { id, ...player }]);
@@ -958,7 +970,7 @@ class LocalStore {
     this._pushLogs(db, [partidoEntry(this._actor(), { id: match.id, ...savedMatch }, this._venuesOf(db), {
       type: 'alta',
       ...person,
-      detail: waiting ? 'En la lista de espera' : '',
+      detail: selfSignupDetail(player, waiting),
     })]);
     if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '', data.phoneShared === true);
     else if (data.hasPhone && /^[0-9a-f]{64}$/.test(String(data.phoneKey || ''))) {
@@ -968,6 +980,63 @@ class LocalStore {
       player.phoneShared = false;
     }
     this._save(db); return id;
+  }
+  _chargeSignupRate(db, rosterId, now = Date.now()) {
+    const id = String(rosterId || '').trim();
+    if (!id) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
+    db.signupRates ||= {};
+    const next = signupRateDecision(db.signupRates[id], now);
+    if (!next.ok) throw Object.assign(new Error(next.error), { code: 'rate-limit' });
+    db.signupRates[id] = { windowStart: next.windowStart, count: next.count };
+  }
+  async selfJoin(match, person, { waiting = false } = {}) {
+    const rosterId = String(person?.id || '').trim();
+    const db = this._load();
+    this._chargeSignupRate(db, rosterId);
+    this._save(db);
+    return this.addPlayer(match, {
+      name: person?.name || '',
+      rosterId,
+      phone: person?.phone || '',
+      shortName: person?.shortName || '',
+    }, person?.name || '', {
+      selfPending: waiting !== true,
+      waiting: waiting === true,
+      selfSignup: true,
+    });
+  }
+  async selfCancel(playerId, now = Date.now()) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!player) return;
+    const match = db.matches[player.matchId] || {};
+    if (!canSelfCancel(player, match, now)) {
+      throw Object.assign(new Error('Avisale al organizador para bajarte.'), { code: 'too-late' });
+    }
+    this._chargeSignupRate(db, player.rosterId || playerId, now);
+    this._save(db);
+    await this.deletePlayer(playerId);
+  }
+  async confirmSelf(playerId) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!player?.selfPending) return;
+    const match = db.matches[player.matchId] || {};
+    const mates = Object.values(db.players).filter((row) => row.matchId === player.matchId && row !== player);
+    const cap = match.capacity || 14;
+    if (mates.filter((row) => occupiesSpot(row)).length >= cap) {
+      throw Object.assign(new Error('No hay lugar.'), { code: 'match-full' });
+    }
+    player.selfPending = false;
+    player.rosterAt = Date.now();
+    player.updatedAt = player.rosterAt;
+    this._save(db);
+  }
+  async rejectSelf(playerId) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!isSelfPending(player)) return;
+    await this.deletePlayer(playerId);
   }
   _dropFromTeams(db, matchId, playerId) {
     const match = db.matches[matchId];
@@ -3015,7 +3084,7 @@ export class FirebaseStore {
     return;
   }
   async addPlayer(match, data, who, opts = {}) {
-    const { collection, addDoc, doc, updateDoc, deleteField } = this.fs; const now = Date.now();
+    const { collection, addDoc, doc, setDoc, updateDoc, deleteField } = this.fs; const now = Date.now();
     const mates = this.state.players.filter((p) => p.matchId === match.id);
     refuseDuplicate(mates, data);
     refuseGuestHost(mates, data);
@@ -3026,8 +3095,10 @@ export class FirebaseStore {
       data,
     );
     const cap = match.capacity || 14;
-    const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
-    const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
+    const mainCount = mates.filter((p) => occupiesSpot(p)).length;
+    const pending = opts.selfPending === true;
+    if (pending && mainCount >= cap) throw Object.assign(new Error('El partido se completó.'), { code: 'match-full' });
+    const waiting = pending || opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
     const hold = opts.tentative === true && !waiting;
@@ -3048,8 +3119,13 @@ export class FirebaseStore {
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
       ...signupWith(data, this.actor),
       ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
+      ...(pending ? { selfPending: true, selfSignup: true, rosterAt: null } : {}),
+      ...(opts.selfSignup === true && waiting ? { selfSignup: true } : {}),
     };
-    const ref = await addDoc(collection(this.db, 'players'), player);
+    const ref = opts.id
+      ? doc(this.db, 'players', opts.id)
+      : await addDoc(collection(this.db, 'players'), player);
+    if (opts.id) await setDoc(ref, player);
     const stored = this.state.matches.find((item) => item.id === match.id) || match;
     await updateDoc(doc(this.db, 'matches', match.id), { ...countPatch(this.fs, stored, 1, mates.length), updatedAt: now });
     if (canon) {
@@ -3068,9 +3144,70 @@ export class FirebaseStore {
     await this._appendLogs([partidoEntry(this._actor(), stored, this.state.venues, {
       type: 'alta',
       ...playerLogFields({ id: ref.id, ...player }, [...mates, { id: ref.id, ...player }]),
-      detail: waiting ? 'En la lista de espera' : '',
+      detail: selfSignupDetail(player, waiting),
     })]);
     return ref.id;
+  }
+  async _chargeSignupRate(rosterId, playerId) {
+    const { doc, runTransaction, serverTimestamp } = this.fs;
+    const ref = doc(this.db, 'signupRates', rosterId);
+    await runTransaction(this.db, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() ? snap.data() : null;
+      const startMs = prev?.windowStart?.toMillis?.() || Number(prev?.windowStart) || 0;
+      const next = signupRateDecision(prev ? { windowStart: startMs, count: prev.count } : null, Date.now());
+      if (!next.ok) throw Object.assign(new Error(next.error), { code: 'rate-limit' });
+      const fresh = !prev || Date.now() - startMs >= 30 * 60 * 1000;
+      tx.set(ref, {
+        windowStart: fresh ? serverTimestamp() : prev.windowStart,
+        count: next.count,
+        lastId: playerId,
+      });
+    });
+  }
+  async selfJoin(match, person, { waiting = false } = {}) {
+    const rosterId = String(person?.id || '').trim();
+    if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
+    const id = rid();
+    await this._chargeSignupRate(rosterId, id);
+    return this.addPlayer(match, {
+      name: person?.name || '',
+      rosterId,
+      phone: person?.phone || '',
+      shortName: person?.shortName || '',
+    }, person?.name || '', {
+      id,
+      selfPending: waiting !== true,
+      waiting: waiting === true,
+      selfSignup: true,
+    });
+  }
+  async selfCancel(playerId, now = Date.now()) {
+    const player = this.state.players.find((row) => row.id === playerId);
+    if (!player) return;
+    const match = this.state.matches.find((row) => row.id === player.matchId) || {};
+    if (!canSelfCancel(player, match, now)) {
+      throw Object.assign(new Error('Avisale al organizador para bajarte.'), { code: 'too-late' });
+    }
+    await this._chargeSignupRate(player.rosterId || playerId, playerId);
+    await this.deletePlayer(playerId);
+  }
+  async confirmSelf(playerId) {
+    const player = this.state.players.find((row) => row.id === playerId);
+    if (!player?.selfPending) return;
+    const match = this.state.matches.find((row) => row.id === player.matchId) || {};
+    const mates = this.state.players.filter((row) => row.matchId === player.matchId && row.id !== playerId);
+    if (mates.filter((row) => occupiesSpot(row)).length >= (match.capacity || 14)) {
+      throw Object.assign(new Error('No hay lugar.'), { code: 'match-full' });
+    }
+    const { doc, updateDoc } = this.fs;
+    const now = Date.now();
+    await updateDoc(doc(this.db, 'players', playerId), { selfPending: false, rosterAt: now, updatedAt: now });
+  }
+  async rejectSelf(playerId) {
+    const player = this.state.players.find((row) => row.id === playerId);
+    if (!isSelfPending(player)) return;
+    await this.deletePlayer(playerId);
   }
   async setTeams(id, teams, who) {
     const rec = teamsRecord(teams);
