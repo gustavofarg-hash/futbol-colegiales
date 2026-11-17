@@ -565,10 +565,37 @@ dialog.sheet[open] > .tabbar {
 .tabbar a[aria-current="page"] {
   border-color: var(--green); background: var(--green-soft); color: var(--green);
 }
-#jugadores-a-confirmar { scroll-margin-top: calc(var(--header-h, 72px) + var(--tabbar-h, 56px) + 8px); }
-#pending-signups { gap: 6px; }
-.pending-row { align-items: center; }
-.pending-row .self-side { flex-wrap: wrap; justify-content: flex-end; }
+#jugadores-a-confirmar {
+  scroll-margin-top: calc(var(--header-h, 72px) + var(--tabbar-h, 56px) + 8px);
+  background: var(--warn-bg);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--warn-text) 35%, transparent);
+  border-radius: var(--radius);
+  padding: 12px 12px 6px;
+  margin: 0 0 14px;
+  box-shadow: var(--shadow);
+}
+#jugadores-a-confirmar .section { margin: 0 0 8px; }
+#pending-signups { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; min-width: 0; }
+.pending-row {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--warn-text) 22%, transparent);
+}
+.pending-row:first-child { border-top: 0; }
+.pending-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pending-name, .pending-when, .pending-place {
+  margin: 0; min-width: 0; white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: anywhere;
+}
+.pending-name { font-weight: 800; }
+.pending-when { font-weight: 700; }
+.pending-place .self-bit { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
+.pending-place .self-bit span { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.pending-actions { display: flex; flex: none; align-items: center; gap: 6px; }
+.pending-icon {
+  width: 40px; height: 40px; padding: 0; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn-text) 30%, var(--line));
+  background: var(--card); font-size: 1.15rem; line-height: 1;
+}
 .team-board { display: grid; gap: 8px; min-width: 0; }
 .scoreboard {
   display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center;

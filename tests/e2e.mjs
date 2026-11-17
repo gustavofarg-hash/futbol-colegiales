@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v214');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v215');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8546,7 +8546,26 @@ await fresh.close();
   await page.evaluate(() => { location.hash = '#/'; });
   await page.waitForSelector('#jugadores-a-confirmar');
   const pendingText = (await page.locator('#pending-signups').innerText()).replace(/\s+/g, ' ');
-  check('Arriba del inicio está el pendiente', pendingText.includes('Auto López') && pendingText.includes('22:30') && pendingText.includes('Aceptar') && pendingText.includes('Rechazar') && (await page.locator('#tab-confirmar').count()) === 0, pendingText);
+  const pendingUi = await page.evaluate(() => {
+    const row = document.querySelector('#pending-signups .pending-row');
+    const when = row?.querySelector('.pending-when');
+    const place = row?.querySelector('.pending-place');
+    const accept = row?.querySelector('[data-accept]');
+    const card = document.getElementById('jugadores-a-confirmar');
+    const wr = when?.getBoundingClientRect();
+    const br = accept?.getBoundingClientRect();
+    const placeStyle = place ? getComputedStyle(place) : null;
+    return {
+      accept: accept?.getAttribute('aria-label') || '',
+      reject: row?.querySelector('[data-reject]')?.getAttribute('aria-label') || '',
+      title: accept?.getAttribute('title') || '',
+      uncovered: !!(wr && br && wr.right <= br.left + 1),
+      wraps: placeStyle?.whiteSpace !== 'nowrap' && placeStyle?.textOverflow !== 'ellipsis',
+      card: card ? getComputedStyle(card).backgroundColor : '',
+      match: document.querySelector('.match-card') ? getComputedStyle(document.querySelector('.match-card')).backgroundColor : '',
+    };
+  });
+  check('Arriba del inicio está el pendiente', pendingText.includes('Auto López') && pendingText.includes('22:30') && pendingText.includes('Polideportivo') && pendingUi.accept === 'Aceptar' && pendingUi.reject === 'Rechazar' && pendingUi.title === 'Aceptar' && pendingUi.uncovered && pendingUi.wraps && pendingUi.card !== pendingUi.match && (await page.locator('#tab-confirmar').count()) === 0, `${pendingText} ${JSON.stringify(pendingUi)}`);
   const [acceptPopup] = await Promise.all([
     page.waitForEvent('popup'),
     page.click('#pending-signups [data-accept]'),
