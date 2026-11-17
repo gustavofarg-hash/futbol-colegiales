@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v207** (17/11/2026): el enlace de un organizador titula la lista «Próximos partidos de {nombre}». `firestore.rules` no cambió.
 **Actualizada para f7c-v206** (17/11/2026): el enlace que comparte un organizador lleva un token de él. Esa página muestra solo sus partidos, la anotación cuenta como hecha por él y el pendiente le llega solo a él. El enlace viejo, sin token, sigue mostrando los partidos de quienes tienen la ficha y no se los anota a nadie en particular. `firestore.rules` cambió: hay que pegarlas en mis-partidos-prueba.
 **Actualizada para f7c-v205** (17/11/2026): la página del jugador muestra cada partido en una ficha, con el estado debajo y sin cortar el lugar. El registro anota anotarse, espera, anular, aceptar y rechazar. Un partido puede ocultarse de los jugadores. `firestore.rules` cambió: hay que pegarlas en mis-partidos-prueba.
 **Actualizada para f7c-v204** (17/11/2026): sin sesión, poner el actor vacío no vuelve a pedir las colecciones del organizador. La ficha se queda con su escucha. `firestore.rules` no cambió.

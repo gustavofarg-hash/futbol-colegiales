@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v206');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v207');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8109,6 +8109,7 @@ await fresh.close();
       },
       players: {},
       roster: { [id]: { name: 'Ángel', holders: ['org-gustavo'], createdByUid: 'org-gustavo' } },
+      shareTokens: { GustavoToken2026v206xxxx: { uid: 'org-gustavo', name: 'Gustavo Pérez', createdAt: 1 } },
       organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {},
       contacts: { players: {}, roster: {} },
     }));
@@ -8126,6 +8127,10 @@ await fresh.close();
   const guestApp = (await locked.locator('.player-app').innerText()).trim();
   const guestBtn = (await locked.locator('#self-list .self-btn').first().innerText()).trim();
   check('Sin sesión el enlace del jugador abre su página', guestName === 'Ángel' && guestApp === 'Mis Partidos' && guestBtn === 'Anotarme' && guestChrome, `${guestName} ${guestApp} ${guestBtn}`);
+  check('Sin organizador en el enlace no titula la lista', await locked.locator('#player-signup-of').count() === 0);
+  await locked.goto(`${BASE}#/jugador/${guestId}/GustavoToken2026v206xxxx`);
+  await locked.waitForSelector('#player-signup-of');
+  check('El enlace del organizador titula sus próximos partidos', (await locked.locator('#player-signup-of').innerText()) === 'Próximos partidos de Gustavo' && (await locked.locator('#self-list .self-btn').first().innerText()).trim() === 'Anotarme');
   await anon.close();
 }
 

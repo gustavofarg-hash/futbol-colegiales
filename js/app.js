@@ -37,7 +37,7 @@ import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInp
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
-import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
+import { appInstallUrl, appShareMessage, isPlayerDeepLink, organizerMatchesTitle, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
 import { pendingSelfSignups, selfSignupRows } from './self-signup.js';
 import { registerOrganizerPush } from './push.js';
@@ -48,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v206';
+const APP_VERSION = 'f7c-v207';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -4824,9 +4824,16 @@ function renderProfile(id) {
   bindPartidos(person);
 }
 
+function linkOrganizer() {
+  const token = route().share || '';
+  if (!token) return null;
+  return app.store?.shareOrganizer?.(token) || null;
+}
+
 function renderPlayerSignup(person) {
   document.documentElement.classList.add('anon-lock');
   const list = selfSignupSection(person);
+  const title = organizerMatchesTitle(linkOrganizer()?.name);
   const painted = replaceView(`
     <article id="player-signup">
       <header class="player-top">
@@ -4836,6 +4843,7 @@ function renderPlayerSignup(person) {
           <h1 id="player-signup-name">${esc(person.name)}</h1>
         </div>
       </header>
+      ${title ? `<h2 id="player-signup-of">${esc(title)}</h2>` : ''}
       ${list || '<p class="empty-wait" id="self-empty">No hay partidos próximos.</p>'}
     </article>`);
   if (painted !== false) bindSelfSignup(person);
@@ -8408,7 +8416,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v206" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v207" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8445,7 +8453,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v206" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v207" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
