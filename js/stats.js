@@ -2,7 +2,6 @@
 // Un partido cancelado no suma plata ni cupo. La espera no debe.
 import { dayCompensation, matchAdders, matchCompensation } from './compensate.js';
 import { groupByInviter } from './guests.js';
-import { isSelfPending } from './self-signup.js';
 import { monthKeyOf, monthLabel } from './ledger.js';
 import { sameOrganizer, sameOrganizerIdentity, UNSPECIFIED } from './organizers.js';
 import { isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
@@ -81,7 +80,6 @@ export function matchTake({ match, players, matches, prices } = {}) {
   const byOrganizer = new Map();
   const all = matches || (match ? [match] : []);
   for (const player of rows) {
-    if (isSelfPending(player)) continue;
     const key = personKey(player, players) || (player.id ? `id:${player.id}` : '');
     if (key) keys.add(key);
     if (player.waiting === true) waiting += 1;
@@ -242,7 +240,7 @@ function signedUpBy(player, who) {
 /** La lista que se ve en el partido: sin espera, sin «No jugó», y solo hasta el cupo. */
 export function playingList(players, match) {
   if (!match?.id) return [];
-  const mine = (players || []).filter((player) => player && player.matchId === match.id && player.noPlay !== true && player.waiting !== true && !isSelfPending(player));
+  const mine = (players || []).filter((player) => player && player.matchId === match.id && player.noPlay !== true && player.waiting !== true);
   const ordered = groupByInviter(rosterSplit(mine).main, mine);
   const cap = matchCapacity(match);
   return cap > 0 ? ordered.slice(0, cap) : ordered;

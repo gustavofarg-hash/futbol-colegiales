@@ -8,13 +8,14 @@ export const DROP_LOCK_MS = 4 * 60 * 60 * 1000;
 export const RATE_WINDOW_MS = 30 * 60 * 1000;
 export const RATE_MAX = 5;
 
+/** El mismo pendiente de confirmación que usa el organizador: tentative, y lo anotó él. */
 export function isSelfPending(player) {
-  return player?.selfPending === true && player?.waiting !== true;
+  return player?.selfSignup === true && player?.tentative === true && player?.waiting !== true;
 }
 
-/** Ocupa un lugar del partido. El pendiente y la espera no. */
+/** Ocupa un lugar del partido. El pendiente de confirmación también. La espera no. */
 export function occupiesSpot(player) {
-  return !!player && player.waiting !== true && player.noPlay !== true && !isSelfPending(player);
+  return !!player && player.waiting !== true && player.noPlay !== true;
 }
 
 /**

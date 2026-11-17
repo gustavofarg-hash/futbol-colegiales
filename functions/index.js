@@ -116,7 +116,7 @@ exports.decideSignup = onRequest({ region: 'southamerica-east1', cors: true }, a
       if (!result.ok) return result;
       tx.update(actionRef, { used: true, usedAt: Date.now(), decision });
       if (result.op === 'delete') tx.delete(playerRef);
-      else tx.update(playerRef, { selfPending: false, rosterAt: Date.now(), updatedAt: Date.now() });
+      else tx.update(playerRef, { tentative: null, tentativeAt: null, updatedAt: Date.now() });
       return { ...result, matchId: player.matchId, confirmToken: player.confirmToken || '' };
     });
     if (!outcome.ok) {

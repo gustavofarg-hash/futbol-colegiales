@@ -39,7 +39,7 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { isSelfPending, pendingSelfSignups, selfSignupRows } from './self-signup.js';
+import { pendingSelfSignups, selfSignupRows } from './self-signup.js';
 import { registerOrganizerPush } from './push.js';
 import { bindTap, tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, resetProgressText, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
@@ -48,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v197';
+const APP_VERSION = 'f7c-v198';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -746,7 +746,7 @@ const addBlock = (m) => {
 const isWaiting = (p) => p.waiting === true;
 const isNoPlay = (p) => p?.noPlay === true;
 const playersOf = (matchId) => {
-  const all = app.players.filter((p) => p.matchId === matchId && !isNoPlay(p) && !isSelfPending(p));
+  const all = app.players.filter((p) => p.matchId === matchId && !isNoPlay(p));
   return groupByInviter(rosterSplit(all).main, all);
 };
 const noPlayOf = (matchId) => app.players.filter((p) => p.matchId === matchId && isNoPlay(p)).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es') || String(a.id).localeCompare(String(b.id)));
@@ -2138,7 +2138,6 @@ function renderMatch(id) {
     ${readOnly || m.cancelled ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
-    ${selfPendingSection(m, readOnly)}
     ${selfWaitNotices(m)}
     ${waitingSection(m, everyone.length >= cap, readOnly)}
     ${noPlaySection(m, readOnly)}
@@ -2158,13 +2157,6 @@ function renderMatch(id) {
     event.preventDefault();
     event.stopPropagation();
     if (!block) openAddPlayer(m);
-  };
-  const pendingList = $('#self-pending');
-  if (pendingList) pendingList.onclick = (event) => {
-    const ok = event.target.closest('[data-self-ok]');
-    if (ok) return run(app.store.confirmSelf(ok.dataset.selfOk), 'Confirmado');
-    const no = event.target.closest('[data-self-no]');
-    if (no) return run(app.store.rejectSelf(no.dataset.selfNo), 'Rechazado');
   };
   if ($('#btn-add-wait')) $('#btn-add-wait').onclick = (event) => {
     event.preventDefault();
@@ -4861,7 +4853,7 @@ function renderPending() {
   if (!list) return;
   list.onclick = (event) => {
     const accept = event.target.closest('[data-accept]');
-    if (accept) return run(app.store.confirmSelf(accept.dataset.accept), 'Aceptado');
+    if (accept) return run(app.store.clearTentative(accept.dataset.accept), 'Aceptado');
     const reject = event.target.closest('[data-reject]');
     if (reject) return run(app.store.rejectSelf(reject.dataset.reject), 'Rechazado');
   };
@@ -4873,17 +4865,6 @@ function armOrganizerPush() {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   pushArmStarted = true;
   registerOrganizerPush(app.store).catch(() => { pushArmStarted = false; });
-}
-
-function selfPendingSection(match, readOnly) {
-  const rows = app.players.filter((player) => player.matchId === match.id && isSelfPending(player));
-  if (!rows.length) return '';
-  const items = rows.map((player) => `
-    <li class="self-row" data-player="${esc(player.id)}">
-      <span class="self-when">${esc(shownName(player))}</span>
-      ${readOnly ? '<span class="self-note">Pendiente de confirmación</span>' : `<span class="self-side"><button type="button" class="btn self-btn" data-self-ok="${esc(player.id)}">Confirmar</button><button type="button" class="btn self-btn" data-self-no="${esc(player.id)}">Rechazar</button></span>`}
-    </li>`).join('');
-  return `<h2 class="section">Para confirmar</h2><ul class="slots" id="self-pending">${items}</ul>`;
 }
 
 function selfWaitNotices(match) {
@@ -8346,7 +8327,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v197" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v198" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8383,7 +8364,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v197" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v198" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
