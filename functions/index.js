@@ -21,6 +21,41 @@ exports.notifySelfSignup = onDocumentCreated(
       if (ref) await ref.delete().catch(() => {});
       return;
     }
+    if (ping.kind === 'confirmado') {
+      const rosterId = String(ping.rosterId || '');
+      const tokens = [];
+      if (rosterId) {
+        const found = await db.collection('playerTokens').where('rosterId', '==', rosterId).get();
+        found.forEach((doc) => {
+          const token = String(doc.data()?.token || '');
+          if (token) tokens.push({ token, ref: doc.ref });
+        });
+      }
+      const matchSnap = await db.doc(`matches/${ping.matchId}`).get();
+      const match = matchSnap.exists ? { id: ping.matchId, ...matchSnap.data() } : {
+        id: ping.matchId,
+        date: ping.date || '',
+        time: ping.time || '',
+        venueName: ping.venueName || '',
+      };
+      const copy = pushCopy('confirmado', { name: ping.name, rosterId }, match);
+      if (tokens.length) {
+        const res = await getMessaging().sendEachForMulticast({
+          tokens: tokens.map((row) => row.token),
+          data: pushFields('confirmado', copy, { tag: `confirm-${event.params.pingId}` }),
+        });
+        const dead = [];
+        res.responses.forEach((row, index) => {
+          const code = row.error?.code || '';
+          if (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-registration-token') {
+            dead.push(tokens[index].ref.delete().catch(() => {}));
+          }
+        });
+        await Promise.all(dead);
+      }
+      if (ref) await ref.delete().catch(() => {});
+      return;
+    }
     const matchSnap = await db.doc(`matches/${ping.matchId}`).get();
     const match = matchSnap.exists ? { id: ping.matchId, ...matchSnap.data() } : {
       id: ping.matchId,
@@ -160,6 +195,21 @@ exports.decideSignup = onRequest({ region: 'southamerica-east1', cors: true }, a
         method: '',
         rosterId: String(outcome.rosterId || ''),
       }).catch(() => {});
+      if (outcome.op === 'confirm' && outcome.rosterId) {
+        await db.collection('signupPings').add({
+          kind: 'confirmado',
+          name: String(outcome.playerName || '').slice(0, 60),
+          playerId: String(outcome.playerId || previewAction?.playerId || ''),
+          rosterId: String(outcome.rosterId || ''),
+          matchId: String(outcome.matchId || ''),
+          date: String(match.date || ''),
+          time: String(match.time || ''),
+          venueName: String(match.venueName || 'Polideportivo Colegiales').slice(0, 80),
+          createdAt: Date.now(),
+          organizerUid: '',
+          shareToken: '',
+        }).catch(() => {});
+      }
     }
     res.status(200).json({ ok: true, op: outcome.op });
   } catch (error) {

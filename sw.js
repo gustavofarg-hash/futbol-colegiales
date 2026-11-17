@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v209';
+const VERSION = 'f7c-v210';
 const TRIAL = self.location.pathname.includes('/prueba/');
 const CACHE = (TRIAL ? 'prueba-' : '') + VERSION;
 const SHELL = [
