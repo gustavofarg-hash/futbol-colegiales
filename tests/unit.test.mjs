@@ -3999,7 +3999,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v207');
+  assert.equal(version, 'f7c-v208');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -5285,6 +5285,20 @@ test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
   const rows = usualPlayers({ match, matches, players, today, who: { uid: 'gus', name: 'Gustavo' } });
   assert.deepEqual(rows.map((row) => [row.name, row.count]), [['Beto', 3], ['Espera', 1], ['Luz', 1], ['Nube', 1], ['Primo Real', 1]]);
   assert.equal(rows.some((row) => row.name === 'Invitado 1' || row.name === 'Amigo 2'), false);
+  const roster = [{ id: 'r-ana', name: 'Ana', phone: '5491111111111' }];
+  const pending = players.filter((player) => player.id !== 'ana-hoy').concat({
+    id: 'ana-pend', matchId: 'hoy', name: 'Ana', rosterId: 'r-ana', tentative: true, selfSignup: true, ...mine,
+  });
+  const waiting = players.filter((player) => player.id !== 'beto-1' || player.matchId !== 'hoy').concat({
+    id: 'beto-hoy', matchId: 'hoy', name: 'Beto', phone: '5491122222222', waiting: true, ...mine,
+  });
+  assert.equal(usualPlayers({ match, matches, players: pending, roster, today, who: { uid: 'gus', name: 'Gustavo' } }).some((row) => row.name === 'Ana'), false);
+  assert.equal(usualPlayers({ match, matches, players: waiting, roster, today, who: { uid: 'gus', name: 'Gustavo' } }).some((row) => row.name === 'Beto'), false);
+  const gone = usualPlayers({
+    match, matches, roster, today, who: { uid: 'gus', name: 'Gustavo' },
+    players: pending.filter((player) => player.id !== 'ana-pend'),
+  });
+  assert.equal(gone.some((row) => row.name === 'Ana'), true);
 });
 
 test('Me debe cuenta solo partidos ya jugados y el efectivo del día junta a Gus', () => {
