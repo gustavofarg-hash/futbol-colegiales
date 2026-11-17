@@ -13,11 +13,31 @@ function dayLabel(iso) {
   return `${Number(match[3])}/${match[2]}`;
 }
 
+const DAYS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
+function weekdayName(iso) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!match) return '';
+  const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  const name = DAYS[utc.getUTCDay()] || '';
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : '';
+}
+
 function pushCopy(kind, player, match) {
   const name = String(player?.name || '').trim() || 'Un jugador';
-  const when = [dayLabel(match?.date), match?.time || '', String(match?.venueName || 'Polideportivo Colegiales').trim()]
-    .filter(Boolean)
-    .join(' · ');
+  const place = String(match?.venueName || 'Polideportivo Colegiales').trim() || 'Polideportivo Colegiales';
+  const base = 'https://gustavofarg-hash.github.io/futbol-colegiales/prueba/';
+  if (kind === 'confirmado') {
+    const day = [weekdayName(match?.date), dayLabel(match?.date)].filter(Boolean).join(' ');
+    const when = [day, match?.time || ''].filter(Boolean).join(' ');
+    const rosterId = encodeURIComponent(String(player?.rosterId || ''));
+    return {
+      title: 'Mis Partidos',
+      body: `¡Te confirmaron para el ${when} en ${place}!`,
+      url: `${base}#/jugador/${rosterId}`,
+    };
+  }
+  const when = [dayLabel(match?.date), match?.time || '', place].filter(Boolean).join(' · ');
   const verb = kind === 'alta'
     ? 'se anotó y espera confirmación'
     : kind === 'espera'
@@ -28,7 +48,7 @@ function pushCopy(kind, player, match) {
   return {
     title: 'Mis Partidos',
     body: `${name} ${verb}. ${when}`,
-    url: `https://gustavofarg-hash.github.io/futbol-colegiales/prueba/${hash}`,
+    url: `${base}${hash}`,
   };
 }
 

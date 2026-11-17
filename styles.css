@@ -978,6 +978,21 @@ html.anon-lock #ask { display: none !important; }
 html.anon-lock #view { max-width: none; min-height: 100dvh; margin: 0; padding: 24px; display: grid; place-items: center; }
 html.anon-lock #view:has(#player-signup) { display: block; overflow-x: hidden; padding: 16px 12px; }
 #player-signup { text-align: left; }
+.confirm-notices { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }
+.confirm-notice {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px;
+  background: var(--lime, #c6f432); color: var(--lime-ink, #14200a);
+  border-radius: 16px; font-weight: 800; text-align: left; line-height: 1.3;
+}
+.confirm-notice span { flex: 1 1 auto; min-width: 0; }
+.confirm-notice button {
+  flex: none; border: 0; background: transparent; color: inherit;
+  font: inherit; font-size: 1.25rem; line-height: 1; min-width: 32px; min-height: 32px; padding: 0;
+}
+html.dark .confirm-notice { background: #243312; color: var(--lime, #c6f432); }
+.player-push { margin: 0 0 12px; }
+.player-push .btn { width: 100%; }
+.player-push-hint { margin: 6px 0 0; color: var(--muted); font-size: 0.8125rem; text-align: left; }
 html:has(#player-signup),
 html:has(#player-signup) body { overflow-x: hidden; max-width: 100%; }
 html:has(#player-signup) .topstack,

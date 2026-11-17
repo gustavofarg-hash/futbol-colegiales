@@ -16,7 +16,8 @@ import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting }
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
 import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from '../js/behavior.js';
 import { isSelfPending, matchOpenToRoster, occupiesSpot, pendingSelfSignups, selfRowAction, selfSignupRows, signupRateDecision } from '../js/self-signup.js';
-import { registerOrganizerPush } from '../js/push.js';
+import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from '../js/confirm-notice.js';
+import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from '../js/push.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
@@ -1989,6 +1990,25 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.notEqual(db().players[pendingId].tentative, true);
   assert.ok(Object.values(db().log || {}).some((row) => row.type === 'aceptó' && row.actorName === 'Gustavo' && row.playerName === 'Ana Sola'));
   assert.equal(occupiesSpot({ ...db().players[pendingId], id: pendingId }), true);
+  assert.ok(Object.values(db().signupPings || {}).some((row) => row.kind === 'confirmado' && row.playerId === pendingId && row.name === 'Ana Sola'));
+  const told = confirmBannerText({ date: '2026-10-19', time: '21:00', place: 'Polideportivo Colegiales' });
+  assert.equal(told, '¡Te confirmaron para el Lunes 19/10 21:00 en Polideportivo Colegiales!');
+  assert.equal(confirmWhatsAppText('Ana', { date: '2026-10-19', time: '21:00', place: 'Polideportivo Colegiales' }), 'Hola Ana, quedaste confirmado para el Lunes 19/10 21:00 en Polideportivo Colegiales.');
+  assert.equal(unseenConfirmations({
+    rosterId: 'ficha',
+    seenIds: [],
+    matches: [{ id: 'm1', date: '2026-10-19' }],
+    players: [
+      { id: 'nuevo', rosterId: 'ficha', matchId: 'm1', selfSignup: true, tentative: false, waiting: false },
+      { id: 'pendiente', rosterId: 'ficha', matchId: 'm1', selfSignup: true, tentative: true },
+    ],
+  }).map((row) => row.player.id).join(','), 'nuevo');
+  assert.equal(unseenConfirmations({
+    rosterId: 'ficha',
+    seenIds: ['nuevo'],
+    matches: [{ id: 'm1' }],
+    players: [{ id: 'nuevo', rosterId: 'ficha', matchId: 'm1', selfSignup: true }],
+  }).length, 0);
   const waitId = await store.selfJoin({ id: full, date: '2026-10-19', time: '18:00', capacity: 1 }, person, { waiting: true });
   assert.equal(db().players[waitId].waiting, true);
   assert.equal(db().players[waitId].selfSignup, true);
@@ -2026,6 +2046,9 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.match(copy.url, /#\/a-confirmar$/);
   assert.match(pushCopy('espera', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
   assert.match(pushCopy('baja', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
+  const confirmedCopy = pushCopy('confirmado', { name: 'Ana', rosterId: 'fichaAna' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Polideportivo Colegiales' });
+  assert.equal(confirmedCopy.body, '¡Te confirmaron para el Lunes 19/10 21:00 en Polideportivo Colegiales!');
+  assert.match(confirmedCopy.url, /#\/jugador\/fichaAna$/);
   const { noticeActions, actionDecision, pushFields } = require('../functions/logic.js');
   const alta = pushFields('alta', copy, { actionToken: 'a'.repeat(64), playerId: 'p1', tag: 't' });
   assert.equal(alta.decideUrl.includes('decideSignup'), true);
@@ -3999,7 +4022,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v209');
+  assert.equal(version, 'f7c-v210');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4019,6 +4042,10 @@ test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => 
   try {
     const push = await registerOrganizerPush({ savePushToken() { throw new Error('no hay token'); } });
     assert.deepEqual(push, { ok: false, reason: 'no-vapid' });
+    assert.equal(playerPushAvailable(), false);
+    const playerPush = await registerPlayerPush({ savePlayerPushToken() { throw new Error('no hay token'); } }, 'ficha');
+    assert.deepEqual(playerPush, { ok: false, reason: 'no-vapid' });
+    assert.equal(iosPushHint(), '');
   } finally {
     if (prev === undefined) delete globalThis.location;
     else globalThis.location = prev;
@@ -4042,8 +4069,8 @@ test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => 
   };
   assert.equal(store.fs.getMessaging, undefined);
   store._listenGuest('NZpoLFKUUh044kfNGSmR');
-  assert.equal(store._unsubs.length, 3);
-  assert.deepEqual(calls, ['roster/NZpoLFKUUh044kfNGSmR', 'matches', 'players']);
+  assert.equal(store._unsubs.length, 4);
+  assert.deepEqual(calls, ['roster/NZpoLFKUUh044kfNGSmR', 'matches', 'confirmSeen', 'players']);
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(store.state.roster[0].name, 'Ángel');
   assert.equal(store.serverOk, true);

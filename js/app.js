@@ -39,8 +39,9 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, organizerMatchesTitle, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { pendingSelfSignups, selfSignupRows } from './self-signup.js';
-import { registerOrganizerPush } from './push.js';
+import { isSelfPending, pendingSelfSignups, selfSignupRows } from './self-signup.js';
+import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from './confirm-notice.js';
+import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from './push.js';
 import { bindTap, tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, resetProgressText, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
@@ -48,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v209';
+const APP_VERSION = 'f7c-v210';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -241,6 +242,8 @@ const app = {
   profileMatchId: null,
   profileViaMatchId: null,
   selfSignupError: null,
+  confirmSeen: [],
+  noticeError: '',
 };
 window.__app = app; // útil para depurar / tests
 
@@ -1464,7 +1467,10 @@ function renderHome(focusPending = false) {
   const pending = $('#pending-signups');
   if (pending) pending.onclick = (event) => {
     const accept = event.target.closest('[data-accept]');
-    if (accept) return run(app.store.clearTentative(accept.dataset.accept), 'Aceptado');
+    if (accept) {
+      const player = app.players.find((item) => item.id === accept.dataset.accept);
+      return confirmPlayerPlace(player, 'Aceptado');
+    }
     const reject = event.target.closest('[data-reject]');
     if (reject) return run(app.store.rejectSelf(reject.dataset.reject), 'Rechazado');
   };
@@ -2410,7 +2416,32 @@ function confirmSpotButton(p) {
 }
 function clearReservedSpot(player) {
   if (!player || player.tentative !== true) return;
-  run(app.store.clearTentative(player.id), 'Lugar confirmado');
+  confirmPlayerPlace(player, 'Lugar confirmado');
+}
+
+function confirmPlayerPlace(player, okMsg) {
+  if (!player) return;
+  const popup = isSelfPending(player) ? window.open('', '_blank') : null;
+  if (popup) popup.opener = null;
+  const job = app.store.confirmSelf(player.id).then((told) => {
+    if (!told?.match) {
+      popup?.close();
+      return;
+    }
+    const phone = withAgendaPhone(told.player).phone || '';
+    const text = confirmWhatsAppText(givenName(told.player, app.roster), {
+      date: told.match.date,
+      time: told.match.time,
+      place: placeOf(told.match),
+    });
+    const url = waSendUrl({ phone, text });
+    if (popup) popup.location = url;
+    else window.open(url, '_blank', 'noopener');
+  }).catch((error) => {
+    popup?.close();
+    throw error;
+  });
+  return run(job, okMsg);
 }
 
 const REMINDER_BANNER = 'Faltan 2 horas: mandá los recordatorios';
@@ -4834,6 +4865,7 @@ function linkOrganizer() {
 
 function renderPlayerSignup(person) {
   document.documentElement.classList.add('anon-lock');
+  app.store?.watchConfirmSeen?.(person.id);
   const list = selfSignupSection(person);
   const title = organizerMatchesTitle(linkOrganizer()?.name);
   const painted = replaceView(`
@@ -4846,9 +4878,78 @@ function renderPlayerSignup(person) {
         </div>
       </header>
       ${title ? `<h2 id="player-signup-of">${esc(title)}</h2>` : ''}
+      ${confirmNoticesHtml(person)}
+      ${playerPushHtml()}
       ${list || '<p class="empty-wait" id="self-empty">No hay partidos próximos.</p>'}
     </article>`);
-  if (painted !== false) bindSelfSignup(person);
+  if (painted !== false) {
+    bindSelfSignup(person);
+    bindConfirmNotices(person);
+    bindPlayerPush(person);
+  }
+}
+
+function confirmNoticesHtml(person) {
+  const rows = unseenConfirmations({
+    players: app.players,
+    matches: app.matches,
+    rosterId: person.id,
+    seenIds: app.confirmSeen || [],
+  });
+  const fail = app.noticeError ? `<p class="self-error" role="alert">${esc(app.noticeError)}</p>` : '';
+  if (!rows.length) return fail;
+  const items = rows.map(({ player, match }) => `<p class="confirm-notice" role="status"><span>${esc(confirmBannerText({ date: match.date, time: match.time, place: placeOf(match) }))}</span><button type="button" data-notice-dismiss="${esc(player.id)}" aria-label="Cerrar aviso">×</button></p>`).join('');
+  return `<div class="confirm-notices" id="confirm-notices">${items}${fail}</div>`;
+}
+
+function bindConfirmNotices(person) {
+  const box = $('#confirm-notices');
+  if (!box) return;
+  box.onclick = (event) => {
+    const btn = event.target.closest('[data-notice-dismiss]');
+    if (!btn) return;
+    const id = btn.dataset.noticeDismiss;
+    app.noticeError = '';
+    app.confirmSeen = [...new Set([...(app.confirmSeen || []), id])];
+    renderPlayerSignup(person);
+    app.store.markConfirmSeen(id, person.id).catch((error) => {
+      app.confirmSeen = (app.confirmSeen || []).filter((item) => item !== id);
+      app.noticeError = writeFailureText(error);
+      renderPlayerSignup(person);
+    });
+  };
+}
+
+function playerPushHtml() {
+  if (!playerPushAvailable()) return '';
+  const hint = iosPushHint();
+  return `<div class="player-push"><button type="button" class="btn" id="player-push">Avisarme cuando me confirmen</button>${hint ? `<p class="player-push-hint" id="player-push-ios">${esc(hint)}</p>` : ''}<p class="player-push-hint" id="player-push-msg" hidden></p></div>`;
+}
+
+function bindPlayerPush(person) {
+  const btn = $('#player-push');
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const msg = $('#player-push-msg');
+    try {
+      const result = await registerPlayerPush(app.store, person.id);
+      if (result.ok) {
+        btn.textContent = 'Te vamos a avisar';
+        if (msg) msg.hidden = true;
+        return;
+      }
+      btn.disabled = false;
+      if (!msg) return;
+      msg.hidden = false;
+      msg.textContent = result.reason === 'denied' ? 'El navegador no dejó mostrar avisos.' : 'No se pudo activar el aviso.';
+    } catch (error) {
+      btn.disabled = false;
+      if (!msg) return;
+      msg.hidden = false;
+      msg.textContent = writeFailureText(error);
+    }
+  };
 }
 
 const SELF_CAL = '<svg class="self-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>';
@@ -8443,7 +8544,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v209" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v210" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8480,7 +8581,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v209" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v210" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -8669,6 +8770,7 @@ async function boot() {
     app.creditsReady = view.creditsReady === true;
     app.playersReady = view.playersReady === true;
     if (app.guestPlayer) app.shareOrganizer = view.shareOrganizer || null;
+    if (Array.isArray(view.confirmSeen)) app.confirmSeen = view.confirmSeen;
     app.compensations = mergeHeldCompensations(view.compensations || []);
     app.usage = view.usage || null;
     if (app.role === 'admin' && $('#usage-meter')) {
@@ -8686,7 +8788,7 @@ async function boot() {
     if (!app.guestPlayer && pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

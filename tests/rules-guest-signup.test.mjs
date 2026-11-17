@@ -149,6 +149,28 @@ test('el enlace con token puede anotarse, esperar y anular', async (t) => {
     const waitGone = await getDoc(doc(adb, 'players', waitId));
     assert.equal(gone.exists(), false);
     assert.equal(waitGone.exists(), false);
+
+    const confirmedId = 'm1abcxyzconfirmed1';
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'players', confirmedId), { ...payload(confirmedId), tentative: false, tentativeAt: null });
+    });
+    await assertSucceeds(setDoc(doc(anon, 'confirmSeen', confirmedId), { rosterId: ROSTER, seen: true }));
+    await assertFails(setDoc(doc(anon, 'confirmSeen', playerId), { rosterId: ROSTER, seen: true }));
+    await assertFails(setDoc(doc(anon, 'confirmSeen', confirmedId), { rosterId: ROSTER, seen: false }));
+    const tokenTail = 'abcdefghijklmnopqrstuvwx';
+    await assertSucceeds(setDoc(doc(anon, 'playerTokens', `${ROSTER}_${tokenTail}`), {
+      rosterId: ROSTER, token: tokenTail, updatedAt: Date.now(),
+    }));
+    await assertFails(setDoc(doc(anon, 'playerTokens', `${ROSTER}_${tokenTail}b`), {
+      rosterId: 'otraFichaQueNoExiste', token: tokenTail, updatedAt: Date.now(),
+    }));
+    const staff = testEnv.authenticatedContext(ORG, { email: 'gustavo@demo.local' }).firestore();
+    await assertSucceeds(setDoc(doc(staff, 'signupPings', 'pingConfirmo000001'), {
+      kind: 'confirmado', name: NAME, playerId: confirmedId, rosterId: ROSTER, matchId: MATCH,
+      date: '2026-11-17', time: '17:00', venueName: 'Polideportivo Colegiales',
+      createdAt: Date.now(), organizerUid: '', shareToken: '',
+    }));
   } finally {
     await testEnv.cleanup();
   }

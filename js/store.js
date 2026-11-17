@@ -866,6 +866,7 @@ class LocalStore {
       matches, history, historyMeta, historyError: '',
       players, roster, rosterNotes, suspensions, suspensionHistory, payBatches, behavior, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
       credits, creditsError: null, creditsReady: true, playersReady: true, compensations, log, logError: '',
+      confirmSeen: Object.entries(db.confirmSeen || {}).filter(([, row]) => row?.seen === true).map(([id]) => id),
     }));
   }
   async init() {
@@ -1059,6 +1060,26 @@ class LocalStore {
     this._save(db);
     return id;
   }
+  async savePlayerPushToken(rosterId, token) {
+    const owner = String(rosterId || '').trim();
+    const id = tokenDocId(owner, token);
+    if (!id) return '';
+    const db = this._load();
+    db.playerTokens ||= {};
+    db.playerTokens[id] = { rosterId: owner, token: String(token), updatedAt: Date.now() };
+    this._save(db);
+    return id;
+  }
+  async markConfirmSeen(playerId, rosterId) {
+    const id = String(playerId || '').trim();
+    const owner = String(rosterId || '').trim();
+    if (!id || !owner) return;
+    const db = this._load();
+    db.confirmSeen ||= {};
+    db.confirmSeen[id] = { rosterId: owner, seen: true };
+    this._save(db);
+  }
+  watchConfirmSeen() {}
   shareOrganizer(token) {
     const id = String(token || '').trim();
     const row = this._load().shareTokens?.[id];
@@ -1100,8 +1121,15 @@ class LocalStore {
   }
   async confirmSelf(playerId) {
     const player = this._load().players[playerId];
-    if (!player?.tentative) return;
+    if (!player?.tentative) return null;
+    const pending = isSelfPending(player);
     await this.clearTentative(playerId);
+    if (!pending) return null;
+    const db = this._load();
+    const match = { id: player.matchId, ...(db.matches[player.matchId] || {}) };
+    this._queueSignupPing(db, 'confirmado', { id: playerId, ...player }, match);
+    this._save(db);
+    return { player: { id: playerId, ...player }, match };
   }
   async rejectSelf(playerId) {
     const db = this._load();
@@ -1938,7 +1966,7 @@ export class FirebaseStore {
     this._compUnscoped = false;
     this._named = {};
     this._unsubs = [];
-    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '', confirmSeen: [] };
     this._noteMoves = new Set();
     this._rosterReady = false;
     this._logRange = weekRange();
@@ -2550,6 +2578,18 @@ export class FirebaseStore {
       takePlayers,
       () => { this.state.players = []; seen.players = true; publish(); },
     );
+    this._seenRoster = id;
+    this._swap('guest-seen', onSnapshot(
+      query(collection(this.db, 'confirmSeen'), where('rosterId', '==', id)),
+      (snap) => {
+        this.state.confirmSeen = snap.docs.filter((item) => item.data()?.seen === true).map((item) => item.id);
+        if (seen.players) this._emit();
+      },
+      () => {
+        this.state.confirmSeen = [];
+        if (seen.players) this._emit();
+      },
+    ));
     this._swap('guest-players', onSnapshot(
       query(collection(this.db, 'players'), where('viewers', 'array-contains', '*'), where('matchDate', '>=', today)),
       takePlayers,
@@ -3442,6 +3482,37 @@ export class FirebaseStore {
     await setDoc(doc(this.db, 'organizerTokens', id), { uid, token: String(token), updatedAt: Date.now() });
     return id;
   }
+  async savePlayerPushToken(rosterId, token) {
+    const owner = String(rosterId || '').trim();
+    const id = tokenDocId(owner, token);
+    if (!id) return '';
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'playerTokens', id), { rosterId: owner, token: String(token), updatedAt: Date.now() });
+    return id;
+  }
+  async markConfirmSeen(playerId, rosterId) {
+    const id = String(playerId || '').trim();
+    const owner = String(rosterId || '').trim();
+    if (!id || !owner) return;
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'confirmSeen', id), { rosterId: owner, seen: true });
+    this.state.confirmSeen = [...new Set([...(this.state.confirmSeen || []), id])];
+    this._emit();
+  }
+  watchConfirmSeen(rosterId) {
+    const id = String(rosterId || '').trim();
+    if (!id || !this.fs || this._seenRoster === id) return;
+    this._seenRoster = id;
+    const { collection, query, where, onSnapshot } = this.fs;
+    this._swap('confirm-seen', onSnapshot(
+      query(collection(this.db, 'confirmSeen'), where('rosterId', '==', id)),
+      (snap) => {
+        this.state.confirmSeen = snap.docs.filter((item) => item.data()?.seen === true).map((item) => item.id);
+        this._emit();
+      },
+      () => {},
+    ));
+  }
   async _guestSelfJoin(match, person, { waiting = false, organizer = null } = {}) {
     const rosterId = String(person?.id || '').trim();
     if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
@@ -3543,8 +3614,14 @@ export class FirebaseStore {
   }
   async confirmSelf(playerId) {
     const player = this.state.players.find((row) => row.id === playerId);
-    if (!player?.tentative) return;
+    if (!player?.tentative) return null;
+    const pending = isSelfPending(player);
+    const match = this.state.matches.find((row) => row.id === player.matchId) || { id: player.matchId };
     await this.clearTentative(playerId);
+    if (!pending) return null;
+    try { await this._writeSignupPing('confirmado', { ...player, id: playerId }, match, null); }
+    catch { /* sin la función el teléfono no suena, y la confirmación queda */ }
+    return { player: { ...player, id: playerId }, match };
   }
   async rejectSelf(playerId) {
     const player = this.state.players.find((row) => row.id === playerId);

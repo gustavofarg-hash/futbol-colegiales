@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v209');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v210');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8472,7 +8472,16 @@ await fresh.close();
   await page.waitForSelector('#slots .slot:has-text("Auto López") .confirm-spot');
   const pendingRow = (await page.locator('#slots .slot', { hasText: 'Auto López' }).innerText()).replace(/\s+/g, ' ');
   check('En el partido se ve como pendiente de confirmación', pendingRow.includes('Reservado') && pendingRow.includes('Confirmar lugar') && (await page.textContent('#slot-count')).replace(/\s/g, '') === '1/14', pendingRow);
-  await page.click('#slots .slot:has-text("Auto López") .confirm-spot');
+  const [confirmedPopup] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.click('#slots .slot:has-text("Auto López") .confirm-spot'),
+  ]);
+  await confirmedPopup.waitForURL(/whatsapp\.com|wa\.me/).catch((error) => {
+    if (!/whatsapp|wa\.me/.test(String(error))) throw error;
+  });
+  const confirmedWa = decodeURIComponent(confirmedPopup.url()).replace(/\+/g, ' ');
+  check('Confirmar lugar abre WhatsApp para que el organizador lo mande', /whatsapp\.com|wa\.me/.test(confirmedWa) && confirmedWa.includes('quedaste confirmado') && confirmedWa.includes('21:00') && confirmedWa.includes('Hola'), confirmedWa.slice(0, 240));
+  await confirmedPopup.close();
   await page.waitForFunction(() => {
     const row = [...document.querySelectorAll('#slots .slot')].find((el) => el.innerText.includes('Auto López'));
     return row && !row.querySelector('.confirm-spot');
@@ -8484,6 +8493,14 @@ await fresh.close();
     return row && row.innerText.includes('Confirmado') && row.querySelector('.self-check') && row.innerText.includes('21:00');
   }, self.open);
   check('El jugador ve el tilde verde de confirmado', (await page.locator(`#self-list .self-row[data-match="${self.open}"] .self-status`).innerText()) === 'Confirmado');
+  await page.waitForSelector('.confirm-notice');
+  const confirmedBanner = (await page.locator('.confirm-notice').innerText()).replace(/\s+/g, ' ');
+  check('La primera vez avisa que lo confirmaron', confirmedBanner.includes('Te confirmaron') && confirmedBanner.includes('21:00') && confirmedBanner.includes('Polideportivo') && await page.locator('#player-push').count() === 0, confirmedBanner);
+  await page.locator('[data-notice-dismiss]').click();
+  await page.waitForFunction(() => !document.querySelector('.confirm-notice'));
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  await page.waitForSelector('#player-signup');
+  check('El aviso de confirmado se muestra una sola vez', await page.locator('.confirm-notice').count() === 0);
   await page.setViewportSize({ width: 360, height: 800 });
   const confirmedBox = await selfCardBox(self.open);
   const isGreen = (color) => {
@@ -8530,7 +8547,16 @@ await fresh.close();
   await page.waitForSelector('#jugadores-a-confirmar');
   const pendingText = (await page.locator('#pending-signups').innerText()).replace(/\s+/g, ' ');
   check('Arriba del inicio está el pendiente', pendingText.includes('Auto López') && pendingText.includes('22:30') && pendingText.includes('Aceptar') && pendingText.includes('Rechazar') && (await page.locator('#tab-confirmar').count()) === 0, pendingText);
-  await page.click('#pending-signups [data-accept]');
+  const [acceptPopup] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.click('#pending-signups [data-accept]'),
+  ]);
+  await acceptPopup.waitForURL(/whatsapp\.com|wa\.me/).catch((error) => {
+    if (!/whatsapp|wa\.me/.test(String(error))) throw error;
+  });
+  const acceptWa = decodeURIComponent(acceptPopup.url()).replace(/\+/g, ' ');
+  check('Aceptar abre WhatsApp con el texto listo', acceptWa.includes('quedaste confirmado') && acceptWa.includes('22:30'), acceptWa.slice(0, 240));
+  await acceptPopup.close();
   await page.waitForFunction(() => !document.querySelector('#jugadores-a-confirmar'));
   check('Aceptar saca la lista de arriba', await page.locator('#jugadores-a-confirmar').count() === 0);
   const still = await page.evaluate((id) => {
