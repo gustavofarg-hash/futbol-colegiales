@@ -17,7 +17,7 @@ rules_version = '2';
 // Sin viewers, o con `*`, lo ven todos los activos. Con una lista de uids,
 // solo esas cuentas (y el creador) lo leen. Quien no está en adders lo ve
 // y no anota. Sin sesión no hay escrituras, salvo confirmed/confirmedAt
-// con el token.
+// con el token, y el alta o la baja del propio enlace #/jugador/{id}.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -566,7 +566,10 @@ service cloud.firestore {
       // get acepta partidos viejos sin viewers. list solo la consulta
       // array-contains-any [uid, '*']: si no, Firestore rechaza la lista.
       allow get: if isActiveStaff() && canReadListed(resource.data);
+      // El enlace del jugador, sin sesión, lee los partidos abiertos (viewers *).
+      allow get: if resource.data.viewers.hasAny(['*']);
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
+      allow list: if resource.data.viewers.hasAny(['*']);
       allow create: if isActiveStaff() && validMatch(request.resource.data);
       allow update: if isActiveStaff() && validMatch(request.resource.data) && isViewer(resource.data)
           && (isCreator() || (accessSame() && isAdder(resource.data)) || legacyStamp());
@@ -615,22 +618,51 @@ service cloud.firestore {
     function ratePath(rosterId) {
       return /databases/$(database)/documents/signupRates/$(rosterId);
     }
-    function selfRateOk(rosterId) {
+    function selfRateOk(rosterId, pid) {
       return exists(ratePath(rosterId))
-          && get(ratePath(rosterId)).data.lastId == playerId
+          && get(ratePath(rosterId)).data.lastId == pid
           && get(ratePath(rosterId)).data.count is int
           && get(ratePath(rosterId)).data.count >= 1
           && get(ratePath(rosterId)).data.count <= 5
           && get(ratePath(rosterId)).data.windowStart is timestamp
           && request.time < get(ratePath(rosterId)).data.windowStart + duration.value(30, 'm');
     }
+    // El id del enlace #/jugador/{id}. No se puede listar el plantel.
+    function guestRoster(rosterId) {
+      return rosterId is string && rosterId.size() >= 16 && rosterId.size() <= 80
+          && rosterId.matches('^[A-Za-z0-9]+$')
+          && exists(/databases/$(database)/documents/roster/$(rosterId));
+    }
+    function rosterHolders(rosterId) {
+      let d = rosterDoc(rosterId);
+      return (d.get('holders', []) is list && d.get('holders', []).size() > 0)
+          ? d.holders
+          : ((d.get('createdByUid', '') is string && d.createdByUid.size() > 0) ? [d.createdByUid] : []);
+    }
     function selfMatchForHolder(matchId, rosterId) {
       let m = matchData(matchId);
-      let holders = rosterDoc(rosterId).get('holders', []);
+      let holders = rosterHolders(rosterId);
       return (m.get('createdByUid', '') is string && m.createdByUid.size() > 0 && holders.hasAny([m.createdByUid]))
           || (m.keys().hasAny(['adders']) && m.adders is list && holders.hasAny(m.adders))
           || ((!m.keys().hasAny(['createdByUid']) || m.get('createdByUid', '') == '')
               && (!m.keys().hasAny(['adders']) || m.adders.size() == 0 || m.adders.hasAny(['*'])));
+    }
+    function guestSignupShape(d) {
+      return d.selfSignup == true
+          && guestRoster(d.rosterId)
+          && d.name == rosterDoc(d.rosterId).get('name', '')
+          && d.addedByUid == ''
+          && selfMatchForHolder(d.matchId, d.rosterId)
+          && d.get('paid', false) != true
+          && d.get('amount', null) == null
+          && d.get('cash', null) == null
+          && d.get('transfer', null) == null
+          && d.get('pendingTransfer', null) == null
+          && d.get('fromCredit', null) == null
+          && (
+            (d.tentative == true && d.waiting == false)
+            || (d.waiting == true && d.get('tentative', false) != true)
+          );
     }
     function selfSignupShape(d) {
       return d.selfSignup == true
@@ -665,12 +697,20 @@ service cloud.firestore {
 
     match /players/{playerId} {
       allow get: if isActiveStaff() && canReadListed(resource.data);
+      allow get: if resource.data.viewers.hasAny(['*']);
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
+      allow list: if resource.data.viewers.hasAny(['*']);
       // El jugador (quien tiene la ficha) solo puede crear SU alta: pendiente o espera.
       allow create: if signedIn()
           && selfSignupShape(request.resource.data)
           && holdsRoster(request.resource.data.rosterId)
-          && selfRateOk(request.resource.data.rosterId)
+          && selfRateOk(request.resource.data.rosterId, playerId)
+          && validPlayer(request.resource.data)
+          && invitedByOk()
+          && playerListsOk(request.resource.data.matchId);
+      // El enlace #/jugador/{id}, sin cuenta de organizador.
+      allow create: if guestSignupShape(request.resource.data)
+          && selfRateOk(request.resource.data.rosterId, playerId)
           && validPlayer(request.resource.data)
           && invitedByOk()
           && playerListsOk(request.resource.data.matchId);
@@ -708,9 +748,16 @@ service cloud.firestore {
           );
       allow delete: if signedIn()
           && resource.data.selfSignup == true
-          && (resource.data.selfPending == true || resource.data.waiting == true)
+          && (resource.data.selfPending == true || resource.data.tentative == true || resource.data.waiting == true)
           && holdsRoster(resource.data.rosterId)
-          && selfRateOk(resource.data.rosterId);
+          && selfRateOk(resource.data.rosterId, playerId);
+      allow delete: if guestRoster(resource.data.rosterId)
+          && resource.data.name == rosterDoc(resource.data.rosterId).get('name', '')
+          && selfRateOk(resource.data.rosterId, playerId)
+          && (
+            (resource.data.selfSignup == true && (resource.data.tentative == true || resource.data.waiting == true || resource.data.selfPending == true))
+            || (resource.data.get('waiting', false) != true && resource.data.get('noPlay', false) != true && resource.data.get('tentative', false) != true)
+          );
       allow delete: if isAdmin()
           || (isActiveStaff() && (!('adders' in resource.data) || (resource.data.adders is list && resource.data.adders.hasAny([request.auth.uid, '*']))));
     }
@@ -758,15 +805,17 @@ service cloud.firestore {
     }
 
     match /signupRates/{rosterId} {
-      allow get: if signedIn() && (holdsRoster(rosterId) || isActiveStaff());
-      allow create, update: if signedIn() && holdsRoster(rosterId) && signupRateOk();
+      allow get: if (signedIn() && (holdsRoster(rosterId) || isActiveStaff())) || guestRoster(rosterId);
+      allow create, update: if ((signedIn() && holdsRoster(rosterId)) || guestRoster(rosterId)) && signupRateOk();
       allow delete: if isAdmin();
     }
 
     match /roster/{rosterId} {
       // El borrado no puede mirar players: las reglas no consultan otra
       // colección. La app rechaza el borrado si esa ficha está anotada.
-      allow read, delete: if isActiveStaff();
+      // El enlace conoce el id: puede leer ESA ficha, no el listado.
+      allow get: if isActiveStaff() || guestRoster(rosterId);
+      allow list, delete: if isActiveStaff();
       // Sumarse a una ficha ajena. Va primero y no llama a validRoster:
       // validar la ficha entera (notas incluidas) más las otras reglas de
       // update pasa el tope de 1000 expresiones y Firebase niega el vínculo.

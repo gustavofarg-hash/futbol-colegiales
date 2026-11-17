@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v202** (17/11/2026): el enlace `#/jugador/{id}` sin sesión de organizador abre la página del jugador (nombre de la app, nombre y lista). Un id que no existe sigue en «NO TENÉS ACCESO». `firestore.rules` cambió: hay que pegarlas en mis-partidos-prueba.
 **Actualizada para f7c-v201** (17/11/2026): la página del jugador no muestra pestañas, ajustes, volver, A−/A+ ni compartir. Solo el nombre de la app, el del jugador y la lista. `firestore.rules` no cambió.
 **Actualizada para f7c-v200** (17/11/2026): la lista para anotarse está en el enlace del jugador, no en el menú del organizador. Si no tiene acceso, ve su nombre y los partidos. El organizador sigue viendo la ficha de siempre. `firestore.rules` no cambió.
 **Actualizada para f7c-v199** (17/11/2026): «Jugadores a confirmar» no es una pestaña. Está arriba del inicio, solo si hay pendientes. El aviso de un alta abre esa lista. `firestore.rules` no cambió.
