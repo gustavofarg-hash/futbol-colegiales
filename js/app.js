@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v214';
+const APP_VERSION = 'f7c-v215';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -5059,18 +5059,22 @@ function pendingSignupBlock() {
   const rows = myPendingSignups();
   if (!rows.length) return '';
   const items = rows.map(({ player, match }) => {
-    const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} · ${placeOf(match)}`;
-    return `<li class="self-row pending-row" data-player="${esc(player.id)}">
-      <span class="self-when"><b>${esc(shownName(player))}</b> · ${esc(when)}</span>
-      <span class="self-side">
-        <button type="button" class="btn self-btn" data-accept="${esc(player.id)}">Aceptar</button>
-        <button type="button" class="btn self-btn" data-reject="${esc(player.id)}">Rechazar</button>
-      </span>
+    const when = `${capitalize(labelDate(match.date))} ${match.time || '--:--'}`;
+    return `<li class="pending-row" data-player="${esc(player.id)}">
+      <div class="pending-main">
+        <p class="pending-name">${esc(shownName(player))}</p>
+        <p class="pending-when">${esc(when)}</p>
+        <p class="pending-place"><span class="self-bit">${SELF_PIN}<span>${esc(placeOf(match))}</span></span></p>
+      </div>
+      <div class="pending-actions">
+        <button type="button" class="pending-icon" data-accept="${esc(player.id)}" aria-label="Aceptar" title="Aceptar">✅</button>
+        <button type="button" class="pending-icon" data-reject="${esc(player.id)}" aria-label="Rechazar" title="Rechazar">❌</button>
+      </div>
     </li>`;
   }).join('');
-  return `<section id="jugadores-a-confirmar" tabindex="-1">
+  return `<section id="jugadores-a-confirmar" class="pending-card" tabindex="-1">
     <h2 class="section">Jugadores a confirmar</h2>
-    <ul class="slots" id="pending-signups">${items}</ul>
+    <ul id="pending-signups">${items}</ul>
   </section>`;
 }
 

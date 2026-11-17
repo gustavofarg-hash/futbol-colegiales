@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v215** (17/11/2026): «Jugadores a confirmar» es una tarjeta ámbar. Cada fila muestra nombre, día, hora y lugar, y Aceptar/Rechazar son íconos. `firestore.rules` no cambió. Los índices no cambiaron.
 **Actualizada para f7c-v214** (17/11/2026): el organizador vuelve a anotar en un lugar libre. La regla del alta ya no pasa el tope de 1000 expresiones. `firestore.rules` cambió: hay que pegarlas en mis-partidos-prueba. Los índices no cambiaron.
 **Actualizada para f7c-v213** (17/11/2026): la página del jugador vuelve a listar los próximos del organizador aunque falte `createdByUid` o `playerVisible`. Si la consulta falla, lo dice. `firestore.rules` cambió: el organizador puede completar `createdByUid` vacío. Hay un índice de partidos `viewers` + `date`.
 **Actualizada para f7c-v212** (17/11/2026): el ícono es el pateador lima y azul. Un partido próximo sin `playerVisible` se marca visible la primera vez que lo abre su organizador, sin entrada en el Registro. En producción esa escritura toca datos reales. `firestore.rules` no cambió. Los índices no cambiaron.
