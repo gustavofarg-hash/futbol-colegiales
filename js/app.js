@@ -4884,14 +4884,14 @@ function selfSignupSection(person) {
         : '';
     }
     return `<li class="self-card self-row${status === 'confirmed' ? ' is-in' : ''}" data-match="${esc(match.id)}">
-      ${status === 'confirmed' ? SELF_CHECK : ''}
-      <div class="self-body">
-        <p class="self-when"><span class="self-bit">${SELF_CAL}<span>${esc(capitalize(labelDate(match.date)))}</span></span><span class="self-bit">${SELF_CLOCK}<span>${esc(match.time || '--:--')}</span></span><span class="self-bit self-place">${SELF_PIN}<span>${esc(placeOf(match))}</span></span></p>
+      <div class="self-main">
+        <p class="self-when">${status === 'confirmed' ? SELF_CHECK : ''}<span class="self-bit">${SELF_CAL}<span>${esc(capitalize(labelDate(match.date)))}</span></span><span class="self-bit">${SELF_CLOCK}<span>${esc(match.time || '--:--')}</span></span></p>
+        <p class="self-place"><span class="self-bit">${SELF_PIN}<span>${esc(placeOf(match))}</span></span></p>
         ${statusHtml}
         ${failHtml}
         ${lockHtml}
-        ${control ? `<div class="self-actions">${control}</div>` : ''}
       </div>
+      ${control ? `<div class="self-actions">${control}</div>` : ''}
     </li>`;
   }).join('');
   return `<ul class="slots" id="self-list">${items}</ul>`;
