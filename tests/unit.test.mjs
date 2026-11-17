@@ -1938,9 +1938,12 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.equal(selfRowAction({ full: true }).action, 'wait');
   assert.equal(selfRowAction({ player: { tentative: true, selfSignup: true } }).note, 'Pendiente de confirmación');
   assert.equal(selfRowAction({ player: { waiting: true } }).action, 'cancel');
+  assert.equal(selfRowAction({ player: { waiting: true } }).note, 'En lista de espera');
   const kick = Date.parse('2026-10-19T21:00:00-03:00');
   const early = Date.parse('2026-10-19T13:00:00-03:00');
   const late = Date.parse('2026-10-19T18:00:00-03:00');
+  assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: early }).note, 'Confirmado');
+  assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: early }).status, 'confirmed');
   assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: early }).action, 'cancel');
   assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: late }).action, 'locked');
   assert.equal(signupRateDecision(null, 1000).count, 1);
@@ -1953,6 +1956,7 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
     matches: [
       { id: 'm1', date: '2026-10-19', time: '21:00', capacity: 14, createdByUid: 'gus' },
       { id: 'm2', date: '2026-10-20', time: '18:00', capacity: 14, createdByUid: 'martin' },
+      { id: 'hide', date: '2026-10-19', time: '23:40', capacity: 14, createdByUid: 'gus', playerVisible: false },
     ],
     players: [],
     now: early,
@@ -1979,15 +1983,18 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.equal(db().players[pendingId].tentative, true);
   assert.equal(db().players[pendingId].selfSignup, true);
   assert.equal(db().players[pendingId].waiting, false);
+  assert.ok(Object.values(db().log || {}).some((row) => row.type === 'se anotó' && row.actorName === 'Ana Sola' && row.detail === 'Pendiente de confirmación' && String(row.matchLabel || '').includes('21:00')));
   assert.equal(occupiesSpot(db().players[pendingId]), true);
   await store.confirmSelf(pendingId);
   assert.notEqual(db().players[pendingId].tentative, true);
+  assert.ok(Object.values(db().log || {}).some((row) => row.type === 'aceptó' && row.actorName === 'Gustavo' && row.playerName === 'Ana Sola'));
   assert.equal(occupiesSpot({ ...db().players[pendingId], id: pendingId }), true);
   const waitId = await store.selfJoin({ id: full, date: '2026-10-19', time: '18:00', capacity: 1 }, person, { waiting: true });
   assert.equal(db().players[waitId].waiting, true);
   assert.equal(db().players[waitId].selfSignup, true);
   await store.selfCancel(waitId, early);
   assert.equal(db().players[waitId], undefined);
+  assert.ok(Object.values(db().log || {}).some((row) => row.type === 'se bajó' && row.actorName === 'Ana Sola'));
   assert.equal(Object.values(db().behavior || {}).some((row) => row.type === 'baja'), false);
   for (let i = 0; i < 2; i += 1) {
     const extra = await store.addMatch({ date: '2026-10-22', time: `1${i}:00`, capacity: 14 }, 'Gustavo');
@@ -3932,7 +3939,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v204');
+  assert.equal(version, 'f7c-v205');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

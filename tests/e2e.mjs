@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v204');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v205');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8332,6 +8332,7 @@ await fresh.close();
     const app = window.__app;
     const rosterId = await app.store.addRoster({ name: 'Auto López', phone: '11 7000-1940' }, app.who);
     const open = await app.store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14, note: 'Auto abierto' }, app.who);
+    await app.store.addMatch({ date: '2026-10-19', time: '23:40', capacity: 14, note: 'Auto oculto', playerVisible: false }, app.who);
     const full = await app.store.addMatch({ date: '2026-10-19', time: '18:30', capacity: 1, note: 'Auto lleno' }, app.who);
     const soon = await app.store.addMatch({ date: '2026-10-19', time: '16:00', capacity: 14, note: 'Auto cerca' }, app.who);
     const by = (id) => app.matches.find((match) => match.id === id);
@@ -8342,6 +8343,12 @@ await fresh.close();
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
   await page.waitForSelector('#profile');
   check('El organizador no ve la lista de anotarse', await page.locator('#self-list').count() === 0 && (await page.locator('#partidos').innerText()).includes('Elegí los próximos y anotalo de una'));
+  await page.click('#tab-proximos');
+  await page.click('#btn-add-match');
+  await page.waitForSelector('#match-player-visible');
+  check('El partido nuevo arranca visible para los jugadores', await page.isChecked('#match-player-visible'));
+  await page.click('[data-close]');
+  await page.waitForFunction(() => !document.querySelector('#match-form'));
   await page.click('#btn-settings');
   await page.click('#set-logout');
   await page.waitForSelector('#login-form');
@@ -8354,11 +8361,12 @@ await fresh.close();
   const openRow = page.locator(`#self-list .self-row[data-match="${self.open}"]`);
   await openRow.waitFor();
   const openText = (await openRow.innerText()).replace(/\s+/g, ' ');
-  check('La fila del jugador no muestra cupo ni puesto', openText.includes('Anotarme') && !/\d+\/14/.test(openText) && !/Quedan|posición/i.test(openText), openText);
+  check('La fila del jugador no muestra cupo ni puesto', openText.includes('Anotarme') && openText.includes('Polideportivo') && !openText.includes('23:40') && !/\d+\/14/.test(openText) && !/Quedan|posición/i.test(openText), openText);
   await openRow.locator('button', { hasText: 'Anotarme' }).click();
   await page.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
-    return row && row.innerText.includes('Pendiente de confirmación') && row.innerText.includes('Anular');
+    const text = row?.innerText || '';
+    return text.includes('Pendiente de confirmación') && text.includes('Anular') && text.includes('21:00') && text.includes('Polideportivo');
   }, self.open);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.open);
   await page.waitForSelector('#slots .slot:has-text("Auto López") .confirm-spot');
@@ -8371,11 +8379,22 @@ await fresh.close();
   });
   check('Confirmar lugar lo deja como el resto', (await page.textContent('#slot-count')).replace(/\s/g, '') === '1/14' && await page.locator('#slots .confirm-spot').count() === 0);
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Confirmado') && row.querySelector('.self-check') && row.innerText.includes('21:00');
+  }, self.open);
+  check('El jugador ve el tilde verde de confirmado', (await page.locator(`#self-list .self-row[data-match="${self.open}"] .self-status`).innerText()) === 'Confirmado');
+  const moved = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).log || {})
+    .filter((row) => row.playerName === 'Auto López' || row.actorName === 'Auto López')
+    .map((row) => `${row.type}|${row.actorName}|${row.detail}`)
+    .join(' || '));
+  check('El registro anota la anotación y quién aceptó', moved.includes('se anotó|Auto López|Pendiente de confirmación') && moved.includes('aceptó|Martín|Aceptó la anotación'), moved);
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
   const fullRow = page.locator(`#self-list .self-row[data-match="${self.full}"]`);
   await fullRow.locator('button', { hasText: 'Lista de espera' }).click();
   await page.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
-    return row && row.innerText.includes('Anular') && !row.innerText.includes('Pendiente');
+    return row && row.innerText.includes('Anular') && row.innerText.includes('En lista de espera') && row.innerText.includes('18:30');
   }, self.full);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.full);
   await page.waitForSelector('#self-wait-notice');

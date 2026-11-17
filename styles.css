@@ -435,12 +435,33 @@ html.dark .points-step input.up { color: #4ade80; }
 .signup-check input { width: 1.375rem; height: 1.375rem; margin: 0; }
 .signup-block { position: absolute; inset: -6px; border: 0; background: transparent; }
 .signup-row .btn { flex: none; min-height: 40px; padding: 0 10px; }
-#self-list, #self-pending { gap: 4px; }
+#self-list, #self-pending { gap: 12px; }
+#self-list .self-card {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 14px; background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow); overflow: visible;
+}
+#self-list .self-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+#self-list .self-when {
+  display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0;
+  white-space: normal; overflow: visible; text-overflow: unset;
+  font-size: 0.95rem; font-weight: 700;
+}
 .self-row {
   display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
   min-height: 36px; min-width: 0; padding: 4px 6px 4px 10px; max-width: 100%; overflow: hidden;
 }
 .self-when { flex: 1 1 auto; min-width: 0; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.self-bit { display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.self-bit span { white-space: normal; overflow-wrap: anywhere; }
+.self-ico, .self-check { width: 18px; height: 18px; flex: none; }
+.self-check { color: var(--green); margin-top: 2px; }
+.self-status { margin: 0; font-weight: 800; }
+.self-status.confirmed { color: var(--green); }
+.self-status.pending, .self-status.wait { color: var(--muted); }
+#self-list .self-note { white-space: normal; overflow: visible; text-overflow: unset; }
+#self-list .self-actions { display: flex; }
+#self-list .self-btn { min-height: 44px; }
 .self-side { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 72%; }
 .self-side:has(.self-btn) { flex: none; max-width: none; }
 .self-note { font-size: 0.75rem; line-height: 1.1; color: var(--muted, #667); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

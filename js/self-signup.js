@@ -46,15 +46,20 @@ export function signupRateDecision(prev, now = Date.now(), max = RATE_MAX, windo
  * cancel = Anular, locked = ya no se puede bajar solo.
  */
 export function selfRowAction({ player, full, kickoff, now = Date.now() } = {}) {
-  if (isSelfPending(player)) return { action: 'cancel', note: 'Pendiente de confirmación' };
-  if (player?.waiting === true) return { action: 'cancel', note: '' };
+  if (isSelfPending(player)) return { action: 'cancel', status: 'pending', note: 'Pendiente de confirmación' };
+  if (player?.waiting === true) return { action: 'cancel', status: 'wait', note: 'En lista de espera' };
   if (occupiesSpot(player)) {
     const left = Number(kickoff) - Number(now);
-    if (left > DROP_LOCK_MS) return { action: 'cancel', note: '' };
-    return { action: 'locked', note: 'Avisale al organizador para bajarte' };
+    if (left > DROP_LOCK_MS) return { action: 'cancel', status: 'confirmed', note: 'Confirmado' };
+    return { action: 'locked', status: 'confirmed', note: 'Confirmado', lock: 'Avisale al organizador para bajarte' };
   }
   if (full) return { action: 'wait', note: '' };
   return { action: 'join', note: '' };
+}
+
+/** Sin el campo, el partido se muestra. Destildado, no aparece en la página del jugador. */
+export function visibleToPlayers(match) {
+  return match?.playerVisible !== false;
 }
 
 export function playerOnMatch(person, match, players) {
@@ -69,7 +74,7 @@ export function playerOnMatch(person, match, players) {
 
 export function selfSignupRows({ person, matches, players, now = Date.now() } = {}) {
   return (matches || [])
-    .filter((match) => match && match.cancelled !== true && matchOpenToRoster(match, person))
+    .filter((match) => match && match.cancelled !== true && visibleToPlayers(match) && matchOpenToRoster(match, person))
     .filter((match) => {
       const today = new Date(now);
       const iso = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today);

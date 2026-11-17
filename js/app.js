@@ -48,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v204';
+const APP_VERSION = 'f7c-v205';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -3465,6 +3465,7 @@ function openMatchForm(m) {
         <label class="checkline"><input type="radio" name="splitMode" id="match-split-signed" value="signed"${splitModeOf(m) === 'signed' ? ' checked' : ''}><span>Cada uno la cantidad que anotó</span></label>
       </fieldset>
       <label class="field"><span>Nota (opcional)</span><input type="text" name="note" maxlength="300" placeholder="Ej: cancha 2, traer pechera" value="${esc(m?.note || '')}"></label>
+      <label class="checkline"><input type="checkbox" name="playerVisible" id="match-player-visible"${!m || m.playerVisible !== false ? ' checked' : ''}><span>Visible para los jugadores</span></label>
       ${editingAccess ? accessEditor(m) : ''}
       <div class="field"><div class="err" id="mf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${m ? 'Guardar' : 'Crear'}</button></div>
@@ -3494,6 +3495,7 @@ function openMatchForm(m) {
     if (!price.ok) { $('#mf-err').textContent = price.error; return; }
     data.price = price.amount;
     data.splitMode = f.get('splitMode') === 'signed' ? 'signed' : 'equal';
+    data.playerVisible = e.target.playerVisible?.checked !== false;
     const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
     if (dup && !(await askConfirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?'))) return;
     if (editingAccess) data.access = readAccessForm();
@@ -4830,23 +4832,36 @@ function renderPlayerSignup(person) {
   if (painted !== false) bindSelfSignup(person);
 }
 
+const SELF_CAL = '<svg class="self-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>';
+const SELF_CLOCK = '<svg class="self-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>';
+const SELF_PIN = '<svg class="self-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-7.2 7-11a7 7 0 1 0-14 0c0 3.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.2"/></svg>';
+const SELF_CHECK = '<svg class="self-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5 11 15.5 16.5 9"/></svg>';
+
 function selfSignupSection(person) {
   const rows = selfSignupRows({ person, matches: app.matches, players: app.players, now: Date.now() });
   if (!rows.length) return '<ul class="slots" id="self-list"></ul>';
-  const items = rows.map(({ match, player, action, note }) => {
-    const when = `${capitalize(labelDate(match.date))} · ${match.time || '--:--'} · ${placeOf(match)}`;
-    const noteHtml = note ? `<span class="self-note">${esc(note)}</span>` : '';
+  const items = rows.map(({ match, player, action, note, status, lock }) => {
+    const statusHtml = note ? `<p class="self-status ${esc(status || '')}">${esc(note)}</p>` : '';
+    const lockHtml = lock ? `<p class="self-note">${esc(lock)}</p>` : '';
     let control = '';
-    if (action === 'join') control = `<button type="button" class="btn self-btn" data-self="join" data-match="${esc(match.id)}">Anotarme</button>`;
+    if (action === 'join') control = `<button type="button" class="btn primary self-btn" data-self="join" data-match="${esc(match.id)}">Anotarme</button>`;
     else if (action === 'wait') control = `<button type="button" class="btn self-btn" data-self="wait" data-match="${esc(match.id)}">Lista de espera</button>`;
     else if (action === 'cancel') control = `<button type="button" class="btn self-btn" data-self="cancel" data-match="${esc(match.id)}" data-player="${esc(player?.id || '')}">Anular</button>`;
     else if (action === 'locked') {
       const phone = organizerDropPhone(match);
       control = phone
-        ? `<a class="self-wa" href="${esc(waHref(phone))}" target="_blank" rel="noopener">WhatsApp</a>`
+        ? `<a class="btn self-wa" href="${esc(waHref(phone))}" target="_blank" rel="noopener">WhatsApp</a>`
         : '';
     }
-    return `<li class="self-row" data-match="${esc(match.id)}"><span class="self-when">${esc(when)}</span><span class="self-side">${noteHtml}${control}</span></li>`;
+    return `<li class="self-card self-row${status === 'confirmed' ? ' is-in' : ''}" data-match="${esc(match.id)}">
+      ${status === 'confirmed' ? SELF_CHECK : ''}
+      <div class="self-body">
+        <p class="self-when"><span class="self-bit">${SELF_CAL}<span>${esc(capitalize(labelDate(match.date)))}</span></span><span class="self-bit">${SELF_CLOCK}<span>${esc(match.time || '--:--')}</span></span><span class="self-bit self-place">${SELF_PIN}<span>${esc(placeOf(match))}</span></span></p>
+        ${statusHtml}
+        ${lockHtml}
+        ${control ? `<div class="self-actions">${control}</div>` : ''}
+      </div>
+    </li>`;
   }).join('');
   return `<ul class="slots" id="self-list">${items}</ul>`;
 }
@@ -8375,7 +8390,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v204" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v205" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8412,7 +8427,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v204" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v205" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

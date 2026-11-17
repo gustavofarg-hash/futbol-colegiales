@@ -117,7 +117,13 @@ exports.decideSignup = onRequest({ region: 'southamerica-east1', cors: true }, a
       tx.update(actionRef, { used: true, usedAt: Date.now(), decision });
       if (result.op === 'delete') tx.delete(playerRef);
       else tx.update(playerRef, { tentative: null, tentativeAt: null, updatedAt: Date.now() });
-      return { ...result, matchId: player.matchId, confirmToken: player.confirmToken || '' };
+      return {
+        ...result,
+        matchId: player.matchId,
+        confirmToken: player.confirmToken || '',
+        playerName: player.name || '',
+        rosterId: player.rosterId || '',
+      };
     });
     if (!outcome.ok) {
       res.status(outcome.status || 409).json({ ok: false, error: outcome.error });
@@ -131,6 +137,29 @@ exports.decideSignup = onRequest({ region: 'southamerica-east1', cors: true }, a
           updatedAt: Date.now(),
         }).catch(() => {});
       }
+    }
+    if (outcome.matchId) {
+      const matchSnap = await db.doc(`matches/${outcome.matchId}`).get();
+      const match = matchSnap.exists ? matchSnap.data() : {};
+      const when = [match.date || '', match.time || ''].filter(Boolean).join(' · ');
+      await db.collection('log').add({
+        at: Date.now(),
+        actorUid: 'aviso',
+        actorName: 'Desde el aviso',
+        section: 'partidos',
+        type: decision === 'aceptar' ? 'aceptó' : 'rechazó',
+        matchId: outcome.matchId,
+        matchDate: String(match.date || ''),
+        matchTime: String(match.time || ''),
+        matchLabel: String(when || 'Partido').slice(0, 160),
+        editors: ['*'],
+        playerName: String(outcome.playerName || '').slice(0, 80),
+        hostName: '',
+        detail: decision === 'aceptar' ? 'Aceptó la anotación' : 'Rechazó la anotación',
+        amount: 0,
+        method: '',
+        rosterId: String(outcome.rosterId || ''),
+      }).catch(() => {});
     }
     res.status(200).json({ ok: true, op: outcome.op });
   } catch (error) {
