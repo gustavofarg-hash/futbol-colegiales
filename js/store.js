@@ -1017,6 +1017,7 @@ class LocalStore {
     db.signupPings[id] = {
       kind,
       name: String(player?.name || '').slice(0, 60),
+      playerId: String(player?.id || ''),
       rosterId: String(player?.rosterId || ''),
       matchId: String(match?.id || player?.matchId || ''),
       date: String(match?.date || ''),
@@ -3222,6 +3223,7 @@ export class FirebaseStore {
     await addDoc(collection(this.db, 'signupPings'), {
       kind,
       name: String(player?.name || '').slice(0, 60),
+      playerId: String(player?.id || ''),
       rosterId: String(player?.rosterId || ''),
       matchId: String(match?.id || player?.matchId || ''),
       date: String(match?.date || ''),

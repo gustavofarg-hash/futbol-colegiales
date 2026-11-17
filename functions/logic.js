@@ -49,4 +49,53 @@ function organizerUids(match, holders) {
   return [...new Set(ids)];
 }
 
-module.exports = { classifySelfSignup, pushCopy, organizerUids, dayLabel };
+const DECIDE_URL = 'https://southamerica-east1-mis-partidos-prueba.cloudfunctions.net/decideSignup';
+const ACTION_TTL_MS = 12 * 60 * 60 * 1000;
+
+/** Datos del push. El alta lleva el token para Aceptar o Rechazar sin abrir la app. */
+function pushFields(kind, copy, extra = {}) {
+  const data = {
+    title: copy.title,
+    body: copy.body,
+    url: copy.url,
+    kind: String(kind || ''),
+    tag: String(extra.tag || ''),
+  };
+  if (kind === 'alta' && extra.actionToken && extra.playerId) {
+    data.actionToken = String(extra.actionToken);
+    data.playerId = String(extra.playerId);
+    data.decideUrl = DECIDE_URL;
+  }
+  return data;
+}
+
+/** Botones del aviso. Vacío si no es un alta o si no hay token: el toque abre la pestaña. */
+function noticeActions(data) {
+  if (data?.kind !== 'alta' || !data.actionToken || !data.decideUrl) return [];
+  return [
+    { action: 'aceptar', title: 'Aceptar' },
+    { action: 'rechazar', title: 'Rechazar' },
+  ];
+}
+
+/**
+ * Si el token de un solo uso puede aceptar o rechazar ese pendiente.
+ * spotsLeft es cuántos lugares quedan en la lista.
+ */
+function actionDecision(doc, player, decision, now, spotsLeft) {
+  if (!doc) return { ok: false, status: 404, error: 'no existe' };
+  if (doc.used === true) return { ok: false, status: 410, error: 'ya se usó' };
+  if (!(Number(doc.expiresAt) > Number(now))) return { ok: false, status: 410, error: 'venció' };
+  if (decision !== 'aceptar' && decision !== 'rechazar') return { ok: false, status: 400, error: 'decisión' };
+  if (!player || player.selfPending !== true || String(player.id || '') !== String(doc.playerId || '')) {
+    return { ok: false, status: 409, error: 'ya no está pendiente' };
+  }
+  if (decision === 'rechazar') return { ok: true, op: 'delete' };
+  if (!(Number(spotsLeft) > 0)) return { ok: false, status: 409, error: 'no hay lugar' };
+  return { ok: true, op: 'confirm' };
+}
+
+module.exports = {
+  classifySelfSignup, pushCopy, organizerUids, dayLabel,
+  pushFields, noticeActions, actionDecision, DECIDE_URL, ACTION_TTL_MS,
+};
