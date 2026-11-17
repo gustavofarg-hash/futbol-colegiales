@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v201');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v202');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8087,16 +8087,44 @@ await fresh.close();
       header: gone('.topbar'),
       tabs: gone('#tabbar'),
       login: !document.querySelector('#login-form'),
-      store: !window.__app?.store,
-      roster: (window.__app?.roster || []).length === 0,
+      signup: !document.querySelector('#player-signup'),
       text: document.body.innerText.replace(/\s+/g, ' ').trim(),
     };
   });
-  check('Sin sesión no hay menú, login ni datos', bare.header && bare.tabs && bare.login && bare.store && bare.roster && bare.text === '⚠️ NO TENÉS ACCESO', JSON.stringify(bare));
+  check('Sin sesión no hay menú, login ni datos', bare.header && bare.tabs && bare.login && bare.signup && bare.text === '⚠️ NO TENÉS ACCESO', JSON.stringify(bare));
   await locked.screenshot({ path: '/opt/cursor/artifacts/screenshots/v110-sin-sesion.png' });
   await locked.goto(BASE);
   await locked.waitForSelector('#login-form');
   check('Al salir del enlace, sin sesión, vuelve el login', await locked.locator('#login-form').isVisible() && await locked.locator('.topbar').evaluate((el) => el.getClientRects().length === 0) && await locked.locator('#tabbar').evaluate((el) => el.getClientRects().length === 0));
+  const guestId = 'AngelLink2026v202';
+  await locked.evaluate((id) => {
+    localStorage.setItem('f7c-demo-db', JSON.stringify({
+      matches: {
+        m202: {
+          date: '2026-10-19', time: '21:00', capacity: 14, playerCount: 0,
+          venueName: 'Polideportivo Colegiales', createdByUid: 'org-gustavo',
+          viewers: ['*'], adders: ['*'], cancelled: false,
+        },
+      },
+      players: {},
+      roster: { [id]: { name: 'Ángel', holders: ['org-gustavo'], createdByUid: 'org-gustavo' } },
+      organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {},
+      contacts: { players: {}, roster: {} },
+    }));
+  }, guestId);
+  await locked.goto(`${BASE}#/jugador/${guestId}`);
+  await locked.waitForSelector('#player-signup-name');
+  const guestChrome = await locked.evaluate(() => {
+    const hidden = (sel) => {
+      const el = document.querySelector(sel);
+      return !el || el.getClientRects().length === 0;
+    };
+    return hidden('.topbar') && hidden('#tabbar') && hidden('#btn-settings') && hidden('#btn-back') && hidden('#btn-text-smaller') && hidden('#btn-text-bigger') && !document.querySelector('#login-form') && !document.querySelector('#profile');
+  });
+  const guestName = (await locked.locator('#player-signup-name').innerText()).trim();
+  const guestApp = (await locked.locator('.player-app').innerText()).trim();
+  const guestBtn = (await locked.locator('#self-list .self-btn').first().innerText()).trim();
+  check('Sin sesión el enlace del jugador abre su página', guestName === 'Ángel' && guestApp === 'Mis Partidos' && guestBtn === 'Anotarme' && guestChrome, `${guestName} ${guestApp} ${guestBtn}`);
   await anon.close();
 }
 

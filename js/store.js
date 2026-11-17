@@ -1881,10 +1881,13 @@ export class FirebaseStore {
     const today = todayISO(new Date(now));
     if (today === this._queryDay) return;
     this._queryDay = today;
-    if (this.fs) {
-      this._listenUpcoming();
-      this._listenHistory();
+    if (!this.fs) return;
+    if (this._guest) {
+      this._listenGuest(this._guestRosterId);
+      return;
     }
+    this._listenUpcoming();
+    this._listenHistory();
   }
   async ensureMatch(id) {
     if (!id || !this.fs) return 'missing';
@@ -2288,7 +2291,7 @@ export class FirebaseStore {
       throw backupReadError(name, error);
     }
   }
-  async init(onError) {
+  async init(onError, opts = {}) {
     const ready = await initFirebase();
     this.usageMeter = new UsageMeter();
     this.fs = meterFirestore(ready.fs, this.usageMeter, () => this._armUsageFlush());
@@ -2302,6 +2305,12 @@ export class FirebaseStore {
     // suscripción a confirmations muere con permission-denied y la lista
     // nunca se entera del «Sí, juego».
     await this._refreshIdToken();
+    this._guestRosterId = String(opts.guestRosterId || '').trim();
+    if (this._guestRosterId) {
+      this._guest = true;
+      this._listenGuest(this._guestRosterId);
+      return;
+    }
     this._listen();
     this._seedVenues();
     // Si Firestore no existe o la API está deshabilitada, el SDK reintenta en silencio:
@@ -2365,6 +2374,86 @@ export class FirebaseStore {
   }
   _takeMatchSnap(snap) {
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+  listenAsGuest(rosterId) {
+    const id = String(rosterId || '').trim();
+    if (!id || !this.fs) return;
+    this._guest = true;
+    this._listenGuest(id);
+  }
+  _listenGuest(rosterId) {
+    const id = String(rosterId || '').trim();
+    if (!id || !this.fs) return;
+    this._guest = true;
+    this._guestRosterId = id;
+    this._queryDay = this._queryDay || todayISO();
+    const today = this._queryDay;
+    const { doc, collection, query, where, onSnapshot } = this.fs;
+    const seen = { roster: false, matches: false, players: false };
+    const rows = (snap) => snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+    const publish = () => {
+      if (!seen.roster || !seen.matches || !seen.players) return;
+      this.serverOk = true;
+      this.state.playersReady = true;
+      this._emit();
+    };
+    this._swap('guest-roster', onSnapshot(doc(this.db, 'roster', id), (snap) => {
+      this.state.roster = snap.exists() ? [{ id: snap.id, ...snap.data() }] : [];
+      this.state.rosterError = null;
+      seen.roster = true;
+      publish();
+    }, () => {
+      this.state.roster = [];
+      this.state.rosterError = null;
+      seen.roster = true;
+      publish();
+    }));
+    const takeMatches = (snap) => {
+      this.state.matches = rows(snap).filter((match) => String(match.date || '') >= today);
+      seen.matches = true;
+      publish();
+    };
+    const broadMatches = () => onSnapshot(
+      query(collection(this.db, 'matches'), where('viewers', 'array-contains', '*')),
+      takeMatches,
+      () => { this.state.matches = []; seen.matches = true; publish(); },
+    );
+    this._swap('guest-matches', onSnapshot(
+      query(collection(this.db, 'matches'), where('viewers', 'array-contains', '*'), where('date', '>=', today)),
+      takeMatches,
+      (error) => {
+        if (error?.code === 'failed-precondition') {
+          this._swap('guest-matches', broadMatches());
+          return;
+        }
+        this.state.matches = [];
+        seen.matches = true;
+        publish();
+      },
+    ));
+    const takePlayers = (snap) => {
+      this.state.players = rows(snap).filter((player) => String(player.matchDate || player.date || '') >= today);
+      seen.players = true;
+      publish();
+    };
+    const broadPlayers = () => onSnapshot(
+      query(collection(this.db, 'players'), where('viewers', 'array-contains', '*')),
+      takePlayers,
+      () => { this.state.players = []; seen.players = true; publish(); },
+    );
+    this._swap('guest-players', onSnapshot(
+      query(collection(this.db, 'players'), where('viewers', 'array-contains', '*'), where('matchDate', '>=', today)),
+      takePlayers,
+      (error) => {
+        if (error?.code === 'failed-precondition') {
+          this._swap('guest-players', broadPlayers());
+          return;
+        }
+        this.state.players = [];
+        seen.players = true;
+        publish();
+      },
+    ));
   }
   _listenUpcoming() {
     const today = this._queryDay || todayISO();
@@ -3187,6 +3276,7 @@ export class FirebaseStore {
     });
   }
   async selfJoin(match, person, { waiting = false } = {}) {
+    if (!this.actor?.uid) return this._guestSelfJoin(match, person, { waiting });
     const rosterId = String(person?.id || '').trim();
     if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
     const id = rid();
@@ -3228,7 +3318,64 @@ export class FirebaseStore {
     await setDoc(doc(this.db, 'organizerTokens', id), { uid, token: String(token), updatedAt: Date.now() });
     return id;
   }
+  async _guestSelfJoin(match, person, { waiting = false } = {}) {
+    const rosterId = String(person?.id || '').trim();
+    if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
+    const id = rid();
+    await this._chargeSignupRate(rosterId, id);
+    const now = Date.now();
+    const mates = this.state.players.filter((row) => row.matchId === match.id);
+    const access = playerAccess(match);
+    const onWait = waiting === true;
+    const player = {
+      matchId: match.id,
+      matchDate: match.date,
+      name: String(person?.name || ''),
+      rosterId,
+      selfSignup: true,
+      waiting: onWait,
+      waitOrder: onWait ? nextWaitOrder(mates.filter((row) => row.waiting === true)) : null,
+      tentative: !onWait,
+      tentativeAt: onWait ? null : now,
+      rosterAt: onWait ? null : now,
+      addedByUid: '',
+      addedBy: String(person?.name || '').slice(0, 40),
+      createdAt: now,
+      updatedAt: now,
+      phone: '',
+      hasPhone: false,
+      phoneKey: '',
+      phoneOwnerUid: '',
+      phoneShared: false,
+      confirmToken: newConfirmToken(),
+      viewers: access.viewers,
+      adders: access.adders,
+    };
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'players', id), player);
+    this.state.players = [...this.state.players.filter((row) => row.id !== id), { id, ...player }];
+    this._emit();
+    try { await this._writeSignupPing(onWait ? 'espera' : 'alta', { id, ...player }, match); }
+    catch { /* sin funciones el aviso no sale, y la anotación queda */ }
+    return id;
+  }
+  async _guestSelfCancel(playerId, now = Date.now()) {
+    const player = this.state.players.find((row) => row.id === playerId);
+    if (!player) return;
+    const match = this.state.matches.find((row) => row.id === player.matchId) || {};
+    if (!canSelfCancel(player, match, now)) {
+      throw Object.assign(new Error('Avisale al organizador para bajarte.'), { code: 'too-late' });
+    }
+    await this._chargeSignupRate(player.rosterId || playerId, playerId);
+    const { doc, deleteDoc } = this.fs;
+    await deleteDoc(doc(this.db, 'players', playerId));
+    this.state.players = this.state.players.filter((row) => row.id !== playerId);
+    this._emit();
+    try { await this._writeSignupPing('baja', player, match); }
+    catch { /* el aviso no es parte de la baja */ }
+  }
   async selfCancel(playerId, now = Date.now()) {
+    if (!this.actor?.uid) return this._guestSelfCancel(playerId, now);
     const player = this.state.players.find((row) => row.id === playerId);
     if (!player) return;
     const match = this.state.matches.find((row) => row.id === player.matchId) || {};
@@ -4230,10 +4377,10 @@ export function createDemoStore() {
   return new LocalStore();
 }
 
-export async function createStore(onError) {
+export async function createStore(onError, opts) {
   if (isFirebaseConfigured()) {
     const s = new FirebaseStore();
-    try { await s.init(onError); return s; }
+    try { await s.init(onError, opts); return s; }
     catch (e) { console.error('No se pudo iniciar Firebase, usando modo demo', e); onError && onError(e); }
   }
   const s = new LocalStore(); await s.init(); return s;

@@ -48,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v201';
+const APP_VERSION = 'f7c-v202';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -990,6 +990,29 @@ function route() {
 }
 let releaseAnonymousLock = null;
 let redrawLogin = null;
+let releaseLogin = null;
+let onStoreView = () => {};
+async function bootGuestPlayer() {
+  lockShell();
+  document.documentElement.classList.add('anon-lock');
+  app.guestPlayer = true;
+  const id = route().id;
+  if (!app.session) {
+    app.session = openSession();
+    await app.session.init();
+  }
+  if (app.session.user) return;
+  if (!app.store) {
+    app.store = await createStore(() => {}, { guestRosterId: id });
+    const demo = document.getElementById('demo-banner');
+    if (demo) demo.hidden = app.store.mode === 'firebase';
+    app.store.setActor(null);
+    app.store.subscribe(onStoreView);
+    return;
+  }
+  if (typeof app.store.listenAsGuest === 'function') app.store.listenAsGuest(id);
+  else render();
+}
 function lockShell() {
   document.documentElement.classList.add('signed-out');
   const stack = document.getElementById('topstack');
@@ -1010,7 +1033,8 @@ window.addEventListener('hashchange', () => {
   if (!app.session?.user) {
     lockShell();
     if (isPlayerDeepLink(location.hash)) {
-      showAnonymousDenial();
+      if (releaseLogin) releaseLogin();
+      else void bootGuestPlayer();
       return;
     }
     if (releaseAnonymousLock) {
@@ -1152,7 +1176,18 @@ function render() {
   markOnce('f7c-first-render');
   if (app.loaded) markOnce('f7c-data-visible');
   rosterRevealJustScrolled = false;
-  if (!app.session?.user) { lockShell(); return; }
+  if (!app.session?.user) {
+    lockShell();
+    if (isPlayerDeepLink(location.hash)) {
+      document.documentElement.classList.add('anon-lock');
+      if (!app.loaded) return;
+      const id = route().id;
+      const person = (app.roster || []).find((row) => row.id === id);
+      if (person) renderPlayerSignup(person);
+      else showAnonymousDenial();
+    }
+    return;
+  }
   if (document.documentElement.classList.contains('signed-out')) unlockShell();
   const r = route();
   if (document.documentElement.classList.contains('anon-lock')) {
@@ -8334,12 +8369,13 @@ function openFriendForm(m, host) {
 /* ───────── código de acceso (opcional) ───────── */
 function promptLogin(session) {
   return new Promise((resolve) => {
-    const done = () => { redrawLogin = null; resolve(); };
+    const done = () => { releaseLogin = null; redrawLogin = null; resolve(); };
+    releaseLogin = done;
     if (session.user) return done();
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v201" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v202" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8376,7 +8412,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v201" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v202" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -8484,12 +8520,10 @@ async function boot() {
   if (isPlayerDeepLink(location.hash)) {
     app.session = openSession();
     await app.session.init();
-    if (!app.session.user) {
-      showAnonymousDenial();
-      await new Promise((resolve) => { releaseAnonymousLock = resolve; });
+    if (app.session.user) {
+      document.documentElement.classList.remove('anon-lock');
+      unlockShell();
     }
-    document.documentElement.classList.remove('anon-lock');
-    if (app.session.user) unlockShell();
   }
 
   await gate();
@@ -8514,25 +8548,35 @@ async function boot() {
     if (sheet.open && app.refreshPaySheet) app.refreshPaySheet();
     if (!sameSession && app.loaded && (!sheet.open || !sheet.querySelector('input, textarea')) && location.hash !== '#/usuarios') render();
   });
-  if (!app.session.user) {
+  while (!app.session.user && !isPlayerDeepLink(location.hash)) {
     lockShell();
     await promptLogin(app.session);
   }
-  unlockShell();
-  app.who = app.session.user.name;
-  app.role = app.session.user.role;
-  app.uid = app.session.user.uid;
-  app.users = app.session.users || [];
-  app.store = await createStore((e) => {
-    showError(isPermissionDenied(e)
-      ? RULES_MSG
-      : e?.code === 'no-server'
-        ? 'No hay conexión con la base de datos de Firebase: los cambios quedan solo en este teléfono. ¿Está creada la base Firestore del proyecto? (ver README)'
-        : 'Problema de conexión con Firebase: ' + (e?.message || e));
-  });
-  $('#demo-banner').hidden = app.store.mode === 'firebase';
-  app.store.setActor(app.session.user);
-  app.store.subscribe((view) => {
+  const guestLink = !app.session.user && isPlayerDeepLink(location.hash);
+  if (!guestLink) {
+    unlockShell();
+    app.who = app.session.user.name;
+    app.role = app.session.user.role;
+    app.uid = app.session.user.uid;
+    app.users = app.session.users || [];
+    app.store = await createStore((e) => {
+      showError(isPermissionDenied(e)
+        ? RULES_MSG
+        : e?.code === 'no-server'
+          ? 'No hay conexión con la base de datos de Firebase: los cambios quedan solo en este teléfono. ¿Está creada la base Firestore del proyecto? (ver README)'
+          : 'Problema de conexión con Firebase: ' + (e?.message || e));
+    });
+    $('#demo-banner').hidden = app.store.mode === 'firebase';
+    app.store.setActor(app.session.user);
+  } else {
+    lockShell();
+    document.documentElement.classList.add('anon-lock');
+    app.guestPlayer = true;
+    app.store = await createStore(() => {}, { guestRosterId: route().id });
+    $('#demo-banner').hidden = app.store.mode === 'firebase';
+    app.store.setActor(null);
+  }
+  onStoreView = (view) => {
     const { matches, players, roster, rosterError, organizers, organizersError, venues, venuesError, prices, pricesError, credits, creditsError, history, historyMeta, historyError } = view;
     app.matches = applyScoreHold(matches || []); app.players = applyAttendanceHold(applyGoalHold(releaseAnsweredReservations(players || [])));
     app.pendingWrites = view.pending === true;
@@ -8564,13 +8608,13 @@ async function boot() {
     }
     app.log = view.log || [];
     app.logError = view.logError || '';
-    if (rosterError && rosterError !== app.rosterError) showError(rosterError);
+    if (!app.guestPlayer && rosterError && rosterError !== app.rosterError) showError(rosterError);
     app.rosterError = rosterError || null;
-    if (organizersError && organizersError !== app.organizersError) showError(organizersError);
+    if (!app.guestPlayer && organizersError && organizersError !== app.organizersError) showError(organizersError);
     app.organizersError = organizersError || null;
-    if (venuesError && venuesError !== app.venuesError) showError(venuesError);
+    if (!app.guestPlayer && venuesError && venuesError !== app.venuesError) showError(venuesError);
     app.venuesError = venuesError || null;
-    if (pricesError && pricesError !== app.pricesError) showError(pricesError);
+    if (!app.guestPlayer && pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
     const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
@@ -8583,7 +8627,8 @@ async function boot() {
     if (!sheet.open || !sheet.querySelector('input, textarea, select')) render(); else pendingRender = true;
     fixOverflow();
     armReminderTimer();
-  });
+  };
+  app.store.subscribe(onStoreView);
   render();
   armReminderTimer();
   // Al cambiar el día, Hoy/Mañana y el historial se actualizan. El mismo día no redibuja.
@@ -8598,6 +8643,7 @@ let reminderTimerAt = Infinity;
 const clearingReservation = new Set();
 
 function releaseAnsweredReservations(players) {
+  if (!app.session?.user) return players || [];
   return players.map((p) => {
     if (!reservationClearedByAnswer(p)) {
       clearingReservation.delete(p.id);
@@ -8724,6 +8770,7 @@ let pendingRender = false;
 let fixingOverflow = false;
 const overflowTried = new Set();
 async function fixOverflow() {
+  if (!app.session?.user) return;
   if (fixingOverflow || !app.store) return;
   if (app.pendingWrites || app.fromCache) return;
   const patches = [];
