@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v193');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v194');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8295,6 +8295,56 @@ await fresh.close();
   check('Darse de baja desde el perfil, si está en espera, no pregunta puntos', !(await page.locator('#baja-points').isVisible()) && !(await page.locator('#app-ask-text').isVisible()));
   const soloPenalty = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja'), espera.soloRoster);
   check('Esa baja tampoco anota historial', soloPenalty.length === 0, JSON.stringify(soloPenalty));
+}
+
+{
+  const self = await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Auto López', phone: '11 7000-1940' }, app.who);
+    const open = await app.store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14, note: 'Auto abierto' }, app.who);
+    const full = await app.store.addMatch({ date: '2026-10-19', time: '18:30', capacity: 1, note: 'Auto lleno' }, app.who);
+    const soon = await app.store.addMatch({ date: '2026-10-19', time: '16:00', capacity: 14, note: 'Auto cerca' }, app.who);
+    const by = (id) => app.matches.find((match) => match.id === id);
+    await app.store.addPlayer(by(full), { name: 'Ocupa Auto', phone: '11 7000-1941' }, app.who);
+    await app.store.addPlayer(by(soon), { name: 'Auto López', phone: '11 7000-1940', rosterId }, app.who);
+    return { rosterId, open, full, soon };
+  });
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  const openRow = page.locator(`#self-list .self-row[data-match="${self.open}"]`);
+  await openRow.waitFor();
+  const openText = (await openRow.innerText()).replace(/\s+/g, ' ');
+  check('La fila del jugador no muestra cupo ni puesto', openText.includes('Anotarme') && !/\d+\/14/.test(openText) && !/Quedan|posición/i.test(openText), openText);
+  await openRow.locator('button', { hasText: 'Anotarme' }).click();
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Pendiente de confirmación') && row.innerText.includes('Anular');
+  }, self.open);
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.open);
+  await page.waitForSelector('#self-pending [data-self-ok]');
+  check('El pendiente no ocupa un lugar', (await page.textContent('#slot-count')).replace(/\s/g, '') === '0/14');
+  await page.click('#self-pending [data-self-ok]');
+  await page.waitForSelector('#slots .name:text-is("Auto López")');
+  check('Confirmar lo pasa a la lista', (await page.textContent('#slot-count')).replace(/\s/g, '') === '1/14' && await page.locator('#self-pending').count() === 0);
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  const fullRow = page.locator(`#self-list .self-row[data-match="${self.full}"]`);
+  await fullRow.locator('button', { hasText: 'Lista de espera' }).click();
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Anular') && !row.innerText.includes('Pendiente');
+  }, self.full);
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.full);
+  await page.waitForSelector('#self-wait-notice');
+  check('La espera avisa el nombre y no el puesto', (await page.textContent('#self-wait-notice')).includes('Auto López') && !(await page.textContent('#self-wait-notice')).match(/puesto|\/\d+/));
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  await page.locator(`#self-list .self-row[data-match="${self.full}"]`).locator('button', { hasText: 'Anular' }).click();
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Lista de espera');
+  }, self.full);
+  const selfBajas = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja'), self.rosterId);
+  check('Anular la espera no anota puntos', selfBajas.length === 0, JSON.stringify(selfBajas));
+  const soonText = (await page.locator(`#self-list .self-row[data-match="${self.soon}"]`).innerText()).replace(/\s+/g, ' ');
+  check('A menos de 4 h no puede anular solo', soonText.includes('Avisale al organizador para bajarte') && !soonText.includes('Anular'), soonText);
 }
 
 {

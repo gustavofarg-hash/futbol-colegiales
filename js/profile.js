@@ -7,6 +7,7 @@ import { sameOrganizerIdentity } from './organizers.js';
 import { foldText, personKey, phoneIdentity, playerMatchesPerson } from './roster.js';
 import { playerDebt } from './ledger.js';
 import { alreadyInMatch } from './guests.js';
+import { isSelfPending, occupiesSpot } from './self-signup.js';
 
 export const POSITIONS = ['Arquero', 'Defensa', 'Mediocampo', 'Ataque'];
 export const MAX_NOTES = 20;
@@ -442,11 +443,22 @@ export function matchSignupState({ phone, phoneKey, rosterId, name, match, playe
   const mates = (players || []).filter((player) => player.matchId === match?.id);
   const person = asPerson({ phone, phoneKey, rosterId, name });
   const same = mates.filter((player) => playerMatchesPerson(player, person) || alreadyInMatch([player], { ...person, rosterId: person.id }));
-  const mainCount = mates.filter((player) => player.waiting !== true).length;
+  const mainCount = mates.filter((player) => occupiesSpot(player)).length;
   const spots = Math.max(0, cap - mainCount);
   if (same.length) {
-    const onMain = same.some((player) => player.waiting !== true);
-    const found = onMain ? same.find((player) => player.waiting !== true) : same[0];
+    const pending = same.find((player) => isSelfPending(player));
+    const onMain = same.some((player) => occupiesSpot(player));
+    if (pending && !onMain) {
+      return {
+        state: 'pendiente',
+        label: 'Pendiente de confirmación',
+        willWait: false,
+        spots,
+        existing: true,
+        playerId: pending.id,
+      };
+    }
+    const found = onMain ? same.find((player) => occupiesSpot(player)) : same[0];
     return {
       state: onMain ? 'anotado' : 'espera',
       label: onMain ? 'Anotado' : 'En espera',
