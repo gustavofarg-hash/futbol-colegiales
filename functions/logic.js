@@ -80,6 +80,7 @@ function pushFields(kind, copy, extra = {}) {
     title: copy.title,
     body: copy.body,
     url: copy.url,
+    icon: 'icons/icon-192.png',
     kind: String(kind || ''),
     tag: String(extra.tag || ''),
   };

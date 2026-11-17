@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v210';
+const VERSION = 'f7c-v211';
 const TRIAL = self.location.pathname.includes('/prueba/');
 const CACHE = (TRIAL ? 'prueba-' : '') + VERSION;
 const SHELL = [
@@ -67,6 +67,8 @@ self.addEventListener('notificationclick', (event) => {
         : 'No se pudo. Abrí Jugadores a confirmar.';
       await self.registration.showNotification('Mis Partidos', {
         body,
+        icon: 'icons/icon-192.png',
+        badge: 'icons/icon-192.png',
         tag: data.tag || 'f7c-push',
         data: { url: data.url || './' },
       });
@@ -94,6 +96,8 @@ if (TRIAL) {
       const body = data.body || payload.notification?.body || '';
       const note = {
         body,
+        icon: 'icons/icon-192.png',
+        badge: 'icons/icon-192.png',
         data: {
           url: data.url || './',
           kind: data.kind || '',
