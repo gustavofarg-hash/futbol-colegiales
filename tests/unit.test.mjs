@@ -2013,7 +2013,9 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.equal(classifySelfSignup({ selfPending: true }, null), '');
   const copy = pushCopy('alta', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Colegiales' });
   assert.match(copy.body, /Ana se anotó y espera confirmación\. 19\/10 · 21:00 · Colegiales/);
-  assert.match(copy.url, /#\/partido\/m1$/);
+  assert.match(copy.url, /#\/a-confirmar$/);
+  assert.match(pushCopy('espera', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
+  assert.match(pushCopy('baja', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
   assert.deepEqual(organizerUids({ createdByUid: 'gus', adders: ['*'] }, ['otro']), ['gus']);
   assert.deepEqual(organizerUids({}, ['titular']), ['titular']);
 });
@@ -3918,7 +3920,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v195');
+  assert.equal(version, 'f7c-v196');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
