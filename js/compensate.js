@@ -1,13 +1,11 @@
 // Cálculo de compensación del día entre organizadores. Puro.
 import { awaitingItems, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
-import { isSelfPending } from './self-signup.js';
-
 export function splitModeOf(match) {
   return match?.splitMode === 'signed' ? 'signed' : 'equal';
 }
 
 export function playerNeedsPayState(player) {
-  if (!player || player.waiting === true || isSelfPending(player)) return false;
+  if (!player || player.waiting === true) return false;
   if (isFreePlay(player)) return false;
   const parts = paymentParts(player);
   const waiting = awaitingItems(player).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
@@ -90,7 +88,7 @@ export function splitEqual(total, people) {
 }
 
 export function matchCompensation(match, players, staff) {
-  const people = (players || []).filter((player) => player.matchId === match.id && player.waiting !== true && !isSelfPending(player));
+  const people = (players || []).filter((player) => player.matchId === match.id && player.waiting !== true);
   const missing = people.filter(playerNeedsPayState).map((player) => ({
     playerId: player.id,
     name: player.name || 'Jugador',
@@ -174,7 +172,7 @@ export function compensationFingerprint(matches, players, staff) {
       id: match.id, date: match.date, cancelled: match.cancelled === true, split: splitModeOf(match),
       adders: match.adders || [], price: match.price ?? null, createdByUid: match.createdByUid || '',
     })),
-    players: (players || []).filter((player) => player.waiting !== true && !isSelfPending(player)).map((player) => ({
+    players: (players || []).filter((player) => player.waiting !== true).map((player) => ({
       id: player.id, matchId: player.matchId, free: player.freePlay === true, signed: player.signedUpWith || '',
       added: player.addedBy || '', paid: player.paid === true, amount: player.amount ?? null,
       cash: player.cash ?? null, transfer: player.transfer ?? null, pending: player.pendingTransfer ?? null,

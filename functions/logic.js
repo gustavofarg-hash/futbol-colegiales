@@ -2,8 +2,8 @@
 // No importa Firebase: las pruebas lo pueden cargar directo.
 
 function classifySelfSignup(before, after) {
-  if (!before && after?.selfPending === true) return 'alta';
-  if (!before && after?.selfSignup === true && after?.waiting === true && after?.selfPending !== true) return 'espera';
+  if (!before && after?.selfSignup === true && after?.tentative === true && after?.waiting !== true) return 'alta';
+  if (!before && after?.selfSignup === true && after?.waiting === true) return 'espera';
   return '';
 }
 
@@ -87,11 +87,10 @@ function actionDecision(doc, player, decision, now, spotsLeft) {
   if (doc.used === true) return { ok: false, status: 410, error: 'ya se usó' };
   if (!(Number(doc.expiresAt) > Number(now))) return { ok: false, status: 410, error: 'venció' };
   if (decision !== 'aceptar' && decision !== 'rechazar') return { ok: false, status: 400, error: 'decisión' };
-  if (!player || player.selfPending !== true || String(player.id || '') !== String(doc.playerId || '')) {
+  if (!player || player.tentative !== true || String(player.id || '') !== String(doc.playerId || '')) {
     return { ok: false, status: 409, error: 'ya no está pendiente' };
   }
   if (decision === 'rechazar') return { ok: true, op: 'delete' };
-  if (!(Number(spotsLeft) > 0)) return { ok: false, status: 409, error: 'no hay lugar' };
   return { ok: true, op: 'confirm' };
 }
 

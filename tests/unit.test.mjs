@@ -1929,12 +1929,13 @@ test('organizadores demo: siembra Gustavo y Martín y no duplica', async () => {
 
 test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', async () => {
   assert.equal(occupiesSpot({ waiting: true }), false);
-  assert.equal(occupiesSpot({ selfPending: true }), false);
+  assert.equal(occupiesSpot({ tentative: true, selfSignup: true }), true);
   assert.equal(occupiesSpot({ name: 'Ana' }), true);
-  assert.equal(isSelfPending({ selfPending: true, waiting: true }), false);
+  assert.equal(isSelfPending({ tentative: true, selfSignup: true }), true);
+  assert.equal(isSelfPending({ tentative: true }), false);
   assert.equal(selfRowAction({ full: false }).action, 'join');
   assert.equal(selfRowAction({ full: true }).action, 'wait');
-  assert.equal(selfRowAction({ player: { selfPending: true } }).note, 'Pendiente de confirmación');
+  assert.equal(selfRowAction({ player: { tentative: true, selfSignup: true } }).note, 'Pendiente de confirmación');
   assert.equal(selfRowAction({ player: { waiting: true } }).action, 'cancel');
   const kick = Date.parse('2026-10-19T21:00:00-03:00');
   const early = Date.parse('2026-10-19T13:00:00-03:00');
@@ -1974,11 +1975,12 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   const person = { id: rosterId, name: 'Ana Sola', phone: '5491170001940' };
   const pendingId = await store.selfJoin({ id: open, date: '2026-10-19', time: '21:00', capacity: 14 }, person, { waiting: false });
   const db = () => JSON.parse(mem.get('f7c-test-self'));
-  assert.equal(db().players[pendingId].selfPending, true);
+  assert.equal(db().players[pendingId].tentative, true);
+  assert.equal(db().players[pendingId].selfSignup, true);
   assert.equal(db().players[pendingId].waiting, false);
-  assert.equal(occupiesSpot(db().players[pendingId]), false);
+  assert.equal(occupiesSpot(db().players[pendingId]), true);
   await store.confirmSelf(pendingId);
-  assert.equal(db().players[pendingId].selfPending, false);
+  assert.notEqual(db().players[pendingId].tentative, true);
   assert.equal(occupiesSpot({ ...db().players[pendingId], id: pendingId }), true);
   const waitId = await store.selfJoin({ id: full, date: '2026-10-19', time: '18:00', capacity: 1 }, person, { waiting: true });
   assert.equal(db().players[waitId].waiting, true);
@@ -2002,15 +2004,15 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
       { id: 'viejo', date: '2026-10-18', time: '18:00', createdByUid: 'gustavo' },
     ],
     players: [
-      { id: 'p2', name: 'Viejo', matchId: 'viejo', selfPending: true, createdAt: 1 },
-      { id: 'p1', name: 'Nuevo', matchId: 'nuevo', selfPending: true, createdAt: 5 },
-      { id: 'p3', name: 'Ajeno', matchId: 'nuevo', selfPending: true, waiting: true, createdAt: 9 },
+      { id: 'p2', name: 'Viejo', matchId: 'viejo', tentative: true, selfSignup: true, createdAt: 1 },
+      { id: 'p1', name: 'Nuevo', matchId: 'nuevo', tentative: true, selfSignup: true, createdAt: 5 },
+      { id: 'p3', name: 'Ajeno', matchId: 'nuevo', tentative: true, selfSignup: true, waiting: true, createdAt: 9 },
     ],
   });
   assert.deepEqual(listed.map((row) => row.player.name), ['Nuevo', 'Viejo']);
-  assert.equal(classifySelfSignup(null, { selfPending: true }), 'alta');
+  assert.equal(classifySelfSignup(null, { selfSignup: true, tentative: true }), 'alta');
   assert.equal(classifySelfSignup(null, { selfSignup: true, waiting: true }), 'espera');
-  assert.equal(classifySelfSignup({ selfPending: true }, null), '');
+  assert.equal(classifySelfSignup({ tentative: true, selfSignup: true }, null), '');
   const copy = pushCopy('alta', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Colegiales' });
   assert.match(copy.body, /Ana se anotó y espera confirmación\. 19\/10 · 21:00 · Colegiales/);
   assert.match(copy.url, /#\/a-confirmar$/);
@@ -2021,10 +2023,10 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.equal(alta.decideUrl.includes('decideSignup'), true);
   assert.equal(noticeActions(alta).map((row) => row.action).join(','), 'aceptar,rechazar');
   assert.deepEqual(noticeActions(pushFields('espera', copy, {})), []);
-  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', selfPending: true }, 'aceptar', 1000, 2).op, 'confirm');
-  assert.equal(actionDecision({ playerId: 'p1', used: true, expiresAt: 5000 }, { id: 'p1', selfPending: true }, 'aceptar', 1000, 2).status, 410);
-  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', selfPending: true }, 'rechazar', 1000, 0).op, 'delete');
-  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', selfPending: true }, 'aceptar', 1000, 0).status, 409);
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: true }, 'aceptar', 1000, 2).op, 'confirm');
+  assert.equal(actionDecision({ playerId: 'p1', used: true, expiresAt: 5000 }, { id: 'p1', tentative: true }, 'aceptar', 1000, 2).status, 410);
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: true }, 'rechazar', 1000, 0).op, 'delete');
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: false }, 'aceptar', 1000, 2).status, 409);
   assert.deepEqual(organizerUids({ createdByUid: 'gus', adders: ['*'] }, ['otro']), ['gus']);
   assert.deepEqual(organizerUids({}, ['titular']), ['titular']);
 });
@@ -3929,7 +3931,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v197');
+  assert.equal(version, 'f7c-v198');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

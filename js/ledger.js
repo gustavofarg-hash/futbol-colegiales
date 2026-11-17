@@ -5,8 +5,6 @@ import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './
 import { priceOfMatch, promoForPlayer } from './prices.js';
 import { UNSPECIFIED, sameOrganizerIdentity } from './organizers.js';
 import { foldText, isNamedGuest, personKey, phoneIdentity, playerMatchesPerson } from './roster.js';
-import { isSelfPending } from './self-signup.js';
-
 export function receiverLabel(player) {
   const name = String(player?.receivedBy || '').trim();
   return name || UNSPECIFIED;
@@ -182,7 +180,7 @@ export function paymentsSummary({ players, roster, organizer = null }) {
     if (!row) continue;
     const added = addedByLabel(player);
     if (wants(added, organizer)) row.signups.set(added, (row.signups.get(added) || 0) + 1);
-    if (player.waiting === true || isSelfPending(player)) continue;
+    if (player.waiting === true ) continue;
     if (player.paid === true) {
       const seen = new Set();
       for (const share of receivedShares(player)) {
@@ -240,7 +238,7 @@ export function organizerTotals(players, credits = null) {
   };
   for (const player of players || []) {
     bump(addedByLabel(player)).added += 1;
-    if (player.waiting === true || isSelfPending(player)) continue;
+    if (player.waiting === true ) continue;
     if (player.paid === true) {
       for (const share of receivedShares(player)) bump(shareLabel(share.name)).collected += share.amount;
     }
@@ -264,7 +262,7 @@ export function mineSummary(players, name) {
   let pending = 0;
   for (const player of players || []) {
     if (sameOrganizerIdentity(player.addedBy, name)) added += 1;
-    if (player.waiting === true || isSelfPending(player)) continue;
+    if (player.waiting === true ) continue;
     if (player.paid === true) {
       for (const share of receivedShares(player)) if (sameOrganizerIdentity(share.name, name)) amount += share.amount;
     }
@@ -279,7 +277,7 @@ export function pendingTransfers({ players, roster, organizer = null }) {
   const people = new Map();
   let total = 0;
   for (const player of players || []) {
-    if (player?.waiting === true || isSelfPending(player)) continue;
+    if (player?.waiting === true ) continue;
     const shares = pendingShareList(player).filter((share) => wants(shareLabel(share.name), organizer));
     if (!shares.length) continue;
     const key = summaryKey(player, roster, players);
@@ -419,5 +417,5 @@ export function hasUnspecified({ players, phone = null, phoneKey = null, rosterI
   const scoped = phone || phoneKey || rosterId || name;
   const list = scoped ? ofPerson({ phone, phoneKey, rosterId, name }, players) : (players || []);
   return list.some((player) => addedByLabel(player) === UNSPECIFIED
-    || (player.waiting !== true && !isSelfPending(player) && player.paid === true && receivedShares(player).some((share) => shareLabel(share.name) === UNSPECIFIED)));
+    || (player.waiting !== true && player.paid === true && receivedShares(player).some((share) => shareLabel(share.name) === UNSPECIFIED)));
 }

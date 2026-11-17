@@ -409,7 +409,7 @@ function refusePlayedCancel(match, data) {
 }
 
 function selfSignupDetail(player, waiting) {
-  if (player?.selfPending === true) return 'Pendiente de confirmación';
+  if (player?.selfSignup === true && player?.tentative === true) return 'Pendiente de confirmación';
   if (waiting && player?.selfSignup === true) return 'Se anotó solo en la lista de espera';
   if (waiting) return 'En la lista de espera';
   return '';
@@ -944,11 +944,11 @@ class LocalStore {
     );
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => occupiesSpot(p)).length;
-    const pending = opts.selfPending === true;
-    if (pending && mainCount >= cap) throw Object.assign(new Error('El partido se completó.'), { code: 'match-full' });
-    const waiting = pending || opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
+    const selfHold = opts.selfPending === true;
+    if (selfHold && mainCount >= cap) throw Object.assign(new Error('El partido se completó.'), { code: 'match-full' });
+    const waiting = selfHold || opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const rosterId = String(data.rosterId || '').trim();
-    const hold = opts.tentative === true && !waiting;
+    const hold = (opts.tentative === true || selfHold) && !waiting;
     const player = {
       matchId: match.id, matchDate: match.date, name: cleanPersonName(data.name),
       addedBy: who, addedByUid: this.actor?.uid || '', createdAt: now, updatedAt: now,
@@ -962,8 +962,7 @@ class LocalStore {
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
       ...signupWith(data, this.actor),
       ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
-      ...(pending ? { selfPending: true, selfSignup: true, rosterAt: null } : {}),
-      ...(opts.selfSignup === true && waiting ? { selfSignup: true } : {}),
+      ...(selfHold || opts.selfSignup === true ? { selfSignup: true } : {}),
     };
     db.players[id] = player;
     const person = playerLogFields({ id, ...player }, [...mates, { id, ...player }]);
@@ -1051,19 +1050,9 @@ class LocalStore {
     await this.deletePlayer(playerId);
   }
   async confirmSelf(playerId) {
-    const db = this._load();
-    const player = db.players[playerId];
-    if (!player?.selfPending) return;
-    const match = db.matches[player.matchId] || {};
-    const mates = Object.values(db.players).filter((row) => row.matchId === player.matchId && row !== player);
-    const cap = match.capacity || 14;
-    if (mates.filter((row) => occupiesSpot(row)).length >= cap) {
-      throw Object.assign(new Error('No hay lugar.'), { code: 'match-full' });
-    }
-    player.selfPending = false;
-    player.rosterAt = Date.now();
-    player.updatedAt = player.rosterAt;
-    this._save(db);
+    const player = this._load().players[playerId];
+    if (!player?.tentative) return;
+    await this.clearTentative(playerId);
   }
   async rejectSelf(playerId) {
     const db = this._load();
@@ -3129,12 +3118,12 @@ export class FirebaseStore {
     );
     const cap = match.capacity || 14;
     const mainCount = mates.filter((p) => occupiesSpot(p)).length;
-    const pending = opts.selfPending === true;
-    if (pending && mainCount >= cap) throw Object.assign(new Error('El partido se completó.'), { code: 'match-full' });
-    const waiting = pending || opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
+    const selfHold = opts.selfPending === true;
+    if (selfHold && mainCount >= cap) throw Object.assign(new Error('El partido se completó.'), { code: 'match-full' });
+    const waiting = selfHold || opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
-    const hold = opts.tentative === true && !waiting;
+    const hold = (opts.tentative === true || selfHold) && !waiting;
     const canon = canonicalWa(data.phone || '');
     const uid = this.actor?.uid || '';
     const player = {
@@ -3152,8 +3141,7 @@ export class FirebaseStore {
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
       ...signupWith(data, this.actor),
       ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
-      ...(pending ? { selfPending: true, selfSignup: true, rosterAt: null } : {}),
-      ...(opts.selfSignup === true && waiting ? { selfSignup: true } : {}),
+      ...(selfHold || opts.selfSignup === true ? { selfSignup: true } : {}),
     };
     const ref = opts.id
       ? doc(this.db, 'players', opts.id)
@@ -3253,15 +3241,8 @@ export class FirebaseStore {
   }
   async confirmSelf(playerId) {
     const player = this.state.players.find((row) => row.id === playerId);
-    if (!player?.selfPending) return;
-    const match = this.state.matches.find((row) => row.id === player.matchId) || {};
-    const mates = this.state.players.filter((row) => row.matchId === player.matchId && row.id !== playerId);
-    if (mates.filter((row) => occupiesSpot(row)).length >= (match.capacity || 14)) {
-      throw Object.assign(new Error('No hay lugar.'), { code: 'match-full' });
-    }
-    const { doc, updateDoc } = this.fs;
-    const now = Date.now();
-    await updateDoc(doc(this.db, 'players', playerId), { selfPending: false, rosterAt: now, updatedAt: now });
+    if (!player?.tentative) return;
+    await this.clearTentative(playerId);
   }
   async rejectSelf(playerId) {
     const player = this.state.players.find((row) => row.id === playerId);
