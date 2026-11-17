@@ -1915,7 +1915,10 @@ export class FirebaseStore {
     const next = actorRecord(user);
     if (this.actor?.uid === next.uid && this.actor?.name === next.name && this.actor?.role === next.role) return;
     this.actor = next;
-    if (this.fs) this._listen();
+    // La ficha sin sesión ya escuchó su jugador. Volver a escuchar todo
+    // pide las colecciones del organizador y Firebase las niega.
+    if (!this.fs || this._guest) return;
+    this._listen();
   }
   async exportDatabase(opts = {}) {
     requireAdmin(this.actor);

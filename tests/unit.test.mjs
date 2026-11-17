@@ -3932,7 +3932,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v203');
+  assert.equal(version, 'f7c-v204');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3980,6 +3980,10 @@ test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(store.state.roster[0].name, 'Ángel');
   assert.equal(store.serverOk, true);
+  const before = calls.length;
+  store.setActor(null);
+  assert.equal(calls.length, before);
+  assert.equal(store._guest, true);
   const organizer = new FirebaseStore();
   organizer._unsubs = undefined;
   organizer._stop();
