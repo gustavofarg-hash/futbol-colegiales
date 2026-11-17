@@ -320,6 +320,7 @@ export function selfMoveEntry(match, venues, player, move = {}) {
       detail: move.detail || '',
       playerName: player?.name || '',
       ...(move.rosterId ? { rosterId: String(move.rosterId) } : {}),
+      ...(move.guest ? { shareToken: String(move.shareToken || '') } : {}),
     },
   );
 }

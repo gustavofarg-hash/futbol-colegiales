@@ -48,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v205';
+const APP_VERSION = 'f7c-v206';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -985,7 +985,13 @@ function route() {
   if (name === 'jugadores' || name === 'pagos') return { name: 'roster' };
   if (name === 'a-confirmar') return { name: 'pending' };
   if (name === 'usuarios') return { name: 'users' };
-  if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
+  if (name === 'jugador' && id) {
+    let rosterId = id;
+    let share = extra || '';
+    try { rosterId = decodeURIComponent(id); } catch { /* el id queda como vino */ }
+    try { share = share ? decodeURIComponent(share) : ''; } catch { /* el token queda como vino */ }
+    return { name: 'profile', id: rosterId, share };
+  }
   return { name: 'home' };
 }
 let releaseAnonymousLock = null;
@@ -997,20 +1003,21 @@ async function bootGuestPlayer() {
   document.documentElement.classList.add('anon-lock');
   app.guestPlayer = true;
   const id = route().id;
+  const share = route().share || '';
   if (!app.session) {
     app.session = openSession();
     await app.session.init();
   }
   if (app.session.user) return;
   if (!app.store) {
-    app.store = await createStore(() => {}, { guestRosterId: id });
+    app.store = await createStore(() => {}, { guestRosterId: id, shareToken: share });
     const demo = document.getElementById('demo-banner');
     if (demo) demo.hidden = app.store.mode === 'firebase';
     app.store.setActor(null);
     app.store.subscribe(onStoreView);
     return;
   }
-  if (typeof app.store.listenAsGuest === 'function') app.store.listenAsGuest(id);
+  if (typeof app.store.listenAsGuest === 'function') app.store.listenAsGuest(id, share);
   else render();
 }
 function lockShell() {
@@ -2700,7 +2707,9 @@ function resolvePlayerShort(longUrl) {
   return job;
 }
 async function copyPlayerLink(rosterId) {
-  const url = playerLink(rosterId);
+  let token = '';
+  try { token = await app.store?.ensureShareToken?.(actor().uid, actor().name) || ''; } catch { token = ''; }
+  const url = playerLink(rosterId, token);
   if (!url) {
     openSheet(`<h3>Enlace</h3><p>Este jugador todavía no está en Jugadores.</p><div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
     return;
@@ -4838,7 +4847,16 @@ const SELF_PIN = '<svg class="self-ico" viewBox="0 0 24 24" aria-hidden="true"><
 const SELF_CHECK = '<svg class="self-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5 11 15.5 16.5 9"/></svg>';
 
 function selfSignupSection(person) {
-  const rows = selfSignupRows({ person, matches: app.matches, players: app.players, now: Date.now() });
+  const token = route().share || '';
+  const organizer = token ? (app.store?.shareOrganizer?.(token) || null) : null;
+  const rows = selfSignupRows({
+    person,
+    matches: app.matches,
+    players: app.players,
+    now: Date.now(),
+    organizerUid: organizer?.uid || '',
+    scoped: !!token,
+  });
   if (!rows.length) return '<ul class="slots" id="self-list"></ul>';
   const items = rows.map(({ match, player, action, note, status, lock }) => {
     const statusHtml = note ? `<p class="self-status ${esc(status || '')}">${esc(note)}</p>` : '';
@@ -4892,14 +4910,14 @@ function bindSelfSignup(person) {
     const kind = btn.dataset.self;
     const job = kind === 'cancel'
       ? app.store.selfCancel(btn.dataset.player)
-      : app.store.selfJoin(match, person, { waiting: kind === 'wait' });
+      : app.store.selfJoin(match, person, { waiting: kind === 'wait', organizer: route().share ? (app.store?.shareOrganizer?.(route().share) || null) : null });
     const msg = kind === 'join' ? 'Quedó pendiente de confirmación' : (kind === 'wait' ? 'Quedaste en la lista de espera' : 'Listo');
     run(job, msg);
   };
 }
 
 function myPendingSignups() {
-  return pendingSelfSignups({ players: app.players, matches: knownMatches(), uid: actor().uid });
+  return pendingSelfSignups({ players: app.players, matches: knownMatches(), uid: actor().uid, admin: app.role === 'admin' });
 }
 
 function pendingSignupBlock() {
@@ -8390,7 +8408,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v205" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v206" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8427,7 +8445,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v205" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v206" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -8587,7 +8605,7 @@ async function boot() {
     lockShell();
     document.documentElement.classList.add('anon-lock');
     app.guestPlayer = true;
-    app.store = await createStore(() => {}, { guestRosterId: route().id });
+    app.store = await createStore(() => {}, { guestRosterId: route().id, shareToken: route().share || '' });
     $('#demo-banner').hidden = app.store.mode === 'firebase';
     app.store.setActor(null);
   }
@@ -8615,6 +8633,7 @@ async function boot() {
     app.creditsError = creditsError || null;
     app.creditsReady = view.creditsReady === true;
     app.playersReady = view.playersReady === true;
+    if (app.guestPlayer) app.shareOrganizer = view.shareOrganizer || null;
     app.compensations = mergeHeldCompensations(view.compensations || []);
     app.usage = view.usage || null;
     if (app.role === 'admin' && $('#usage-meter')) {

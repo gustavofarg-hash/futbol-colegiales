@@ -648,12 +648,28 @@ service cloud.firestore {
           || ((!m.keys().hasAny(['createdByUid']) || m.get('createdByUid', '') == '')
               && (!m.keys().hasAny(['adders']) || m.adders.size() == 0 || m.adders.hasAny(['*'])));
     }
+    function shareTokenPath(token) {
+      return /databases/$(database)/documents/shareTokens/$(token);
+    }
+    function shareTokenData(token) {
+      return get(shareTokenPath(token)).data;
+    }
+    function guestAddedBy(d) {
+      return d.addedByUid == ''
+          || (d.shareToken is string && d.shareToken.size() >= 20 && d.shareToken.size() <= 80
+              && exists(shareTokenPath(d.shareToken))
+              && shareTokenData(d.shareToken).uid == d.addedByUid
+              && d.addedBy == shareTokenData(d.shareToken).name
+              && (matchData(d.matchId).get('createdByUid', '') == d.addedByUid
+                  || (matchData(d.matchId).keys().hasAny(['adders']) && matchData(d.matchId).adders is list && matchData(d.matchId).adders.hasAny([d.addedByUid]))));
+    }
     function guestSignupShape(d) {
       return d.selfSignup == true
           && guestRoster(d.rosterId)
           && d.name == rosterDoc(d.rosterId).get('name', '')
-          && d.addedByUid == ''
+          && guestAddedBy(d)
           && selfMatchForHolder(d.matchId, d.rosterId)
+          && matchData(d.matchId).get('playerVisible', true) != false
           && d.get('paid', false) != true
           && d.get('amount', null) == null
           && d.get('cash', null) == null
@@ -780,7 +796,7 @@ service cloud.firestore {
     match /signupPings/{pingId} {
       allow create: if signedIn()
           && holdsRoster(request.resource.data.rosterId)
-          && request.resource.data.keys().hasOnly(['kind', 'name', 'playerId', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['kind', 'name', 'playerId', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt', 'organizerUid', 'shareToken'])
           && request.resource.data.playerId is string
           && request.resource.data.playerId.size() > 0
           && request.resource.data.playerId.size() <= 80
@@ -796,7 +812,32 @@ service cloud.firestore {
           && request.resource.data.venueName is string
           && request.resource.data.venueName.size() <= 80
           && request.resource.data.createdAt is number;
+      allow create: if guestRoster(request.resource.data.rosterId)
+          && request.resource.data.keys().hasOnly(['kind', 'name', 'playerId', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt', 'organizerUid', 'shareToken'])
+          && (request.resource.data.kind == 'alta' || request.resource.data.kind == 'espera' || request.resource.data.kind == 'baja')
+          && request.resource.data.organizerUid is string && request.resource.data.organizerUid.size() <= 128
+          && request.resource.data.shareToken is string && request.resource.data.shareToken.size() <= 80
+          && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 60
+          && request.resource.data.matchId is string && request.resource.data.matchId.size() > 0
+          && (request.resource.data.organizerUid == '' || (
+              request.resource.data.shareToken.size() >= 20
+              && exists(shareTokenPath(request.resource.data.shareToken))
+              && shareTokenData(request.resource.data.shareToken).uid == request.resource.data.organizerUid
+          ));
       allow read, update, delete: if isAdmin();
+    }
+
+    match /shareTokens/{token} {
+      allow get: if token.size() >= 20 && token.size() <= 80 && token.matches('^[A-Za-z0-9_-]+$');
+      allow list: if isActiveStaff() && resource.data.uid == request.auth.uid;
+      allow create: if isActiveStaff()
+          && token.size() >= 20 && token.size() <= 80 && token.matches('^[A-Za-z0-9_-]+$')
+          && request.resource.data.keys().hasOnly(['uid', 'name', 'createdAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.name == userData().name
+          && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 40
+          && request.resource.data.createdAt is number;
+      allow update, delete: if false;
     }
 
     // Token de un solo uso para Aceptar o Rechazar desde el aviso.
@@ -1364,15 +1405,21 @@ service cloud.firestore {
     }
 
     function guestSelfLog(d) {
-      return d.keys().hasOnly(['at', 'actorUid', 'actorName', 'section', 'type', 'matchId', 'matchDate', 'matchTime', 'matchLabel', 'editors', 'playerName', 'hostName', 'detail', 'amount', 'method', 'rosterId'])
-          && d.actorUid == ''
+      return d.keys().hasOnly(['at', 'actorUid', 'actorName', 'section', 'type', 'matchId', 'matchDate', 'matchTime', 'matchLabel', 'editors', 'playerName', 'hostName', 'detail', 'amount', 'method', 'rosterId', 'shareToken'])
+          && d.shareToken is string && d.shareToken.size() <= 80
           && d.actorName is string && d.actorName.size() > 0 && d.actorName.size() <= 40
           && d.section == 'partidos'
           && (d.type == 'se anotó' || d.type == 'se bajó')
           && d.rosterId is string
           && guestRoster(d.rosterId)
-          && d.actorName == rosterDoc(d.rosterId).get('name', '')
-          && d.playerName == d.actorName
+          && (
+            (d.shareToken == '' && d.actorUid == '' && d.actorName == rosterDoc(d.rosterId).get('name', '') && d.playerName == d.actorName)
+            || (d.shareToken.size() >= 20
+                && exists(shareTokenPath(d.shareToken))
+                && shareTokenData(d.shareToken).uid == d.actorUid
+                && shareTokenData(d.shareToken).name == d.actorName
+                && d.playerName == rosterDoc(d.rosterId).get('name', ''))
+          )
           && d.amount == 0
           && d.method == ''
           && d.hostName == ''

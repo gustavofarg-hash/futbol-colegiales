@@ -2036,6 +2036,7 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: true }, 'rechazar', 1000, 0).op, 'delete');
   assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: false }, 'aceptar', 1000, 2).status, 409);
   assert.deepEqual(organizerUids({ createdByUid: 'gus', adders: ['*'] }, ['otro']), ['gus']);
+  assert.deepEqual(organizerUids({ createdByUid: 'gus' }, ['otro'], 'solo'), ['solo']);
   assert.deepEqual(organizerUids({}, ['titular']), ['titular']);
 });
 
@@ -3360,11 +3361,67 @@ test('compartir la app nombra el link de instalación', () => {
 
 test('el enlace del jugador abre esa ficha', () => {
   assert.equal(playerLink('abc/1'), `${APP_INSTALL_URL}#/jugador/abc%2F1`);
+  assert.equal(playerLink('abc', 'tok_en-1234567890abcd'), `${APP_INSTALL_URL}#/jugador/abc/tok_en-1234567890abcd`);
+  assert.notEqual(playerLink('abc', 'aaaa'), playerLink('abc', 'bbbb'));
   assert.equal(playerLink('  '), '');
   assert.equal(isPlayerDeepLink('#/jugador/abc'), true);
   assert.equal(isPlayerDeepLink('#/jugador/'), false);
   assert.equal(isPlayerDeepLink('#/jugadores'), false);
   assert.equal(isPlayerDeepLink('#/'), false);
+  assert.equal(isPlayerDeepLink('#/jugador/abc/tok_en-1234567890abcd'), true);
+});
+
+test('el enlace de un organizador solo muestra sus partidos y la anotación es de él', async () => {
+  const now = Date.parse('2026-10-19T13:00:00-03:00');
+  const person = { id: 'r', name: 'Ana', holders: ['gus', 'martin'] };
+  const matches = [
+    { id: 'ga', date: '2026-10-19', time: '21:00', createdByUid: 'gus' },
+    { id: 'ma', date: '2026-10-19', time: '22:00', createdByUid: 'martin' },
+    { id: 'hide', date: '2026-10-19', time: '23:00', createdByUid: 'gus', playerVisible: false },
+  ];
+  assert.deepEqual(selfSignupRows({ person, matches, now, organizerUid: 'gus', scoped: true }).map((row) => row.match.id), ['ga']);
+  assert.deepEqual(selfSignupRows({ person, matches, now }).map((row) => row.match.id).sort(), ['ga', 'ma']);
+  const pending = pendingSelfSignups({
+    uid: 'gus',
+    matches: [{ id: 'ga', createdByUid: 'gus' }, { id: 'ma', createdByUid: 'martin' }],
+    players: [
+      { id: '1', matchId: 'ga', tentative: true, selfSignup: true, addedByUid: 'gus', createdAt: 2 },
+      { id: '2', matchId: 'ma', tentative: true, selfSignup: true, addedByUid: 'martin', createdAt: 3 },
+    ],
+  });
+  assert.deepEqual(pending.map((row) => row.player.id), ['1']);
+  assert.equal(pendingSelfSignups({
+    uid: 'z',
+    admin: true,
+    matches: [{ id: 'ma', createdByUid: 'martin' }],
+    players: [{ id: '2', matchId: 'ma', tentative: true, selfSignup: true, addedByUid: 'martin', createdAt: 1 }],
+  }).length, 1);
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-share-link';
+  store.actor = { uid: 'gus', name: 'Gustavo' };
+  await store.init();
+  const token = await store.ensureShareToken('gus', 'Gustavo');
+  assert.equal(await store.ensureShareToken('gus', 'Gustavo'), token);
+  assert.equal(store.shareOrganizer(token).name, 'Gustavo');
+  const rosterId = await store.addRoster({ name: 'Ana Link', phone: '5491170002060' }, 'Gustavo');
+  const matchId = await store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14 }, 'Gustavo');
+  const raw = JSON.parse(mem.get('f7c-share-link'));
+  raw.matches[matchId].createdByUid = 'gus';
+  mem.set('f7c-share-link', JSON.stringify(raw));
+  const playerId = await store.selfJoin({ id: matchId, date: '2026-10-19', time: '21:00', capacity: 14, createdByUid: 'gus' }, { id: rosterId, name: 'Ana Link' }, { organizer: { uid: 'gus', name: 'Gustavo', token } });
+  const saved = JSON.parse(mem.get('f7c-share-link'));
+  assert.equal(saved.players[playerId].addedByUid, 'gus');
+  assert.equal(saved.players[playerId].addedBy, 'Gustavo');
+  assert.equal(saved.players[playerId].signedUpWith, 'gus');
+  const log = Object.values(saved.log).find((row) => row.type === 'se anotó' && row.playerName === 'Ana Link');
+  assert.equal(log.actorName, 'Gustavo');
+  assert.equal(log.actorUid, 'gus');
 });
 
 test('cancelar no arma recordatorio y el mensaje no lleva link', () => {
@@ -3939,7 +3996,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v205');
+  assert.equal(version, 'f7c-v206');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
