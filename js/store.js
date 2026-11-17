@@ -112,7 +112,7 @@ import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
 import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, COLLECTION_LABELS, RESET_STALLED, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, firestoreRestFields, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialMockToken, trialOpKey, trialPlayerPlan, trialShouldReplace, withDeadline } from './backup.js';
-import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
+import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, selfMoveEntry, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 import { behaviorDeleteLog, behaviorLog, cleanBehaviorEntry } from './behavior.js';
 
 function reportBackupProgress(onProgress, done, total) {
@@ -390,6 +390,7 @@ function matchDoc(data, who) {
     ...(cleanCourt(data.court) ? { court: cleanCourt(data.court) } : {}),
     ...(storedMatchPrice(data) != null ? { price: storedMatchPrice(data) } : {}),
     splitMode: data.splitMode === 'signed' ? 'signed' : 'equal',
+    ...(data.playerVisible === false ? { playerVisible: false } : (data.playerVisible === true ? { playerVisible: true } : {})),
     source: data.source || 'manual',
     sourceRef: data.sourceRef || null,
     sourceText: data.sourceText || null,
@@ -434,6 +435,7 @@ function cleanMatchPatch(data) {
   }
   if ('cancelled' in rest) rest.cancelled = rest.cancelled === true;
   if ('splitMode' in rest) rest.splitMode = rest.splitMode === 'signed' ? 'signed' : 'equal';
+  if ('playerVisible' in rest) rest.playerVisible = rest.playerVisible !== false;
   if (rest.cancelled === false) {
     rest.cancelledAt = null;
     rest.cancelledBy = null;
@@ -673,7 +675,7 @@ class LocalStore {
     if (!entries?.length) return;
     db.log ||= {};
     for (const entry of entries) {
-      if (!entry?.type || !entry.actorUid) continue;
+      if (!entry?.type || (!entry.actorUid && !entry.actorName)) continue;
       db.log[rid()] = entry;
     }
   }
@@ -967,7 +969,7 @@ class LocalStore {
     db.players[id] = player;
     const person = playerLogFields({ id, ...player }, [...mates, { id, ...player }]);
     const savedMatch = db.matches[match.id] || match;
-    this._pushLogs(db, [partidoEntry(this._actor(), { id: match.id, ...savedMatch }, this._venuesOf(db), {
+    if (!(selfHold || opts.selfSignup === true)) this._pushLogs(db, [partidoEntry(this._actor(), { id: match.id, ...savedMatch }, this._venuesOf(db), {
       type: 'alta',
       ...person,
       detail: selfSignupDetail(player, waiting),
@@ -1006,7 +1008,14 @@ class LocalStore {
     });
     const saved = this._load();
     const player = { id, ...(saved.players[id] || {}) };
-    this._queueSignupPing(saved, waiting ? 'espera' : 'alta', player, saved.matches[player.matchId] || match);
+    const savedMatch = { id: player.matchId || match.id, ...(saved.matches[player.matchId] || match) };
+    this._pushLogs(saved, [selfMoveEntry(savedMatch, this._venuesOf(saved), player, {
+      type: 'se anotó',
+      detail: waiting ? 'En la lista de espera' : 'Pendiente de confirmación',
+      actorName: person?.name || player.name,
+      rosterId,
+    })]);
+    this._queueSignupPing(saved, waiting ? 'espera' : 'alta', player, savedMatch);
     this._save(saved);
     return id;
   }
@@ -1046,8 +1055,14 @@ class LocalStore {
     }
     this._chargeSignupRate(db, player.rosterId || playerId, now);
     this._queueSignupPing(db, 'baja', { id: playerId, ...player }, match);
+    this._pushLogs(db, [selfMoveEntry({ id: player.matchId, ...match }, this._venuesOf(db), { id: playerId, ...player }, {
+      type: 'se bajó',
+      detail: 'Anuló su lugar',
+      actorName: player.name,
+      rosterId: player.rosterId || '',
+    })]);
     this._save(db);
-    await this.deletePlayer(playerId);
+    await this.deletePlayer(playerId, { skipLog: true });
   }
   async confirmSelf(playerId) {
     const player = this._load().players[playerId];
@@ -1058,7 +1073,15 @@ class LocalStore {
     const db = this._load();
     const player = db.players[playerId];
     if (!isSelfPending(player)) return;
-    await this.deletePlayer(playerId);
+    const match = db.matches[player.matchId] || {};
+    this._pushLogs(db, [selfMoveEntry({ id: player.matchId, ...match }, this._venuesOf(db), { id: playerId, ...player }, {
+      type: 'rechazó',
+      detail: 'Rechazó la anotación',
+      actorName: this._actor().name,
+      actorUid: this._actor().uid,
+    })]);
+    this._save(db);
+    await this.deletePlayer(playerId, { skipLog: true });
   }
   _dropFromTeams(db, matchId, playerId) {
     const match = db.matches[matchId];
@@ -1357,7 +1380,18 @@ class LocalStore {
     this._save(db);
   }
   async clearTentative(id) {
+    const player = this._load().players[id];
     await this.updatePlayer(id, { tentative: null, tentativeAt: null });
+    if (!isSelfPending(player)) return;
+    const db = this._load();
+    const match = db.matches[player.matchId] || {};
+    this._pushLogs(db, [selfMoveEntry({ id: player.matchId, ...match }, this._venuesOf(db), { id, ...player }, {
+      type: 'aceptó',
+      detail: 'Aceptó la anotación',
+      actorName: this._actor().name,
+      actorUid: this._actor().uid,
+    })]);
+    this._save(db);
   }
   async ensureConfirmToken(id) {
     const p = this._load().players[id];
@@ -1370,17 +1404,19 @@ class LocalStore {
   async markReminderSent(id) {
     await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
-  async deletePlayer(id) {
+  async deletePlayer(id, opts = {}) {
     const db = this._load();
     const player = db.players[id];
     if (player) {
-      const mates = this._matesOf(db, player.matchId);
-      const match = db.matches[player.matchId];
-      this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: player.matchId, ...match } : { id: player.matchId }, this._venuesOf(db), {
-        type: 'baja',
-        ...playerLogFields({ id, ...player }, mates),
-        detail: player.noPlay === true ? 'Sin devolver el crédito' : (player.waiting === true ? 'En la lista de espera' : ''),
-      })]);
+      if (opts.skipLog !== true) {
+        const mates = this._matesOf(db, player.matchId);
+        const match = db.matches[player.matchId];
+        this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: player.matchId, ...match } : { id: player.matchId }, this._venuesOf(db), {
+          type: 'baja',
+          ...playerLogFields({ id, ...player }, mates),
+          detail: player.noPlay === true ? 'Sin devolver el crédito' : (player.waiting === true ? 'En la lista de espera' : ''),
+        })]);
+      }
       this._dropFromTeams(db, player.matchId, id);
     }
     delete db.players[id];
@@ -3034,7 +3070,7 @@ export class FirebaseStore {
     if (!this.fs || !entries?.length) return;
     const { doc, setDoc } = this.fs;
     for (const entry of entries) {
-      if (!entry?.type || !entry.actorUid) continue;
+      if (!entry?.type || (!entry.actorUid && !entry.actorName)) continue;
       await setDoc(doc(this.db, 'log', rid()), entry);
     }
   }
@@ -3259,7 +3295,7 @@ export class FirebaseStore {
     }
     await this._writeConfirmation(token, ref.id, player, match);
     await this.ensureShortLink(ref.id, { matchId: match.id, confirmToken: token });
-    await this._appendLogs([partidoEntry(this._actor(), stored, this.state.venues, {
+    if (!(selfHold || opts.selfSignup === true)) await this._appendLogs([partidoEntry(this._actor(), stored, this.state.venues, {
       type: 'alta',
       ...playerLogFields({ id: ref.id, ...player }, [...mates, { id: ref.id, ...player }]),
       detail: selfSignupDetail(player, waiting),
@@ -3363,6 +3399,14 @@ export class FirebaseStore {
     await setDoc(doc(this.db, 'players', id), player);
     this.state.players = [...this.state.players.filter((row) => row.id !== id), { id, ...player }];
     this._emit();
+    try {
+      await this._appendLogs([selfMoveEntry(match, this.state.venues, { id, ...player }, {
+        type: 'se anotó',
+        detail: onWait ? 'En la lista de espera' : 'Pendiente de confirmación',
+        actorName: player.name,
+        rosterId,
+      })]);
+    } catch { /* sin la regla nueva la anotación igual queda */ }
     try { await this._writeSignupPing(onWait ? 'espera' : 'alta', { id, ...player }, match); }
     catch { /* sin funciones el aviso no sale, y la anotación queda */ }
     return id;
@@ -3379,6 +3423,14 @@ export class FirebaseStore {
     await deleteDoc(doc(this.db, 'players', playerId));
     this.state.players = this.state.players.filter((row) => row.id !== playerId);
     this._emit();
+    try {
+      await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+        type: 'se bajó',
+        detail: 'Anuló su lugar',
+        actorName: player.name,
+        rosterId: player.rosterId || '',
+      })]);
+    } catch { /* la baja ya quedó */ }
     try { await this._writeSignupPing('baja', player, match); }
     catch { /* el aviso no es parte de la baja */ }
   }
@@ -3392,7 +3444,15 @@ export class FirebaseStore {
     }
     await this._chargeSignupRate(player.rosterId || playerId, playerId);
     await this._writeSignupPing('baja', player, match);
-    await this.deletePlayer(playerId);
+    try {
+      await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+        type: 'se bajó',
+        detail: 'Anuló su lugar',
+        actorName: player.name,
+        rosterId: player.rosterId || '',
+      })]);
+    } catch { /* la baja ya quedó */ }
+    await this.deletePlayer(playerId, { skipLog: true });
   }
   async confirmSelf(playerId) {
     const player = this.state.players.find((row) => row.id === playerId);
@@ -3402,7 +3462,14 @@ export class FirebaseStore {
   async rejectSelf(playerId) {
     const player = this.state.players.find((row) => row.id === playerId);
     if (!isSelfPending(player)) return;
-    await this.deletePlayer(playerId);
+    const match = this.state.matches.find((row) => row.id === player.matchId) || { id: player.matchId };
+    await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+      type: 'rechazó',
+      detail: 'Rechazó la anotación',
+      actorName: this._actor().name,
+      actorUid: this._actor().uid,
+    })]);
+    await this.deletePlayer(playerId, { skipLog: true });
   }
   async setTeams(id, teams, who) {
     const rec = teamsRecord(teams);
@@ -3760,7 +3827,16 @@ export class FirebaseStore {
     })]);
   }
   async clearTentative(id) {
+    const player = this.state.players.find((row) => row.id === id);
     await this.updatePlayer(id, { tentative: null, tentativeAt: null });
+    if (!isSelfPending(player)) return;
+    const match = this.state.matches.find((row) => row.id === player.matchId) || { id: player.matchId };
+    await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+      type: 'aceptó',
+      detail: 'Aceptó la anotación',
+      actorName: this._actor().name,
+      actorUid: this._actor().uid,
+    })]);
   }
   async ensureShortLink(id, hint) {
     const p = this.state.players.find((x) => x.id === id) || hint || null;
@@ -3842,11 +3918,11 @@ export class FirebaseStore {
   async markReminderSent(id) {
     await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
-  async deletePlayer(id) {
+  async deletePlayer(id, opts = {}) {
     const { doc, writeBatch } = this.fs;
     const player = this.state.players.find((item) => item.id === id);
     const match = this.state.matches.find((item) => item.id === player?.matchId);
-    if (player) {
+    if (player && opts.skipLog !== true) {
       const mates = this.state.players.filter((item) => item.matchId === player.matchId);
       await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
         type: 'baja',

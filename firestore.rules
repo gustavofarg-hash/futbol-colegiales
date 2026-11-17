@@ -69,6 +69,7 @@ service cloud.firestore {
           && (!('court' in d) || (d.court is string && d.court.size() <= 20))
           && (!('price' in d) || (d.price is int && d.price >= 0 && d.price <= 1000000000))
           && (!('splitMode' in d) || d.splitMode == 'equal' || d.splitMode == 'signed')
+          && (!('playerVisible' in d) || d.playerVisible is bool)
           && (!('score' in d) || scoreOk(d.score))
           && accessShape(d);
     }
@@ -1362,9 +1363,31 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    function guestSelfLog(d) {
+      return d.keys().hasOnly(['at', 'actorUid', 'actorName', 'section', 'type', 'matchId', 'matchDate', 'matchTime', 'matchLabel', 'editors', 'playerName', 'hostName', 'detail', 'amount', 'method', 'rosterId'])
+          && d.actorUid == ''
+          && d.actorName is string && d.actorName.size() > 0 && d.actorName.size() <= 40
+          && d.section == 'partidos'
+          && (d.type == 'se anotó' || d.type == 'se bajó')
+          && d.rosterId is string
+          && guestRoster(d.rosterId)
+          && d.actorName == rosterDoc(d.rosterId).get('name', '')
+          && d.playerName == d.actorName
+          && d.amount == 0
+          && d.method == ''
+          && d.hostName == ''
+          && d.at is number && d.at > 0
+          && d.matchId is string && d.matchId.size() > 0 && d.matchId.size() <= 80
+          && d.detail is string && d.detail.size() <= 200
+          && d.editors is list && d.editors.size() > 0 && d.editors.size() <= 31
+          && (d.editors.hasAny(['*']) || d.editors.hasAny(rosterHolders(d.rosterId)))
+          && selfMatchForHolder(d.matchId, d.rosterId)
+          && matchData(d.matchId).get('playerVisible', true) != false;
+    }
     match /log/{entryId} {
       allow read: if isActiveStaff() && canReadLog(resource.data);
       allow create: if isActiveStaff() && validLog(request.resource.data) && entryId.size() > 0 && entryId.size() <= 80;
+      allow create: if guestSelfLog(request.resource.data) && entryId.size() > 0 && entryId.size() <= 80;
       allow update: if false;
       allow delete: if isAdmin();
     }
