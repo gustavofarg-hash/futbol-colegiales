@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v211';
+const APP_VERSION = 'f7c-v212';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -8896,9 +8896,11 @@ function pingActivity(items) {
     const body = activityNoticeText(item);
     const title = 'Mis Partidos';
     const tag = `f7c-act-${item.id || item.at}`;
-    const fallback = () => { try { new Notification(title, { body, tag }); } catch { /* el navegador no muestra avisos */ } };
+    const icon = 'icons/icon-192.png';
+    const badge = 'icons/badge-mono.png';
+    const fallback = () => { try { new Notification(title, { body, tag, icon }); } catch { /* el navegador no muestra avisos */ } };
     const ready = navigator.serviceWorker?.ready;
-    if (ready && typeof ready.then === 'function') ready.then((reg) => reg.showNotification(title, { body, tag })).catch(fallback);
+    if (ready && typeof ready.then === 'function') ready.then((reg) => reg.showNotification(title, { body, tag, icon, badge })).catch(fallback);
     else fallback();
   });
 }

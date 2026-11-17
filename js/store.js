@@ -88,7 +88,7 @@ import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
 import { USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, usageFlushDecision, UsageMeter } from './usage.js';
-import { guestListenPlan, historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
+import { guestListenPlan, historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, playerVisibleBackfill, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { creditDocId, nextCredit } from './credit.js';
 import { MAX_PRICE } from './prices.js';
@@ -2647,7 +2647,6 @@ export class FirebaseStore {
       this._buckets.matches.history = this._takeMatchSnap(snap);
       this._rebuild('matches');
       this._widenFromMatches(this._buckets.matches.history);
-      this._backfillMatches(snap.docs);
     }, (e) => {
       if (e?.code === 'failed-precondition') {
         this.state.historyError = e.message || 'Falta un índice de Firestore para el historial.';
@@ -2849,10 +2848,24 @@ export class FirebaseStore {
     });
     this._swap('compensations', un);
   }
-  async _backfillMatches() {
-    // No reescribe viewers al recibir un snapshot. Eso era una escritura por
-    // partido viejo en cada apertura, y si fallaba se reintentaba en el siguiente.
-    return;
+  _backfillMatches(docs) {
+    // Una vez por partido, en esta sesión. El historial no entra: solo próximos.
+    // No pasa por updateMatch, así que el Registro no anota nada.
+    if (this._guest || !this.actor?.uid || !this.fs?.writeBatch || !this.db) return;
+    const today = this._queryDay || todayISO();
+    const rows = [];
+    for (const item of docs || []) {
+      const match = typeof item?.data === 'function' ? { id: item.id, ...(item.data() || {}) } : item;
+      const row = playerVisibleBackfill(match, { uid: this.actor.uid, today });
+      if (!row || this._backfilled.has(row.id)) continue;
+      this._backfilled.add(row.id);
+      rows.push(row);
+    }
+    if (!rows.length) return;
+    const { doc, writeBatch } = this.fs;
+    const batch = writeBatch(this.db);
+    for (const row of rows) batch.update(doc(this.db, 'matches', row.id), row.patch);
+    Promise.resolve(batch.commit()).catch((error) => console.error(error));
   }
   _listen() {
     this._stop();
