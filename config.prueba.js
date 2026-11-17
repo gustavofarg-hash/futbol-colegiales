@@ -24,3 +24,7 @@ export const VENUE = "Polideportivo Colegiales";
 // Sin el ID de Drive de producción. En la prueba, «Guardar en Google Drive»
 // descarga el archivo o abre el menú de compartir.
 export const GOOGLE_DRIVE_CLIENT_ID = "";
+
+// Clave pública web push de mis-partidos-prueba. Vacía hasta pegarla desde
+// Firebase → Cloud Messaging → Certificados de clave web.
+export const FCM_VAPID_KEY = "";

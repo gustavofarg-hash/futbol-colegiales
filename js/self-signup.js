@@ -85,6 +85,22 @@ export function selfSignupRows({ person, matches, players, now = Date.now() } = 
     });
 }
 
+/** Pendientes de este organizador, el más nuevo primero. Sin dueño, lo ve cualquiera. */
+export function pendingSelfSignups({ players, matches, uid } = {}) {
+  const byId = new Map((matches || []).filter((match) => match?.id).map((match) => [match.id, match]));
+  return (players || [])
+    .filter((player) => isSelfPending(player))
+    .map((player) => ({ player, match: byId.get(player.matchId) || null }))
+    .filter(({ match }) => {
+      if (!match || match.cancelled === true) return false;
+      const owners = [];
+      if (match.createdByUid) owners.push(String(match.createdByUid));
+      for (const id of match.adders || []) if (id && id !== '*') owners.push(String(id));
+      return !owners.length || owners.includes(String(uid || ''));
+    })
+    .sort((a, b) => (Number(b.player.createdAt) || 0) - (Number(a.player.createdAt) || 0) || String(b.player.id).localeCompare(String(a.player.id)));
+}
+
 export function canSelfCancel(player, match, now = Date.now()) {
   if (!player) return false;
   if (isSelfPending(player) || player.waiting === true) return true;
