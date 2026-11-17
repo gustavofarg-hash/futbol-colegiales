@@ -1,8 +1,10 @@
 // Genera capturas con datos de EJEMPLO (solo en el navegador de prueba; la app se publica vacía).
 import { createRequire } from 'node:module';
+import { refuseRealTarget } from './no-real-firebase.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_PATH || 'playwright');
-const BASE = process.argv[2] || 'http://localhost:8765/';
+const BASE = process.argv[2] || 'http://127.0.0.1:8765/';
+refuseRealTarget(BASE);
 const OUT = new URL('../screenshots/', import.meta.url).pathname;
 const NOW = new Date('2026-10-19T13:00:00-03:00');
 
@@ -20,7 +22,15 @@ add('2026-10-20_2100', 14); add('2026-10-22_2100', 9, 0); add('2026-10-23_2000',
 
 const browser = await chromium.launch();
 for (const scheme of ['light', 'dark']) {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires', colorScheme: scheme });
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires', colorScheme: scheme, serviceWorkers: 'block' });
+  await ctx.addInitScript(() => { globalThis.__F7C_TEST = true; });
+  await ctx.route('**/config.js', async (route) => {
+    const res = await route.fetch();
+    const body = (await res.text()).replace(/projectId:\s*["'][^"']+["']/, 'projectId: "TU_PROYECTO"');
+    if (/projectId:\s*["'](?:mis-partidos-prueba|futbol-partidos)["']/.test(body)) throw new Error('config.js sigue apuntando a un proyecto real');
+    await route.fulfill({ status: 200, contentType: 'text/javascript', body });
+  });
+  await ctx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => route.abort());
   const page = await ctx.newPage();
   await page.clock.install({ time: NOW });
   await page.addInitScript((d) => { localStorage.setItem('f7c-demo-db', JSON.stringify(d)); localStorage.setItem('f7c-who', 'Gustavo'); }, db);
@@ -49,7 +59,15 @@ for (const scheme of ['light', 'dark']) {
   await ctx.close();
 }
 // Pantalla inicial vacía con "¿Quién sos?"
-const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
+const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires', serviceWorkers: 'block' });
+await ctx.addInitScript(() => { globalThis.__F7C_TEST = true; });
+await ctx.route('**/config.js', async (route) => {
+  const res = await route.fetch();
+  const body = (await res.text()).replace(/projectId:\s*["'][^"']+["']/, 'projectId: "TU_PROYECTO"');
+  if (/projectId:\s*["'](?:mis-partidos-prueba|futbol-partidos)["']/.test(body)) throw new Error('config.js sigue apuntando a un proyecto real');
+  await route.fulfill({ status: 200, contentType: 'text/javascript', body });
+});
+await ctx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => route.abort());
 const page = await ctx.newPage();
 await page.goto(BASE);
 await page.waitForSelector('dialog[open] [data-who]');
