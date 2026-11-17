@@ -32,7 +32,9 @@ function pushCopy(kind, player, match) {
   };
 }
 
-function organizerUids(match, holders) {
+function organizerUids(match, holders, onlyUid) {
+  const only = String(onlyUid || '').trim();
+  if (only) return [only];
   const ids = [];
   const created = String(match?.createdByUid || '').trim();
   if (created) ids.push(created);

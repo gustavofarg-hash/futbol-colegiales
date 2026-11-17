@@ -96,6 +96,7 @@ import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
 import { canSelfCancel, isSelfPending, occupiesSpot, signupRateDecision } from './self-signup.js';
 import { tokenDocId } from './push.js';
+import { newShareToken } from './share.js';
 import { bumpGoals, bumpScore, dropPlayer, nextInGoalAt, scoreRecord, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations, upcomingConfirmSlots } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
@@ -254,6 +255,13 @@ function guestFields(data) {
 }
 
 /** Con quién se anotó. Si el alta no lo manda, queda el organizador logueado. */
+function linkStamp(organizer, person) {
+  const uid = String(organizer?.uid || '').trim();
+  const name = String(organizer?.name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  if (!uid || !name) return null;
+  return { uid, name, token: String(organizer.token || '') };
+}
+
 function signupWith(data, actor) {
   const has = !!data && ('signedUpWith' in data || 'signedUpWithName' in data);
   const uid = String((has ? data.signedUpWith : actor?.uid) || '').trim().slice(0, 128);
@@ -953,7 +961,7 @@ class LocalStore {
     const hold = (opts.tentative === true || selfHold) && !waiting;
     const player = {
       matchId: match.id, matchDate: match.date, name: cleanPersonName(data.name),
-      addedBy: who, addedByUid: this.actor?.uid || '', createdAt: now, updatedAt: now,
+      addedBy: opts.addedBy || who, addedByUid: opts.addedByUid !== undefined ? opts.addedByUid : (this.actor?.uid || ''), createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: newConfirmToken(),
@@ -991,20 +999,23 @@ class LocalStore {
     if (!next.ok) throw Object.assign(new Error(next.error), { code: 'rate-limit' });
     db.signupRates[id] = { windowStart: next.windowStart, count: next.count };
   }
-  async selfJoin(match, person, { waiting = false } = {}) {
+  async selfJoin(match, person, { waiting = false, organizer = null } = {}) {
     const rosterId = String(person?.id || '').trim();
     const db = this._load();
     this._chargeSignupRate(db, rosterId);
     this._save(db);
+    const org = linkStamp(organizer, person);
     const id = await this.addPlayer(match, {
       name: person?.name || '',
       rosterId,
       phone: person?.phone || '',
       shortName: person?.shortName || '',
-    }, person?.name || '', {
+      ...(org ? { signedUpWith: org.uid, signedUpWithName: org.name } : {}),
+    }, org?.name || person?.name || '', {
       selfPending: waiting !== true,
       waiting: waiting === true,
       selfSignup: true,
+      ...(org ? { addedByUid: org.uid, addedBy: org.name } : {}),
     });
     const saved = this._load();
     const player = { id, ...(saved.players[id] || {}) };
@@ -1012,8 +1023,11 @@ class LocalStore {
     this._pushLogs(saved, [selfMoveEntry(savedMatch, this._venuesOf(saved), player, {
       type: 'se anotó',
       detail: waiting ? 'En la lista de espera' : 'Pendiente de confirmación',
-      actorName: person?.name || player.name,
+      actorName: org?.name || person?.name || player.name,
+      actorUid: org?.uid || '',
       rosterId,
+      guest: true,
+      shareToken: org?.token || '',
     })]);
     this._queueSignupPing(saved, waiting ? 'espera' : 'alta', player, savedMatch);
     this._save(saved);
@@ -1045,6 +1059,24 @@ class LocalStore {
     this._save(db);
     return id;
   }
+  shareOrganizer(token) {
+    const id = String(token || '').trim();
+    const row = this._load().shareTokens?.[id];
+    return row?.uid ? { uid: row.uid, name: row.name || '', token: id } : null;
+  }
+  async ensureShareToken(uid, name) {
+    const owner = String(uid || '').trim();
+    const label = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (!owner || !label) return '';
+    const db = this._load();
+    db.shareTokens ||= {};
+    const found = Object.entries(db.shareTokens).find(([, row]) => row.uid === owner);
+    if (found) return found[0];
+    const token = newShareToken();
+    db.shareTokens[token] = { uid: owner, name: label, createdAt: Date.now() };
+    this._save(db);
+    return token;
+  }
   async selfCancel(playerId, now = Date.now()) {
     const db = this._load();
     const player = db.players[playerId];
@@ -1060,6 +1092,8 @@ class LocalStore {
       detail: 'Anuló su lugar',
       actorName: player.name,
       rosterId: player.rosterId || '',
+      guest: true,
+      shareToken: '',
     })]);
     this._save(db);
     await this.deletePlayer(playerId, { skipLog: true });
@@ -2346,6 +2380,7 @@ export class FirebaseStore {
     // nunca se entera del «Sí, juego».
     await this._refreshIdToken();
     this._guestRosterId = String(opts.guestRosterId || '').trim();
+    this._shareToken = String(opts.shareToken || '').trim();
     if (this._guestRosterId) {
       this._guest = true;
       // Un fallo al armar las escuchas no puede tirar Firebase abajo: si no,
@@ -2419,11 +2454,29 @@ export class FirebaseStore {
   _takeMatchSnap(snap) {
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
-  listenAsGuest(rosterId) {
+  listenAsGuest(rosterId, shareToken = '') {
     const id = String(rosterId || '').trim();
     if (!id || !this.fs) return;
     this._guest = true;
+    this._shareToken = String(shareToken || '').trim();
     this._listenGuest(id);
+  }
+  shareOrganizer(token) {
+    const id = String(token || '').trim();
+    const current = this.state.shareOrganizer;
+    if (!id || !current || current.token !== id) return null;
+    return current;
+  }
+  async ensureShareToken(uid, name) {
+    const owner = String(uid || '').trim();
+    const label = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (!owner || !label) return '';
+    const { collection, query, where, getDocs, doc, setDoc } = this.fs;
+    const found = await getDocs(query(collection(this.db, 'shareTokens'), where('uid', '==', owner)));
+    if (!found.empty) return found.docs[0].id;
+    const token = newShareToken();
+    await setDoc(doc(this.db, 'shareTokens', token), { uid: owner, name: label, createdAt: Date.now() });
+    return token;
   }
   _listenGuest(rosterId) {
     const id = String(rosterId || '').trim();
@@ -2433,14 +2486,26 @@ export class FirebaseStore {
     this._queryDay = this._queryDay || todayISO();
     const today = this._queryDay;
     const { doc, collection, query, where, onSnapshot } = this.fs;
-    const seen = { roster: false, matches: false, players: false };
+    const seen = { roster: false, matches: false, players: false, share: !this._shareToken };
     const rows = (snap) => snap.docs.map((item) => ({ id: item.id, ...item.data() }));
     const publish = () => {
-      if (!seen.roster || !seen.matches || !seen.players) return;
+      if (!seen.roster || !seen.matches || !seen.players || !seen.share) return;
       this.serverOk = true;
       this.state.playersReady = true;
       this._emit();
     };
+    if (this._shareToken) {
+      this._swap('guest-share', onSnapshot(doc(this.db, 'shareTokens', this._shareToken), (snap) => {
+        const data = snap.exists() ? snap.data() : null;
+        this.state.shareOrganizer = data?.uid ? { uid: String(data.uid), name: String(data.name || ''), token: this._shareToken } : null;
+        seen.share = true;
+        publish();
+      }, () => {
+        this.state.shareOrganizer = null;
+        seen.share = true;
+        publish();
+      }));
+    } else this.state.shareOrganizer = null;
     this._swap('guest-roster', onSnapshot(doc(this.db, 'roster', id), (snap) => {
       this.state.roster = snap.exists() ? [{ id: snap.id, ...snap.data() }] : [];
       this.state.rosterError = null;
@@ -3261,7 +3326,7 @@ export class FirebaseStore {
     const uid = this.actor?.uid || '';
     const player = {
       matchId: match.id, matchDate: match.date, name: cleanPersonName(data.name), phone: '',
-      addedBy: who, addedByUid: uid, createdAt: now, updatedAt: now,
+      addedBy: opts.addedBy || who, addedByUid: opts.addedByUid !== undefined ? opts.addedByUid : uid, createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: token,
@@ -3319,10 +3384,11 @@ export class FirebaseStore {
       });
     });
   }
-  async selfJoin(match, person, { waiting = false } = {}) {
-    if (!this.actor?.uid) return this._guestSelfJoin(match, person, { waiting });
+  async selfJoin(match, person, { waiting = false, organizer = null } = {}) {
+    if (!this.actor?.uid) return this._guestSelfJoin(match, person, { waiting, organizer });
     const rosterId = String(person?.id || '').trim();
     if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
+    const org = linkStamp(organizer, person);
     const id = rid();
     await this._chargeSignupRate(rosterId, id);
     const playerId = await this.addPlayer(match, {
@@ -3330,17 +3396,29 @@ export class FirebaseStore {
       rosterId,
       phone: person?.phone || '',
       shortName: person?.shortName || '',
-    }, person?.name || '', {
+      ...(org ? { signedUpWith: org.uid, signedUpWithName: org.name } : {}),
+    }, org?.name || person?.name || '', {
       id,
       selfPending: waiting !== true,
       waiting: waiting === true,
       selfSignup: true,
+      ...(org ? { addedByUid: org.uid, addedBy: org.name } : {}),
     });
     const player = this.state.players.find((row) => row.id === playerId) || { id: playerId, name: person?.name || '', rosterId };
-    await this._writeSignupPing(waiting ? 'espera' : 'alta', player, match);
+    const mine = !org || org.uid === this._actor().uid;
+    await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+      type: 'se anotó',
+      detail: waiting ? 'En la lista de espera' : 'Pendiente de confirmación',
+      actorName: org?.name || person?.name || player.name,
+      actorUid: org?.uid || this._actor().uid,
+      rosterId,
+      guest: !mine,
+      shareToken: org?.token || '',
+    })]);
+    await this._writeSignupPing(waiting ? 'espera' : 'alta', player, match, org);
     return playerId;
   }
-  async _writeSignupPing(kind, player, match) {
+  async _writeSignupPing(kind, player, match, organizer) {
     const { collection, addDoc } = this.fs;
     await addDoc(collection(this.db, 'signupPings'), {
       kind,
@@ -3352,6 +3430,8 @@ export class FirebaseStore {
       time: String(match?.time || ''),
       venueName: String(match?.venueName || 'Polideportivo Colegiales').slice(0, 80),
       createdAt: Date.now(),
+      organizerUid: String(organizer?.uid || player?.addedByUid || ''),
+      shareToken: String(organizer?.token || player?.shareToken || ''),
     });
   }
   async savePushToken(token) {
@@ -3362,7 +3442,7 @@ export class FirebaseStore {
     await setDoc(doc(this.db, 'organizerTokens', id), { uid, token: String(token), updatedAt: Date.now() });
     return id;
   }
-  async _guestSelfJoin(match, person, { waiting = false } = {}) {
+  async _guestSelfJoin(match, person, { waiting = false, organizer = null } = {}) {
     const rosterId = String(person?.id || '').trim();
     if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
     const id = rid();
@@ -3371,6 +3451,7 @@ export class FirebaseStore {
     const mates = this.state.players.filter((row) => row.matchId === match.id);
     const access = playerAccess(match);
     const onWait = waiting === true;
+    const org = linkStamp(organizer, person);
     const player = {
       matchId: match.id,
       matchDate: match.date,
@@ -3382,8 +3463,9 @@ export class FirebaseStore {
       tentative: !onWait,
       tentativeAt: onWait ? null : now,
       rosterAt: onWait ? null : now,
-      addedByUid: '',
-      addedBy: String(person?.name || '').slice(0, 40),
+      addedByUid: org?.uid || '',
+      addedBy: org?.name || String(person?.name || '').slice(0, 40),
+      ...(org ? { signedUpWith: org.uid, signedUpWithName: org.name, shareToken: org.token } : { shareToken: '' }),
       createdAt: now,
       updatedAt: now,
       phone: '',
@@ -3403,11 +3485,14 @@ export class FirebaseStore {
       await this._appendLogs([selfMoveEntry(match, this.state.venues, { id, ...player }, {
         type: 'se anotó',
         detail: onWait ? 'En la lista de espera' : 'Pendiente de confirmación',
-        actorName: player.name,
+        actorName: org?.name || player.name,
+        actorUid: org?.uid || '',
         rosterId,
+        guest: true,
+        shareToken: org?.token || '',
       })]);
     } catch { /* sin la regla nueva la anotación igual queda */ }
-    try { await this._writeSignupPing(onWait ? 'espera' : 'alta', { id, ...player }, match); }
+    try { await this._writeSignupPing(onWait ? 'espera' : 'alta', { id, ...player }, match, org); }
     catch { /* sin funciones el aviso no sale, y la anotación queda */ }
     return id;
   }
@@ -3429,9 +3514,11 @@ export class FirebaseStore {
         detail: 'Anuló su lugar',
         actorName: player.name,
         rosterId: player.rosterId || '',
+        guest: true,
+        shareToken: '',
       })]);
     } catch { /* la baja ya quedó */ }
-    try { await this._writeSignupPing('baja', player, match); }
+    try { await this._writeSignupPing('baja', player, match, null); }
     catch { /* el aviso no es parte de la baja */ }
   }
   async selfCancel(playerId, now = Date.now()) {

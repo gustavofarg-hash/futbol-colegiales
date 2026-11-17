@@ -33,7 +33,7 @@ exports.notifySelfSignup = onDocumentCreated(
       const roster = await db.doc(`roster/${ping.rosterId}`).get();
       holders = roster.exists ? roster.data()?.holders || [] : [];
     }
-    const uids = organizerUids(match, holders);
+    const uids = organizerUids(match, holders, ping.organizerUid);
     const tokens = [];
     for (let i = 0; i < uids.length; i += 10) {
       const slice = uids.slice(i, i + 10);

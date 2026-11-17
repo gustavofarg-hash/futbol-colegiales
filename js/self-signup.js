@@ -62,6 +62,15 @@ export function visibleToPlayers(match) {
   return match?.playerVisible !== false;
 }
 
+/** Partido de este organizador: lo creó él, o está en quienes anotan (no el comodín *). */
+export function matchOwnedBy(match, uid) {
+  const id = String(uid || '').trim();
+  if (!id || !match) return false;
+  if (String(match.createdByUid || '').trim() === id) return true;
+  const adders = Array.isArray(match.adders) ? match.adders.map((item) => String(item || '')) : [];
+  return adders.includes(id);
+}
+
 export function playerOnMatch(person, match, players) {
   const id = String(person?.id || '');
   const key = personKey({ ...person, id }, players);
@@ -72,9 +81,11 @@ export function playerOnMatch(person, match, players) {
   }) || null;
 }
 
-export function selfSignupRows({ person, matches, players, now = Date.now() } = {}) {
+export function selfSignupRows({ person, matches, players, now = Date.now(), organizerUid = '', scoped = false } = {}) {
+  const owner = String(organizerUid || '').trim();
   return (matches || [])
     .filter((match) => match && match.cancelled !== true && visibleToPlayers(match) && matchOpenToRoster(match, person))
+    .filter((match) => !scoped || (!!owner && matchOwnedBy(match, owner)))
     .filter((match) => {
       const today = new Date(now);
       const iso = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today);
@@ -92,13 +103,15 @@ export function selfSignupRows({ person, matches, players, now = Date.now() } = 
 }
 
 /** Pendientes de este organizador, el más nuevo primero. Sin dueño, lo ve cualquiera. */
-export function pendingSelfSignups({ players, matches, uid } = {}) {
+export function pendingSelfSignups({ players, matches, uid, admin = false } = {}) {
   const byId = new Map((matches || []).filter((match) => match?.id).map((match) => [match.id, match]));
   return (players || [])
     .filter((player) => isSelfPending(player))
     .map((player) => ({ player, match: byId.get(player.matchId) || null }))
-    .filter(({ match }) => {
+    .filter(({ player, match }) => {
       if (!match || match.cancelled === true) return false;
+      const forUid = String(player.addedByUid || '').trim();
+      if (forUid) return admin === true || forUid === String(uid || '');
       const owners = [];
       if (match.createdByUid) owners.push(String(match.createdByUid));
       for (const id of match.adders || []) if (id && id !== '*') owners.push(String(id));

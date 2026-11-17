@@ -7,17 +7,42 @@ export function appInstallUrl() {
   return base.endsWith('/') ? base : `${base}/`;
 }
 
-/** Enlace directo a la ficha de un jugador. El id es el de la ficha (la misma si está compartida). */
-export function playerLink(rosterId) {
-  const id = String(rosterId || '').trim();
-  if (!id) return '';
-  return `${appInstallUrl()}#/jugador/${encodeURIComponent(id)}`;
+/** Token opaco del organizador que comparte el enlace. No es el mail ni el uid. */
+export function newShareToken() {
+  const bytes = new Uint8Array(18);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  let raw = '';
+  for (const b of bytes) raw += String.fromCharCode(b);
+  return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** Hash de una ficha: #/jugador/{id}. Sin id no cuenta. */
-export function isPlayerDeepLink(hash) {
+/**
+ * Enlace de un jugador. Con token, es el de ese organizador.
+ * Sin token, el enlace viejo: #/jugador/{id}.
+ */
+export function playerLink(rosterId, organizerToken = '') {
+  const id = String(rosterId || '').trim();
+  if (!id) return '';
+  const token = String(organizerToken || '').trim();
+  const base = `${appInstallUrl()}#/jugador/${encodeURIComponent(id)}`;
+  return token ? `${base}/${encodeURIComponent(token)}` : base;
+}
+
+function decodePart(value) {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
+
+/** { id, token } o null. El token falta en los enlaces de antes. */
+export function playerLinkParts(hash) {
   const parts = String(hash || '').replace(/^#\/?/, '').split('/');
-  return parts[0] === 'jugador' && !!parts[1];
+  if (parts[0] !== 'jugador' || !parts[1]) return null;
+  return { id: decodePart(parts[1]), token: parts[2] ? decodePart(parts[2]) : '' };
+}
+
+/** Hash de una ficha: #/jugador/{id} o #/jugador/{id}/{token}. Sin id no cuenta. */
+export function isPlayerDeepLink(hash) {
+  return !!playerLinkParts(hash);
 }
 
 export function appShareMessage() {
