@@ -110,12 +110,19 @@ service cloud.firestore {
     function isCreator() {
       return resource.data.get('createdByUid', '') == request.auth.uid;
     }
-    // Un partido viejo sin createdByUid: el organizador se lo anota a sí mismo.
-    // No cambia quién lo ve ni quién anota.
-    function claimOwnMatch() {
+    // Un partido viejo sin createdByUid. Regla corta, aparte de validMatch:
+    // si entra en la regla larga, el alta del jugador pasa las 1000 expresiones.
+    function fillOwnMatch() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
       return resource.data.get('createdByUid', '') == ''
-          && request.resource.data.createdByUid == request.auth.uid
-          && request.resource.data.get('viewers', null) == resource.data.get('viewers', null)
+          && changed.hasOnly(['createdByUid', 'playerVisible', 'viewers'])
+          && changed.hasAny(['createdByUid'])
+          && request.resource.data.get('createdByUid', '') == request.auth.uid
+          && (!changed.hasAny(['playerVisible']) || request.resource.data.playerVisible == true)
+          && (!changed.hasAny(['viewers'])
+              || (!('viewers' in resource.data)
+                  && request.resource.data.viewers is list
+                  && request.resource.data.viewers.hasAny(['*'])))
           && request.resource.data.get('adders', null) == resource.data.get('adders', null)
           && request.resource.data.get('solo', null) == resource.data.get('solo', null)
           && request.resource.data.get('limits', null) == resource.data.get('limits', null);
@@ -582,8 +589,9 @@ service cloud.firestore {
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
       allow list: if resource.data.viewers.hasAny(['*']);
       allow create: if isActiveStaff() && validMatch(request.resource.data);
+      allow update: if isActiveStaff() && fillOwnMatch();
       allow update: if isActiveStaff() && validMatch(request.resource.data) && isViewer(resource.data)
-          && (isCreator() || (accessSame() && isAdder(resource.data)) || legacyStamp() || claimOwnMatch());
+          && (isCreator() || (accessSame() && isAdder(resource.data)) || legacyStamp());
       // playerCount lo mantiene quien anota o quita jugadores. Si el campo no
       // está, vale 0 y un partido viejo se puede borrar. La regla no puede
       // contar los documentos de players: quien edita el partido podría
@@ -724,7 +732,7 @@ service cloud.firestore {
           );
     }
     function selfSignupShape(d) {
-      return d.selfSignup == true
+      return d.get('selfSignup', false) == true
           && d.rosterId is string
           && d.addedByUid == request.auth.uid
           && d.name == rosterDoc(d.rosterId).get('name', '')
@@ -754,11 +762,51 @@ service cloud.firestore {
                   && resource.data.count < 5);
     }
 
+    // Alta del organizador desde un lugar libre, la espera o Agregar jugador.
+    // Va primero y no llama a validPlayer: esa función, con los campos del
+    // alta, pasa el tope de 1000 expresiones y Firebase niega el permiso.
+    function organizerSlotShape(d) {
+      return d.keys().hasAll(['matchId', 'matchDate', 'name', 'addedBy', 'addedByUid', 'createdAt', 'updatedAt', 'viewers', 'adders'])
+          && d.keys().hasOnly(['matchId', 'matchDate', 'name', 'phone', 'addedBy', 'addedByUid', 'createdAt', 'updatedAt', 'waiting', 'waitOrder', 'rosterAt', 'confirmToken', 'hasPhone', 'phoneKey', 'phoneOwnerUid', 'phoneShared', 'viewers', 'adders', 'rosterId', 'signedUpWith', 'signedUpWithName', 'shortName', 'tentative', 'tentativeAt', 'selfSignup', 'invitedBy', 'invitedByName', 'guestAuto', 'shortCode'])
+          && d.matchId is string && d.matchId.size() > 0 && d.matchId.size() <= 80
+          && d.matchDate is string && d.matchDate.size() == 10
+          && d.name is string && d.name.size() > 0 && d.name.size() <= 60
+          && phoneGone(d)
+          && d.addedByUid == request.auth.uid
+          && d.addedBy is string && d.addedBy.size() > 0 && d.addedBy.size() <= 40
+          && d.createdAt is number && d.updatedAt is number
+          && d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30
+          && d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30
+          && d.get('paid', false) != true
+          && d.get('selfSignup', false) != true
+          && (!('waiting' in d) || d.waiting is bool)
+          && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is int && d.waitOrder >= 0 && d.waitOrder <= 1000000))
+          && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
+          && (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
+          && (!('signedUpWith' in d) || d.signedUpWith == d.addedByUid)
+          && (!('signedUpWithName' in d) || (d.signedUpWithName is string && d.signedUpWithName.size() > 0 && d.signedUpWithName.size() <= 40))
+          && (!('shortName' in d) || (d.shortName is string && d.shortName.size() <= 40))
+          && (!('tentative' in d) || d.tentative is bool)
+          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number)
+          && (!('hasPhone' in d) || d.hasPhone is bool)
+          && (!('phoneShared' in d) || d.phoneShared is bool)
+          && (!('phoneKey' in d) || d.phoneKey == '' || (d.phoneKey is string && d.phoneKey.size() == 64))
+          && (!('phoneOwnerUid' in d) || (d.phoneOwnerUid is string && d.phoneOwnerUid.size() <= 128))
+          && (!('rosterId' in d) || (d.rosterId is string && d.rosterId.size() <= 80))
+          && (!('shortCode' in d) || (d.shortCode is string && d.shortCode.size() == 8))
+          && (!('guestAuto' in d) || d.guestAuto is bool);
+    }
+
     match /players/{playerId} {
       allow get: if isActiveStaff() && canReadListed(resource.data);
       allow get: if resource.data.viewers.hasAny(['*']);
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
       allow list: if resource.data.viewers.hasAny(['*']);
+      allow create: if isActiveStaff()
+          && organizerSlotShape(request.resource.data)
+          && invitedByOk()
+          && isAdder(matchData(request.resource.data.matchId))
+          && playerListsOk(request.resource.data.matchId);
       // El jugador (quien tiene la ficha) solo puede crear SU alta: pendiente o espera.
       allow create: if signedIn()
           && selfSignupShape(request.resource.data)
