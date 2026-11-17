@@ -1,6 +1,7 @@
 // Prueba end-to-end en modo demo con Playwright (Chromium headless, 390x844).
 // Uso: node tests/e2e.mjs [baseUrl]   (requiere `npm i playwright` en algún lado accesible)
 import { createRequire } from 'node:module';
+import { refuseRealTarget } from './no-real-firebase.mjs';
 import { dayCompensation } from '../js/compensate.js';
 import { organizerDayShare, organizerShareByPeriod, playerOrganizerMonths } from '../js/stats.js';
 import { formatARS } from '../js/payments.js';
@@ -8,6 +9,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_PATH || 'playwright');
 
 const BASE = process.argv[2] || 'http://127.0.0.1:18431/';
+refuseRealTarget(BASE);
 const NOW = new Date('2026-10-19T13:00:00-03:00'); // lunes 19/10/2026 13:00 (BA)
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond, extra }); console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' — ' + extra : ''}`); };
@@ -58,10 +60,14 @@ async function assertRepaintKeeps(label) {
 }
 
 const browser = await chromium.launch();
+// El service worker se prueba más abajo (navigator.serviceWorker.ready). Bloquearlo
+// deja esa promesa colgada. Firestore igual no sale: config.js se reescribe y
+// las rutas de abajo abortan los hosts reales.
 const ctx = await browser.newContext({
   viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
   locale: 'es-AR', timezoneId: 'America/Buenos_Aires', permissions: ['clipboard-read', 'clipboard-write'],
 });
+await ctx.addInitScript(() => { globalThis.__F7C_TEST = true; });
 // Fuerza modo demo: config.js del repo tiene la config real de Firebase y estas
 // pruebas no deben leer ni escribir Firestore.
 await ctx.route('**/config.js', async (route) => {
@@ -77,6 +83,7 @@ await ctx.route('**/config.js', async (route) => {
   appId: "TU_APP_ID",
 };`,
   );
+  if (/projectId:\s*["'](?:mis-partidos-prueba|futbol-partidos)["']/.test(body)) throw new Error('config.js sigue apuntando a un proyecto real');
   await route.fulfill({ status: 200, contentType: 'text/javascript', body });
 });
 await ctx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => {
@@ -8076,7 +8083,8 @@ check('Al abrir la app arranca en Próximos partidos', await fresh.evaluate(() =
 await fresh.close();
 
 {
-  const anon = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
+  const anon = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires', serviceWorkers: 'block' });
+  await anon.addInitScript(() => { globalThis.__F7C_TEST = true; });
   await anon.route('**/config.js', async (route) => {
     const res = await route.fetch();
     const body = (await res.text()).replace(
@@ -8604,7 +8612,8 @@ await fresh.close();
 
 {
   // Con GOOGLE_DRIVE_CLIENT_ID: pide permiso con Google y sube el archivo con la API de Drive.
-  const driveCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
+  const driveCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires', serviceWorkers: 'block' });
+  await driveCtx.addInitScript(() => { globalThis.__F7C_TEST = true; });
   await driveCtx.route('**/config.js', async (route) => {
     const res = await route.fetch();
     const body = (await res.text())

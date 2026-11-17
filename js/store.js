@@ -170,11 +170,15 @@ export async function initFirebase() {
   }
   // Las pruebas (unit, e2e, reglas) no leen mis-partidos-prueba ni producción.
   // Solo el emulador. El navegador de /prueba/ no entra por acá.
-  if (typeof process !== 'undefined' && process.env && process.env.NODE_TEST_CONTEXT && !process.env.FIRESTORE_EMULATOR_HOST) {
-    const project = String(firebaseConfig.projectId || '');
-    if (project === 'mis-partidos-prueba' || project === 'futbol-partidos') {
-      throw new Error('Las pruebas no leen Firebase real. Usá el emulador.');
-    }
+  const project = String(firebaseConfig.projectId || '');
+  const realProject = project === 'mis-partidos-prueba' || project === 'futbol-partidos';
+  const testRun = (typeof process !== 'undefined' && process.env && process.env.NODE_TEST_CONTEXT)
+    || (typeof globalThis !== 'undefined' && globalThis.__F7C_TEST);
+  const emulatorHost = (typeof globalThis !== 'undefined' && globalThis.__F7C_EMULATOR_HOST)
+    || (typeof process !== 'undefined' && process.env && process.env.FIRESTORE_EMULATOR_HOST)
+    || '';
+  if (testRun && realProject && !emulatorHost) {
+    throw new Error('Las pruebas no leen Firebase real. Usá el emulador.');
   }
   if (firebaseBundle) return firebaseBundle;
   const [{ initializeApp, getApps, getApp }, fs] = await Promise.all([
@@ -187,6 +191,10 @@ export async function initFirebase() {
     db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) });
   } catch {
     db = fs.getFirestore(app);
+  }
+  if (testRun && emulatorHost && typeof fs.connectFirestoreEmulator === 'function') {
+    const [host, portRaw] = String(emulatorHost).split(':');
+    fs.connectFirestoreEmulator(db, host || '127.0.0.1', Number(portRaw || 8181));
   }
   firebaseBundle = { app, db, fs };
   return firebaseBundle;
@@ -2515,9 +2523,11 @@ export class FirebaseStore {
   }
   listenAsGuest(rosterId, shareToken = '') {
     const id = String(rosterId || '').trim();
+    const token = String(shareToken || '').trim();
     if (!id || !this.fs) return;
+    if (this._guest && this._guestRosterId === id && String(this._shareToken || '') === token && this._unsubs?.length) return;
     this._guest = true;
-    this._shareToken = String(shareToken || '').trim();
+    this._shareToken = token;
     this._listenGuest(id);
   }
   shareOrganizer(token) {
@@ -2881,12 +2891,12 @@ export class FirebaseStore {
     this._queryDay = todayISO();
     const { collection, doc, query, where, onSnapshot } = this.fs;
     const uid = this.actor?.uid || '';
-    const watch = (ref, opts, onNext, onErr) => {
+    const watch = (name, ref, opts, onNext, onErr) => {
       const next = (snap) => { onNext(snap); };
       const un = opts
         ? onSnapshot(ref, opts, next, (e) => this._onListenError(e, onErr))
         : onSnapshot(ref, next, (e) => this._onListenError(e, onErr));
-      this._unsubs.push(un);
+      this._swap(name, un);
     };
     const accessIds = [EVERYONE];
     if (uid) accessIds.unshift(uid);
@@ -2904,35 +2914,35 @@ export class FirebaseStore {
     };
     if (typeof setTimeout === 'function') this._deferTimer = setTimeout(deferListen, 0);
     else deferListen();
-    watch(collection(this.db, 'rosterSuspensions'), null, (snap) => {
+    watch('suspensions', collection(this.db, 'rosterSuspensions'), null, (snap) => {
       this.state.suspensions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
     }, () => {
       this.state.suspensions = [];
       this._emit();
     });
-    watch(collection(this.db, 'suspensionHistory'), null, (snap) => {
+    watch('suspension-history', collection(this.db, 'suspensionHistory'), null, (snap) => {
       this.state.suspensionHistory = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
     }, () => {
       this.state.suspensionHistory = [];
       this._emit();
     });
-    watch(collection(this.db, 'behavior'), null, (snap) => {
+    watch('behavior', collection(this.db, 'behavior'), null, (snap) => {
       this.state.behavior = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
     }, () => {
       this.state.behavior = [];
       this._emit();
     });
-    watch(collection(this.db, 'payBatches'), null, (snap) => {
+    watch('pay-batches', collection(this.db, 'payBatches'), null, (snap) => {
       this.state.payBatches = snap.docs.map((d) => presentPayBatch(d.id, d.data()));
       this._emit();
     }, () => {
       this.state.payBatches = [];
       this._emit();
     });
-    watch(collection(this.db, 'roster'), null, (snap) => {
+    watch('roster', collection(this.db, 'roster'), null, (snap) => {
       this.state.roster = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.rosterError = null;
       this._rosterReady = true;
@@ -2945,7 +2955,7 @@ export class FirebaseStore {
       this._emit();
     });
     if (uid) {
-      watch(query(collection(this.db, 'rosterNotes'), where('ownerUid', '==', uid)), null, (snap) => {
+      watch('roster-notes', query(collection(this.db, 'rosterNotes'), where('ownerUid', '==', uid)), null, (snap) => {
         const map = {};
         snap.docs.forEach((item) => {
           const data = item.data() || {};
@@ -2959,7 +2969,7 @@ export class FirebaseStore {
         this._emit();
       });
     }
-    watch(collection(this.db, 'organizers'), null, (snap) => {
+    watch('organizers', collection(this.db, 'organizers'), null, (snap) => {
       this.state.organizers = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.organizersError = null;
       this._emit();
@@ -2967,7 +2977,7 @@ export class FirebaseStore {
       this.state.organizersError = isOrganizerDenied(e) ? ORGANIZERS_DENIED_READ : ('No se pudo leer organizadores: ' + (e?.message || e?.code || e));
       this._emit();
     });
-    watch(collection(this.db, 'venues'), null, (snap) => {
+    watch('venues', collection(this.db, 'venues'), null, (snap) => {
       this.state.venues = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.venuesError = null;
       this._emit();
@@ -2976,7 +2986,7 @@ export class FirebaseStore {
       this.state.venuesError = isVenueDenied(e) ? VENUES_DENIED_READ : ('No se pudieron leer las sedes: ' + (e?.message || e?.code || e));
       this._emit();
     });
-    watch(collection(this.db, 'credits'), null, (snap) => {
+    watch('credits', collection(this.db, 'credits'), null, (snap) => {
       this.state.credits = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.creditsError = null;
       const meta = snap.metadata;
@@ -2990,7 +3000,7 @@ export class FirebaseStore {
         : ('No se pudo leer el saldo a favor: ' + (e?.message || e?.code || e));
       this._emit();
     });
-    watch(doc(this.db, 'settings', 'prices'), null, (snap) => {
+    watch('prices', doc(this.db, 'settings', 'prices'), null, (snap) => {
       this.state.prices = snap.exists() ? snap.data() : null;
       this.state.pricesError = null;
       this._emit();
@@ -3026,7 +3036,8 @@ export class FirebaseStore {
         this._contactBuckets.rosterOwner = takeMap(snap);
         mergeContacts();
       }, contactErr);
-      this._unsubs.push(ownerPlayers, ownerRoster);
+      this._swap('contacts-owner-players', ownerPlayers);
+      this._swap('contacts-owner-roster', ownerRoster);
     }
     const sharedPlayers = onSnapshot(
       query(collection(this.db, 'playerContacts'), where('visibleToAll', '==', true), where('viewers', 'array-contains-any', accessIds)),
@@ -3045,8 +3056,9 @@ export class FirebaseStore {
         contactErr,
       )
       : null;
-    this._unsubs.push(sharedPlayers, sharedRoster);
-    if (readerRoster) this._unsubs.push(readerRoster);
+    this._swap('contacts-shared-players', sharedPlayers);
+    this._swap('contacts-shared-roster', sharedRoster);
+    if (readerRoster) this._swap('contacts-readers', readerRoster);
   }
   _onListenError(e, extra) {
     const plan = listenDeniedPlan({
