@@ -17,6 +17,25 @@
       ]
     },
     {
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdByUid", "order": "ASCENDING" },
+        { "fieldPath": "playerVisible", "order": "ASCENDING" },
+        { "fieldPath": "viewers", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "players",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "rosterId", "order": "ASCENDING" },
+        { "fieldPath": "viewers", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "matchDate", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "log",
       "queryScope": "COLLECTION",
       "fields": [

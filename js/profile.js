@@ -394,13 +394,58 @@ export function historyWindow(matches, filter, now = Date.now()) {
  * Consulta de partidos. Siempre filtra por viewers (el permiso del partido).
  * Próximos: date >= hoy, sin tope. Historial: date < hoy, límite 30, o el rango.
  */
+/** Tope de próximos en la pantalla del organizador. Sin tope, cada apertura lee todo el futuro. */
+export const UPCOMING_PAGE = 40;
+/** Tope de la página del jugador: sus partidos y sus altas, no la colección. */
+export const GUEST_PAGE = 24;
+
+/**
+ * Consultas de la página del jugador, sin sesión.
+ * Partidos: solo los de ese organizador, visibles, de hoy en adelante.
+ * Jugadores: solo las altas de esa ficha. viewers * lo pide la regla de list.
+ */
+export function guestListenPlan({ rosterId, organizerUid, today, limit = GUEST_PAGE } = {}) {
+  const id = String(rosterId || '').trim();
+  const owner = String(organizerUid || '').trim();
+  const day = String(today || '');
+  return {
+    rosterId: id,
+    matches: owner ? {
+      collection: 'matches',
+      filters: [
+        { field: 'createdByUid', op: '==', value: owner },
+        { field: 'playerVisible', op: '==', value: true },
+        { field: 'viewers', op: 'array-contains', value: '*' },
+        { field: 'date', op: '>=', value: day },
+      ],
+      orderBy: ['date', 'asc'],
+      limit,
+    } : null,
+    players: id ? {
+      collection: 'players',
+      filters: [
+        { field: 'rosterId', op: '==', value: id },
+        { field: 'viewers', op: 'array-contains', value: '*' },
+        { field: 'matchDate', op: '>=', value: day },
+      ],
+      orderBy: ['matchDate', 'asc'],
+      limit,
+    } : null,
+    seen: id ? {
+      collection: 'confirmSeen',
+      filters: [{ field: 'rosterId', op: '==', value: id }],
+      limit,
+    } : null,
+  };
+}
+
 export function matchQueryPlan(which, bounds, today) {
   const viewers = { field: 'viewers', op: 'array-contains-any' };
   if (which === 'upcoming') {
     return {
       filters: [viewers, { field: 'date', op: '>=', value: today }],
       orderBy: ['date', 'asc'],
-      limit: null,
+      limit: UPCOMING_PAGE,
     };
   }
   if (!bounds || bounds.empty) return { empty: true, filters: [viewers], orderBy: [], limit: null };
