@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v199** (17/11/2026): «Jugadores a confirmar» no es una pestaña. Está arriba del inicio, solo si hay pendientes. El aviso de un alta abre esa lista. `firestore.rules` no cambió.
 **Actualizada para f7c-v198** (17/11/2026): anotarse solo usa el mismo pendiente de confirmación que ya usa el organizador. Aparece en la lista del partido con Confirmar lugar. Confirmar ahí o en «Jugadores a confirmar» es el mismo dato. `firestore.rules` no cambió.
 **Actualizada para f7c-v197** (17/11/2026): el aviso de un alta tiene Aceptar y Rechazar. Esos botones resuelven el pendiente sin abrir la app. El toque en el texto sigue abriendo «Jugadores a confirmar». En el iPhone los botones no aparecen. `firestore.rules` cambió: hay que pegarlas en la prueba.
 **Actualizada para f7c-v196** (17/11/2026): tocar el aviso de un alta abre «Jugadores a confirmar», aunque la app estuviera cerrada. El de una baja o de la lista de espera sigue abriendo el partido. `firestore.rules` no cambió.
