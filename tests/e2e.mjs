@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v207');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v208');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -2857,6 +2857,17 @@ await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Habitual Sol")');
 await page.waitForFunction(() => ![...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.includes('Habitual Sol')));
 check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).join(',') === 'Habitual Espera,Habitual Leo,Habitual Lluvia,Habitual Mudo');
+await page.evaluate(async (id) => {
+  const app = window.__app;
+  const match = app.matches.find((item) => item.id === id);
+  await app.store.addPlayer(match, { name: 'Habitual Leo', phone: '11 4100-0002' }, app.who, { waiting: true });
+}, usualId);
+await page.waitForFunction(() => ![...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.trim() === 'Habitual Leo'));
+check('Al ponerlo en espera sale de suelen anotarse', !(await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).includes('Habitual Leo'));
+const leoId = await page.evaluate((id) => window.__app.players.find((player) => player.matchId === id && player.name === 'Habitual Leo' && player.waiting)?.id, usualId);
+await page.evaluate(async (id) => { await window.__app.store.deletePlayer(id); }, leoId);
+await page.waitForFunction(() => [...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.trim() === 'Habitual Leo'));
+check('Al sacarlo de la espera vuelve a suelen anotarse', (await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).includes('Habitual Leo'));
 
 {
   await page.evaluate(async () => {
