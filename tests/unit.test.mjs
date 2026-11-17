@@ -3065,7 +3065,9 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   assert.equal(upcoming.limit, 40);
   const guest = guestListenPlan({ rosterId: 'ficha', organizerUid: 'org', today: '2026-10-19' });
   assert.equal(guest.matches.limit, GUEST_PAGE);
-  assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid' && filter.value === 'org'), true);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'viewers' && filter.value === '*'), true);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid'), false);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'playerVisible'), false);
   assert.equal(guest.players.filters.some((filter) => filter.field === 'rosterId' && filter.value === 'ficha'), true);
   assert.equal(guest.matches.collection, 'matches');
   assert.deepEqual(upcoming.orderBy, ['date', 'asc']);
@@ -3411,6 +3413,15 @@ test('el enlace de un organizador solo muestra sus partidos y la anotación es d
     { id: 'hide', date: '2026-10-19', time: '23:00', createdByUid: 'gus', playerVisible: false },
   ];
   assert.deepEqual(selfSignupRows({ person, matches, now, organizerUid: 'gus', scoped: true }).map((row) => row.match.id), ['ga']);
+  const named = selfSignupRows({
+    person,
+    matches: [...matches, { id: 'apodo', date: '2026-10-19', time: '20:00', createdBy: 'Gus', viewers: ['*'] }],
+    now,
+    organizerUid: 'otro',
+    organizerName: 'Gustavo',
+    scoped: true,
+  });
+  assert.deepEqual(named.map((row) => row.match.id), ['apodo']);
   assert.deepEqual(selfSignupRows({ person, matches, now }).map((row) => row.match.id).sort(), ['ga', 'ma']);
   const pending = pendingSelfSignups({
     uid: 'gus',
@@ -4027,7 +4038,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v212');
+  assert.equal(version, 'f7c-v213');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4076,12 +4087,13 @@ test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => 
   };
   assert.equal(store.fs.getMessaging, undefined);
   store._listenGuest('NZpoLFKUUh044kfNGSmR');
-  assert.equal(store._unsubs.length, 3);
+  assert.equal(store._unsubs.length, 4);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.deepEqual(calls.map((ref) => ref.path), ['roster/NZpoLFKUUh044kfNGSmR', 'confirmSeen', 'players', 'matches']);
+  assert.deepEqual(calls.map((ref) => ref.path), ['matches', 'roster/NZpoLFKUUh044kfNGSmR', 'confirmSeen', 'players']);
   const matchQuery = calls.find((ref) => ref.path === 'matches');
-  assert.ok(matchQuery.parts.some((part) => part.field === 'createdByUid' && part.value === 'org'));
-  assert.ok(matchQuery.parts.some((part) => part.field === 'playerVisible' && part.value === true));
+  assert.equal(matchQuery.parts.some((part) => part.field === 'createdByUid'), false);
+  assert.equal(matchQuery.parts.some((part) => part.field === 'playerVisible'), false);
+  assert.ok(matchQuery.parts.some((part) => part.field === 'viewers' && part.value === '*'));
   assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '>='));
   assert.ok(matchQuery.parts.some((part) => part.limit === 24));
   const playerQuery = calls.find((ref) => ref.path === 'players');
@@ -5528,12 +5540,42 @@ test('un partido próximo sin playerVisible se marca visible una sola vez y no e
     { id: 'oculto', data: () => ({ date: today, createdByUid: 'gus', viewers: ['*'], playerVisible: false }) },
     { id: 'ajeno', data: () => ({ date: today, createdByUid: 'martin', viewers: ['*'] }) },
     { id: 'viejo', data: () => ({ date: '2026-11-01', createdByUid: 'gus', viewers: ['*'] }) },
+    { id: 'por-nombre', data: () => ({ date: today, createdBy: 'Gus', viewers: ['*'] }) },
   ];
   store._backfillMatches(docs);
   store._backfillMatches(docs);
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(commits, 1);
-  assert.deepEqual(writes, [{ path: 'matches/hoy', patch: { playerVisible: true } }]);
+  assert.deepEqual(writes, [
+    { path: 'matches/hoy', patch: { playerVisible: true } },
+    { path: 'matches/por-nombre', patch: { createdByUid: 'gus', playerVisible: true } },
+  ]);
+});
+
+test('si la consulta de la ficha falla, avisa en la página', () => {
+  const store = new FirebaseStore();
+  store.db = {};
+  store.fs = {
+    doc(_db, col, id) { return { path: `${col}/${id}` }; },
+    collection(_db, col) { return { path: col }; },
+    query(ref, ...parts) { return { path: ref.path, parts }; },
+    where(field, op, value) { return { field, op, value }; },
+    orderBy(field, dir) { return { orderBy: field, dir }; },
+    limit(n) { return { limit: n }; },
+    onSnapshot(ref, next, error) {
+      queueMicrotask(() => {
+        if (ref.path === 'matches') error({ code: 'failed-precondition', message: 'falta índice' });
+        else if (String(ref.path).startsWith('roster/')) next({ exists: () => true, id: 'ficha', data: () => ({ name: 'Cristian', holders: ['org'] }) });
+        else next({ docs: [], metadata: { fromCache: false } });
+      });
+      return () => {};
+    },
+  };
+  store._listenGuest('fichaCristian');
+  return new Promise((resolve) => setTimeout(resolve, 20)).then(() => {
+    assert.equal(store.state.guestMatchError, 'No se pudieron cargar los partidos.');
+    assert.deepEqual(store.state.matches, []);
+  });
 });
 
 test('al abrir no se reescriben los contadores y el límite diario se avisa', async () => {

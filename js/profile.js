@@ -406,42 +406,45 @@ export const GUEST_PAGE = 24;
  * viewers * se agrega si la lista no está: sin viewers el partido es de todos
  * y la página del jugador lo pide. Una lista privada no se abre.
  */
-export function playerVisibleBackfill(match, { uid, today } = {}) {
+export function playerVisibleBackfill(match, { uid, today, name } = {}) {
   const owner = String(uid || '').trim();
   const day = String(today || '');
   const id = String(match?.id || '').trim();
   if (!id || !owner || !day) return null;
-  if (String(match.createdByUid || '') !== owner) return null;
   if (String(match.date || '') < day) return null;
-  if (match.playerVisible === true || match.playerVisible === false) return null;
-  const patch = { playerVisible: true };
-  const viewers = match.viewers;
-  if (!Array.isArray(viewers) || !viewers.length) patch.viewers = ['*'];
+  const created = String(match.createdByUid || '').trim();
+  const adders = Array.isArray(match.adders) ? match.adders.map((item) => String(item || '')) : [];
+  const byName = !!name && sameOrganizerIdentity({ name: match.createdBy || '' }, { name });
+  const his = created === owner || (!created && (byName || adders.includes(owner)));
+  if (!his) return null;
+  const patch = {};
+  if (!created) patch.createdByUid = owner;
+  if (match.playerVisible !== true && match.playerVisible !== false) patch.playerVisible = true;
+  if (!Array.isArray(match.viewers) || !match.viewers.length) patch.viewers = ['*'];
+  if (!Object.keys(patch).length) return null;
   return { id, patch };
 }
 
 /**
  * Consultas de la página del jugador, sin sesión.
- * Partidos: solo los de ese organizador, visibles, de hoy en adelante.
- * Jugadores: solo las altas de esa ficha. viewers * lo pide la regla de list.
+ * Partidos: los abiertos de hoy en adelante, con tope. El dueño se filtra
+ * en la app: createdByUid y playerVisible a veces no están y Firestore
+ * no encuentra un campo que falta. Jugadores: solo las altas de esa ficha.
  */
-export function guestListenPlan({ rosterId, organizerUid, today, limit = GUEST_PAGE } = {}) {
+export function guestListenPlan({ rosterId, today, limit = GUEST_PAGE } = {}) {
   const id = String(rosterId || '').trim();
-  const owner = String(organizerUid || '').trim();
   const day = String(today || '');
   return {
     rosterId: id,
-    matches: owner ? {
+    matches: {
       collection: 'matches',
       filters: [
-        { field: 'createdByUid', op: '==', value: owner },
-        { field: 'playerVisible', op: '==', value: true },
         { field: 'viewers', op: 'array-contains', value: '*' },
         { field: 'date', op: '>=', value: day },
       ],
       orderBy: ['date', 'asc'],
       limit,
-    } : null,
+    },
     players: id ? {
       collection: 'players',
       filters: [

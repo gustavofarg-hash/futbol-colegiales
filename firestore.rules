@@ -110,6 +110,16 @@ service cloud.firestore {
     function isCreator() {
       return resource.data.get('createdByUid', '') == request.auth.uid;
     }
+    // Un partido viejo sin createdByUid: el organizador se lo anota a sí mismo.
+    // No cambia quién lo ve ni quién anota.
+    function claimOwnMatch() {
+      return resource.data.get('createdByUid', '') == ''
+          && request.resource.data.createdByUid == request.auth.uid
+          && request.resource.data.get('viewers', null) == resource.data.get('viewers', null)
+          && request.resource.data.get('adders', null) == resource.data.get('adders', null)
+          && request.resource.data.get('solo', null) == resource.data.get('solo', null)
+          && request.resource.data.get('limits', null) == resource.data.get('limits', null);
+    }
     function legacyStamp() {
       return !('viewers' in resource.data)
           && request.resource.data.viewers is list
@@ -573,7 +583,7 @@ service cloud.firestore {
       allow list: if resource.data.viewers.hasAny(['*']);
       allow create: if isActiveStaff() && validMatch(request.resource.data);
       allow update: if isActiveStaff() && validMatch(request.resource.data) && isViewer(resource.data)
-          && (isCreator() || (accessSame() && isAdder(resource.data)) || legacyStamp());
+          && (isCreator() || (accessSame() && isAdder(resource.data)) || legacyStamp() || claimOwnMatch());
       // playerCount lo mantiene quien anota o quita jugadores. Si el campo no
       // está, vale 0 y un partido viejo se puede borrar. La regla no puede
       // contar los documentos de players: quien edita el partido podría

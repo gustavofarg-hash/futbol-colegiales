@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v212';
+const APP_VERSION = 'f7c-v213';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -4875,6 +4875,7 @@ function renderPlayerSignup(person) {
         <h1 id="player-signup-name">Hola, ${esc(givenName(person) || person.name)}</h1>
       </header>
       ${title ? `<h2 id="player-signup-of">${esc(title)}</h2>` : ''}
+      ${app.guestMatchError ? `<p class="self-error" role="alert">${esc(app.guestMatchError)}</p>` : ''}
       ${confirmNoticesHtml(person)}
       ${playerPushHtml()}
       ${list || '<p class="empty-wait" id="self-empty">No hay partidos próximos.</p>'}
@@ -4963,6 +4964,7 @@ function selfSignupSection(person) {
     players: app.players,
     now: Date.now(),
     organizerUid: organizer?.uid || '',
+    organizerName: organizer?.name || '',
     scoped: !!token,
   });
   if (!rows.length) return '<ul class="slots" id="self-list"></ul>';
@@ -8767,6 +8769,7 @@ async function boot() {
     app.creditsReady = view.creditsReady === true;
     app.playersReady = view.playersReady === true;
     if (app.guestPlayer) app.shareOrganizer = view.shareOrganizer || null;
+    app.guestMatchError = view.guestMatchError || '';
     if (Array.isArray(view.confirmSeen)) app.confirmSeen = view.confirmSeen;
     app.compensations = mergeHeldCompensations(view.compensations || []);
     app.usage = view.usage || null;
@@ -8785,7 +8788,7 @@ async function boot() {
     if (!app.guestPlayer && pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen, app.guestMatchError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

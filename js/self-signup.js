@@ -2,6 +2,7 @@
 // Un pendiente no ocupa cupo ni suma plata hasta que el organizador confirma.
 // La espera entra directo. Sacarse de un pendiente o de la espera no resta puntos.
 import { toEpoch } from './dates.js';
+import { sameOrganizerIdentity } from './organizers.js';
 import { personKey, rosterHolderIds } from './roster.js';
 
 export const DROP_LOCK_MS = 4 * 60 * 60 * 1000;
@@ -62,6 +63,24 @@ export function visibleToPlayers(match) {
   return match?.playerVisible !== false;
 }
 
+/**
+ * Partido de este organizador en su enlace.
+ * Sirve el uid, el nombre (Gus y Gustavo) o estar en quienes anotan.
+ * Un partido abierto sin dueño también: así no desaparece si falta createdByUid.
+ */
+export function guestMatchForOrganizer(match, { uid = '', name = '' } = {}) {
+  if (!match || match.cancelled === true || !visibleToPlayers(match)) return false;
+  const owner = String(uid || '').trim();
+  const label = String(name || '').trim();
+  const created = String(match.createdByUid || '').trim();
+  if (owner && created === owner) return true;
+  const adders = Array.isArray(match.adders) ? match.adders.map((id) => String(id || '')) : [];
+  if (owner && adders.includes(owner)) return true;
+  if (label && sameOrganizerIdentity({ name: match.createdBy || '' }, { name: label })) return true;
+  const open = !adders.length || adders.includes('*');
+  return open && !created && !String(match.createdBy || '').trim() && !!owner;
+}
+
 /** Partido de este organizador: lo creó él, o está en quienes anotan (no el comodín *). */
 export function matchOwnedBy(match, uid) {
   const id = String(uid || '').trim();
@@ -81,11 +100,15 @@ export function playerOnMatch(person, match, players) {
   }) || null;
 }
 
-export function selfSignupRows({ person, matches, players, now = Date.now(), organizerUid = '', scoped = false } = {}) {
+export function selfSignupRows({ person, matches, players, now = Date.now(), organizerUid = '', organizerName = '', scoped = false } = {}) {
   const owner = String(organizerUid || '').trim();
+  const label = String(organizerName || '').trim();
   return (matches || [])
-    .filter((match) => match && match.cancelled !== true && visibleToPlayers(match) && matchOpenToRoster(match, person))
-    .filter((match) => !scoped || (!!owner && matchOwnedBy(match, owner)))
+    .filter((match) => {
+      if (!match || match.cancelled === true || !visibleToPlayers(match)) return false;
+      if (scoped) return guestMatchForOrganizer(match, { uid: owner, name: label });
+      return matchOpenToRoster(match, person);
+    })
     .filter((match) => {
       const today = new Date(now);
       const iso = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit' }).format(today);
