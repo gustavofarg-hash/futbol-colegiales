@@ -95,7 +95,9 @@ export function selfSignupRows({ person, matches, players, now = Date.now(), org
     .map((match) => {
       const player = playerOnMatch(person, match, players);
       const cap = Number(match.capacity) > 0 ? Number(match.capacity) : 14;
-      const taken = (players || []).filter((item) => item?.matchId === match.id && occupiesSpot(item)).length;
+      const listed = (players || []).filter((item) => item?.matchId === match.id && occupiesSpot(item)).length;
+      const stored = Number(match.playerCount);
+      const taken = Number.isFinite(stored) ? Math.max(listed, Math.trunc(stored)) : listed;
       const kickoff = toEpoch(match.date, match.time);
       const action = selfRowAction({ player, full: taken >= cap, kickoff, now });
       return { match, player, taken, cap, ...action };

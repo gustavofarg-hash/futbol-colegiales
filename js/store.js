@@ -88,7 +88,7 @@ import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
 import { USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, usageFlushDecision, UsageMeter } from './usage.js';
-import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
+import { guestListenPlan, historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { creditDocId, nextCredit } from './credit.js';
 import { MAX_PRICE } from './prices.js';
@@ -148,6 +148,14 @@ function pagePath() {
 export async function initFirebase() {
   if (blocksProductionFirebase(pagePath(), firebaseConfig.projectId)) {
     throw new Error('La versión de prueba no puede usar el Firebase de producción');
+  }
+  // Las pruebas (unit, e2e, reglas) no leen mis-partidos-prueba ni producción.
+  // Solo el emulador. El navegador de /prueba/ no entra por acá.
+  if (typeof process !== 'undefined' && process.env && process.env.NODE_TEST_CONTEXT && !process.env.FIRESTORE_EMULATOR_HOST) {
+    const project = String(firebaseConfig.projectId || '');
+    if (project === 'mis-partidos-prueba' || project === 'futbol-partidos') {
+      throw new Error('Las pruebas no leen Firebase real. Usá el emulador.');
+    }
   }
   if (firebaseBundle) return firebaseBundle;
   const [{ initializeApp, getApps, getApp }, fs] = await Promise.all([
@@ -2444,6 +2452,10 @@ export class FirebaseStore {
     if (this._onError) this._onError(e);
   }
   _stop() {
+    if (this._deferTimer) {
+      clearTimeout(this._deferTimer);
+      this._deferTimer = 0;
+    }
     for (const un of this._unsubs || []) {
       try { un(); } catch { /* ya cerrado */ }
     }
@@ -2506,14 +2518,23 @@ export class FirebaseStore {
     await setDoc(doc(this.db, 'shareTokens', token), { uid: owner, name: label, createdAt: Date.now() });
     return token;
   }
+  _queryFromPlan(plan) {
+    const { collection, query, where, orderBy, limit } = this.fs;
+    const parts = [];
+    for (const filter of plan.filters || []) parts.push(where(filter.field, filter.op, filter.value));
+    if (plan.orderBy?.length) parts.push(orderBy(plan.orderBy[0], plan.orderBy[1] || 'asc'));
+    if (plan.limit) parts.push(limit(plan.limit));
+    return query(collection(this.db, plan.collection), ...parts);
+  }
   _listenGuest(rosterId) {
     const id = String(rosterId || '').trim();
     if (!id || !this.fs) return;
     this._guest = true;
     this._guestRosterId = id;
+    this._guestOrganizer = '';
     this._queryDay = this._queryDay || todayISO();
     const today = this._queryDay;
-    const { doc, collection, query, where, onSnapshot } = this.fs;
+    const { doc, onSnapshot } = this.fs;
     const seen = { roster: false, matches: false, players: false, share: !this._shareToken };
     const rows = (snap) => snap.docs.map((item) => ({ id: item.id, ...item.data() }));
     const publish = () => {
@@ -2522,87 +2543,78 @@ export class FirebaseStore {
       this.state.playersReady = true;
       this._emit();
     };
+    const plan = guestListenPlan({ rosterId: id, today });
+    const armMatches = (uid) => {
+      const owner = String(uid || '').trim();
+      if (!owner) {
+        if (!seen.matches) {
+          this.state.matches = [];
+          seen.matches = true;
+          publish();
+        }
+        return;
+      }
+      if (this._guestOrganizer === owner) return;
+      this._guestOrganizer = owner;
+      const matches = guestListenPlan({ rosterId: id, organizerUid: owner, today }).matches;
+      this._swap('guest-matches', onSnapshot(this._queryFromPlan(matches), (snap) => {
+        this.state.matches = rows(snap).filter((match) => match.playerVisible !== false && match.cancelled !== true);
+        seen.matches = true;
+        publish();
+      }, () => {
+        this.state.matches = [];
+        seen.matches = true;
+        publish();
+      }));
+    };
     if (this._shareToken) {
       this._swap('guest-share', onSnapshot(doc(this.db, 'shareTokens', this._shareToken), (snap) => {
         const data = snap.exists() ? snap.data() : null;
         this.state.shareOrganizer = data?.uid ? { uid: String(data.uid), name: String(data.name || ''), token: this._shareToken } : null;
         seen.share = true;
+        armMatches(data?.uid || '');
         publish();
       }, () => {
         this.state.shareOrganizer = null;
         seen.share = true;
+        armMatches('');
         publish();
       }));
     } else this.state.shareOrganizer = null;
     this._swap('guest-roster', onSnapshot(doc(this.db, 'roster', id), (snap) => {
-      this.state.roster = snap.exists() ? [{ id: snap.id, ...snap.data() }] : [];
+      const data = snap.exists() ? snap.data() : null;
+      this.state.roster = data ? [{ id: snap.id, ...data }] : [];
       this.state.rosterError = null;
       seen.roster = true;
+      if (!this._shareToken) {
+        const holder = (Array.isArray(data?.holders) && data.holders[0]) || data?.createdByUid || '';
+        armMatches(holder);
+      }
       publish();
     }, () => {
       this.state.roster = [];
       this.state.rosterError = null;
       seen.roster = true;
+      if (!this._shareToken) armMatches('');
       publish();
     }));
-    const takeMatches = (snap) => {
-      this.state.matches = rows(snap).filter((match) => String(match.date || '') >= today);
-      seen.matches = true;
-      publish();
-    };
-    const broadMatches = () => onSnapshot(
-      query(collection(this.db, 'matches'), where('viewers', 'array-contains', '*')),
-      takeMatches,
-      () => { this.state.matches = []; seen.matches = true; publish(); },
-    );
-    this._swap('guest-matches', onSnapshot(
-      query(collection(this.db, 'matches'), where('viewers', 'array-contains', '*'), where('date', '>=', today)),
-      takeMatches,
-      (error) => {
-        if (error?.code === 'failed-precondition') {
-          this._swap('guest-matches', broadMatches());
-          return;
-        }
-        this.state.matches = [];
-        seen.matches = true;
-        publish();
-      },
-    ));
-    const takePlayers = (snap) => {
-      this.state.players = rows(snap).filter((player) => String(player.matchDate || player.date || '') >= today);
+    this._seenRoster = id;
+    this._swap('guest-seen', onSnapshot(this._queryFromPlan(plan.seen), (snap) => {
+      this.state.confirmSeen = snap.docs.filter((item) => item.data()?.seen === true).map((item) => item.id);
+      if (seen.players) this._emit();
+    }, () => {
+      this.state.confirmSeen = [];
+      if (seen.players) this._emit();
+    }));
+    this._swap('guest-players', onSnapshot(this._queryFromPlan(plan.players), (snap) => {
+      this.state.players = rows(snap).filter((player) => player.rosterId === id);
       seen.players = true;
       publish();
-    };
-    const broadPlayers = () => onSnapshot(
-      query(collection(this.db, 'players'), where('viewers', 'array-contains', '*')),
-      takePlayers,
-      () => { this.state.players = []; seen.players = true; publish(); },
-    );
-    this._seenRoster = id;
-    this._swap('guest-seen', onSnapshot(
-      query(collection(this.db, 'confirmSeen'), where('rosterId', '==', id)),
-      (snap) => {
-        this.state.confirmSeen = snap.docs.filter((item) => item.data()?.seen === true).map((item) => item.id);
-        if (seen.players) this._emit();
-      },
-      () => {
-        this.state.confirmSeen = [];
-        if (seen.players) this._emit();
-      },
-    ));
-    this._swap('guest-players', onSnapshot(
-      query(collection(this.db, 'players'), where('viewers', 'array-contains', '*'), where('matchDate', '>=', today)),
-      takePlayers,
-      (error) => {
-        if (error?.code === 'failed-precondition') {
-          this._swap('guest-players', broadPlayers());
-          return;
-        }
-        this.state.players = [];
-        seen.players = true;
-        publish();
-      },
-    ));
+    }, () => {
+      this.state.players = [];
+      seen.players = true;
+      publish();
+    }));
   }
   _listenUpcoming() {
     const today = this._queryDay || todayISO();
@@ -2729,11 +2741,10 @@ export class FirebaseStore {
       this._buckets[kind].broad = [];
       this._rebuild(kind);
     }, (e) => {
-      if (!unindexed && e?.code === 'failed-precondition') {
-        if (this._datedUnindexed) return;
-        this._datedUnindexed = true;
-        this._listenDated('players', 'matchDate');
-        this._listenDated('confirmations', 'date');
+      // Sin índice no se suelta el filtro de fecha: eso leía la colección entera.
+      if (e?.code === 'failed-precondition') {
+        if (kind === 'players') this.state.playersReady = true;
+        this._emit();
         return;
       }
       this._onListenError(e);
@@ -2832,12 +2843,7 @@ export class FirebaseStore {
     const un = onSnapshot(ref, (snap) => {
       this.state.compensations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
-    }, (e) => {
-      if (cutoff && e?.code === 'failed-precondition' && !this._compUnscoped) {
-        this._compUnscoped = true;
-        this._listenCompensations();
-        return;
-      }
+    }, () => {
       this.state.compensations = [];
       this._emit();
     });
@@ -2879,7 +2885,7 @@ export class FirebaseStore {
       this._listenCompensations();
       this._listenUsage();
     };
-    if (typeof setTimeout === 'function') setTimeout(deferListen, 0);
+    if (typeof setTimeout === 'function') this._deferTimer = setTimeout(deferListen, 0);
     else deferListen();
     watch(collection(this.db, 'rosterSuspensions'), null, (snap) => {
       this.state.suspensions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
