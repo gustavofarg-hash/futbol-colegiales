@@ -45,10 +45,21 @@ export function isPlayerDeepLink(hash) {
   return !!playerLinkParts(hash);
 }
 
+/** Primer nombre, el mismo de «Próximos partidos de {nombre}». */
+export function organizerFirstName(name) {
+  return String(name || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean)[0] || '';
+}
+
 /** «Próximos partidos de Gustavo». Vacío si no hay nombre. */
 export function organizerMatchesTitle(name) {
-  const first = String(name || '').trim().replace(/\s+/g, ' ').split(' ').filter(Boolean)[0] || '';
+  const first = organizerFirstName(name);
   return first ? `Próximos partidos de ${first}` : '';
+}
+
+/** «Esperando la confirmación de Gustavo...». Sin nombre, sin el «de». */
+export function pendingConfirmLabel(name) {
+  const first = organizerFirstName(name);
+  return first ? `Esperando la confirmación de ${first}...` : 'Esperando la confirmación...';
 }
 
 export function appShareMessage() {

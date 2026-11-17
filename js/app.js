@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v215';
+const APP_VERSION = 'f7c-v216';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -4964,7 +4964,7 @@ function selfSignupSection(person) {
     players: app.players,
     now: Date.now(),
     organizerUid: organizer?.uid || '',
-    organizerName: organizer?.name || '',
+    organizerName: organizer?.name || (!token && app.session?.user?.name) || '',
     scoped: !!token,
   });
   if (!rows.length) return '<ul class="slots" id="self-list"></ul>';

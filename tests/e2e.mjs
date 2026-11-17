@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v215');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v216');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8144,7 +8144,7 @@ await fresh.close();
   await locked.locator('#self-list button', { hasText: 'Anotarme' }).click();
   await locked.waitForFunction(() => {
     const row = document.querySelector('#self-list .self-row');
-    return row && row.innerText.includes('Pendiente de confirmación') && row.innerText.includes('Anular');
+    return row && row.innerText.includes('Esperando la confirmación de Gustavo...') && row.innerText.includes('Anular');
   });
   const linkPending = await locked.evaluate(() => {
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
@@ -8466,7 +8466,7 @@ await fresh.close();
   await page.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
     const text = row?.innerText || '';
-    return text.includes('Pendiente de confirmación') && text.includes('Anular') && text.includes('21:00') && text.includes('Polideportivo');
+    return text.includes('Esperando la confirmación de Martín...') && text.includes('Anular') && text.includes('21:00') && text.includes('Polideportivo');
   }, self.open);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.open);
   await page.waitForSelector('#slots .slot:has-text("Auto López") .confirm-spot');

@@ -4,6 +4,7 @@
 import { toEpoch } from './dates.js';
 import { sameOrganizerIdentity } from './organizers.js';
 import { personKey, rosterHolderIds } from './roster.js';
+import { pendingConfirmLabel } from './share.js';
 
 export const DROP_LOCK_MS = 4 * 60 * 60 * 1000;
 export const RATE_WINDOW_MS = 30 * 60 * 1000;
@@ -46,8 +47,8 @@ export function signupRateDecision(prev, now = Date.now(), max = RATE_MAX, windo
  * Qué muestra la fila. join = Anotarme, wait = Lista de espera,
  * cancel = Anular, locked = ya no se puede bajar solo.
  */
-export function selfRowAction({ player, full, kickoff, now = Date.now() } = {}) {
-  if (isSelfPending(player)) return { action: 'cancel', status: 'pending', note: 'Pendiente de confirmación' };
+export function selfRowAction({ player, full, kickoff, now = Date.now(), organizerName = '' } = {}) {
+  if (isSelfPending(player)) return { action: 'cancel', status: 'pending', note: pendingConfirmLabel(organizerName) };
   if (player?.waiting === true) return { action: 'cancel', status: 'wait', note: 'En lista de espera' };
   if (occupiesSpot(player)) {
     const left = Number(kickoff) - Number(now);
@@ -122,7 +123,7 @@ export function selfSignupRows({ person, matches, players, now = Date.now(), org
       const stored = Number(match.playerCount);
       const taken = Number.isFinite(stored) ? Math.max(listed, Math.trunc(stored)) : listed;
       const kickoff = toEpoch(match.date, match.time);
-      const action = selfRowAction({ player, full: taken >= cap, kickoff, now });
+      const action = selfRowAction({ player, full: taken >= cap, kickoff, now, organizerName: label });
       return { match, player, taken, cap, ...action };
     });
 }
