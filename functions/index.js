@@ -2,10 +2,12 @@
 // Se dispara al crear signupPings/{id}. Manda un push a los organizadores
 // del partido y borra el aviso. Si no hay tokens, igual lo borra.
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onRequest } = require('firebase-functions/v2/https');
 const { initializeApp } = require('firebase-admin/app');
-const { getFirestore } = require('firebase-admin/firestore');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
-const { pushCopy, organizerUids } = require('./logic');
+const crypto = require('crypto');
+const { pushCopy, organizerUids, pushFields, actionDecision, ACTION_TTL_MS } = require('./logic');
 
 initializeApp();
 
@@ -43,10 +45,22 @@ exports.notifySelfSignup = onDocumentCreated(
       });
     }
     const copy = pushCopy(ping.kind, { name: ping.name }, match);
+    let actionToken = '';
+    const playerId = String(ping.playerId || '');
+    if (ping.kind === 'alta' && playerId) {
+      actionToken = crypto.randomBytes(32).toString('hex');
+      await db.doc(`signupActions/${actionToken}`).set({
+        playerId,
+        matchId: ping.matchId,
+        used: false,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + ACTION_TTL_MS,
+      });
+    }
     if (tokens.length) {
       const res = await getMessaging().sendEachForMulticast({
         tokens: tokens.map((row) => row.token),
-        data: { title: copy.title, body: copy.body, url: copy.url, tag: `signup-${event.params.pingId}` },
+        data: pushFields(ping.kind, copy, { actionToken, playerId, tag: `signup-${event.params.pingId}` }),
       });
       const dead = [];
       res.responses.forEach((row, index) => {
@@ -60,3 +74,66 @@ exports.notifySelfSignup = onDocumentCreated(
     if (ref) await ref.delete().catch(() => {});
   },
 );
+
+exports.decideSignup = onRequest({ region: 'southamerica-east1', cors: true }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: 'POST' });
+    return;
+  }
+  const token = String(req.body?.token || '');
+  const decision = String(req.body?.decision || '');
+  if (!/^[a-f0-9]{64}$/.test(token)) {
+    res.status(400).json({ ok: false, error: 'token' });
+    return;
+  }
+  const db = getFirestore();
+  const actionRef = db.doc(`signupActions/${token}`);
+  try {
+    const preview = await actionRef.get();
+    const previewAction = preview.exists ? preview.data() : null;
+    let spotsLeft = 1;
+    if (decision === 'aceptar' && previewAction?.playerId) {
+      const peek = await db.doc(`players/${previewAction.playerId}`).get();
+      const matchId = peek.data()?.matchId;
+      if (matchId) {
+        const mates = await db.collection('players').where('matchId', '==', matchId).get();
+        const matchSnap = await db.doc(`matches/${matchId}`).get();
+        const cap = Number(matchSnap.data()?.capacity) > 0 ? Number(matchSnap.data().capacity) : 14;
+        const taken = mates.docs.filter((doc) => {
+          const row = doc.data() || {};
+          return row.waiting !== true && row.noPlay !== true && row.selfPending !== true;
+        }).length;
+        spotsLeft = cap - taken;
+      }
+    }
+    const outcome = await db.runTransaction(async (tx) => {
+      const actionSnap = await tx.get(actionRef);
+      const action = actionSnap.exists ? actionSnap.data() : null;
+      const playerRef = action?.playerId ? db.doc(`players/${action.playerId}`) : null;
+      const playerSnap = playerRef ? await tx.get(playerRef) : null;
+      const player = playerSnap?.exists ? { id: action.playerId, ...playerSnap.data() } : null;
+      const result = actionDecision(action, player, decision, Date.now(), spotsLeft);
+      if (!result.ok) return result;
+      tx.update(actionRef, { used: true, usedAt: Date.now(), decision });
+      if (result.op === 'delete') tx.delete(playerRef);
+      else tx.update(playerRef, { selfPending: false, rosterAt: Date.now(), updatedAt: Date.now() });
+      return { ...result, matchId: player.matchId, confirmToken: player.confirmToken || '' };
+    });
+    if (!outcome.ok) {
+      res.status(outcome.status || 409).json({ ok: false, error: outcome.error });
+      return;
+    }
+    if (outcome.op === 'delete') {
+      if (outcome.confirmToken) await db.doc(`confirmations/${outcome.confirmToken}`).delete().catch(() => {});
+      if (outcome.matchId) {
+        await db.doc(`matches/${outcome.matchId}`).update({
+          playerCount: FieldValue.increment(-1),
+          updatedAt: Date.now(),
+        }).catch(() => {});
+      }
+    }
+    res.status(200).json({ ok: true, op: outcome.op });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: 'no se pudo' });
+  }
+});

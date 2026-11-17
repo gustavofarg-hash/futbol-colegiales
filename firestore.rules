@@ -732,7 +732,10 @@ service cloud.firestore {
     match /signupPings/{pingId} {
       allow create: if signedIn()
           && holdsRoster(request.resource.data.rosterId)
-          && request.resource.data.keys().hasOnly(['kind', 'name', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt'])
+          && request.resource.data.keys().hasOnly(['kind', 'name', 'playerId', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt'])
+          && request.resource.data.playerId is string
+          && request.resource.data.playerId.size() > 0
+          && request.resource.data.playerId.size() <= 80
           && (request.resource.data.kind == 'alta' || request.resource.data.kind == 'espera' || request.resource.data.kind == 'baja')
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
@@ -746,6 +749,12 @@ service cloud.firestore {
           && request.resource.data.venueName.size() <= 80
           && request.resource.data.createdAt is number;
       allow read, update, delete: if isAdmin();
+    }
+
+    // Token de un solo uso para Aceptar o Rechazar desde el aviso.
+    // Lo crea y lo gasta solo la Cloud Function. La app no lo lee ni lo escribe.
+    match /signupActions/{tokenId} {
+      allow read, write: if false;
     }
 
     match /signupRates/{rosterId} {

@@ -2016,6 +2016,15 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.match(copy.url, /#\/a-confirmar$/);
   assert.match(pushCopy('espera', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
   assert.match(pushCopy('baja', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
+  const { noticeActions, actionDecision, pushFields } = require('../functions/logic.js');
+  const alta = pushFields('alta', copy, { actionToken: 'a'.repeat(64), playerId: 'p1', tag: 't' });
+  assert.equal(alta.decideUrl.includes('decideSignup'), true);
+  assert.equal(noticeActions(alta).map((row) => row.action).join(','), 'aceptar,rechazar');
+  assert.deepEqual(noticeActions(pushFields('espera', copy, {})), []);
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', selfPending: true }, 'aceptar', 1000, 2).op, 'confirm');
+  assert.equal(actionDecision({ playerId: 'p1', used: true, expiresAt: 5000 }, { id: 'p1', selfPending: true }, 'aceptar', 1000, 2).status, 410);
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', selfPending: true }, 'rechazar', 1000, 0).op, 'delete');
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', selfPending: true }, 'aceptar', 1000, 0).status, 409);
   assert.deepEqual(organizerUids({ createdByUid: 'gus', adders: ['*'] }, ['otro']), ['gus']);
   assert.deepEqual(organizerUids({}, ['titular']), ['titular']);
 });
@@ -3920,7 +3929,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v196');
+  assert.equal(version, 'f7c-v197');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

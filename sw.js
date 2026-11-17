@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v196';
+const VERSION = 'f7c-v197';
 const TRIAL = self.location.pathname.includes('/prueba/');
 const CACHE = (TRIAL ? 'prueba-' : '') + VERSION;
 const SHELL = [
@@ -35,10 +35,8 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  const target = event.notification?.data?.url || './';
-  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+function openNotification(target) {
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
     const open = clients.find((client) => client.url && client.url.includes(self.registration.scope));
     if (open) {
       open.postMessage({ type: 'open', url: target });
@@ -46,7 +44,36 @@ self.addEventListener('notificationclick', (event) => {
     }
     if (self.clients.openWindow) return self.clients.openWindow(target);
     return undefined;
-  }));
+  });
+}
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const data = event.notification?.data || {};
+  const action = event.action || '';
+  if ((action === 'aceptar' || action === 'rechazar') && data.actionToken && data.decideUrl) {
+    event.waitUntil((async () => {
+      let ok = false;
+      try {
+        const res = await fetch(data.decideUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: data.actionToken, decision: action }),
+        });
+        ok = res.ok;
+      } catch { ok = false; }
+      const body = ok
+        ? (action === 'aceptar' ? 'Aceptado' : 'Rechazado')
+        : 'No se pudo. Abrí Jugadores a confirmar.';
+      await self.registration.showNotification('Mis Partidos', {
+        body,
+        tag: data.tag || 'f7c-push',
+        data: { url: data.url || './' },
+      });
+    })());
+    return;
+  }
+  event.waitUntil(openNotification(data.url || './'));
 });
 
 if (TRIAL) {
@@ -65,11 +92,25 @@ if (TRIAL) {
       const data = payload.data || {};
       const title = data.title || payload.notification?.title || 'Mis Partidos';
       const body = data.body || payload.notification?.body || '';
-      return self.registration.showNotification(title, {
+      const note = {
         body,
-        data: { url: data.url || './' },
+        data: {
+          url: data.url || './',
+          kind: data.kind || '',
+          actionToken: data.actionToken || '',
+          decideUrl: data.decideUrl || '',
+          playerId: data.playerId || '',
+          tag: data.tag || 'f7c-push',
+        },
         tag: data.tag || 'f7c-push',
-      });
+      };
+      if (data.kind === 'alta' && data.actionToken && data.decideUrl) {
+        note.actions = [
+          { action: 'aceptar', title: 'Aceptar' },
+          { action: 'rechazar', title: 'Rechazar' },
+        ];
+      }
+      return self.registration.showNotification(title, note);
     });
   } catch (error) {
     // Sin el script de mensajería la app sigue. El aviso con la app cerrada no llega.
