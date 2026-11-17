@@ -48,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v199';
+const APP_VERSION = 'f7c-v200';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -1158,7 +1158,9 @@ function render() {
   if (document.documentElement.classList.contains('anon-lock')) {
     if (releaseAnonymousLock) return;
     if (r.name === 'profile' && playerLinkDenied(r.id)) {
-      showAnonymousDenial();
+      const person = (app.roster || []).find((row) => row.id === r.id);
+      if (person) renderPlayerSignup(person);
+      else showAnonymousDenial();
       return;
     }
     document.documentElement.classList.remove('anon-lock');
@@ -4589,7 +4591,8 @@ function renderProfile(id) {
   const fromMatch = app.profileViaMatchId === id;
   if (!fromMatch && (!person || !rosterHeldBy(person, actor()))) {
     app.signupDraft = null;
-    showAnonymousDenial();
+    if (person) renderPlayerSignup(person);
+    else showAnonymousDenial();
     return;
   }
   if (!person) {
@@ -4612,7 +4615,6 @@ function renderProfile(id) {
         <h2 class="section${fichaSuspended(person)}">${fichaName(person, person.name)}</h2>
         ${playerShareButton('profile-share')}
       </div>
-      ${selfSignupSection(person)}
       ${money.panel.nickHtml}
       ${own ? `<label class="field profile-name"><span>Nombre</span><input id="profile-name" maxlength="60" autocomplete="name" autocapitalize="words" data-cap-words="1" value="${esc(person.name)}"></label>` : ''}
       <div class="phone-row">
@@ -4774,7 +4776,17 @@ function renderProfile(id) {
     saveProfile(person.id, { positions: POSITIONS.filter((item) => next.has(item)) });
   };
   bindPartidos(person);
-  bindSelfSignup(person);
+}
+
+function renderPlayerSignup(person) {
+  document.documentElement.classList.add('anon-lock');
+  const list = selfSignupSection(person);
+  const painted = replaceView(`
+    <article id="player-signup">
+      <h1 id="player-signup-name">${esc(person.name)}</h1>
+      ${list || '<p class="empty-wait" id="self-empty">No hay partidos próximos.</p>'}
+    </article>`);
+  if (painted !== false) bindSelfSignup(person);
 }
 
 function selfSignupSection(person) {
@@ -8321,7 +8333,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v199" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v200" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8358,7 +8370,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v199" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v200" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
