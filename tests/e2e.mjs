@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v200');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v201');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -6449,10 +6449,13 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const playerPage = (await page.locator('#player-signup').innerText()).replace(/\s+/g, ' ').trim();
   check('Sin acceso ve su nombre y la lista para anotarse', (await page.locator('#player-signup-name').innerText()) === 'Enlace Díaz' && await page.locator('#self-list, #self-empty').count() === 1 && await page.locator('#profile').count() === 0 && !/Quedan|\/14|posición/i.test(playerPage), playerPage.slice(0, 240));
   const lockedChrome = await page.evaluate(() => {
-    const hidden = (sel) => document.querySelector(sel).getClientRects().length === 0;
-    return hidden('.topbar') && hidden('#tabbar') && !document.querySelector('#login-form');
+    const hidden = (sel) => {
+      const el = document.querySelector(sel);
+      return !el || el.getClientRects().length === 0;
+    };
+    return hidden('.topbar') && hidden('#tabbar') && hidden('#btn-settings') && hidden('#btn-back') && hidden('.text-size') && hidden('#btn-text-smaller') && hidden('#btn-text-bigger') && !document.querySelector('#login-form') && !document.querySelector('#profile-share') && document.querySelector('.player-app')?.textContent === 'Mis Partidos';
   });
-  check('Con sesión y sin acceso no hay barra, pestañas ni login', lockedChrome);
+  check('La página del jugador no tiene menús del organizador', lockedChrome);
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v110-sin-acceso.png' });
   await page.evaluate(() => { location.hash = '#/jugador/no-existe'; });
   await page.waitForSelector('#player-locked');

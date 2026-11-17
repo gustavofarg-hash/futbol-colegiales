@@ -438,12 +438,13 @@ html.dark .points-step input.up { color: #4ade80; }
 #self-list, #self-pending { gap: 4px; }
 .self-row {
   display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
-  min-height: 36px; padding: 4px 6px 4px 10px; max-width: 100%; overflow: hidden;
+  min-height: 36px; min-width: 0; padding: 4px 6px 4px 10px; max-width: 100%; overflow: hidden;
 }
 .self-when { flex: 1 1 auto; min-width: 0; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .self-side { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 72%; }
+.self-side:has(.self-btn) { flex: none; max-width: none; }
 .self-note { font-size: 0.75rem; line-height: 1.1; color: var(--muted, #667); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.self-btn { min-height: 32px; padding: 0 10px; font-size: 0.8125rem; }
+.self-btn { min-height: 32px; padding: 0 10px; font-size: 0.8125rem; flex: none; white-space: nowrap; }
 .self-wa { font-size: 0.8125rem; font-weight: 700; white-space: nowrap; }
 #self-wait-notice { margin: 8px 0; font-size: 0.875rem; }
 .pay-btn {
@@ -939,9 +940,25 @@ html.anon-lock #toast,
 html.anon-lock #sheet,
 html.anon-lock #ask { display: none !important; }
 html.anon-lock #view { max-width: none; min-height: 100dvh; margin: 0; padding: 24px; display: grid; place-items: center; }
-html.anon-lock #view:has(#player-signup) { display: block; }
-#player-signup { max-width: 28rem; margin: 0 auto; }
-#player-signup h1 { margin: 0 0 12px; font-size: 1.35rem; }
+html.anon-lock #view:has(#player-signup) { display: block; overflow-x: hidden; }
+html:has(#player-signup),
+html:has(#player-signup) body { overflow-x: hidden; max-width: 100%; }
+html:has(#player-signup) .topstack,
+html:has(#player-signup) #tabbar,
+html:has(#player-signup) #tab-slot,
+html:has(#player-signup) #btn-settings,
+html:has(#player-signup) #btn-back,
+html:has(#player-signup) .text-size,
+html:has(#player-signup) #trial-banner,
+html:has(#player-signup) #activity-banner,
+html:has(#player-signup) #demo-banner { display: none !important; }
+html:has(#player-signup) { --actionbar-h: 0px; }
+#player-signup { width: 100%; max-width: min(28rem, 100%); min-width: 0; margin: 0 auto; }
+#self-list { min-width: 0; max-width: 100%; }
+.player-top { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; }
+.player-top img { width: 40px; height: 40px; border-radius: 10px; }
+.player-app { font-size: 0.8rem; font-weight: 800; letter-spacing: .02em; }
+#player-signup h1 { margin: 0; font-size: 1.35rem; }
 html.anon-lock #view .loading { display: none; }
 .anon-lock { text-align: center; color: var(--text); }
 .anon-warn { font-size: 2.5rem; line-height: 1; margin: 0 0 8px; }
