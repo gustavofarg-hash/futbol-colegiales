@@ -48,7 +48,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v208';
+const APP_VERSION = 'f7c-v209';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -240,6 +240,7 @@ const app = {
   showLater: false,
   profileMatchId: null,
   profileViaMatchId: null,
+  selfSignupError: null,
 };
 window.__app = app; // útil para depurar / tests
 
@@ -4869,6 +4870,8 @@ function selfSignupSection(person) {
   if (!rows.length) return '<ul class="slots" id="self-list"></ul>';
   const items = rows.map(({ match, player, action, note, status, lock }) => {
     const statusHtml = note ? `<p class="self-status ${esc(status || '')}">${esc(note)}</p>` : '';
+    const fail = app.selfSignupError?.matchId === match.id ? app.selfSignupError.text : '';
+    const failHtml = fail ? `<p class="self-error" role="alert">${esc(fail)}</p>` : '';
     const lockHtml = lock ? `<p class="self-note">${esc(lock)}</p>` : '';
     let control = '';
     if (action === 'join') control = `<button type="button" class="btn primary self-btn" data-self="join" data-match="${esc(match.id)}">Anotarme</button>`;
@@ -4885,6 +4888,7 @@ function selfSignupSection(person) {
       <div class="self-body">
         <p class="self-when"><span class="self-bit">${SELF_CAL}<span>${esc(capitalize(labelDate(match.date)))}</span></span><span class="self-bit">${SELF_CLOCK}<span>${esc(match.time || '--:--')}</span></span><span class="self-bit self-place">${SELF_PIN}<span>${esc(placeOf(match))}</span></span></p>
         ${statusHtml}
+        ${failHtml}
         ${lockHtml}
         ${control ? `<div class="self-actions">${control}</div>` : ''}
       </div>
@@ -4908,20 +4912,42 @@ function organizerDropPhone(match) {
   return hit?.phone || '';
 }
 
+function selfSignupFailureText(kind, error) {
+  const code = String(error?.code || '');
+  if (code === 'rate-limit' || code === 'too-late' || code === 'no-roster' || code === 'already-in-match' || code === 'suspended' || code === 'match-full' || code === 'guest-cannot-invite') {
+    return String(error?.message || 'No se pudo guardar');
+  }
+  const verb = kind === 'wait'
+    ? 'No se pudo anotar en la lista de espera'
+    : (kind === 'cancel' ? 'No se pudo anular' : 'No se pudo anotar');
+  return writeFailureText(error).replace('No se pudo guardar', verb);
+}
+
+let selfSignupBusy = false;
 function bindSelfSignup(person) {
   const list = $('#self-list');
   if (!list) return;
-  list.onclick = (event) => {
+  list.onclick = async (event) => {
     const btn = event.target.closest('[data-self]');
-    if (!btn || !person) return;
+    if (!btn || !person || selfSignupBusy) return;
     const match = matchById(btn.dataset.match);
     if (!match) return;
     const kind = btn.dataset.self;
+    selfSignupBusy = true;
+    app.selfSignupError = null;
     const job = kind === 'cancel'
       ? app.store.selfCancel(btn.dataset.player)
       : app.store.selfJoin(match, person, { waiting: kind === 'wait', organizer: route().share ? (app.store?.shareOrganizer?.(route().share) || null) : null });
-    const msg = kind === 'join' ? 'Quedó pendiente de confirmación' : (kind === 'wait' ? 'Quedaste en la lista de espera' : 'Listo');
-    run(job, msg);
+    try {
+      await job;
+      app.selfSignupError = null;
+    } catch (e) {
+      console.error(e);
+      app.selfSignupError = { matchId: match.id, text: selfSignupFailureText(kind, e) };
+      renderPlayerSignup(person);
+    } finally {
+      selfSignupBusy = false;
+    }
   };
 }
 
@@ -8417,7 +8443,7 @@ function promptLogin(session) {
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v208" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v209" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8454,7 +8480,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v208" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v209" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>

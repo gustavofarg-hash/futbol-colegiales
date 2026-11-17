@@ -681,6 +681,38 @@ service cloud.firestore {
             || (d.waiting == true && d.get('tentative', false) != true)
           );
     }
+    // El alta del enlace no puede llamar a validPlayer: esa función, sumada
+    // a la forma del invitado, pasa el tope de 1000 expresiones y Firestore
+    // niega el alta aunque los datos estén bien. La lista de claves corta
+    // plata, goles y confirmación sin recorrer cada campo opcional.
+    function guestPlayerFields(d) {
+      return d.keys().hasAll(['matchId', 'matchDate', 'name', 'rosterId', 'selfSignup', 'waiting', 'waitOrder', 'tentative', 'tentativeAt', 'rosterAt', 'addedByUid', 'addedBy', 'shareToken', 'createdAt', 'updatedAt', 'phone', 'hasPhone', 'phoneKey', 'phoneOwnerUid', 'phoneShared', 'confirmToken', 'viewers', 'adders'])
+          && d.keys().hasOnly(['matchId', 'matchDate', 'name', 'rosterId', 'selfSignup', 'waiting', 'waitOrder', 'tentative', 'tentativeAt', 'rosterAt', 'addedByUid', 'addedBy', 'shareToken', 'createdAt', 'updatedAt', 'phone', 'hasPhone', 'phoneKey', 'phoneOwnerUid', 'phoneShared', 'confirmToken', 'viewers', 'adders', 'signedUpWith', 'signedUpWithName'])
+          && d.matchId is string && d.matchId.size() > 0 && d.matchId.size() <= 80
+          && d.matchDate is string && d.matchDate.size() == 10
+          && d.phone == ''
+          && d.hasPhone == false
+          && d.phoneKey == ''
+          && d.phoneOwnerUid == ''
+          && d.phoneShared == false
+          && d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80
+          && d.createdAt is number && d.updatedAt is number
+          && d.addedByUid is string && d.addedByUid.size() <= 128
+          && d.addedBy is string && d.addedBy.size() > 0 && d.addedBy.size() <= 40
+          && d.shareToken is string && d.shareToken.size() <= 80
+          && d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30
+          && d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30
+          && (d.waitOrder == null || (d.waitOrder is int && d.waitOrder >= 0 && d.waitOrder <= 1000000))
+          && (d.tentativeAt == null || d.tentativeAt is number)
+          && (d.rosterAt == null || d.rosterAt is number)
+          && (
+            (!d.keys().hasAny(['signedUpWith']) && !d.keys().hasAny(['signedUpWithName']))
+            || (d.keys().hasAll(['signedUpWith', 'signedUpWithName'])
+                && d.signedUpWith == d.addedByUid
+                && d.signedUpWithName == d.addedBy
+                && d.addedByUid.size() > 0)
+          );
+    }
     function selfSignupShape(d) {
       return d.selfSignup == true
           && d.rosterId is string
@@ -726,10 +758,12 @@ service cloud.firestore {
           && invitedByOk()
           && playerListsOk(request.resource.data.matchId);
       // El enlace #/jugador/{id}, sin cuenta de organizador.
-      allow create: if guestSignupShape(request.resource.data)
+      // Va antes y no llama a validPlayer: si no, el tope de 1000
+      // expresiones niega el alta y la pantalla vuelve a «Anotarme».
+      allow create: if !signedIn()
+          && guestSignupShape(request.resource.data)
+          && guestPlayerFields(request.resource.data)
           && selfRateOk(request.resource.data.rosterId, playerId)
-          && validPlayer(request.resource.data)
-          && invitedByOk()
           && playerListsOk(request.resource.data.matchId);
       allow create: if isActiveStaff() && validPlayer(request.resource.data)
           && invitedByOk()
