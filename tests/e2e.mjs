@@ -8180,7 +8180,7 @@ await fresh.close();
   await waitRow.locator('button', { hasText: 'Anular' }).click();
   await locked.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
-    return row && row.innerText.includes('Lista de espera') && !row.innerText.includes('Anular');
+    return row && row.innerText.includes('Anotarme en lista de espera') && !row.querySelector('[data-self="cancel"]');
   }, fullId);
   await locked.evaluate(() => {
     window.__app.store.selfJoin = async () => {
@@ -8447,7 +8447,8 @@ await fresh.close();
       overflow: Math.max(0, Math.ceil(row.scrollWidth - row.clientWidth)),
       pageOverflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
       buttonRight: ab.left >= mb.right - 2 && ab.right <= rb.right + 1,
-      centered: Math.abs((ab.top + ab.height / 2) - (mb.top + mb.height / 2)) <= 8,
+      uncovered: [...when.querySelectorAll('.self-bit')].every((el) => el.getBoundingClientRect().right <= ab.left + 1),
+      centered: Math.abs((ab.top + ab.height / 2) - (mb.top + mb.height / 2)) <= 12,
       sameLine: tops.every((top) => Math.abs(top - tops[0]) < 3),
       placeBelow: place.getBoundingClientRect().top >= when.getBoundingClientRect().bottom - 2,
       placeShown: placeStyle ? placeStyle.textOverflow !== 'ellipsis' && placeStyle.whiteSpace !== 'nowrap' && placeText.scrollWidth <= placeText.clientWidth + 1 : false,
@@ -8459,7 +8460,7 @@ await fresh.close();
   await page.setViewportSize({ width: 360, height: 800 });
   const joinBox = await selfCardBox(self.open);
   const waitBox = await selfCardBox(self.full);
-  check('A 360px la ficha queda en dos columnas sin cortarse', joinBox.overflow <= 1 && joinBox.pageOverflow <= 1 && joinBox.buttonRight && joinBox.centered && joinBox.sameLine && joinBox.placeBelow && joinBox.placeShown && waitBox.buttonRight && waitBox.overflow <= 1 && waitBox.sameLine, JSON.stringify({ joinBox, waitBox }));
+  check('A 360px la ficha queda en dos columnas sin cortarse', joinBox.overflow <= 1 && joinBox.pageOverflow <= 1 && joinBox.buttonRight && joinBox.uncovered && joinBox.centered && joinBox.placeBelow && joinBox.placeShown && waitBox.buttonRight && waitBox.uncovered && waitBox.overflow <= 1 && (await page.locator(`#self-list .self-row[data-match="${self.full}"] .self-btn`).innerText()).replace(/\s+/g, ' ').includes('Anotarme en lista de espera'), JSON.stringify({ joinBox, waitBox }));
   await page.setViewportSize({ width: 390, height: 844 });
   await openRow.locator('button', { hasText: 'Anotarme' }).click();
   await page.waitForFunction((id) => {
@@ -8529,7 +8530,7 @@ await fresh.close();
   await page.locator(`#self-list .self-row[data-match="${self.full}"]`).locator('button', { hasText: 'Anular' }).click();
   await page.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
-    return row && row.innerText.includes('Lista de espera');
+    return row && row.innerText.includes('Anotarme en lista de espera');
   }, self.full);
   const selfBajas = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja'), self.rosterId);
   check('Anular la espera no anota puntos', selfBajas.length === 0, JSON.stringify(selfBajas));

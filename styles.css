@@ -439,13 +439,16 @@ html.dark .points-step input.up { color: #4ade80; }
 #self-list .self-card {
   display: flex; flex-direction: row; align-items: center; gap: 8px;
   padding: 8px 10px; background: var(--card); border: 1px solid var(--line);
-  border-radius: var(--radius); box-shadow: var(--shadow); overflow: visible;
+  border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
   text-align: left;
 }
-#self-list .self-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+#self-list .self-main {
+  flex: 1 1 0; min-width: 0; max-width: 100%; overflow: hidden;
+  display: flex; flex-direction: column; gap: 2px;
+}
 #self-list .self-when {
-  display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 8px; margin: 0;
-  white-space: nowrap; overflow: visible; text-overflow: unset;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 0;
+  min-width: 0; max-width: 100%;
   font-size: 0.8125rem; font-weight: 700; line-height: 1.2;
 }
 .self-row {
@@ -461,7 +464,7 @@ html.dark .points-step input.up { color: #4ade80; }
 .self-error { margin: 0; color: var(--danger); font-weight: 700; font-size: 0.8125rem; line-height: 1.25; text-align: left; }
 #self-list .self-ico, #self-list .self-check { width: 16px; height: 16px; }
 #self-list .self-bit { gap: 4px; }
-#self-list .self-when .self-bit { flex: none; align-items: center; min-width: max-content; }
+#self-list .self-when .self-bit { flex: 0 1 auto; align-items: center; min-width: 0; max-width: 100%; }
 #self-list .self-when .self-bit span { white-space: nowrap; }
 #self-list .self-status.confirmed,
 #self-list .self-check { color: #15803d; margin-top: 0; }
@@ -475,8 +478,15 @@ html.dark #self-list .self-check { color: #4ade80; }
   white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: anywhere;
 }
 #self-list .self-note { white-space: normal; overflow: visible; text-overflow: unset; text-align: left; }
-#self-list .self-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; margin-left: auto; }
-#self-list .self-btn { min-height: 36px; padding: 0 8px; font-size: 0.8125rem; }
+#self-list .self-actions {
+  display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end;
+  margin-left: auto; max-width: 40%; min-width: 0;
+}
+#self-list .self-btn, #self-list .self-wa {
+  min-height: 36px; height: auto; max-width: 100%; min-width: 0;
+  padding: 6px 8px; font-size: 0.8125rem; line-height: 1.15;
+  white-space: normal; text-align: center;
+}
 .self-side { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 72%; }
 .self-side:has(.self-btn) { flex: none; max-width: none; }
 .self-note { font-size: 0.75rem; line-height: 1.1; color: var(--muted, #667); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
