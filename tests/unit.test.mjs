@@ -20,7 +20,7 @@ import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from '../
 import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from '../js/push.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { GUEST_PAGE, HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, guestListenPlan, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
+import { GUEST_PAGE, HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, guestListenPlan, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, playerVisibleBackfill, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { compensationDoneDates, countedForMoney, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
@@ -4027,7 +4027,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v211');
+  assert.equal(version, 'f7c-v212');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -5488,9 +5488,52 @@ test('el medidor no escribe seguido ni con la app oculta', () => {
   const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
   assert.equal(app.includes('backfillConfirmTokens'), false);
   assert.equal(app.includes('scheduleRetroactiveAutoCredit() {\n  // El pase de crédito'), true);
-  assert.match(store, /async _backfillMatches\(\) \{[\s\S]*?return;/);
+  assert.match(store, /_backfillMatches\(docs\) \{/);
+  assert.equal(store.includes('_appendLogs') && /_backfillMatches\(docs\) \{[\s\S]*?\n  \}/.exec(store)[0].includes('_appendLogs'), false);
+  assert.equal(store.includes("_widenFromMatches(this._buckets.matches.history);\n      this._backfillMatches"), false);
   assert.match(store, /async _migrateContacts\(\) \{[\s\S]*?return;/);
   assert.equal(store.includes('this._migrated.delete(tag)'), false);
+});
+
+test('un partido próximo sin playerVisible se marca visible una sola vez y no entra al registro', async () => {
+  const today = '2026-11-17';
+  const his = { id: 'hoy', date: today, createdByUid: 'gus', viewers: ['*'] };
+  assert.deepEqual(playerVisibleBackfill(his, { uid: 'gus', today }), { id: 'hoy', patch: { playerVisible: true } });
+  assert.equal(playerVisibleBackfill({ ...his, playerVisible: false }, { uid: 'gus', today }), null);
+  assert.equal(playerVisibleBackfill({ ...his, playerVisible: true }, { uid: 'gus', today }), null);
+  assert.equal(playerVisibleBackfill({ ...his, createdByUid: 'martin' }, { uid: 'gus', today }), null);
+  assert.equal(playerVisibleBackfill({ ...his, date: '2026-11-16' }, { uid: 'gus', today }), null);
+  assert.deepEqual(playerVisibleBackfill({ id: 'libre', date: today, createdByUid: 'gus' }, { uid: 'gus', today }).patch, { playerVisible: true, viewers: ['*'] });
+  assert.deepEqual(playerVisibleBackfill({ id: 'solo', date: today, createdByUid: 'gus', viewers: ['gus'] }, { uid: 'gus', today }).patch, { playerVisible: true });
+  const store = new FirebaseStore();
+  store.actor = { uid: 'gus', name: 'Gustavo', role: 'organizer' };
+  store.db = {};
+  store._queryDay = today;
+  store._backfilled = new Set();
+  store._appendLogs = async () => { throw new Error('registro'); };
+  const writes = [];
+  let commits = 0;
+  store.fs = {
+    doc(_db, ...parts) { return { path: parts.join('/') }; },
+    writeBatch() {
+      const batch = [];
+      return {
+        update(ref, patch) { batch.push({ path: ref.path, patch }); },
+        commit() { commits += 1; writes.push(...batch); return Promise.resolve(); },
+      };
+    },
+  };
+  const docs = [
+    { id: 'hoy', data: () => ({ date: today, createdByUid: 'gus', viewers: ['*'] }) },
+    { id: 'oculto', data: () => ({ date: today, createdByUid: 'gus', viewers: ['*'], playerVisible: false }) },
+    { id: 'ajeno', data: () => ({ date: today, createdByUid: 'martin', viewers: ['*'] }) },
+    { id: 'viejo', data: () => ({ date: '2026-11-01', createdByUid: 'gus', viewers: ['*'] }) },
+  ];
+  store._backfillMatches(docs);
+  store._backfillMatches(docs);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(commits, 1);
+  assert.deepEqual(writes, [{ path: 'matches/hoy', patch: { playerVisible: true } }]);
 });
 
 test('al abrir no se reescriben los contadores y el límite diario se avisa', async () => {

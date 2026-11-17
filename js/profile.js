@@ -400,6 +400,27 @@ export const UPCOMING_PAGE = 40;
 export const GUEST_PAGE = 24;
 
 /**
+ * Un partido viejo sin playerVisible se ve (el casillero arranca marcado).
+ * Firestore no consulta un campo que no está, así que hay que escribirlo.
+ * Solo el organizador dueño, solo de hoy en adelante, y solo si el campo falta.
+ * viewers * se agrega si la lista no está: sin viewers el partido es de todos
+ * y la página del jugador lo pide. Una lista privada no se abre.
+ */
+export function playerVisibleBackfill(match, { uid, today } = {}) {
+  const owner = String(uid || '').trim();
+  const day = String(today || '');
+  const id = String(match?.id || '').trim();
+  if (!id || !owner || !day) return null;
+  if (String(match.createdByUid || '') !== owner) return null;
+  if (String(match.date || '') < day) return null;
+  if (match.playerVisible === true || match.playerVisible === false) return null;
+  const patch = { playerVisible: true };
+  const viewers = match.viewers;
+  if (!Array.isArray(viewers) || !viewers.length) patch.viewers = ['*'];
+  return { id, patch };
+}
+
+/**
  * Consultas de la página del jugador, sin sesión.
  * Partidos: solo los de ese organizador, visibles, de hoy en adelante.
  * Jugadores: solo las altas de esa ficha. viewers * lo pide la regla de list.
