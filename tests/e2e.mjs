@@ -142,7 +142,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v208');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v209');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8142,6 +8142,56 @@ await fresh.close();
   await locked.goto(`${BASE}#/jugador/${guestId}/GustavoToken2026v206xxxx`);
   await locked.waitForSelector('#player-signup-of');
   check('El enlace del organizador titula sus próximos partidos', (await locked.locator('#player-signup-of').innerText()) === 'Próximos partidos de Gustavo' && (await locked.locator('#self-list .self-btn').first().innerText()).trim() === 'Anotarme');
+  await locked.locator('#self-list button', { hasText: 'Anotarme' }).click();
+  await locked.waitForFunction(() => {
+    const row = document.querySelector('#self-list .self-row');
+    return row && row.innerText.includes('Pendiente de confirmación') && row.innerText.includes('Anular');
+  });
+  const linkPending = await locked.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const player = Object.values(db.players || {}).find((row) => row.name === 'Ángel' && row.selfSignup === true);
+    return player ? { tentative: player.tentative === true, waiting: player.waiting === true, addedByUid: player.addedByUid || '', share: player.signedUpWith || '' } : null;
+  });
+  check('Desde el enlace, Anotarme queda pendiente a nombre del organizador', linkPending?.tentative === true && linkPending.waiting === false && linkPending.addedByUid === 'org-gustavo' && linkPending.share === 'org-gustavo', JSON.stringify(linkPending));
+  await locked.locator('#self-list button', { hasText: 'Anular' }).click();
+  await locked.waitForFunction(() => (document.querySelector('#self-list .self-btn')?.innerText || '').trim() === 'Anotarme');
+  check('Desde el enlace, Anular vuelve a Anotarme', (await locked.locator('#self-list .self-btn').innerText()).trim() === 'Anotarme');
+  const fullId = await locked.evaluate(() => {
+    const app = window.__app;
+    const db = app.store._load();
+    db.matches.full209 = {
+      date: '2026-10-19', time: '22:30', capacity: 1, playerCount: 1,
+      venueName: 'Polideportivo Colegiales', createdByUid: 'org-gustavo',
+      viewers: ['*'], adders: ['*'], cancelled: false,
+    };
+    db.players.ocupa209 = {
+      matchId: 'full209', matchDate: '2026-10-19', name: 'Ocupa Cupo',
+      waiting: false, noPlay: false, viewers: ['*'], adders: ['*'],
+    };
+    app.store._save(db);
+    return 'full209';
+  });
+  const waitRow = locked.locator(`#self-list .self-row[data-match="${fullId}"]`);
+  await waitRow.locator('button', { hasText: 'Lista de espera' }).click();
+  await locked.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('En lista de espera') && row.innerText.includes('Anular');
+  }, fullId);
+  check('Desde el enlace, Lista de espera anota y se puede anular', (await waitRow.innerText()).includes('En lista de espera'));
+  await waitRow.locator('button', { hasText: 'Anular' }).click();
+  await locked.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Lista de espera') && !row.innerText.includes('Anular');
+  }, fullId);
+  await locked.evaluate(() => {
+    window.__app.store.selfJoin = async () => {
+      throw Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+    };
+  });
+  await locked.locator('#self-list .self-row button', { hasText: 'Anotarme' }).first().click();
+  await locked.waitForSelector('#self-list .self-error');
+  const denied = (await locked.locator('#self-list .self-error').innerText()).replace(/\s+/g, ' ');
+  check('Si Firebase rechaza el alta, el error queda en la ficha', denied.includes('No se pudo anotar') && denied.includes('permiso') && (await locked.locator('#self-list .self-btn').first().innerText()).trim() === 'Anotarme', denied);
   await anon.close();
 }
 
