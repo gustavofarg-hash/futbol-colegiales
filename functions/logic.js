@@ -24,10 +24,11 @@ function pushCopy(kind, player, match) {
       ? 'entró en la lista de espera'
       : 'se bajó';
   const id = encodeURIComponent(String(match?.id || ''));
+  const hash = kind === 'alta' ? '#/a-confirmar' : `#/partido/${id}`;
   return {
     title: 'Mis Partidos',
     body: `${name} ${verb}. ${when}`,
-    url: `https://gustavofarg-hash.github.io/futbol-colegiales/prueba/#/partido/${id}`,
+    url: `https://gustavofarg-hash.github.io/futbol-colegiales/prueba/${hash}`,
   };
 }
 
