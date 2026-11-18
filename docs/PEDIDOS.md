@@ -4,6 +4,7 @@
 
 Auditoría de solo lectura sobre `main` en `/workspace/fc-audit`, con la versión **f7c-v61** (`js/app.js:37`, `sw.js:3`). Hecha el 30/10/2026.
 **Actualizada para f7c-v155** (12/11/2026): el botón de pago de la lista tiene la misma forma y el mismo tamaño que el de WhatsApp (cuadrado de radio 12px). El fondo es el de la promo y el $ es gris oscuro en claro y gris claro en oscuro, para que se lea. `firestore.rules` no cambió.
+**Actualizada para f7c-v219** (18/11/2026): la ficha del enlace muestra los partidos de ese organizador de los próximos 14 días, sábado y domingo incluidos. Próximos del organizador usa el mismo rango, sin el tope de 40. `firestore.rules` no cambió. Hay un índice nuevo de partidos: `createdByUid` + `viewers` + `date`.
 **Actualizada para f7c-v218** (18/11/2026): el aviso al teléfono también corre en producción cuando hay clave web en config.js. En /prueba/ esa clave sigue vacía y no hay push. Los links de la función apuntan a la app publicada si el proyecto es futbol-partidos. `firestore.rules` no cambió. Los índices no cambiaron.
 **Actualizada para f7c-v217** (17/11/2026, otra vez): las pruebas abortan si apuntan al sitio publicado o a un proyecto real. Una ficha ya escuchada no se vuelve a suscribir. `firestore.rules` no cambió.
 **Actualizada para f7c-v217** (17/11/2026): el aviso de cupo de Firebase solo sale si el código es resource-exhausted. La escucha de jugadores y confirmaciones del organizador tiene tope. `firestore.rules` no cambió. Hay índices nuevos: jugadores y confirmaciones por fecha descendente.

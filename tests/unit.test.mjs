@@ -21,7 +21,7 @@ import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from '../
 import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from '../js/push.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { GUEST_PAGE, HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, guestListenPlan, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, playerVisibleBackfill, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
+import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, guestListenPlan, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, playerVisibleBackfill, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
 import { compensationDoneDates, countedForMoney, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
@@ -3068,12 +3068,18 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   assert.ok(ranged.filters.some((filter) => filter.op === '>=' && filter.value === '2026-10-01'));
   assert.ok(ranged.filters.some((filter) => filter.op === '<=' && filter.value === '2026-10-10'));
   const upcoming = matchQueryPlan('upcoming', null, '2026-10-19');
-  assert.equal(upcoming.limit, 40);
+  assert.equal(upcoming.limit, null);
+  assert.ok(upcoming.filters.some((filter) => filter.field === 'date' && filter.op === '<=' && filter.value === '2026-11-01'));
   const guest = guestListenPlan({ rosterId: 'ficha', organizerUid: 'org', today: '2026-10-19' });
-  assert.equal(guest.matches.limit, GUEST_PAGE);
+  assert.equal(guest.matches.limit, null);
+  assert.equal(guest.until, '2026-11-01');
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'viewers' && filter.value === '*'), true);
-  assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid'), false);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid' && filter.op === '==' && filter.value === 'org'), true);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'date' && filter.op === '<=' && filter.value === '2026-11-01'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'playerVisible'), false);
+  const open = guestListenPlan({ rosterId: 'ficha', today: '2026-10-19' });
+  assert.equal(open.matches.filters.some((filter) => filter.field === 'createdByUid'), false);
+  assert.equal(open.matches.limit, null);
   assert.equal(guest.players.filters.some((filter) => filter.field === 'rosterId' && filter.value === 'ficha'), true);
   assert.equal(guest.matches.collection, 'matches');
   assert.deepEqual(upcoming.orderBy, ['date', 'asc']);
@@ -4044,7 +4050,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v218');
+  assert.equal(version, 'f7c-v219');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4054,6 +4060,38 @@ test('el error del backup nombra la colección y el documento', () => {
   assert.ok(app.indexOf('${noPlaySection(m, readOnly)}') < app.indexOf('${usualSection(m)}'), 'No jugó pero pagó queda arriba de Suelen anotarse');
   assert.equal(app.includes('Crear cuenta de administrador'), false);
   assert.match(readFileSync(new URL('../js/auth.js', import.meta.url), 'utf8'), /async registerAdmin\(/);
+});
+
+test('el enlace pide los partidos de ese organizador, sábado incluido', async () => {
+  const store = new FirebaseStore();
+  store._shareToken = 'tokendegustavolargo1234';
+  store._queryDay = '2026-11-18';
+  const calls = [];
+  store.fs = {
+    doc(_db, col, id) { return { path: `${col}/${id}` }; },
+    collection(_db, col) { return { path: col }; },
+    query(ref, ...parts) { return { path: ref.path, parts }; },
+    where(field, op, value) { return { field, op, value }; },
+    orderBy(field, dir) { return { orderBy: field, dir }; },
+    limit(n) { return { limit: n }; },
+    onSnapshot(ref, next) {
+      calls.push(ref);
+      queueMicrotask(() => {
+        if (String(ref.path).startsWith('shareTokens/')) next({ exists: () => true, id: 'tokendegustavolargo1234', data: () => ({ uid: 'gus', name: 'Gustavo' }) });
+        else if (String(ref.path).startsWith('roster/')) next({ exists: () => true, id: 'ficha', data: () => ({ name: 'Jeremi' }) });
+        else next({ docs: [], metadata: { fromCache: false } });
+      });
+      return () => {};
+    },
+  };
+  store._listenGuest('ficha');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const matchQuery = calls.find((ref) => ref.path === 'matches');
+  assert.ok(matchQuery.parts.some((part) => part.field === 'createdByUid' && part.op === '==' && part.value === 'gus'));
+  assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '>=' && part.value === '2026-11-18'));
+  assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '<=' && part.value === '2026-12-01'));
+  assert.equal(matchQuery.parts.some((part) => part.limit), false);
+  assert.equal(calls.filter((ref) => ref.path === 'matches').length, 1);
 });
 
 test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => {
@@ -4110,7 +4148,8 @@ test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => 
   assert.equal(matchQuery.parts.some((part) => part.field === 'playerVisible'), false);
   assert.ok(matchQuery.parts.some((part) => part.field === 'viewers' && part.value === '*'));
   assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '>='));
-  assert.ok(matchQuery.parts.some((part) => part.limit === 24));
+  assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '<='));
+  assert.equal(matchQuery.parts.some((part) => part.limit), false);
   const playerQuery = calls.find((ref) => ref.path === 'players');
   assert.ok(playerQuery.parts.some((part) => part.field === 'rosterId' && part.value === 'NZpoLFKUUh044kfNGSmR'));
   assert.equal(playerQuery.parts.some((part) => part.field === 'viewers' && part.op === 'array-contains-any'), false);

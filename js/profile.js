@@ -394,9 +394,12 @@ export function historyWindow(matches, filter, now = Date.now()) {
  * Consulta de partidos. Siempre filtra por viewers (el permiso del partido).
  * Próximos: date >= hoy, sin tope. Historial: date < hoy, límite 30, o el rango.
  */
-/** Tope de próximos en la pantalla del organizador. Sin tope, cada apertura lee todo el futuro. */
-export const UPCOMING_PAGE = 40;
-/** Tope de la página del jugador: sus partidos y sus altas, no la colección. */
+/** Próximos del organizador: hoy y 13 días más. Un tope por cantidad
+ * escondía el sábado y el domingo si antes había muchos partidos. */
+export const UPCOMING_HORIZON_DAYS = 13;
+/** La ficha del jugador muestra ese mismo horizonte, solo de su organizador. */
+export const GUEST_HORIZON_DAYS = 13;
+/** Tope de «ya vi el aviso» en la ficha. No recorta la lista de partidos. */
 export const GUEST_PAGE = 24;
 
 /**
@@ -427,38 +430,45 @@ export function playerVisibleBackfill(match, { uid, today, name } = {}) {
 
 /**
  * Consultas de la página del jugador, sin sesión.
- * Partidos: los abiertos de hoy en adelante, con tope. El dueño se filtra
- * en la app: createdByUid y playerVisible a veces no están y Firestore
- * no encuentra un campo que falta. Jugadores: solo las altas de esa ficha.
+ * Con el uid del enlace, solo los partidos de ese organizador en los
+ * próximos 14 días. Sin uid, el mismo rango de los abiertos: un tope de
+ * 24 partidos de todos se comía el fin de semana. playerVisible no entra
+ * en la consulta porque a veces el campo no está.
  */
-export function guestListenPlan({ rosterId, today, limit = GUEST_PAGE } = {}) {
+export function guestListenPlan({ rosterId, today, organizerUid } = {}) {
   const id = String(rosterId || '').trim();
   const day = String(today || '');
+  const end = day ? addDays(day, GUEST_HORIZON_DAYS) : '';
+  const owner = String(organizerUid || '').trim();
+  const matchFilters = [];
+  if (owner) matchFilters.push({ field: 'createdByUid', op: '==', value: owner });
+  matchFilters.push({ field: 'viewers', op: 'array-contains', value: '*' });
+  if (day) matchFilters.push({ field: 'date', op: '>=', value: day });
+  if (end) matchFilters.push({ field: 'date', op: '<=', value: end });
   return {
     rosterId: id,
+    until: end,
     matches: {
       collection: 'matches',
-      filters: [
-        { field: 'viewers', op: 'array-contains', value: '*' },
-        { field: 'date', op: '>=', value: day },
-      ],
+      filters: matchFilters,
       orderBy: ['date', 'asc'],
-      limit,
+      limit: null,
     },
     players: id ? {
       collection: 'players',
       filters: [
         { field: 'rosterId', op: '==', value: id },
         { field: 'viewers', op: 'array-contains', value: '*' },
-        { field: 'matchDate', op: '>=', value: day },
+        ...(day ? [{ field: 'matchDate', op: '>=', value: day }] : []),
+        ...(end ? [{ field: 'matchDate', op: '<=', value: end }] : []),
       ],
       orderBy: ['matchDate', 'asc'],
-      limit,
+      limit: null,
     } : null,
     seen: id ? {
       collection: 'confirmSeen',
       filters: [{ field: 'rosterId', op: '==', value: id }],
-      limit,
+      limit: GUEST_PAGE,
     } : null,
   };
 }
@@ -466,10 +476,13 @@ export function guestListenPlan({ rosterId, today, limit = GUEST_PAGE } = {}) {
 export function matchQueryPlan(which, bounds, today) {
   const viewers = { field: 'viewers', op: 'array-contains-any' };
   if (which === 'upcoming') {
+    const end = today ? addDays(today, UPCOMING_HORIZON_DAYS) : '';
+    const filters = [viewers, { field: 'date', op: '>=', value: today }];
+    if (end) filters.push({ field: 'date', op: '<=', value: end });
     return {
-      filters: [viewers, { field: 'date', op: '>=', value: today }],
+      filters,
       orderBy: ['date', 'asc'],
-      limit: UPCOMING_PAGE,
+      limit: null,
     };
   }
   if (!bounds || bounds.empty) return { empty: true, filters: [viewers], orderBy: [], limit: null };

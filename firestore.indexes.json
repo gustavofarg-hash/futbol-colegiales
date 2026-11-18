@@ -51,6 +51,15 @@
       ]
     },
     {
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdByUid", "order": "ASCENDING" },
+        { "fieldPath": "viewers", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "players",
       "queryScope": "COLLECTION",
       "fields": [

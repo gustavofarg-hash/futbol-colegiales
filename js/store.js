@@ -2573,31 +2573,43 @@ export class FirebaseStore {
     };
     const plan = guestListenPlan({ rosterId: id, today });
     this.state.guestMatchError = '';
-    this._swap('guest-matches', onSnapshot(this._queryFromPlan(plan.matches), (snap) => {
-      this.state.matches = rows(snap).filter((match) => match.playerVisible !== false && match.cancelled !== true);
-      this.state.guestMatchError = '';
-      seen.matches = true;
-      publish();
-    }, (error) => {
-      console.error(error);
-      this.state.matches = [];
-      this.state.guestMatchError = 'No se pudieron cargar los partidos.';
-      seen.matches = true;
-      publish();
-    }));
+    let armedFor = null;
+    const armMatches = (organizerUid) => {
+      const key = String(organizerUid || '');
+      if (armedFor === key && this._named?.['guest-matches']) return;
+      armedFor = key;
+      const matches = guestListenPlan({ rosterId: id, today, organizerUid: key }).matches;
+      this._swap('guest-matches', onSnapshot(this._queryFromPlan(matches), (snap) => {
+        this.state.matches = rows(snap).filter((match) => match.playerVisible !== false && match.cancelled !== true);
+        this.state.guestMatchError = '';
+        seen.matches = true;
+        publish();
+      }, (error) => {
+        console.error(error);
+        this.state.matches = [];
+        this.state.guestMatchError = 'No se pudieron cargar los partidos.';
+        seen.matches = true;
+        publish();
+      }));
+    };
     if (this._shareToken) {
       this._swap('guest-share', onSnapshot(doc(this.db, 'shareTokens', this._shareToken), (snap) => {
         const data = snap.exists() ? snap.data() : null;
         this.state.shareOrganizer = data?.uid ? { uid: String(data.uid), name: String(data.name || ''), token: this._shareToken } : null;
+        armMatches(this.state.shareOrganizer?.uid || '');
         seen.share = true;
         publish();
       }, (error) => {
         console.error(error);
         this.state.shareOrganizer = null;
+        armMatches('');
         seen.share = true;
         publish();
       }));
-    } else this.state.shareOrganizer = null;
+    } else {
+      this.state.shareOrganizer = null;
+      armMatches('');
+    }
     this._swap('guest-roster', onSnapshot(doc(this.db, 'roster', id), (snap) => {
       const data = snap.exists() ? snap.data() : null;
       this.state.roster = data ? [{ id: snap.id, ...data }] : [];
