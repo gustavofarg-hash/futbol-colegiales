@@ -44,6 +44,14 @@
       "collectionGroup": "matches",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "viewers", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "createdByUid", "order": "ASCENDING" },
         { "fieldPath": "playerVisible", "order": "ASCENDING" },
         { "fieldPath": "viewers", "arrayConfig": "CONTAINS" },
@@ -73,6 +81,22 @@
       "fields": [
         { "fieldPath": "shareToken", "order": "ASCENDING" },
         { "fieldPath": "rosterId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "players",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "matchId", "order": "ASCENDING" },
+        { "fieldPath": "viewers", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
+      "collectionGroup": "confirmations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "matchId", "order": "ASCENDING" },
+        { "fieldPath": "viewers", "arrayConfig": "CONTAINS" }
       ]
     },
     {

@@ -12,6 +12,7 @@ export const DEMO_ACCOUNTS = [
 
 const FB_VERSION = '13.0.0';
 const FB = `https://www.gstatic.com/firebasejs/${FB_VERSION}`;
+let authEmulatorReady = false;
 
 export function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -157,8 +158,13 @@ class FirebaseSession {
   _emit() { this.listeners.forEach((fn) => fn(this)); }
   async init() {
     this.fb = await initFirebase();
-    const { getAuth } = await import(`${FB}/firebase-auth.js`);
+    const { getAuth, connectAuthEmulator } = await import(`${FB}/firebase-auth.js`);
     this.auth = getAuth(this.fb.app);
+    const authEmulator = typeof globalThis !== 'undefined' && globalThis.__F7C_TEST && globalThis.__F7C_AUTH_EMULATOR;
+    if (authEmulator && !authEmulatorReady) {
+      connectAuthEmulator(this.auth, String(authEmulator), { disableWarnings: true });
+      authEmulatorReady = true;
+    }
     await this.auth.authStateReady();
     if (this.auth.currentUser) await this._adopt(this.auth.currentUser);
   }

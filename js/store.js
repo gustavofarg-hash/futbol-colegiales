@@ -88,6 +88,7 @@ import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
 import { COMP_LISTEN, CONFIRM_LISTEN, PLAYER_LISTEN, USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, usageFlushDecision, UsageMeter } from './usage.js';
+import { chunkList, rosterDatesOf } from './roster-load.js';
 import { guestListenPlan, historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, playerVisibleBackfill, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { creditDocId, nextCredit } from './credit.js';
@@ -2014,7 +2015,7 @@ export class FirebaseStore {
     this._compUnscoped = false;
     this._named = {};
     this._unsubs = [];
-    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '', confirmSeen: [], guestMatchError: '' };
+    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '', confirmSeen: [], guestMatchError: '', rosterWatch: [], rosterCovered: [], rosterDates: [] };
     this._noteMoves = new Set();
     this._rosterReady = false;
     this._logRange = weekRange();
@@ -2048,6 +2049,7 @@ export class FirebaseStore {
       const opened = (this._buckets.matches.opened || []).filter((row) => row.id !== match.id);
       opened.push(match);
       this._buckets.matches.opened = opened;
+      this._armRoster();
       this._rebuild('matches');
       this._widenDated(match.date);
       return 'ok';
@@ -2501,6 +2503,8 @@ export class FirebaseStore {
     }
     this._unsubs = [];
     this._named = {};
+    this._dropRoster();
+    this._rosterKey = '';
   }
   _swap(name, un) {
     const prev = this._named?.[name];
@@ -2716,6 +2720,7 @@ export class FirebaseStore {
       this._buckets.matches.history = [];
       this.state.historyError = '';
       this._swap('history', null);
+      this._armRoster();
       this._rebuild('matches');
       return;
     }
@@ -2725,12 +2730,14 @@ export class FirebaseStore {
       this._noteSnap(snap);
       this.state.historyError = '';
       this._buckets.matches.history = this._takeMatchSnap(snap);
+      this._armRoster();
       this._rebuild('matches');
       this._widenFromMatches(this._buckets.matches.history);
     }, (e) => {
       if (e?.code === 'failed-precondition') {
         this.state.historyError = e.message || 'Falta un índice de Firestore para el historial.';
         this._buckets.matches.history = [];
+        this._armRoster();
         this._rebuild('matches');
         return;
       }
@@ -2780,10 +2787,196 @@ export class FirebaseStore {
     this.state.pending = meta.hasPendingWrites === true;
   }
   _rebuild(kind) {
-    const priority = kind === 'matches' ? ['opened', 'history', 'upcoming'] : ['broad', 'narrow'];
+    const priority = kind === 'matches' ? ['opened', 'history', 'upcoming', 'roster'] : ['broad', 'narrow', 'roster'];
     this.state[kind] = mergeDocsById(this._buckets[kind] || {}, priority);
     this._emit();
     if (kind === 'players') this._migrateContacts();
+  }
+  _dropRosterDocs() {
+    for (const un of this._rosterDocUnsubs || []) {
+      try { un(); } catch { /* ya cerrado */ }
+    }
+    this._rosterDocUnsubs = [];
+    this._rosterIdsKey = '';
+  }
+  _dropRoster() {
+    this._rosterGen = (this._rosterGen || 0) + 1;
+    for (const un of this._rosterUnsubs || []) {
+      try { un(); } catch { /* ya cerrado */ }
+    }
+    this._rosterUnsubs = [];
+    this._dropRosterDocs();
+    if (this._buckets?.players) this._buckets.players.roster = [];
+    if (this._buckets?.confirmations) this._buckets.confirmations.roster = [];
+    if (this._buckets?.matches) this._buckets.matches.roster = [];
+    this._compRoster = [];
+  }
+  _rosterListen(ref, onNext, onErr, kind = 'dates') {
+    const { onSnapshot } = this.fs;
+    const un = onSnapshot(ref, onNext, onErr || (() => {}));
+    const list = kind === 'docs' ? '_rosterDocUnsubs' : '_rosterUnsubs';
+    this[list] = this[list] || [];
+    this[list].push(un);
+    return un;
+  }
+  _rosterFail(error) {
+    if (error?.code === 'failed-precondition') {
+      this.state.rosterError = 'Falta el índice de Firestore para los jugadores del historial (matchId + viewers).';
+    } else if (error?.code === 'permission-denied') {
+      this.state.rosterError = 'No se pudieron leer los jugadores del historial.';
+    } else {
+      this.state.rosterError = 'No se pudieron cargar los jugadores del historial.';
+    }
+    this._emit();
+  }
+  _docRows(snap) {
+    return (snap?.docs || []).map((item) => ({ id: item.id, ...item.data() }));
+  }
+  _armRoster() {
+    if (!this.fs || this._guest || !this.actor?.uid || !this._buckets?.matches) return;
+    const today = this._queryDay || todayISO();
+    const opened = (this._buckets.matches.opened || []).filter((match) => match?.date && match.date < today);
+    const dates = rosterDatesOf([...(this._buckets.matches.history || []), ...opened]);
+    const key = dates.join('|');
+    if (key === this._rosterKey) return;
+    this._rosterKey = key;
+    this._dropRoster();
+    this.state.rosterWatch = dates;
+    this.state.rosterCovered = [];
+    this.state.rosterDates = [];
+    this.state.rosterError = '';
+    if (!dates.length) return;
+    this._listenRosterDates(dates);
+  }
+  _listenRosterDates(dates) {
+    const gen = this._rosterGen;
+    const uid = this.actor.uid;
+    const { collection, query, where } = this.fs;
+    const chunks = chunkList(dates, 30);
+    const got = {};
+    const take = (part, index, snap) => {
+      if (gen !== this._rosterGen) return;
+      got[`${part}:${index}`] = this._docRows(snap);
+      if (!chunks.every((_, i) => got[`star:${i}`] && got[`mine:${i}`])) return;
+      const byId = new Map();
+      for (const rows of Object.values(got)) {
+        for (const match of rows) if (match?.id) byId.set(match.id, match);
+      }
+      this._buckets.matches.roster = [...byId.values()];
+      this.state.rosterDates = dates.slice();
+      const today = this._queryDay || todayISO();
+      const ids = new Set(byId.keys());
+      for (const match of this._buckets.matches.history || []) if (match?.id) ids.add(match.id);
+      for (const match of this._buckets.matches.opened || []) {
+        if (match?.id && match.date && match.date < today) ids.add(match.id);
+      }
+      const idKey = [...ids].sort().join('|');
+      this._rebuild('matches');
+      if (idKey === this._rosterIdsKey) return;
+      this._rosterIdsKey = idKey;
+      this.state.rosterCovered = [];
+      this._dropRosterDocs();
+      this._rosterIdsKey = idKey;
+      this._listenRosterDocs('players', [...ids], gen);
+      this._listenRosterDocs('confirmations', [...ids], gen);
+      this._listenRosterCompensations(dates, gen);
+    };
+    const base = collection(this.db, 'matches');
+    chunks.forEach((chunk, index) => {
+      this._rosterListen(
+        query(base, where('viewers', 'array-contains', '*'), where('date', 'in', chunk)),
+        (snap) => take('star', index, snap),
+        (error) => this._rosterFail(error),
+      );
+      this._rosterListen(
+        query(base, where('viewers', 'array-contains', uid), where('date', 'in', chunk)),
+        (snap) => take('mine', index, snap),
+        (error) => this._rosterFail(error),
+      );
+    });
+  }
+  _listenRosterDocs(kind, ids, gen) {
+    const chunks = chunkList(ids, 30);
+    if (!chunks.length) {
+      if (kind === 'players') this.state.rosterCovered = [];
+      this._buckets[kind].roster = [];
+      this._rebuild(kind);
+      return;
+    }
+    const uid = this.actor.uid;
+    const { collection, query, where } = this.fs;
+    const parts = {};
+    const note = (key, part, docs) => {
+      if (gen !== this._rosterGen) return;
+      parts[key] = parts[key] || {};
+      parts[key][part] = docs;
+      const covered = [];
+      const all = [];
+      chunks.forEach((chunk, index) => {
+        const got = parts[String(index)];
+        if (!got?.star || !got?.mine) return;
+        covered.push(...chunk);
+        all.push(...got.star, ...got.mine);
+      });
+      const byId = new Map();
+      for (const row of all) if (row?.id) byId.set(row.id, row);
+      this._buckets[kind].roster = [...byId.values()];
+      if (kind === 'players') {
+        this.state.rosterCovered = covered;
+        if (covered.length === chunks.reduce((sum, chunk) => sum + chunk.length, 0)) this.state.rosterError = '';
+      }
+      this._rebuild(kind);
+    };
+    const base = collection(this.db, kind);
+    chunks.forEach((chunk, index) => {
+      const key = String(index);
+      this._rosterListen(
+        query(base, where('matchId', 'in', chunk), where('viewers', 'array-contains', '*')),
+        (snap) => note(key, 'star', this._docRows(snap)),
+        (error) => {
+          if (kind === 'players') this._rosterFail(error);
+          else note(key, 'star', []);
+        },
+        'docs',
+      );
+      this._rosterListen(
+        query(base, where('matchId', 'in', chunk), where('viewers', 'array-contains', uid)),
+        (snap) => note(key, 'mine', this._docRows(snap)),
+        (error) => {
+          if (kind === 'players') this._rosterFail(error);
+          else note(key, 'mine', []);
+        },
+        'docs',
+      );
+    });
+  }
+  _listenRosterCompensations(dates, gen) {
+    const { collection, query, where } = this.fs;
+    const chunks = chunkList(dates, 30);
+    const parts = {};
+    const note = (index, docs) => {
+      if (gen !== this._rosterGen) return;
+      parts[index] = docs;
+      if (Object.keys(parts).length < chunks.length) return;
+      this._compRoster = Object.values(parts).flat();
+      this._publishCompensations();
+    };
+    const base = collection(this.db, 'compensations');
+    chunks.forEach((chunk, index) => {
+      this._rosterListen(
+        query(base, where('date', 'in', chunk)),
+        (snap) => note(index, this._docRows(snap)),
+        () => note(index, []),
+        'docs',
+      );
+    });
+  }
+  _publishCompensations() {
+    const byId = new Map();
+    for (const row of this._compNarrow || []) if (row?.id) byId.set(row.id, row);
+    for (const row of this._compRoster || []) if (row?.id) byId.set(row.id, row);
+    this.state.compensations = [...byId.values()];
+    this._emit();
   }
   _widenFromMatches(matches) {
     let min = '';
@@ -2921,11 +3114,11 @@ export class FirebaseStore {
       ? query(collection(this.db, 'compensations'), where('date', '>=', cutoff), orderBy('date', 'desc'), limit(COMP_LISTEN))
       : query(collection(this.db, 'compensations'), orderBy('date', 'desc'), limit(COMP_LISTEN));
     const un = onSnapshot(ref, (snap) => {
-      this.state.compensations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      this._emit();
+      this._compNarrow = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      this._publishCompensations();
     }, () => {
-      this.state.compensations = [];
-      this._emit();
+      this._compNarrow = [];
+      this._publishCompensations();
     });
     this._swap('compensations', un);
   }
