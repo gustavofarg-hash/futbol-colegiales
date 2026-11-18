@@ -3052,8 +3052,24 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   many.push({ id: 'despues', date: '2026-10-22', time: '21:00', startsAt: toEpoch('2026-10-22', '21:00') });
   const recent = historyWindow(many, null, now);
   assert.equal(recent.matches.length, HISTORY_PAGE);
+  assert.equal(recent.hasMore, true);
   assert.equal(recent.matches[0].id, '2026-10-18');
   assert.equal(recent.matches.at(-1).id, addDays('2026-10-18', -(HISTORY_PAGE - 1)));
+  const nextPage = historyWindow(many, null, now, 2);
+  assert.equal(nextPage.matches.length, 40);
+  assert.equal(nextPage.hasMore, false);
+  assert.equal(nextPage.matches.at(-1).id, addDays('2026-10-18', -39));
+  const boundary = addDays('2026-10-18', -(HISTORY_PAGE - 1));
+  const paired = many.filter((match) => match.date !== boundary).concat([
+    { id: 'par-temprano', date: boundary, time: '19:00', startsAt: toEpoch(boundary, '19:00') },
+    { id: 'par-noche', date: boundary, time: '21:00', startsAt: toEpoch(boundary, '21:00') },
+    { id: 'mas-viejo', date: addDays(boundary, -1), time: '21:00', startsAt: toEpoch(addDays(boundary, -1), '21:00') },
+  ]);
+  const packed = historyWindow(paired, null, now);
+  assert.equal(packed.matches.some((match) => match.id === 'par-temprano'), true);
+  assert.equal(packed.matches.some((match) => match.id === 'par-noche'), true);
+  assert.equal(packed.matches.some((match) => match.id === 'mas-viejo'), false);
+  assert.equal(packed.hasMore, true);
   assert.equal(recent.matches.some((match) => match.date >= '2026-10-19'), false);
   const outside = historyWindow(many, { day: '2026-09-09' }, now);
   assert.equal(outside.matches.length, 1);
@@ -4066,7 +4082,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v222');
+  assert.equal(version, 'f7c-v223');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);

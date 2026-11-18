@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v222';
+const APP_VERSION = 'f7c-v223';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -1399,6 +1399,13 @@ function historyShown(matches) {
   return (matches || []).filter((match) => covered.has(match.id));
 }
 
+function historyNearEnd() {
+  if (route().name !== 'history' || !app.historyHasMore || app.historyLoading) return;
+  if (app.store?.mode === 'firebase' && (app.history || []).some((match) => (app.rosterWatch || []).includes(match.date) && !(app.rosterCovered || []).includes(match.id))) return;
+  const scroller = document.scrollingElement || document.documentElement;
+  const remain = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  if (remain < 800) app.store.loadMoreHistory?.();
+}
 function pastRosterPending(match) {
   if (app.store?.mode !== 'firebase' || !match?.date) return false;
   const watch = app.rosterWatch || [];
@@ -1990,7 +1997,8 @@ function renderHistory() {
     ${rosterWait ? '<p class="hint" id="hist-loading">Cargando jugadores…</p>' : ''}
     ${past.length ? `<ul class="match-list" id="list-history">${historyWithCompensation(past)}</ul>` : (rosterWait ? '' : `
       <div class="empty" id="list-history"><div class="big">📅</div><p><b>${esc(emptyLead)}</b></p>
-      <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`)}`)) return;
+      <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`)}
+    ${app.historyHasMore ? `<button type="button" class="btn block" id="hist-more"${app.historyLoading ? ' disabled' : ''}>${app.historyLoading ? 'Cargando…' : 'Cargar más'}</button>` : ''}`)) return;
   $('#history-filter').onsubmit = (e) => {
     e.preventDefault();
     const day = $('#hist-day').value;
@@ -2003,6 +2011,13 @@ function renderHistory() {
   const histImport = $('#btn-hist-import');
   if (histImport) histImport.onclick = () => openHistoryImport();
   bindCompensation($('#list-history'));
+  const more = $('#hist-more');
+  if (more) more.onclick = () => app.store.loadMoreHistory?.();
+  if (!app.historyScrollBound) {
+    app.historyScrollBound = true;
+    window.addEventListener('scroll', () => historyNearEnd(), { passive: true });
+  }
+  requestAnimationFrame(() => historyNearEnd());
   const clear = $('#hist-clear');
   if (clear) clear.onclick = () => {
     app.historyFilter = null;
@@ -8832,6 +8847,8 @@ async function boot() {
     app.history = history || [];
     app.historyMeta = historyMeta || null;
     app.historyError = historyError || '';
+    app.historyHasMore = view.historyHasMore === true;
+    app.historyLoading = view.historyLoading === true;
     app.rosterWatch = view.rosterWatch || [];
     app.rosterCovered = view.rosterCovered || [];
     app.rosterDates = view.rosterDates || [];
@@ -8872,7 +8889,7 @@ async function boot() {
     if (!app.guestPlayer && pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.rosterWatch, app.rosterCovered, app.rosterDates, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen, app.guestMatchError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.historyHasMore, app.historyLoading, app.rosterWatch, app.rosterCovered, app.rosterDates, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen, app.guestMatchError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

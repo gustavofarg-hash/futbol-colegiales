@@ -149,7 +149,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v222');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v223');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -2133,6 +2133,24 @@ await page.click('#hist-clear');
 await page.waitForSelector('#list-history .match-card[data-note="Ayer"]');
 check('Limpiar vuelve a los últimos partidos', await page.locator('#hist-clear').isHidden() && (await page.textContent('#hist-caption')).includes('más recientes primero'));
 check('El aviso del historial no incluye una fecha', (await page.locator('#history-filter .roster-lead').innerText()).trim() === 'Por defecto muestra los últimos 30 partidos');
+const pageIds = await page.evaluate(async () => {
+  const who = window.__app.who;
+  const ids = [];
+  for (let i = 0; i < 40; i += 1) {
+    const date = new Date(Date.UTC(2024, 0, 10 + i)).toISOString().slice(0, 10);
+    ids.push(await window.__app.store.addMatch({ date, time: '21:00', note: 'Pagina vieja', capacity: 14 }, who));
+  }
+  return ids;
+});
+await page.waitForSelector('#hist-more');
+const beforeMore = await page.locator('#list-history .match-card[data-note="Pagina vieja"]').count();
+check('Cargar más está para los días más viejos', (await page.locator('#hist-more').innerText()) === 'Cargar más' && beforeMore < 40, String(beforeMore));
+await page.click('#hist-more');
+await page.waitForFunction((n) => document.querySelectorAll('#list-history .match-card[data-note="Pagina vieja"]').length > n, beforeMore);
+check('Cargar más trae partidos más viejos', await page.locator('#list-history .match-card[data-note="Pagina vieja"]').count() > beforeMore);
+await page.evaluate(async (ids) => {
+  for (const id of ids) await window.__app.store.deleteMatch(id);
+}, pageIds);
 check('Historial no muestra sede y formato al pie', await page.locator('#view .footer-note').count() === 0);
 check('Todas arranca elegida', await page.locator('#hist-venues [data-venue="all"]').evaluate((el) => el.classList.contains('on')));
 await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/historial-todas.png' });
