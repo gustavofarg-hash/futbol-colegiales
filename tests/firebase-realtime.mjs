@@ -1,10 +1,12 @@
-// Prueba contra el proyecto REAL de Firebase (config.js): dos contextos (Gustavo y Martín),
-// tiempo real, edición y borrado. Limpia todos los datos de prueba al final.
-// Uso: node tests/firebase-realtime.mjs http://localhost:8080/
+// Tiempo real contra el emulador, nunca contra mis-partidos-prueba ni producción.
+// Uso: FIRESTORE_EMULATOR_HOST=127.0.0.1:8181 node tests/firebase-realtime.mjs http://127.0.0.1:8080/
 import { createRequire } from 'node:module';
+import { refuseRealTarget, refuseUnlessEmulator } from './no-real-firebase.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_PATH || 'playwright');
-const BASE = process.argv[2] || 'http://localhost:8080/';
+const BASE = process.argv[2] || 'http://127.0.0.1:8080/';
+refuseUnlessEmulator();
+refuseRealTarget(BASE);
 const T = 15000;
 const results = [];
 const check = (n, c, x = '') => { results.push({ n, ok: !!c }); console.log(`${c ? '✅' : '❌'} ${n}${x ? ' — ' + x : ''}`); };
@@ -18,6 +20,11 @@ const NOTE = 'PRUEBA AUTOMATICA - borrar';
 const browser = await chromium.launch();
 async function open(who) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'es-AR', timezoneId: 'America/Buenos_Aires', serviceWorkers: 'block' });
+  await ctx.addInitScript((host) => {
+    globalThis.__F7C_TEST = true;
+    globalThis.__F7C_EMULATOR_HOST = host;
+  }, process.env.FIRESTORE_EMULATOR_HOST);
+  await ctx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => route.abort());
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

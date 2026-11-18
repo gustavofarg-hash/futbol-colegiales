@@ -110,12 +110,18 @@ export function overlayConfirmations(players, cards) {
 
 const CONFIRM_ALSO_MAX = 12;
 
-/** Partidos próximos en los que esta persona está anotada, sin lista de espera. */
+/**
+ * Partidos de la misma fecha que el que se confirma, en los que esta persona
+ * está anotada. Otro día no entra. La espera tampoco.
+ */
 export function upcomingConfirmSlots({ players, matches, player, now = new Date() } = {}) {
   const today = todayISO(now);
   const key = personKey(player, players);
   if (!key) return [];
   const byId = new Map((matches || []).map((match) => [match.id, match]));
+  const anchor = byId.get(player?.matchId);
+  const day = String(anchor?.date || player?.matchDate || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < today) return [];
   const rows = [];
   for (const other of players || []) {
     const token = String(other?.confirmToken || '');
@@ -124,7 +130,7 @@ export function upcomingConfirmSlots({ players, matches, player, now = new Date(
     if (personKey(other, players) !== key) continue;
     const match = byId.get(other.matchId);
     if (!match || match.cancelled === true) continue;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(match.date || '')) || match.date < today) continue;
+    if (match.date !== day) continue;
     const time = clockTime(match.time);
     if (!time) continue;
     rows.push({ token, playerId: other.id, date: match.date, time });
@@ -133,9 +139,10 @@ export function upcomingConfirmSlots({ players, matches, player, now = new Date(
   return rows.slice(0, CONFIRM_ALSO_MAX);
 }
 
-/** Lo que la página puede mostrar: horarios de hoy en adelante, sin repetir el token. */
-export function visibleConfirmSlots(list, now = new Date()) {
+/** Lo que la página puede mostrar: el día del link, de hoy en adelante, sin repetir el token. */
+export function visibleConfirmSlots(list, now = new Date(), day = '') {
   const today = todayISO(now);
+  const only = /^\d{4}-\d{2}-\d{2}$/.test(String(day || '')) ? String(day) : '';
   const out = [];
   const seen = new Set();
   for (const row of list || []) {
@@ -145,6 +152,7 @@ export function visibleConfirmSlots(list, now = new Date()) {
     const time = clockTime(row?.time);
     if (token.length < 16 || token.length > 80 || !playerId || playerId.length > 80) continue;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < today || !time) continue;
+    if (only && date !== only) continue;
     if (seen.has(token)) continue;
     seen.add(token);
     const confirmed = row?.confirmed === 'si' || row?.confirmed === 'no' ? row.confirmed : null;

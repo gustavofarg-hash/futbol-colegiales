@@ -1,6 +1,7 @@
 // Prueba end-to-end en modo demo con Playwright (Chromium headless, 390x844).
 // Uso: node tests/e2e.mjs [baseUrl]   (requiere `npm i playwright` en algún lado accesible)
 import { createRequire } from 'node:module';
+import { refuseRealTarget } from './no-real-firebase.mjs';
 import { dayCompensation } from '../js/compensate.js';
 import { organizerDayShare, organizerShareByPeriod, playerOrganizerMonths } from '../js/stats.js';
 import { formatARS } from '../js/payments.js';
@@ -8,6 +9,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_PATH || 'playwright');
 
 const BASE = process.argv[2] || 'http://127.0.0.1:18431/';
+refuseRealTarget(BASE);
 const NOW = new Date('2026-10-19T13:00:00-03:00'); // lunes 19/10/2026 13:00 (BA)
 const results = [];
 const check = (name, cond, extra = '') => { results.push({ name, ok: !!cond, extra }); console.log(`${cond ? '✅' : '❌'} ${name}${extra ? ' — ' + extra : ''}`); };
@@ -58,10 +60,14 @@ async function assertRepaintKeeps(label) {
 }
 
 const browser = await chromium.launch();
+// El service worker se prueba más abajo (navigator.serviceWorker.ready). Bloquearlo
+// deja esa promesa colgada. Firestore igual no sale: config.js se reescribe y
+// las rutas de abajo abortan los hosts reales.
 const ctx = await browser.newContext({
   viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
   locale: 'es-AR', timezoneId: 'America/Buenos_Aires', permissions: ['clipboard-read', 'clipboard-write'],
 });
+await ctx.addInitScript(() => { globalThis.__F7C_TEST = true; });
 // Fuerza modo demo: config.js del repo tiene la config real de Firebase y estas
 // pruebas no deben leer ni escribir Firestore.
 await ctx.route('**/config.js', async (route) => {
@@ -77,6 +83,7 @@ await ctx.route('**/config.js', async (route) => {
   appId: "TU_APP_ID",
 };`,
   );
+  if (/projectId:\s*["'](?:mis-partidos-prueba|futbol-partidos)["']/.test(body)) throw new Error('config.js sigue apuntando a un proyecto real');
   await route.fulfill({ status: 200, contentType: 'text/javascript', body });
 });
 await ctx.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => {
@@ -142,7 +149,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v187');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v217');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -255,7 +262,7 @@ const tabFit = await page.evaluate(() => ({
   overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   right: Math.max(...[...document.querySelectorAll('#tabbar a')].map((el) => el.getBoundingClientRect().right)),
 }));
-check('A 390px las cinco pestañas no desbordan', tabFit.overflow <= 1 && tabFit.right <= 391, JSON.stringify(tabFit));
+check('A 390px las pestañas no desbordan', tabFit.overflow <= 1 && tabFit.right <= 391, JSON.stringify(tabFit));
 check('Próximos partidos queda activo', await page.getAttribute('#tab-proximos', 'aria-current') === 'page');
 await page.click('#btn-settings');
 check('Ajustes dice quién entró', (await page.textContent('#set-who')).includes('Entraste como Gustavo'));
@@ -271,7 +278,7 @@ const settingsBars = await page.evaluate(() => {
     inDialog: document.querySelector('#tabbar').parentElement?.id === 'sheet',
   };
 });
-check('En Ajustes las cinco pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro']), JSON.stringify(settingsBars));
+check('En Ajustes las pestañas siguen visibles', settingsBars.tabsInView && settingsBars.inDialog && JSON.stringify(settingsBars.labels) === JSON.stringify(['Próximos', 'Jugadores', 'Historial', 'Estadísticas', 'Registro']), JSON.stringify(settingsBars));
 check('La hoja de Ajustes no queda debajo de las pestañas', settingsBars.sheetBelow, JSON.stringify(settingsBars));
 await page.click('#btn-historial');
 await page.waitForSelector('#history-filter');
@@ -1593,9 +1600,9 @@ await page.click('#stats-mode a[href="#/estadisticas/dia"]');
 await page.waitForSelector('#stats-days');
 check('La vista se llama Día', (await page.locator('#stats-mode a[aria-current="page"]').innerText()).trim() === 'Día');
 await page.locator('#stats-days .who').first().click();
-await page.waitForSelector('#stats-collected');
+await page.waitForSelector('#stats-day-signed');
 const matchStats = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
-check('Por día muestra lo que correspondió y la asistencia de cada partido', matchStats.includes('Te correspondió:') && matchStats.includes('En la lista:') && matchStats.includes('No juega:') && matchStats.includes('Cobrado') && matchStats.includes('Por medio') && !matchStats.includes('Por organizador') && (await page.locator('#stats-title').innerText()).trim() === 'Estadísticas por día', matchStats.slice(0, 280));
+check('Por día muestra lo que correspondió, lo que anotó y lo que pagaron', matchStats.includes('Te correspondió:') && matchStats.includes('Anotaste en el día:') && matchStats.includes('Pagaron:') && !matchStats.includes('En la lista:') && !matchStats.includes('Por medio') && !matchStats.includes('Cobrado') && !matchStats.includes('Goles') && (await page.locator('#stats-title').innerText()).trim() === 'Estadísticas por día', matchStats.slice(0, 280));
 await page.evaluate(() => {
   const store = window.__app.store;
   const db = store._load();
@@ -2857,6 +2864,17 @@ await page.click('#player-form button[type=submit]');
 await page.waitForSelector('#slots .name:text-is("Habitual Sol")');
 await page.waitForFunction(() => ![...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.includes('Habitual Sol')));
 check('Al anotarlo sale de suelen jugar', (await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).join(',') === 'Habitual Espera,Habitual Leo,Habitual Lluvia,Habitual Mudo');
+await page.evaluate(async (id) => {
+  const app = window.__app;
+  const match = app.matches.find((item) => item.id === id);
+  await app.store.addPlayer(match, { name: 'Habitual Leo', phone: '11 4100-0002' }, app.who, { waiting: true });
+}, usualId);
+await page.waitForFunction(() => ![...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.trim() === 'Habitual Leo'));
+check('Al ponerlo en espera sale de suelen anotarse', !(await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).includes('Habitual Leo'));
+const leoId = await page.evaluate((id) => window.__app.players.find((player) => player.matchId === id && player.name === 'Habitual Leo' && player.waiting)?.id, usualId);
+await page.evaluate(async (id) => { await window.__app.store.deletePlayer(id); }, leoId);
+await page.waitForFunction(() => [...document.querySelectorAll('#usual-list .name')].some((el) => el.textContent.trim() === 'Habitual Leo'));
+check('Al sacarlo de la espera vuelve a suelen anotarse', (await page.locator('#usual-list .name').allInnerTexts()).map((text) => text.trim()).includes('Habitual Leo'));
 
 {
   await page.evaluate(async () => {
@@ -6392,8 +6410,9 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#profile-share');
   await page.waitForFunction(() => (document.querySelector('#toast')?.textContent || '').includes('Enlace copiado'));
   const link = await page.evaluate(() => navigator.clipboard.readText());
-  const expected = `https://gustavofarg-hash.github.io/futbol-colegiales/#/jugador/${encodeURIComponent(shared.id)}`;
-  check('El enlace es el de la ficha en GitHub Pages', link === expected, link);
+  const expectedBase = `https://gustavofarg-hash.github.io/futbol-colegiales/#/jugador/${encodeURIComponent(shared.id)}`;
+  const linkToken = decodeURIComponent(link.slice(expectedBase.length + 1));
+  check('El enlace es el de la ficha y nombra al organizador', link.startsWith(`${expectedBase}/`) && /^[A-Za-z0-9_-]{20,}$/.test(linkToken), link);
   check('Esa ficha abre la pestaña Jugadores', await page.locator('#btn-roster').getAttribute('aria-current') === 'page');
   await page.evaluate((matchId) => { location.hash = `#/partido/${encodeURIComponent(matchId)}`; }, shared.matchId);
   await page.waitForSelector('.slot:has-text("Enlace Díaz") .more-btn');
@@ -6412,7 +6431,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   });
   await page.click('#pm-share');
   await page.waitForSelector('#player-link');
-  check('Si no se puede copiar, el enlace se puede seleccionar', (await page.inputValue('#player-link')) === expected);
+  check('Si no se puede copiar, el enlace se puede seleccionar', (await page.inputValue('#player-link')) === link);
   await page.click('#sheet [data-close]');
   await page.evaluate(() => {
     window.__copied = '';
@@ -6445,15 +6464,17 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.click('#login-form button[type=submit]');
   await page.waitForFunction(() => window.__app?.who === 'Martín');
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, shared.id);
-  await page.waitForSelector('#player-locked');
-  const denied = (await page.locator('body').innerText()).replace(/\s+/g, ' ').trim();
-  check('Sin acceso solo dice NO TENÉS ACCESO', denied === '⚠️ NO TENÉS ACCESO', denied);
-  check('Sin acceso no muestra el nombre', !denied.includes('Enlace'));
+  await page.waitForSelector('#player-signup-name');
+  const playerPage = (await page.locator('#player-signup').innerText()).replace(/\s+/g, ' ').trim();
+  check('Sin acceso ve su nombre y la lista para anotarse', (await page.locator('#player-signup-name').innerText()) === 'Hola, Enlace' && await page.locator('#self-list, #self-empty').count() === 1 && await page.locator('#profile').count() === 0 && !/Quedan|\/14|posición/i.test(playerPage), playerPage.slice(0, 240));
   const lockedChrome = await page.evaluate(() => {
-    const hidden = (sel) => document.querySelector(sel).getClientRects().length === 0;
-    return hidden('.topbar') && hidden('#tabbar') && !document.querySelector('#login-form');
+    const hidden = (sel) => {
+      const el = document.querySelector(sel);
+      return !el || el.getClientRects().length === 0;
+    };
+    return hidden('.topbar') && hidden('#tabbar') && hidden('#btn-settings') && hidden('#btn-back') && hidden('.text-size') && hidden('#btn-text-smaller') && hidden('#btn-text-bigger') && !document.querySelector('#login-form') && !document.querySelector('#profile-share') && !document.querySelector('.player-app');
   });
-  check('Con sesión y sin acceso no hay barra, pestañas ni login', lockedChrome);
+  check('La página del jugador no tiene menús del organizador', lockedChrome);
   await page.screenshot({ path: '/opt/cursor/artifacts/screenshots/v110-sin-acceso.png' });
   await page.evaluate(() => { location.hash = '#/jugador/no-existe'; });
   await page.waitForSelector('#player-locked');
@@ -7487,6 +7508,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const manyIds = await page.evaluate(async () => {
     const app = window.__app;
     const hoyM = await app.store.addMatch({ date: '2026-10-19', time: '20:00', capacity: 14, note: 'Varios hoy' }, app.who);
+    const tardeM = await app.store.addMatch({ date: '2026-10-19', time: '18:30', capacity: 14, note: 'Varios tarde' }, app.who);
     const mananaM = await app.store.addMatch({ date: '2026-10-20', time: '21:00', capacity: 14, note: 'Varios mañana' }, app.who);
     const juevesM = await app.store.addMatch({ date: '2026-10-22', time: '19:00', capacity: 14, note: 'Varios jueves' }, app.who);
     const esperaM = await app.store.addMatch({ date: '2026-10-21', time: '18:00', capacity: 1, note: 'Varios espera' }, app.who);
@@ -7494,7 +7516,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     await app.store.addPlayer(by(esperaM), { name: 'Ocupa Varios', phone: '11 7000-1780' }, app.who);
     const phone = '11 7000-1781';
     const ids = [];
-    for (const id of [hoyM, mananaM, juevesM]) {
+    for (const id of [hoyM, tardeM, mananaM, juevesM]) {
       ids.push(await app.store.addPlayer(by(id), { name: 'Varios López', phone }, app.who));
     }
     ids.push(await app.store.addPlayer(by(esperaM), { name: 'Varios López', phone }, app.who, { waiting: true }));
@@ -7508,23 +7530,23 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   const manyLines = await manyPage.locator('#confirm-slots li').allInnerTexts();
   const manyAsk = (await manyPage.locator('#confirm-ask').innerText()).trim();
   const manyBody = (await manyPage.locator('body').innerText()).replace(/\s+/g, ' ');
-  check('Varios partidos listan HOY, mañana y jueves', manyAsk === '¿Confirmás que jugás estos partidos?' && manyLines.join('|') === 'HOY 20:00|mañana 21:00|jueves 19:00' && !manyBody.includes('18:00') && !manyBody.includes('Ocupa') && (await manyPage.locator('h1').innerText()) === 'Varios', `${manyAsk} ${manyLines.join('|')} ${manyBody.slice(0, 180)}`);
+  check('Varios partidos del día listan solo HOY', manyAsk === '¿Confirmás que jugás estos partidos?' && manyLines.join('|') === 'HOY 18:30|HOY 20:00' && !manyBody.includes('18:00') && !manyBody.includes('21:00') && !manyBody.includes('jueves') && !manyBody.includes('Ocupa') && (await manyPage.locator('h1').innerText()) === 'Varios', `${manyAsk} ${manyLines.join('|')} ${manyBody.slice(0, 220)}`);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, manyIds.matchId);
   await page.waitForSelector('.slot:has-text("Varios López") .wa-btn');
   const manyWa = decodeURIComponent((await page.getAttribute('.slot:has-text("Varios López") .wa-btn', 'href')).split('text=')[1] || '');
   const manyLink = manyWa.split('Respondé en este link: ')[1] || '';
-  check('El WhatsApp lista los tres horarios con un solo link', manyWa === `¡Hola Varios! ¿Confirmás que jugás HOY 20:00, mañana 21:00 y jueves 19:00?\n\nRespondé en este link: ${manyLink}` && (manyWa.match(/https?:\/\//g) || []).length === 1, manyWa);
+  check('El WhatsApp lista solo los horarios de hoy con un solo link', manyWa === `¡Hola Varios! ¿Confirmás que jugás HOY 18:30 y 20:00?\n\nRespondé en este link: ${manyLink}` && !manyWa.includes('mañana') && !manyWa.includes('jueves') && (manyWa.match(/https?:\/\//g) || []).length === 1, manyWa);
   await manyPage.click('#btn-si');
   await manyPage.waitForSelector('#thanks');
-  check('Un sí confirma todos los partidos del link', (await manyPage.locator('#thanks').innerText()).includes('jugás') && await manyPage.locator('#btn-si').count() === 0);
+  check('Un sí confirma los partidos de hoy del link', (await manyPage.locator('#thanks').innerText()).includes('jugás') && await manyPage.locator('#btn-si').count() === 0);
   const manySaved = await page.evaluate((ids) => {
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
     return ids.map((id) => db.players[id]?.confirmed || null);
   }, manyIds.ids);
-  check('El sí quedó en los tres partidos y no en la espera', manySaved.join(',') === 'si,si,si,', manySaved.join(','));
+  check('El sí quedó en los de hoy y no toca los otros días', manySaved.join(',') === 'si,si,,,', manySaved.join(','));
   await manyPage.reload();
   await manyPage.waitForSelector('#thanks');
-  check('Reabrir el link de varios sigue sin botones', await manyPage.locator('#btn-si').count() === 0 && (await manyPage.locator('#confirm-slots li').allInnerTexts()).join('|') === 'HOY 20:00|mañana 21:00|jueves 19:00');
+  check('Reabrir el link de varios sigue sin botones', await manyPage.locator('#btn-si').count() === 0 && (await manyPage.locator('#confirm-slots li').allInnerTexts()).join('|') === 'HOY 18:30|HOY 20:00');
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, manyIds.matchId);
   await page.waitForSelector('.slot:has-text("Varios López") .more-btn');
   await page.locator('.slot', { hasText: 'Varios López' }).locator('.more-btn').click();
@@ -7552,7 +7574,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
     return ids.map((id) => db.players[id]?.confirmed || null);
   }, noIds.ids);
-  check('No juego marca que no juega en todos esos partidos', (await noPage.locator('#thanks').innerText()).includes('no jugás') && noSaved.join(',') === 'no,no', `${noSaved.join(',')} ${(await noPage.locator('#thanks').innerText())}`);
+  check('No juego marca el de hoy y no toca el de mañana', (await noPage.locator('#thanks').innerText()).includes('no jugás') && noSaved.join(',') === 'no,', `${noSaved.join(',')} ${(await noPage.locator('#thanks').innerText())}`);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, noIds.matchId);
   await page.waitForFunction(() => [...document.querySelectorAll('#slots .slot')].some((row) => row.innerText.includes('Niega López') && row.innerText.includes('No juega')));
   check('En el partido, No se ve igual que en uno solo', (await page.locator('#slots .slot', { hasText: 'Niega López' }).innerText()).includes('No juega'));
@@ -7966,7 +7988,7 @@ await page.locator('#slots .slot').first().screenshot({ path: '/opt/cursor/artif
   await page.locator('#stats-days [data-date="2026-10-07"] a').click();
   await page.waitForSelector('#stats-day');
   const dayOpen = (await page.locator('#stats-view').innerText()).replace(/\s+/g, ' ');
-  check('El día abierto lista los dos horarios y el mismo total', (await page.locator('#stats-entitled').innerText()) === `Te correspondió: ${formatARS(octDaily)}` && dayOpen.includes('18:00') && dayOpen.includes('21:00') && (await page.locator('.stats-day-match').count()) === 2, dayOpen.slice(0, 240));
+  check('El día abierto lista los dos horarios, lo anotado y lo pagado', (await page.locator('#stats-entitled').innerText()) === `Te correspondió: ${formatARS(octDaily)}` && (await page.locator('#stats-day-signed').innerText()) === 'Anotaste en el día: 2 jugadores' && (await page.locator('#stats-day-paid').innerText()) === `Pagaron: ${formatARS(16000)}` && dayOpen.includes('18:00') && dayOpen.includes('21:00') && !dayOpen.includes('hs') && !dayOpen.includes('En la lista') && !dayOpen.includes('Por medio') && (await page.locator('.stats-day-match').count()) === 2, dayOpen.slice(0, 320));
   check('Un día ya jugado entra en Día aunque no tenga cálculo', listed.includes('2026-10-18') === true, listed.join(','));
   await page.evaluate(() => { location.hash = '#/estadisticas/dia'; });
   await page.waitForSelector('#stats-days [data-date="2026-10-07"]');
@@ -8061,7 +8083,8 @@ check('Al abrir la app arranca en Próximos partidos', await fresh.evaluate(() =
 await fresh.close();
 
 {
-  const anon = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
+  const anon = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires', serviceWorkers: 'block' });
+  await anon.addInitScript(() => { globalThis.__F7C_TEST = true; });
   await anon.route('**/config.js', async (route) => {
     const res = await route.fetch();
     const body = (await res.text()).replace(
@@ -8084,16 +8107,98 @@ await fresh.close();
       header: gone('.topbar'),
       tabs: gone('#tabbar'),
       login: !document.querySelector('#login-form'),
-      store: !window.__app?.store,
-      roster: (window.__app?.roster || []).length === 0,
+      signup: !document.querySelector('#player-signup'),
       text: document.body.innerText.replace(/\s+/g, ' ').trim(),
     };
   });
-  check('Sin sesión no hay menú, login ni datos', bare.header && bare.tabs && bare.login && bare.store && bare.roster && bare.text === '⚠️ NO TENÉS ACCESO', JSON.stringify(bare));
+  check('Sin sesión no hay menú, login ni datos', bare.header && bare.tabs && bare.login && bare.signup && bare.text === '⚠️ NO TENÉS ACCESO', JSON.stringify(bare));
   await locked.screenshot({ path: '/opt/cursor/artifacts/screenshots/v110-sin-sesion.png' });
   await locked.goto(BASE);
   await locked.waitForSelector('#login-form');
   check('Al salir del enlace, sin sesión, vuelve el login', await locked.locator('#login-form').isVisible() && await locked.locator('.topbar').evaluate((el) => el.getClientRects().length === 0) && await locked.locator('#tabbar').evaluate((el) => el.getClientRects().length === 0));
+  const guestId = 'AngelLink2026v202';
+  await locked.evaluate((id) => {
+    localStorage.setItem('f7c-demo-db', JSON.stringify({
+      matches: {
+        m202: {
+          date: '2026-10-19', time: '21:00', capacity: 14, playerCount: 0,
+          venueName: 'Polideportivo Colegiales', createdByUid: 'org-gustavo',
+          viewers: ['*'], adders: ['*'], cancelled: false,
+        },
+      },
+      players: {},
+      roster: { [id]: { name: 'Ángel', holders: ['org-gustavo'], createdByUid: 'org-gustavo' } },
+      shareTokens: { GustavoToken2026v206xxxx: { uid: 'org-gustavo', name: 'Gustavo Pérez', createdAt: 1 } },
+      organizers: {}, venues: {}, confirmations: {}, settings: {}, credits: {},
+      contacts: { players: {}, roster: {} },
+    }));
+  }, guestId);
+  await locked.goto(`${BASE}#/jugador/${guestId}`);
+  await locked.waitForSelector('#player-signup-name');
+  const guestChrome = await locked.evaluate(() => {
+    const hidden = (sel) => {
+      const el = document.querySelector(sel);
+      return !el || el.getClientRects().length === 0;
+    };
+    return hidden('.topbar') && hidden('#tabbar') && hidden('#btn-settings') && hidden('#btn-back') && hidden('#btn-text-smaller') && hidden('#btn-text-bigger') && !document.querySelector('#login-form') && !document.querySelector('#profile');
+  });
+  const guestName = (await locked.locator('#player-signup-name').innerText()).trim();
+  const guestBtn = (await locked.locator('#self-list .self-btn').first().innerText()).trim();
+  check('Sin sesión el enlace del jugador abre su página', guestName === 'Hola, Ángel' && await locked.locator('.player-app').count() === 0 && guestBtn === 'Anotarme' && guestChrome, `${guestName} ${guestBtn}`);
+  check('Sin organizador en el enlace no titula la lista', await locked.locator('#player-signup-of').count() === 0);
+  await locked.goto(`${BASE}#/jugador/${guestId}/GustavoToken2026v206xxxx`);
+  await locked.waitForSelector('#player-signup-of');
+  check('El enlace del organizador titula sus próximos partidos', (await locked.locator('#player-signup-of').innerText()) === 'Próximos partidos de Gustavo' && (await locked.locator('#self-list .self-btn').first().innerText()).trim() === 'Anotarme');
+  await locked.locator('#self-list button', { hasText: 'Anotarme' }).click();
+  await locked.waitForFunction(() => {
+    const row = document.querySelector('#self-list .self-row');
+    return row && row.innerText.includes('Esperando la confirmación de Gustavo...') && row.innerText.includes('Anular');
+  });
+  const linkPending = await locked.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    const player = Object.values(db.players || {}).find((row) => row.name === 'Ángel' && row.selfSignup === true);
+    return player ? { tentative: player.tentative === true, waiting: player.waiting === true, addedByUid: player.addedByUid || '', share: player.signedUpWith || '' } : null;
+  });
+  check('Desde el enlace, Anotarme queda pendiente a nombre del organizador', linkPending?.tentative === true && linkPending.waiting === false && linkPending.addedByUid === 'org-gustavo' && linkPending.share === 'org-gustavo', JSON.stringify(linkPending));
+  await locked.locator('#self-list button', { hasText: 'Anular' }).click();
+  await locked.waitForFunction(() => (document.querySelector('#self-list .self-btn')?.innerText || '').trim() === 'Anotarme');
+  check('Desde el enlace, Anular vuelve a Anotarme', (await locked.locator('#self-list .self-btn').innerText()).trim() === 'Anotarme');
+  const fullId = await locked.evaluate(() => {
+    const app = window.__app;
+    const db = app.store._load();
+    db.matches.full209 = {
+      date: '2026-10-19', time: '22:30', capacity: 1, playerCount: 1,
+      venueName: 'Polideportivo Colegiales', createdByUid: 'org-gustavo',
+      viewers: ['*'], adders: ['*'], cancelled: false,
+    };
+    db.players.ocupa209 = {
+      matchId: 'full209', matchDate: '2026-10-19', name: 'Ocupa Cupo',
+      waiting: false, noPlay: false, viewers: ['*'], adders: ['*'],
+    };
+    app.store._save(db);
+    return 'full209';
+  });
+  const waitRow = locked.locator(`#self-list .self-row[data-match="${fullId}"]`);
+  await waitRow.locator('button', { hasText: 'Lista de espera' }).click();
+  await locked.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('En lista de espera') && row.innerText.includes('Anular');
+  }, fullId);
+  check('Desde el enlace, Lista de espera anota y se puede anular', (await waitRow.innerText()).includes('En lista de espera'));
+  await waitRow.locator('button', { hasText: 'Anular' }).click();
+  await locked.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Anotarme en lista de espera') && !row.querySelector('[data-self="cancel"]');
+  }, fullId);
+  await locked.evaluate(() => {
+    window.__app.store.selfJoin = async () => {
+      throw Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+    };
+  });
+  await locked.locator('#self-list .self-row button', { hasText: 'Anotarme' }).first().click();
+  await locked.waitForSelector('#self-list .self-error');
+  const denied = (await locked.locator('#self-list .self-error').innerText()).replace(/\s+/g, ' ');
+  check('Si Firebase rechaza el alta, el error queda en la ficha', denied.includes('No se pudo anotar') && denied.includes('permiso') && (await locked.locator('#self-list .self-btn').first().innerText()).trim() === 'Anotarme', denied);
   await anon.close();
 }
 
@@ -8253,11 +8358,262 @@ await fresh.close();
   await page.waitForSelector('#wait-list .name:text-is("Falta Pérez")');
   const bajas = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja').length, falta.rosterId);
   check('Si pagó igual, bajar a la espera no resta puntos', bajas === 0, String(bajas));
+  const espera = await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Espera Sin Puntos', phone: '5491166661919' }, app.who);
+    const guestRoster = await app.store.addRoster({ name: 'Invitado Espera', phone: '5491166661920' }, app.who);
+    const soloRoster = await app.store.addRoster({ name: 'Solo Espera', phone: '5491166661921' }, app.who);
+    const mid = await app.store.addMatch({ date: '2026-10-25', time: '18:00', capacity: 14, note: 'Espera sin puntos' }, app.who);
+    const match = app.matches.find((item) => item.id === mid);
+    const id = await app.store.addPlayer(match, { name: 'Espera Sin Puntos', phone: '5491166661919', rosterId }, app.who, { waiting: true });
+    await app.store.addPlayer(match, { name: 'Invitado Espera', phone: '5491166661920', rosterId: guestRoster, invitedBy: id, invitedByName: 'Espera Sin Puntos', guestAuto: true }, app.who, { waiting: true });
+    await app.store.addPlayer(match, { name: 'Solo Espera', phone: '5491166661921', rosterId: soloRoster }, app.who, { waiting: true });
+    return { mid, rosterId, guestRoster, soloRoster };
+  });
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, espera.mid);
+  await page.waitForSelector('#wait-list .name:text-is("Espera Sin Puntos")');
+  await page.locator('#wait-list .slot', { has: page.locator('.name:text-is("Espera Sin Puntos")') }).locator('.more-btn').click();
+  await page.waitForSelector('#pm-del');
+  check('El menú de la espera dice Quitar de la espera', (await page.locator('#pm-del').innerText()).includes('Quitar de la espera'));
+  await page.click('#pm-del');
+  await page.waitForSelector('#ask-yes');
+  const guestQuestion = (await page.locator('#sheet').innerText()).replace(/\s+/g, ' ');
+  check('Quitar de la espera no abre la quita de puntos', !(await page.locator('#baja-points').isVisible()) && guestQuestion.includes('Quitar también a sus invitados') && !guestQuestion.includes('puntos'), guestQuestion.slice(0, 240));
+  await page.click('#ask-yes');
+  await page.waitForFunction(() => {
+    const text = document.querySelector('#wait-list')?.innerText || '';
+    return !text.includes('Espera Sin Puntos') && !text.includes('Invitado Espera') && text.includes('Solo Espera');
+  });
+  const penalty = await page.evaluate(({ host, guest }) => {
+    const behavior = Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {});
+    return behavior.filter((row) => (row.rosterId === host || row.rosterId === guest) && row.type === 'baja');
+  }, { host: espera.rosterId, guest: espera.guestRoster });
+  check('Quitar de la espera no anota puntos ni historial', penalty.length === 0, JSON.stringify(penalty));
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, espera.soloRoster);
+  await page.waitForSelector('#signup-list .signup-row:has-text("25/10") [data-signup-remove]');
+  await page.locator('#signup-list .signup-row', { hasText: '25/10' }).locator('[data-signup-remove]').click();
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#signup-list .signup-row')].find((el) => el.innerText.includes('25/10'));
+    return row && !row.innerText.includes('En espera');
+  });
+  check('Darse de baja desde el perfil, si está en espera, no pregunta puntos', !(await page.locator('#baja-points').isVisible()) && !(await page.locator('#app-ask-text').isVisible()));
+  const soloPenalty = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja'), espera.soloRoster);
+  check('Esa baja tampoco anota historial', soloPenalty.length === 0, JSON.stringify(soloPenalty));
+}
+
+{
+  const self = await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Auto López', phone: '11 7000-1940' }, app.who);
+    const open = await app.store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14, note: 'Auto abierto' }, app.who);
+    await app.store.addMatch({ date: '2026-10-19', time: '23:40', capacity: 14, note: 'Auto oculto', playerVisible: false }, app.who);
+    const full = await app.store.addMatch({ date: '2026-10-19', time: '18:30', capacity: 1, note: 'Auto lleno' }, app.who);
+    const soon = await app.store.addMatch({ date: '2026-10-19', time: '16:00', capacity: 14, note: 'Auto cerca' }, app.who);
+    const by = (id) => app.matches.find((match) => match.id === id);
+    await app.store.addPlayer(by(full), { name: 'Ocupa Auto', phone: '11 7000-1941' }, app.who);
+    await app.store.addPlayer(by(soon), { name: 'Auto López', phone: '11 7000-1940', rosterId }, app.who);
+    return { rosterId, open, full, soon };
+  });
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  await page.waitForSelector('#profile');
+  check('El organizador no ve la lista de anotarse', await page.locator('#self-list').count() === 0 && (await page.locator('#partidos').innerText()).includes('Elegí los próximos y anotalo de una'));
+  await page.click('#tab-proximos');
+  await page.click('#btn-add-match');
+  await page.waitForSelector('#match-player-visible');
+  check('El partido nuevo arranca visible para los jugadores', await page.isChecked('#match-player-visible'));
+  await page.click('[data-close]');
+  await page.waitForFunction(() => !document.querySelector('#match-form'));
+  await page.click('#btn-settings');
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  await page.waitForSelector('#player-signup');
+  const openRow = page.locator(`#self-list .self-row[data-match="${self.open}"]`);
+  await openRow.waitFor();
+  const openText = (await openRow.innerText()).replace(/\s+/g, ' ');
+  check('La fila del jugador no muestra cupo ni puesto', openText.includes('Anotarme') && openText.includes('Polideportivo') && !openText.includes('23:40') && !/\d+\/14/.test(openText) && !/Quedan|posición/i.test(openText), openText);
+  const selfCardBox = (id) => page.evaluate((matchId) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${matchId}"]`);
+    const main = row.querySelector('.self-main');
+    const actions = row.querySelector('.self-actions');
+    const when = row.querySelector('.self-when');
+    const place = row.querySelector('.self-place');
+    const placeText = place?.querySelector('span span');
+    const status = row.querySelector('.self-status');
+    const rb = row.getBoundingClientRect();
+    const mb = main.getBoundingClientRect();
+    const ab = actions.getBoundingClientRect();
+    const tops = [...when.children].map((el) => el.getBoundingClientRect().top);
+    const placeStyle = placeText ? getComputedStyle(placeText) : null;
+    const statusStyle = status ? getComputedStyle(status) : null;
+    const check = row.querySelector('.self-check');
+    return {
+      overflow: Math.max(0, Math.ceil(row.scrollWidth - row.clientWidth)),
+      pageOverflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+      buttonRight: ab.left >= mb.right - 2 && ab.right <= rb.right + 1,
+      uncovered: [...when.querySelectorAll('.self-bit')].every((el) => el.getBoundingClientRect().right <= ab.left + 1),
+      centered: Math.abs((ab.top + ab.height / 2) - (mb.top + mb.height / 2)) <= 12,
+      sameLine: tops.every((top) => Math.abs(top - tops[0]) < 3),
+      placeBelow: place.getBoundingClientRect().top >= when.getBoundingClientRect().bottom - 2,
+      placeShown: placeStyle ? placeStyle.textOverflow !== 'ellipsis' && placeStyle.whiteSpace !== 'nowrap' && placeText.scrollWidth <= placeText.clientWidth + 1 : false,
+      statusAlign: statusStyle?.textAlign || '',
+      statusColor: statusStyle?.color || '',
+      checkColor: check ? getComputedStyle(check).color : '',
+    };
+  }, id);
+  await page.setViewportSize({ width: 360, height: 800 });
+  const joinBox = await selfCardBox(self.open);
+  const waitBox = await selfCardBox(self.full);
+  check('A 360px la ficha queda en dos columnas sin cortarse', joinBox.overflow <= 1 && joinBox.pageOverflow <= 1 && joinBox.buttonRight && joinBox.uncovered && joinBox.centered && joinBox.placeBelow && joinBox.placeShown && waitBox.buttonRight && waitBox.uncovered && waitBox.overflow <= 1 && (await page.locator(`#self-list .self-row[data-match="${self.full}"] .self-btn`).innerText()).replace(/\s+/g, ' ').includes('Anotarme en lista de espera'), JSON.stringify({ joinBox, waitBox }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRow.locator('button', { hasText: 'Anotarme' }).click();
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    const text = row?.innerText || '';
+    return text.includes('Esperando la confirmación de Martín...') && text.includes('Anular') && text.includes('21:00') && text.includes('Polideportivo');
+  }, self.open);
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.open);
+  await page.waitForSelector('#slots .slot:has-text("Auto López") .confirm-spot');
+  const pendingRow = (await page.locator('#slots .slot', { hasText: 'Auto López' }).innerText()).replace(/\s+/g, ' ');
+  check('En el partido se ve como pendiente de confirmación', pendingRow.includes('Reservado') && pendingRow.includes('Confirmar lugar') && (await page.textContent('#slot-count')).replace(/\s/g, '') === '1/14', pendingRow);
+  const [confirmedPopup] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.click('#slots .slot:has-text("Auto López") .confirm-spot'),
+  ]);
+  await confirmedPopup.waitForURL(/whatsapp\.com|wa\.me/).catch((error) => {
+    if (!/whatsapp|wa\.me/.test(String(error))) throw error;
+  });
+  const confirmedWa = decodeURIComponent(confirmedPopup.url()).replace(/\+/g, ' ');
+  check('Confirmar lugar abre WhatsApp para que el organizador lo mande', /whatsapp\.com|wa\.me/.test(confirmedWa) && confirmedWa.includes('quedaste confirmado') && confirmedWa.includes('21:00') && confirmedWa.includes('Hola'), confirmedWa.slice(0, 240));
+  await confirmedPopup.close();
+  await page.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#slots .slot')].find((el) => el.innerText.includes('Auto López'));
+    return row && !row.querySelector('.confirm-spot');
+  });
+  check('Confirmar lugar lo deja como el resto', (await page.textContent('#slot-count')).replace(/\s/g, '') === '1/14' && await page.locator('#slots .confirm-spot').count() === 0);
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Confirmado') && row.querySelector('.self-check') && row.innerText.includes('21:00');
+  }, self.open);
+  check('El jugador ve el tilde verde de confirmado', (await page.locator(`#self-list .self-row[data-match="${self.open}"] .self-status`).innerText()) === 'Confirmado');
+  await page.waitForSelector('.confirm-notice');
+  const confirmedBanner = (await page.locator('.confirm-notice').innerText()).replace(/\s+/g, ' ');
+  check('La primera vez avisa que lo confirmaron', confirmedBanner.includes('Te confirmaron') && confirmedBanner.includes('21:00') && confirmedBanner.includes('Polideportivo') && await page.locator('#player-push').count() === 0, confirmedBanner);
+  await page.locator('[data-notice-dismiss]').click();
+  await page.waitForFunction(() => !document.querySelector('.confirm-notice'));
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  await page.waitForSelector('#player-signup');
+  check('El aviso de confirmado se muestra una sola vez', await page.locator('.confirm-notice').count() === 0);
+  await page.setViewportSize({ width: 360, height: 800 });
+  const confirmedBox = await selfCardBox(self.open);
+  const isGreen = (color) => {
+    const bits = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color || '');
+    if (!bits) return false;
+    const [r, g, b] = [bits[1], bits[2], bits[3]].map(Number);
+    return g > r + 20 && g > b + 20;
+  };
+  check('Confirmado es verde y queda a la izquierda', confirmedBox.statusAlign === 'left' && isGreen(confirmedBox.statusColor) && isGreen(confirmedBox.checkColor) && confirmedBox.buttonRight && confirmedBox.overflow <= 1, JSON.stringify(confirmedBox));
+  await page.setViewportSize({ width: 390, height: 844 });
+  const moved = await page.evaluate(() => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).log || {})
+    .filter((row) => row.playerName === 'Auto López' || row.actorName === 'Auto López')
+    .map((row) => `${row.type}|${row.actorName}|${row.detail}`)
+    .join(' || '));
+  check('El registro anota la anotación y quién aceptó', moved.includes('se anotó|Auto López|Pendiente de confirmación') && moved.includes('aceptó|Martín|Aceptó la anotación'), moved);
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  const fullRow = page.locator(`#self-list .self-row[data-match="${self.full}"]`);
+  await fullRow.locator('button', { hasText: 'Lista de espera' }).click();
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Anular') && row.innerText.includes('En lista de espera') && row.innerText.includes('18:30');
+  }, self.full);
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.full);
+  await page.waitForSelector('#self-wait-notice');
+  check('La espera avisa el nombre y no el puesto', (await page.textContent('#self-wait-notice')).includes('Auto López') && !(await page.textContent('#self-wait-notice')).match(/puesto|\/\d+/));
+  await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
+  await page.locator(`#self-list .self-row[data-match="${self.full}"]`).locator('button', { hasText: 'Anular' }).click();
+  await page.waitForFunction((id) => {
+    const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
+    return row && row.innerText.includes('Anotarme en lista de espera');
+  }, self.full);
+  const selfBajas = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja'), self.rosterId);
+  check('Anular la espera no anota puntos', selfBajas.length === 0, JSON.stringify(selfBajas));
+  const soonText = (await page.locator(`#self-list .self-row[data-match="${self.soon}"]`).innerText()).replace(/\s+/g, ' ');
+  check('A menos de 4 h no puede anular solo', soonText.includes('Avisale al organizador para bajarte') && !soonText.includes('Anular'), soonText);
+  const pendingId = await page.evaluate(async () => {
+    const app = window.__app;
+    const person = app.roster.find((row) => row.name === 'Auto López');
+    const id = await app.store.addMatch({ date: '2026-10-19', time: '22:30', capacity: 14, note: 'Auto pendiente' }, app.who);
+    const match = app.matches.find((row) => row.id === id);
+    return app.store.selfJoin(match, person, { waiting: false });
+  });
+  await page.evaluate(() => { location.hash = '#/'; });
+  await page.waitForSelector('#jugadores-a-confirmar');
+  const pendingText = (await page.locator('#pending-signups').innerText()).replace(/\s+/g, ' ');
+  const pendingUi = await page.evaluate(() => {
+    const row = document.querySelector('#pending-signups .pending-row');
+    const when = row?.querySelector('.pending-when');
+    const place = row?.querySelector('.pending-place');
+    const accept = row?.querySelector('[data-accept]');
+    const card = document.getElementById('jugadores-a-confirmar');
+    const wr = when?.getBoundingClientRect();
+    const br = accept?.getBoundingClientRect();
+    const placeStyle = place ? getComputedStyle(place) : null;
+    return {
+      accept: accept?.getAttribute('aria-label') || '',
+      reject: row?.querySelector('[data-reject]')?.getAttribute('aria-label') || '',
+      title: accept?.getAttribute('title') || '',
+      uncovered: !!(wr && br && wr.right <= br.left + 1),
+      wraps: placeStyle?.whiteSpace !== 'nowrap' && placeStyle?.textOverflow !== 'ellipsis',
+      card: card ? getComputedStyle(card).backgroundColor : '',
+      match: document.querySelector('.match-card') ? getComputedStyle(document.querySelector('.match-card')).backgroundColor : '',
+    };
+  });
+  check('Arriba del inicio está el pendiente', pendingText.includes('Auto López') && pendingText.includes('22:30') && pendingText.includes('Polideportivo') && pendingUi.accept === 'Aceptar' && pendingUi.reject === 'Rechazar' && pendingUi.title === 'Aceptar' && pendingUi.uncovered && pendingUi.wraps && pendingUi.card !== pendingUi.match && (await page.locator('#tab-confirmar').count()) === 0, `${pendingText} ${JSON.stringify(pendingUi)}`);
+  const [acceptPopup] = await Promise.all([
+    page.waitForEvent('popup'),
+    page.click('#pending-signups [data-accept]'),
+  ]);
+  await acceptPopup.waitForURL(/whatsapp\.com|wa\.me/).catch((error) => {
+    if (!/whatsapp|wa\.me/.test(String(error))) throw error;
+  });
+  const acceptWa = decodeURIComponent(acceptPopup.url()).replace(/\+/g, ' ');
+  check('Aceptar abre WhatsApp con el texto listo', acceptWa.includes('quedaste confirmado') && acceptWa.includes('22:30'), acceptWa.slice(0, 240));
+  await acceptPopup.close();
+  await page.waitForFunction(() => !document.querySelector('#jugadores-a-confirmar'));
+  check('Aceptar saca la lista de arriba', await page.locator('#jugadores-a-confirmar').count() === 0);
+  const still = await page.evaluate((id) => {
+    const row = JSON.parse(localStorage.getItem('f7c-demo-db')).players[id];
+    return row ? row.tentative === true : false;
+  }, pendingId);
+  check('Aceptar lo deja en el partido', still === false);
+  await page.evaluate(() => sessionStorage.clear());
+  await page.evaluate(async () => {
+    const app = window.__app;
+    const person = app.roster.find((row) => row.name === 'Auto López');
+    const id = await app.store.addMatch({ date: '2026-10-19', time: '23:00', capacity: 14, note: 'Auto aviso' }, app.who);
+    const match = app.matches.find((row) => row.id === id);
+    await app.store.selfJoin(match, person, { waiting: false });
+  });
+  await page.evaluate(() => sessionStorage.clear());
+  await page.goto(`${BASE}#/a-confirmar`);
+  await page.waitForSelector('#jugadores-a-confirmar');
+  const focused = await page.evaluate(() => ({
+    hash: location.hash,
+    tab: document.querySelector('#tabbar a[aria-current="page"]')?.dataset.tab || '',
+    top: document.getElementById('jugadores-a-confirmar')?.getBoundingClientRect().top ?? 999,
+  }));
+  check('El aviso de un alta abre el inicio y muestra la lista', focused.hash === '#/a-confirmar' && focused.tab === 'home' && focused.top < 360, JSON.stringify(focused));
 }
 
 {
   // Con GOOGLE_DRIVE_CLIENT_ID: pide permiso con Google y sube el archivo con la API de Drive.
-  const driveCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires' });
+  const driveCtx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: 'es-AR', timezoneId: 'America/Buenos_Aires', serviceWorkers: 'block' });
+  await driveCtx.addInitScript(() => { globalThis.__F7C_TEST = true; });
   await driveCtx.route('**/config.js', async (route) => {
     const res = await route.fetch();
     const body = (await res.text())

@@ -2,7 +2,7 @@
 // Solo mira los partidos y jugadores que ya están cargados.
 import { addDays, toISODate, weekdayOf } from './dates.js';
 import { isAutoGuestName } from './guests.js';
-import { personKey } from './roster.js';
+import { foldText, personKey, phoneIdentity } from './roster.js';
 import { signupOrganizerUid } from './stats.js';
 
 function addMonths(iso, months) {
@@ -18,13 +18,32 @@ function clock(time) {
   return text.length >= 5 ? text.slice(0, 5) : text;
 }
 
+/** Claves de la misma persona: ficha, teléfono y nombre. Un alta pendiente a veces no trae el teléfono. */
+function usualKeys(player, players, roster) {
+  const keys = new Set();
+  const add = (value) => { if (value) keys.add(value); };
+  add(personKey(player, players));
+  const rosterId = String(player?.rosterId || '').trim();
+  const phone = phoneIdentity(player);
+  const card = (roster || []).find((item) => item?.id && (item.id === rosterId || (phone && phoneIdentity(item) === phone))) || null;
+  add(rosterId ? `r:${rosterId}` : '');
+  if (card?.id) add(`r:${card.id}`);
+  add(phone ? `p:${phone}` : '');
+  const cardPhone = card ? phoneIdentity(card) : '';
+  if (cardPhone) add(`p:${cardPhone}`);
+  const name = foldText(player?.name || card?.name || '');
+  if (name && !isAutoGuestName(player?.name) && !isAutoGuestName(card?.name)) add(`n:${name}`);
+  return keys;
+}
+
 /**
  * Quienes se anotaron (titular o espera) con este organizador, el mismo día
  * de la semana y la misma hora, en los últimos 3 meses. Un partido que después
  * se canceló también cuenta. No entran los que ya están en este partido
- * ni un invitado sin nombre (Invitado 1, Amigo 2). Orden: más veces primero.
+ * (lista, pendiente o espera) ni un invitado sin nombre (Invitado 1, Amigo 2).
+ * Orden: más veces primero.
  */
-export function usualPlayers({ match, matches, players, today, who } = {}) {
+export function usualPlayers({ match, matches, players, roster, today, who } = {}) {
   const uid = String(who?.uid || '').trim();
   const date = String(match?.date || '');
   const time = clock(match?.time);
@@ -34,8 +53,7 @@ export function usualPlayers({ match, matches, players, today, who } = {}) {
   const here = new Set();
   for (const player of players || []) {
     if (player?.matchId !== match.id) continue;
-    const key = personKey(player, players);
-    if (key) here.add(key);
+    for (const key of usualKeys(player, players, roster)) here.add(key);
   }
   const byKey = new Map();
   const seen = new Set();
@@ -47,8 +65,9 @@ export function usualPlayers({ match, matches, players, today, who } = {}) {
     for (const player of players || []) {
       if (player?.matchId !== other.id || !uid || signupOrganizerUid(player) !== uid) continue;
       if (isAutoGuestName(player?.name)) continue;
-      const key = personKey(player, players);
-      if (!key || here.has(key)) continue;
+      const keys = [...usualKeys(player, players, roster)];
+      if (!keys.length || keys.some((key) => here.has(key))) continue;
+      const key = personKey(player, players) || keys[0];
       const once = `${other.id}:${key}`;
       if (seen.has(once)) continue;
       seen.add(once);

@@ -17,7 +17,7 @@ rules_version = '2';
 // Sin viewers, o con `*`, lo ven todos los activos. Con una lista de uids,
 // solo esas cuentas (y el creador) lo leen. Quien no está en adders lo ve
 // y no anota. Sin sesión no hay escrituras, salvo confirmed/confirmedAt
-// con el token.
+// con el token, y el alta o la baja del propio enlace #/jugador/{id}.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -69,6 +69,7 @@ service cloud.firestore {
           && (!('court' in d) || (d.court is string && d.court.size() <= 20))
           && (!('price' in d) || (d.price is int && d.price >= 0 && d.price <= 1000000000))
           && (!('splitMode' in d) || d.splitMode == 'equal' || d.splitMode == 'signed')
+          && (!('playerVisible' in d) || d.playerVisible is bool)
           && (!('score' in d) || scoreOk(d.score))
           && accessShape(d);
     }
@@ -108,6 +109,23 @@ service cloud.firestore {
     }
     function isCreator() {
       return resource.data.get('createdByUid', '') == request.auth.uid;
+    }
+    // Un partido viejo sin createdByUid. Regla corta, aparte de validMatch:
+    // si entra en la regla larga, el alta del jugador pasa las 1000 expresiones.
+    function fillOwnMatch() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return resource.data.get('createdByUid', '') == ''
+          && changed.hasOnly(['createdByUid', 'playerVisible', 'viewers'])
+          && changed.hasAny(['createdByUid'])
+          && request.resource.data.get('createdByUid', '') == request.auth.uid
+          && (!changed.hasAny(['playerVisible']) || request.resource.data.playerVisible == true)
+          && (!changed.hasAny(['viewers'])
+              || (!('viewers' in resource.data)
+                  && request.resource.data.viewers is list
+                  && request.resource.data.viewers.hasAny(['*'])))
+          && request.resource.data.get('adders', null) == resource.data.get('adders', null)
+          && request.resource.data.get('solo', null) == resource.data.get('solo', null)
+          && request.resource.data.get('limits', null) == resource.data.get('limits', null);
     }
     function legacyStamp() {
       return !('viewers' in resource.data)
@@ -163,7 +181,7 @@ service cloud.firestore {
           'cashTo', 'transferTo', 'pendingTo', 'transferParts', 'freePlay', 'fromCredit', 'creditTo', 'autoCredit', 'awaiting'];
     }
     function waitKeys() {
-      return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt', 'noPlay'];
+      return ['waiting', 'waitOrder', 'rosterAt', 'tentative', 'tentativeAt', 'noPlay', 'selfPending', 'selfSignup'];
     }
     function confirmKeys() {
       return ['confirmToken', 'confirmed', 'confirmedAt', 'reminderSentAt'];
@@ -208,7 +226,9 @@ service cloud.firestore {
           && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
           && (!('tentative' in d) || d.tentative == null || d.tentative is bool)
           && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number)
-          && (!('noPlay' in d) || d.noPlay is bool);
+          && (!('noPlay' in d) || d.noPlay is bool)
+          && (!('selfPending' in d) || d.selfPending is bool)
+          && (!('selfSignup' in d) || d.selfSignup is bool);
     }
     function validConfirm(d) {
       return (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
@@ -564,8 +584,12 @@ service cloud.firestore {
       // get acepta partidos viejos sin viewers. list solo la consulta
       // array-contains-any [uid, '*']: si no, Firestore rechaza la lista.
       allow get: if isActiveStaff() && canReadListed(resource.data);
+      // El enlace del jugador, sin sesión, lee los partidos abiertos (viewers *).
+      allow get: if resource.data.viewers.hasAny(['*']);
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
+      allow list: if resource.data.viewers.hasAny(['*']);
       allow create: if isActiveStaff() && validMatch(request.resource.data);
+      allow update: if isActiveStaff() && fillOwnMatch();
       allow update: if isActiveStaff() && validMatch(request.resource.data) && isViewer(resource.data)
           && (isCreator() || (accessSame() && isAdder(resource.data)) || legacyStamp());
       // playerCount lo mantiene quien anota o quita jugadores. Si el campo no
@@ -602,9 +626,203 @@ service cloud.firestore {
       return !('invitedBy' in request.resource.data) || invitedByUnchanged() || hostIsMainPlayer();
     }
 
+    function rosterDoc(rosterId) {
+      return get(/databases/$(database)/documents/roster/$(rosterId)).data;
+    }
+    function holdsRoster(rosterId) {
+      return rosterId is string && rosterId.size() > 0 && rosterId.size() <= 80
+          && exists(/databases/$(database)/documents/roster/$(rosterId))
+          && rosterDoc(rosterId).get('holders', []).hasAny([request.auth.uid]);
+    }
+    function ratePath(rosterId) {
+      return /databases/$(database)/documents/signupRates/$(rosterId);
+    }
+    function selfRateOk(rosterId, pid) {
+      return exists(ratePath(rosterId))
+          && get(ratePath(rosterId)).data.lastId == pid
+          && get(ratePath(rosterId)).data.count is int
+          && get(ratePath(rosterId)).data.count >= 1
+          && get(ratePath(rosterId)).data.count <= 5
+          && get(ratePath(rosterId)).data.windowStart is timestamp
+          && request.time < get(ratePath(rosterId)).data.windowStart + duration.value(30, 'm');
+    }
+    // El id del enlace #/jugador/{id}. No se puede listar el plantel.
+    function guestRoster(rosterId) {
+      return rosterId is string && rosterId.size() >= 16 && rosterId.size() <= 80
+          && rosterId.matches('^[A-Za-z0-9]+$')
+          && exists(/databases/$(database)/documents/roster/$(rosterId));
+    }
+    function rosterHolders(rosterId) {
+      let d = rosterDoc(rosterId);
+      return (d.get('holders', []) is list && d.get('holders', []).size() > 0)
+          ? d.holders
+          : ((d.get('createdByUid', '') is string && d.createdByUid.size() > 0) ? [d.createdByUid] : []);
+    }
+    function selfMatchForHolder(matchId, rosterId) {
+      let m = matchData(matchId);
+      let holders = rosterHolders(rosterId);
+      return (m.get('createdByUid', '') is string && m.createdByUid.size() > 0 && holders.hasAny([m.createdByUid]))
+          || (m.keys().hasAny(['adders']) && m.adders is list && holders.hasAny(m.adders))
+          || ((!m.keys().hasAny(['createdByUid']) || m.get('createdByUid', '') == '')
+              && (!m.keys().hasAny(['adders']) || m.adders.size() == 0 || m.adders.hasAny(['*'])));
+    }
+    function shareTokenPath(token) {
+      return /databases/$(database)/documents/shareTokens/$(token);
+    }
+    function shareTokenData(token) {
+      return get(shareTokenPath(token)).data;
+    }
+    function guestAddedBy(d) {
+      return d.addedByUid == ''
+          || (d.shareToken is string && d.shareToken.size() >= 20 && d.shareToken.size() <= 80
+              && exists(shareTokenPath(d.shareToken))
+              && shareTokenData(d.shareToken).uid == d.addedByUid
+              && d.addedBy == shareTokenData(d.shareToken).name
+              && (matchData(d.matchId).get('createdByUid', '') == d.addedByUid
+                  || (matchData(d.matchId).keys().hasAny(['adders']) && matchData(d.matchId).adders is list && matchData(d.matchId).adders.hasAny([d.addedByUid]))));
+    }
+    function guestSignupShape(d) {
+      return d.selfSignup == true
+          && guestRoster(d.rosterId)
+          && d.name == rosterDoc(d.rosterId).get('name', '')
+          && guestAddedBy(d)
+          && selfMatchForHolder(d.matchId, d.rosterId)
+          && matchData(d.matchId).get('playerVisible', true) != false
+          && d.get('paid', false) != true
+          && d.get('amount', null) == null
+          && d.get('cash', null) == null
+          && d.get('transfer', null) == null
+          && d.get('pendingTransfer', null) == null
+          && d.get('fromCredit', null) == null
+          && (
+            (d.tentative == true && d.waiting == false)
+            || (d.waiting == true && d.get('tentative', false) != true)
+          );
+    }
+    // El alta del enlace no puede llamar a validPlayer: esa función, sumada
+    // a la forma del invitado, pasa el tope de 1000 expresiones y Firestore
+    // niega el alta aunque los datos estén bien. La lista de claves corta
+    // plata, goles y confirmación sin recorrer cada campo opcional.
+    function guestPlayerFields(d) {
+      return d.keys().hasAll(['matchId', 'matchDate', 'name', 'rosterId', 'selfSignup', 'waiting', 'waitOrder', 'tentative', 'tentativeAt', 'rosterAt', 'addedByUid', 'addedBy', 'shareToken', 'createdAt', 'updatedAt', 'phone', 'hasPhone', 'phoneKey', 'phoneOwnerUid', 'phoneShared', 'confirmToken', 'viewers', 'adders'])
+          && d.keys().hasOnly(['matchId', 'matchDate', 'name', 'rosterId', 'selfSignup', 'waiting', 'waitOrder', 'tentative', 'tentativeAt', 'rosterAt', 'addedByUid', 'addedBy', 'shareToken', 'createdAt', 'updatedAt', 'phone', 'hasPhone', 'phoneKey', 'phoneOwnerUid', 'phoneShared', 'confirmToken', 'viewers', 'adders', 'signedUpWith', 'signedUpWithName'])
+          && d.matchId is string && d.matchId.size() > 0 && d.matchId.size() <= 80
+          && d.matchDate is string && d.matchDate.size() == 10
+          && d.phone == ''
+          && d.hasPhone == false
+          && d.phoneKey == ''
+          && d.phoneOwnerUid == ''
+          && d.phoneShared == false
+          && d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80
+          && d.createdAt is number && d.updatedAt is number
+          && d.addedByUid is string && d.addedByUid.size() <= 128
+          && d.addedBy is string && d.addedBy.size() > 0 && d.addedBy.size() <= 40
+          && d.shareToken is string && d.shareToken.size() <= 80
+          && d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30
+          && d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30
+          && (d.waitOrder == null || (d.waitOrder is int && d.waitOrder >= 0 && d.waitOrder <= 1000000))
+          && (d.tentativeAt == null || d.tentativeAt is number)
+          && (d.rosterAt == null || d.rosterAt is number)
+          && (
+            (!d.keys().hasAny(['signedUpWith']) && !d.keys().hasAny(['signedUpWithName']))
+            || (d.keys().hasAll(['signedUpWith', 'signedUpWithName'])
+                && d.signedUpWith == d.addedByUid
+                && d.signedUpWithName == d.addedBy
+                && d.addedByUid.size() > 0)
+          );
+    }
+    function selfSignupShape(d) {
+      return d.get('selfSignup', false) == true
+          && d.rosterId is string
+          && d.addedByUid == request.auth.uid
+          && d.name == rosterDoc(d.rosterId).get('name', '')
+          && selfMatchForHolder(d.matchId, d.rosterId)
+          && d.get('paid', false) != true
+          && d.get('amount', null) == null
+          && d.get('cash', null) == null
+          && d.get('transfer', null) == null
+          && d.get('pendingTransfer', null) == null
+          && d.get('fromCredit', null) == null
+          && (
+            (d.selfPending == true && d.waiting == false)
+            || (d.waiting == true && d.get('selfPending', false) != true)
+          );
+    }
+    function signupRateOk() {
+      let next = request.resource.data;
+      let fresh = resource == null || request.time > resource.data.windowStart + duration.value(30, 'm');
+      return next.keys().hasOnly(['windowStart', 'count', 'lastId'])
+          && next.lastId is string && next.lastId.size() > 0 && next.lastId.size() <= 80
+          && next.count is int && next.count >= 1 && next.count <= 5
+          && next.windowStart is timestamp
+          && (fresh
+              ? next.count == 1 && next.windowStart == request.time
+              : next.count == resource.data.count + 1
+                  && next.windowStart == resource.data.windowStart
+                  && resource.data.count < 5);
+    }
+
+    // Alta del organizador desde un lugar libre, la espera o Agregar jugador.
+    // Va primero y no llama a validPlayer: esa función, con los campos del
+    // alta, pasa el tope de 1000 expresiones y Firebase niega el permiso.
+    function organizerSlotShape(d) {
+      return d.keys().hasAll(['matchId', 'matchDate', 'name', 'addedBy', 'addedByUid', 'createdAt', 'updatedAt', 'viewers', 'adders'])
+          && d.keys().hasOnly(['matchId', 'matchDate', 'name', 'phone', 'addedBy', 'addedByUid', 'createdAt', 'updatedAt', 'waiting', 'waitOrder', 'rosterAt', 'confirmToken', 'hasPhone', 'phoneKey', 'phoneOwnerUid', 'phoneShared', 'viewers', 'adders', 'rosterId', 'signedUpWith', 'signedUpWithName', 'shortName', 'tentative', 'tentativeAt', 'selfSignup', 'invitedBy', 'invitedByName', 'guestAuto', 'shortCode'])
+          && d.matchId is string && d.matchId.size() > 0 && d.matchId.size() <= 80
+          && d.matchDate is string && d.matchDate.size() == 10
+          && d.name is string && d.name.size() > 0 && d.name.size() <= 60
+          && phoneGone(d)
+          && d.addedByUid == request.auth.uid
+          && d.addedBy is string && d.addedBy.size() > 0 && d.addedBy.size() <= 40
+          && d.createdAt is number && d.updatedAt is number
+          && d.viewers is list && d.viewers.size() > 0 && d.viewers.size() <= 30
+          && d.adders is list && d.adders.size() > 0 && d.adders.size() <= 30
+          && d.get('paid', false) != true
+          && d.get('selfSignup', false) != true
+          && (!('waiting' in d) || d.waiting is bool)
+          && (!('waitOrder' in d) || d.waitOrder == null || (d.waitOrder is int && d.waitOrder >= 0 && d.waitOrder <= 1000000))
+          && (!('rosterAt' in d) || d.rosterAt == null || d.rosterAt is number)
+          && (!('confirmToken' in d) || (d.confirmToken is string && d.confirmToken.size() >= 16 && d.confirmToken.size() <= 80))
+          && (!('signedUpWith' in d) || d.signedUpWith == d.addedByUid)
+          && (!('signedUpWithName' in d) || (d.signedUpWithName is string && d.signedUpWithName.size() > 0 && d.signedUpWithName.size() <= 40))
+          && (!('shortName' in d) || (d.shortName is string && d.shortName.size() <= 40))
+          && (!('tentative' in d) || d.tentative is bool)
+          && (!('tentativeAt' in d) || d.tentativeAt == null || d.tentativeAt is number)
+          && (!('hasPhone' in d) || d.hasPhone is bool)
+          && (!('phoneShared' in d) || d.phoneShared is bool)
+          && (!('phoneKey' in d) || d.phoneKey == '' || (d.phoneKey is string && d.phoneKey.size() == 64))
+          && (!('phoneOwnerUid' in d) || (d.phoneOwnerUid is string && d.phoneOwnerUid.size() <= 128))
+          && (!('rosterId' in d) || (d.rosterId is string && d.rosterId.size() <= 80))
+          && (!('shortCode' in d) || (d.shortCode is string && d.shortCode.size() == 8))
+          && (!('guestAuto' in d) || d.guestAuto is bool);
+    }
+
     match /players/{playerId} {
       allow get: if isActiveStaff() && canReadListed(resource.data);
+      allow get: if resource.data.viewers.hasAny(['*']);
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
+      allow list: if resource.data.viewers.hasAny(['*']);
+      allow create: if isActiveStaff()
+          && organizerSlotShape(request.resource.data)
+          && invitedByOk()
+          && isAdder(matchData(request.resource.data.matchId))
+          && playerListsOk(request.resource.data.matchId);
+      // El jugador (quien tiene la ficha) solo puede crear SU alta: pendiente o espera.
+      allow create: if signedIn()
+          && selfSignupShape(request.resource.data)
+          && holdsRoster(request.resource.data.rosterId)
+          && selfRateOk(request.resource.data.rosterId, playerId)
+          && validPlayer(request.resource.data)
+          && invitedByOk()
+          && playerListsOk(request.resource.data.matchId);
+      // El enlace #/jugador/{id}, sin cuenta de organizador.
+      // Va antes y no llama a validPlayer: si no, el tope de 1000
+      // expresiones niega el alta y la pantalla vuelve a «Anotarme».
+      allow create: if !signedIn()
+          && guestSignupShape(request.resource.data)
+          && guestPlayerFields(request.resource.data)
+          && selfRateOk(request.resource.data.rosterId, playerId)
+          && playerListsOk(request.resource.data.matchId);
       allow create: if isActiveStaff() && validPlayer(request.resource.data)
           && invitedByOk()
           && isAdder(matchData(request.resource.data.matchId))
@@ -637,14 +855,151 @@ service cloud.firestore {
             )
             || playerFollowsMatch()
           );
+      allow delete: if signedIn()
+          && resource.data.selfSignup == true
+          && (resource.data.selfPending == true || resource.data.tentative == true || resource.data.waiting == true)
+          && holdsRoster(resource.data.rosterId)
+          && selfRateOk(resource.data.rosterId, playerId);
+      allow delete: if guestRoster(resource.data.rosterId)
+          && resource.data.name == rosterDoc(resource.data.rosterId).get('name', '')
+          && selfRateOk(resource.data.rosterId, playerId)
+          && (
+            (resource.data.selfSignup == true && (resource.data.tentative == true || resource.data.waiting == true || resource.data.selfPending == true))
+            || (resource.data.get('waiting', false) != true && resource.data.get('noPlay', false) != true && resource.data.get('tentative', false) != true)
+          );
       allow delete: if isAdmin()
           || (isActiveStaff() && (!('adders' in resource.data) || (resource.data.adders is list && resource.data.adders.hasAny([request.auth.uid, '*']))));
+    }
+
+    match /organizerTokens/{tokenId} {
+      allow get: if isActiveStaff() && resource.data.uid == request.auth.uid;
+      allow list: if isActiveStaff() && resource.data.uid == request.auth.uid;
+      allow create, update: if isActiveStaff()
+          && tokenId.matches('^[A-Za-z0-9]{1,40}_[A-Za-z0-9]{8,40}$')
+          && request.resource.data.keys().hasOnly(['uid', 'token', 'updatedAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.token is string
+          && request.resource.data.token.size() >= 20
+          && request.resource.data.token.size() <= 4096
+          && request.resource.data.updatedAt is number;
+      allow delete: if isActiveStaff() && resource.data.uid == request.auth.uid;
+    }
+
+    // Token del jugador para avisarle cuando lo confirman. Sin sesión.
+    // Solo su ficha, y nada más que el token.
+    match /playerTokens/{tokenId} {
+      allow get, list, delete: if false;
+      allow create, update: if tokenId.size() > request.resource.data.rosterId.size()
+          && tokenId[0:request.resource.data.rosterId.size()] == request.resource.data.rosterId
+          && tokenId[request.resource.data.rosterId.size():request.resource.data.rosterId.size() + 1] == '_'
+          && request.resource.data.keys().hasOnly(['rosterId', 'token', 'updatedAt'])
+          && guestRoster(request.resource.data.rosterId)
+          && request.resource.data.token is string
+          && request.resource.data.token.size() >= 20
+          && request.resource.data.token.size() <= 4096
+          && request.resource.data.updatedAt is number;
+    }
+
+    // El jugador cerró el cartel de «te confirmaron». Una vez, y solo si ya está confirmado.
+    match /confirmSeen/{playerId} {
+      allow get: if guestRoster(resource.data.rosterId);
+      allow list: if resource.data.rosterId is string
+          && resource.data.rosterId.size() >= 16
+          && resource.data.rosterId.size() <= 80;
+      allow create: if request.resource.data.keys().hasOnly(['rosterId', 'seen'])
+          && request.resource.data.seen == true
+          && guestRoster(request.resource.data.rosterId)
+          && exists(/databases/$(database)/documents/players/$(playerId))
+          && get(/databases/$(database)/documents/players/$(playerId)).data.rosterId == request.resource.data.rosterId
+          && get(/databases/$(database)/documents/players/$(playerId)).data.selfSignup == true
+          && get(/databases/$(database)/documents/players/$(playerId)).data.get('waiting', false) != true
+          && get(/databases/$(database)/documents/players/$(playerId)).data.get('tentative', false) != true;
+      allow update, delete: if false;
+    }
+
+    match /signupPings/{pingId} {
+      allow create: if isActiveStaff()
+          && request.resource.data.keys().hasOnly(['kind', 'name', 'playerId', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt', 'organizerUid', 'shareToken'])
+          && request.resource.data.kind == 'confirmado'
+          && request.resource.data.playerId is string
+          && request.resource.data.playerId.size() > 0
+          && request.resource.data.playerId.size() <= 80
+          && request.resource.data.rosterId is string
+          && request.resource.data.rosterId.size() >= 16
+          && request.resource.data.rosterId.size() <= 80
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 60
+          && request.resource.data.matchId is string
+          && request.resource.data.matchId.size() > 0
+          && request.resource.data.matchId.size() <= 80
+          && request.resource.data.createdAt is number
+          && request.resource.data.organizerUid == ''
+          && request.resource.data.shareToken == '';
+      allow create: if signedIn()
+          && holdsRoster(request.resource.data.rosterId)
+          && request.resource.data.keys().hasOnly(['kind', 'name', 'playerId', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt', 'organizerUid', 'shareToken'])
+          && request.resource.data.playerId is string
+          && request.resource.data.playerId.size() > 0
+          && request.resource.data.playerId.size() <= 80
+          && (request.resource.data.kind == 'alta' || request.resource.data.kind == 'espera' || request.resource.data.kind == 'baja')
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 60
+          && request.resource.data.matchId is string
+          && request.resource.data.matchId.size() > 0
+          && request.resource.data.matchId.size() <= 80
+          && request.resource.data.date is string
+          && request.resource.data.time is string
+          && request.resource.data.venueName is string
+          && request.resource.data.venueName.size() <= 80
+          && request.resource.data.createdAt is number;
+      allow create: if guestRoster(request.resource.data.rosterId)
+          && request.resource.data.keys().hasOnly(['kind', 'name', 'playerId', 'rosterId', 'matchId', 'date', 'time', 'venueName', 'createdAt', 'organizerUid', 'shareToken'])
+          && (request.resource.data.kind == 'alta' || request.resource.data.kind == 'espera' || request.resource.data.kind == 'baja')
+          && request.resource.data.organizerUid is string && request.resource.data.organizerUid.size() <= 128
+          && request.resource.data.shareToken is string && request.resource.data.shareToken.size() <= 80
+          && request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 60
+          && request.resource.data.matchId is string && request.resource.data.matchId.size() > 0
+          && (request.resource.data.organizerUid == '' || (
+              request.resource.data.shareToken.size() >= 20
+              && exists(shareTokenPath(request.resource.data.shareToken))
+              && shareTokenData(request.resource.data.shareToken).uid == request.resource.data.organizerUid
+          ));
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /shareTokens/{token} {
+      allow get: if token.size() >= 20 && token.size() <= 80 && token.matches('^[A-Za-z0-9_-]+$');
+      allow list: if isActiveStaff() && resource.data.uid == request.auth.uid;
+      allow create: if isActiveStaff()
+          && token.size() >= 20 && token.size() <= 80 && token.matches('^[A-Za-z0-9_-]+$')
+          && request.resource.data.keys().hasOnly(['uid', 'name', 'createdAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.name == userData().name
+          && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 40
+          && request.resource.data.createdAt is number;
+      allow update, delete: if false;
+    }
+
+    // Token de un solo uso para Aceptar o Rechazar desde el aviso.
+    // Lo crea y lo gasta solo la Cloud Function. La app no lo lee ni lo escribe.
+    match /signupActions/{tokenId} {
+      allow read, write: if false;
+    }
+
+    match /signupRates/{rosterId} {
+      allow get: if (signedIn() && (holdsRoster(rosterId) || isActiveStaff())) || guestRoster(rosterId);
+      allow create, update: if ((signedIn() && holdsRoster(rosterId)) || guestRoster(rosterId)) && signupRateOk();
+      allow delete: if isAdmin();
     }
 
     match /roster/{rosterId} {
       // El borrado no puede mirar players: las reglas no consultan otra
       // colección. La app rechaza el borrado si esa ficha está anotada.
-      allow read, delete: if isActiveStaff();
+      // El enlace conoce el id: puede leer ESA ficha, no el listado.
+      allow get: if isActiveStaff() || guestRoster(rosterId);
+      allow list, delete: if isActiveStaff();
       // Sumarse a una ficha ajena. Va primero y no llama a validRoster:
       // validar la ficha entera (notas incluidas) más las otras reglas de
       // update pasa el tope de 1000 expresiones y Firebase niega el vínculo.
@@ -1191,9 +1546,37 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    function guestSelfLog(d) {
+      return d.keys().hasOnly(['at', 'actorUid', 'actorName', 'section', 'type', 'matchId', 'matchDate', 'matchTime', 'matchLabel', 'editors', 'playerName', 'hostName', 'detail', 'amount', 'method', 'rosterId', 'shareToken'])
+          && d.shareToken is string && d.shareToken.size() <= 80
+          && d.actorName is string && d.actorName.size() > 0 && d.actorName.size() <= 40
+          && d.section == 'partidos'
+          && (d.type == 'se anotó' || d.type == 'se bajó')
+          && d.rosterId is string
+          && guestRoster(d.rosterId)
+          && (
+            (d.shareToken == '' && d.actorUid == '' && d.actorName == rosterDoc(d.rosterId).get('name', '') && d.playerName == d.actorName)
+            || (d.shareToken.size() >= 20
+                && exists(shareTokenPath(d.shareToken))
+                && shareTokenData(d.shareToken).uid == d.actorUid
+                && shareTokenData(d.shareToken).name == d.actorName
+                && d.playerName == rosterDoc(d.rosterId).get('name', ''))
+          )
+          && d.amount == 0
+          && d.method == ''
+          && d.hostName == ''
+          && d.at is number && d.at > 0
+          && d.matchId is string && d.matchId.size() > 0 && d.matchId.size() <= 80
+          && d.detail is string && d.detail.size() <= 200
+          && d.editors is list && d.editors.size() > 0 && d.editors.size() <= 31
+          && (d.editors.hasAny(['*']) || d.editors.hasAny(rosterHolders(d.rosterId)))
+          && selfMatchForHolder(d.matchId, d.rosterId)
+          && matchData(d.matchId).get('playerVisible', true) != false;
+    }
     match /log/{entryId} {
       allow read: if isActiveStaff() && canReadLog(resource.data);
       allow create: if isActiveStaff() && validLog(request.resource.data) && entryId.size() > 0 && entryId.size() <= 80;
+      allow create: if guestSelfLog(request.resource.data) && entryId.size() > 0 && entryId.size() <= 80;
       allow update: if false;
       allow delete: if isAdmin();
     }

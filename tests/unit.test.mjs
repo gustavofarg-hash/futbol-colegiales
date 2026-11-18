@@ -1,22 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { classifySelfSignup, organizerUids, pushCopy } = require('../functions/logic.js');
 import { parseMatchesFromText as p, parsePlayedMatchesFromText } from '../js/parser.js';
 import { normalizePhone, waLink, waSendUrl } from '../js/phone.js';
 import { allocateAcrossDebts, annulCreditDeltas, autoCreditExcess, autoCreditTake, collectedLine, findPlayerPayBatch, formatARS, mineAddedLabel, organizerDayCash, organizerReceipts, parseAmount, payBatchAddedPending, payBatchPendingPeers, payBatchSnapshot, paymentFailureText, paymentParts, paymentRecord, paymentShares, paymentStatusText, paymentWithoutShare, pendingStatusText, receivePendingTransfer, revertPayBatch, settleOldestDebts, settlementSummary, splitLeftoverCredit, writePaymentsInOrder } from '../js/payments.js';
 import { FirebaseStore, createDemoStore, isFirebaseConfigured, listenDeniedPlan, mergeDocsById, nextPlayerCount } from '../js/store.js';
-import { RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
+import { CONFIRM_LISTEN, PLAYER_LISTEN, RECENT_LISTEN_DAYS, USAGE_FLUSH_MS, UsageMeter, meterFirestore, playerCountSweep, quotaDay, recentCutoff, usageFlushDecision, usageLevel, usageSummary, writeFailureText } from '../js/usage.js';
+import { refuseRealTarget, refuseUnlessEmulator } from './no-real-firebase.mjs';
 import { firebaseConfig as productionConfig } from '../config.js';
-import { ADMIN_EMAIL as trialAdminEmail, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
+import { ADMIN_EMAIL as trialAdminEmail, FCM_VAPID_KEY as trialVapid, GOOGLE_DRIVE_CLIENT_ID as trialDriveClientId, firebaseConfig as trialConfig } from '../config.prueba.js';
 import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, isTrialPath, publicAppOriginFrom } from '../js/trial.js';
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
-import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, stepPointInput } from '../js/behavior.js';
+import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from '../js/behavior.js';
+import { isSelfPending, matchOpenToRoster, occupiesSpot, pendingSelfSignups, selfRowAction, selfSignupRows, signupRateDecision } from '../js/self-signup.js';
+import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from '../js/confirm-notice.js';
+import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from '../js/push.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
-import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
+import { GUEST_PAGE, HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, guestListenPlan, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, playerVisibleBackfill, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { compensationDoneDates, countedGoals, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
+import { compensationDoneDates, countedForMoney, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
 import { activityNoticeText, activityNotices } from '../js/notify.js';
@@ -40,7 +47,7 @@ import { acceptedExternalShort, shortenExternal } from '../js/shorten.js';
 import { TEXT_SIZE_DEFAULT, TEXT_SIZES, indexFromStored, readTextSize, stepTextSize, textSizeIndex } from '../js/text-size.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canView, compensationApplies, importAccess, isRestricted, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from '../js/access.js';
 import { balanceTeams, bumpGoals, bumpScore, cyclePlayer, dropPlayer, dropPlayerOn, goaliesLeft, movePlayer, nextInGoalAt, normalizeScore, normalizeTeams, orderByGoal, orderTeamsByGoal, scoreLine, shuffleTeams, teamsBalance, teamsMessage, teamsRecord } from '../js/teams.js';
-import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, playerLink } from '../js/share.js';
+import { APP_INSTALL_URL, appShareMessage, isPlayerDeepLink, organizerMatchesTitle, playerLink } from '../js/share.js';
 import {
   adminEmailConfigured, createOrganizerDemo, deleteOrganizerDemo, emptyAuthDb, loginDemo,
   sameAdminEmail, seedDemoAuth, setOrganizerActiveDemo,
@@ -1187,6 +1194,7 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
   const phone = 'ab'.repeat(32);
   const group = [
     { id: 'hoy', matchId: 'm1', confirmToken: 'token-hoy-largo-0001', phoneKey: phone },
+    { id: 'tarde', matchId: 'm9', confirmToken: 'token-tarde-largo-009', phoneKey: phone },
     { id: 'man', matchId: 'm2', confirmToken: 'token-man-largo-0002', phoneKey: phone },
     { id: 'jue', matchId: 'm3', confirmToken: 'token-jue-largo-0003', phoneKey: phone },
     { id: 'esp', matchId: 'm4', confirmToken: 'token-esp-largo-0004', phoneKey: phone, waiting: true },
@@ -1197,6 +1205,7 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
   ];
   const groupMatches = [
     { id: 'm1', date: '2026-10-19', time: '20:00' },
+    { id: 'm9', date: '2026-10-19', time: '17:30' },
     { id: 'm2', date: '2026-10-20', time: '21:00' },
     { id: 'm3', date: '2026-10-22', time: '19:00' },
     { id: 'm4', date: '2026-10-21', time: '18:00' },
@@ -1206,10 +1215,14 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
     { id: 'm8', date: '2026-10-24', time: '19:00', cancelled: true },
   ];
   const slots = upcomingConfirmSlots({ players: group, matches: groupMatches, player: group[0], now: before });
-  assert.deepEqual(slots.map((slot) => confirmSlotText(slot, before)), ['HOY 20:00', 'mañana 21:00', 'jueves 19:00']);
+  assert.deepEqual(slots.map((slot) => confirmSlotText(slot, before)), ['HOY 17:30', 'HOY 20:00']);
+  const tomorrowSlots = upcomingConfirmSlots({ players: group, matches: groupMatches, player: group[2], now: before });
+  assert.deepEqual(tomorrowSlots.map((slot) => confirmSlotText(slot, before)), ['mañana 21:00']);
   assert.equal(sharedConfirmAnswer(slots), null);
   assert.equal(sharedConfirmAnswer(slots.map((slot) => ({ ...slot, confirmed: 'si' }))), 'si');
-  assert.equal(visibleConfirmSlots(slots, before).length, 3);
+  assert.equal(visibleConfirmSlots(slots, before).length, 2);
+  const stale = [...slots, ...tomorrowSlots, { token: 'token-jue-largo-0003', playerId: 'jue', date: '2026-10-22', time: '19:00' }];
+  assert.deepEqual(visibleConfirmSlots(stale, before, '2026-10-19').map((slot) => slot.date), ['2026-10-19', '2026-10-19']);
   assert.equal(visibleConfirmSlots(slots, new Date('2026-11-15T13:00:00-03:00')).length, 0);
   const manyUrl = 'https://spoo.me/XXXX';
   const luciano = { name: 'Luciano Pérez' };
@@ -1227,9 +1240,8 @@ test('la confirmación de asistencia usa HOY al cruzar la medianoche', () => {
     slots: [{ date: '2026-10-19', time: '17:30' }, { date: '2026-10-19', time: '18:30' }],
   }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y 18:30?\n\nRespondé en este link: ${manyUrl}`);
   assert.equal(attendanceMessage({
-    player: luciano, confirmUrl: manyUrl, now: before,
-    slots: [{ date: '2026-10-19', time: '17:30' }, { date: '2026-10-20', time: '21:00' }],
-  }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y mañana 21:00?\n\nRespondé en este link: ${manyUrl}`);
+    player: luciano, confirmUrl: manyUrl, now: before, slots,
+  }), `¡Hola Luciano! ¿Confirmás que jugás HOY 17:30 y 20:00?\n\nRespondé en este link: ${manyUrl}`);
   assert.equal(attendanceMessage({
     player: luciano, when: 'Mañana', time: '18:00', confirmUrl: manyUrl,
   }), `¡Hola Luciano! ¿Confirmás que jugás Mañana 18:00?\n\nRespondé en este link: ${manyUrl}`);
@@ -1487,8 +1499,8 @@ test('perfil: partidos pasados, día y horario más frecuentes', () => {
     { id: 'ya', existing: true },
   ]), ['libre', 'lleno']);
   const ledger = paymentLedger({ phone, players, matches });
-  assert.equal(ledger.totalText, 'Pagó $19.000');
-  assert.equal(ledger.months[0].text, 'Oct 2026: $19.000');
+  assert.equal(ledger.totalText, 'Pagó $10.000');
+  assert.equal(ledger.months[0].text, 'Oct 2026: $10.000');
   assert.deepEqual(ledger.byOrganizer.map((row) => row.name), ['Sin especificar']);
   assert.equal(monthLabel('2026-10'), 'Oct 2026');
   const notes = sortedNotes([
@@ -1664,6 +1676,10 @@ test('la baja calcula los puntos según la hora de Buenos Aires', () => {
   assert.equal(bajaDeduction({ date: '2026-10-19', time: '12:00', now }).label, 'No fue sin avisar');
   assert.equal(bajaReasonText('Menos de 1 h antes'), 'Se bajó con menos de 1 h');
   assert.equal(bajaReasonText('Después del inicio, conviene suspender'), 'No fue sin avisar');
+  assert.equal(removalDeducts({ waiting: true }), false);
+  assert.equal(removalDeducts({ waiting: false }), true);
+  assert.equal(removalDeducts({ noPlay: true }), true);
+  assert.equal(removalDeducts(null), false);
   assert.match(preview.headline, /Ana · Lunes 19\/10 · 21:00 hs/);
   assert.match(preview.nowLine, /Ahora son las 13:00 · falta 8 h/);
   assert.equal(parseBajaPoints('0').points, 0);
@@ -1866,9 +1882,9 @@ test('pagos por organizador: mes, cobrador y veces anotado', () => {
     { matchId: 'oct', phone: '5491100000000', paid: true, amount: 9000, receivedBy: 'Martín', addedBy: 'Lucía' },
   ];
   const all = paymentLedger({ phone, players, matches });
-  assert.equal(all.total, 14000);
-  assert.deepEqual(all.months.map((row) => row.text), ['Nov 2026: $4.000', 'Oct 2026: $10.000']);
-  assert.deepEqual(all.byOrganizer.map((row) => [row.name, row.amount]), [['Gustavo', 5000], ['Martín', 5000], ['Sin especificar', 4000]]);
+  assert.equal(all.total, 9000);
+  assert.deepEqual(all.months.map((row) => row.text), ['Nov 2026: $4.000', 'Oct 2026: $5.000']);
+  assert.deepEqual(all.byOrganizer.map((row) => [row.name, row.amount]), [['Martín', 5000], ['Sin especificar', 4000]]);
   const martin = paymentLedger({ phone, players, matches, organizer: 'martín' });
   assert.equal(martin.totalText, 'Pagó $5.000');
   assert.equal(martin.months.length, 1);
@@ -1914,7 +1930,142 @@ test('organizadores demo: siembra Gustavo y Martín y no duplica', async () => {
   assert.equal(JSON.parse(mem.get('f7c-test-org')).organizers.lucia.name, 'Lucía');
 });
 
-test('la ficha de varios partidos próximos no incluye la espera', async () => {
+test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', async () => {
+  assert.equal(occupiesSpot({ waiting: true }), false);
+  assert.equal(occupiesSpot({ tentative: true, selfSignup: true }), true);
+  assert.equal(occupiesSpot({ name: 'Ana' }), true);
+  assert.equal(isSelfPending({ tentative: true, selfSignup: true }), true);
+  assert.equal(isSelfPending({ tentative: true }), false);
+  assert.equal(selfRowAction({ full: false }).action, 'join');
+  assert.equal(selfRowAction({ full: true }).action, 'wait');
+  assert.equal(selfRowAction({ player: { tentative: true, selfSignup: true }, organizerName: 'Gustavo Pérez' }).note, 'Esperando la confirmación de Gustavo...');
+  assert.equal(selfRowAction({ player: { tentative: true, selfSignup: true } }).note, 'Esperando la confirmación...');
+  assert.equal(selfRowAction({ player: { waiting: true } }).action, 'cancel');
+  assert.equal(selfRowAction({ player: { waiting: true } }).note, 'En lista de espera');
+  const kick = Date.parse('2026-10-19T21:00:00-03:00');
+  const early = Date.parse('2026-10-19T13:00:00-03:00');
+  const late = Date.parse('2026-10-19T18:00:00-03:00');
+  assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: early }).note, 'Confirmado');
+  assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: early }).status, 'confirmed');
+  assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: early }).action, 'cancel');
+  assert.equal(selfRowAction({ player: { name: 'Ana' }, kickoff: kick, now: late }).action, 'locked');
+  assert.equal(signupRateDecision(null, 1000).count, 1);
+  assert.equal(signupRateDecision({ windowStart: 1000, count: 5 }, 1000 + 10 * 60 * 1000).ok, false);
+  assert.equal(signupRateDecision({ windowStart: 1000, count: 5 }, 1000 + 31 * 60 * 1000).ok, true);
+  assert.equal(matchOpenToRoster({ createdByUid: 'gus', cancelled: false }, { holders: ['gus'] }), true);
+  assert.equal(matchOpenToRoster({ createdByUid: 'martin' }, { holders: ['gus'] }), false);
+  const rows = selfSignupRows({
+    person: { id: 'r1', holders: ['gus'], name: 'Ana' },
+    matches: [
+      { id: 'm1', date: '2026-10-19', time: '21:00', capacity: 14, createdByUid: 'gus' },
+      { id: 'm2', date: '2026-10-20', time: '18:00', capacity: 14, createdByUid: 'martin' },
+      { id: 'hide', date: '2026-10-19', time: '23:40', capacity: 14, createdByUid: 'gus', playerVisible: false },
+    ],
+    players: [],
+    now: early,
+  });
+  assert.deepEqual(rows.map((row) => row.match.id), ['m1']);
+  assert.equal(rows[0].action, 'join');
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-test-self';
+  store.actor = { uid: 'gustavo', name: 'Gustavo' };
+  await store.init();
+  const rosterId = await store.addRoster({ name: 'Ana Sola', phone: '5491170001940' }, 'Gustavo');
+  const open = await store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14 }, 'Gustavo');
+  const full = await store.addMatch({ date: '2026-10-19', time: '18:00', capacity: 1 }, 'Gustavo');
+  await store.addPlayer({ id: full, date: '2026-10-19', capacity: 1 }, { name: 'Ocupa Sola', phone: '5491170001941' }, 'Gustavo');
+  const person = { id: rosterId, name: 'Ana Sola', phone: '5491170001940' };
+  const pendingId = await store.selfJoin({ id: open, date: '2026-10-19', time: '21:00', capacity: 14 }, person, { waiting: false });
+  const db = () => JSON.parse(mem.get('f7c-test-self'));
+  assert.equal(db().players[pendingId].tentative, true);
+  assert.equal(db().players[pendingId].selfSignup, true);
+  assert.equal(db().players[pendingId].waiting, false);
+  assert.ok(Object.values(db().log || {}).some((row) => row.type === 'se anotó' && row.actorName === 'Ana Sola' && row.detail === 'Pendiente de confirmación' && String(row.matchLabel || '').includes('21:00')));
+  assert.equal(occupiesSpot(db().players[pendingId]), true);
+  await store.confirmSelf(pendingId);
+  assert.notEqual(db().players[pendingId].tentative, true);
+  assert.ok(Object.values(db().log || {}).some((row) => row.type === 'aceptó' && row.actorName === 'Gustavo' && row.playerName === 'Ana Sola'));
+  assert.equal(occupiesSpot({ ...db().players[pendingId], id: pendingId }), true);
+  assert.ok(Object.values(db().signupPings || {}).some((row) => row.kind === 'confirmado' && row.playerId === pendingId && row.name === 'Ana Sola'));
+  const told = confirmBannerText({ date: '2026-10-19', time: '21:00', place: 'Polideportivo Colegiales' });
+  assert.equal(told, '¡Te confirmaron para el Lunes 19/10 21:00 en Polideportivo Colegiales!');
+  assert.equal(confirmWhatsAppText('Ana', { date: '2026-10-19', time: '21:00', place: 'Polideportivo Colegiales' }), 'Hola Ana, quedaste confirmado para el Lunes 19/10 21:00 en Polideportivo Colegiales.');
+  assert.equal(unseenConfirmations({
+    rosterId: 'ficha',
+    seenIds: [],
+    matches: [{ id: 'm1', date: '2026-10-19' }],
+    players: [
+      { id: 'nuevo', rosterId: 'ficha', matchId: 'm1', selfSignup: true, tentative: false, waiting: false },
+      { id: 'pendiente', rosterId: 'ficha', matchId: 'm1', selfSignup: true, tentative: true },
+    ],
+  }).map((row) => row.player.id).join(','), 'nuevo');
+  assert.equal(unseenConfirmations({
+    rosterId: 'ficha',
+    seenIds: ['nuevo'],
+    matches: [{ id: 'm1' }],
+    players: [{ id: 'nuevo', rosterId: 'ficha', matchId: 'm1', selfSignup: true }],
+  }).length, 0);
+  const waitId = await store.selfJoin({ id: full, date: '2026-10-19', time: '18:00', capacity: 1 }, person, { waiting: true });
+  assert.equal(db().players[waitId].waiting, true);
+  assert.equal(db().players[waitId].selfSignup, true);
+  await store.selfCancel(waitId, early);
+  assert.equal(db().players[waitId], undefined);
+  assert.ok(Object.values(db().log || {}).some((row) => row.type === 'se bajó' && row.actorName === 'Ana Sola'));
+  assert.equal(Object.values(db().behavior || {}).some((row) => row.type === 'baja'), false);
+  for (let i = 0; i < 2; i += 1) {
+    const extra = await store.addMatch({ date: '2026-10-22', time: `1${i}:00`, capacity: 14 }, 'Gustavo');
+    await store.selfJoin({ id: extra, date: '2026-10-22', time: `1${i}:00`, capacity: 14 }, person, {});
+  }
+  const blocked = await store.addMatch({ date: '2026-10-23', time: '12:00', capacity: 14 }, 'Gustavo');
+  await assert.rejects(() => store.selfJoin({ id: blocked, date: '2026-10-23', time: '12:00', capacity: 14 }, person, {}), /rato/);
+  const pings = Object.values(db().signupPings || {});
+  assert.ok(pings.some((row) => row.kind === 'alta' && row.name === 'Ana Sola'));
+  assert.ok(pings.some((row) => row.kind === 'baja' && row.name === 'Ana Sola'));
+  const listed = pendingSelfSignups({
+    uid: 'gustavo',
+    matches: [
+      { id: 'nuevo', date: '2026-10-19', time: '21:00', createdByUid: 'gustavo' },
+      { id: 'viejo', date: '2026-10-18', time: '18:00', createdByUid: 'gustavo' },
+    ],
+    players: [
+      { id: 'p2', name: 'Viejo', matchId: 'viejo', tentative: true, selfSignup: true, createdAt: 1 },
+      { id: 'p1', name: 'Nuevo', matchId: 'nuevo', tentative: true, selfSignup: true, createdAt: 5 },
+      { id: 'p3', name: 'Ajeno', matchId: 'nuevo', tentative: true, selfSignup: true, waiting: true, createdAt: 9 },
+    ],
+  });
+  assert.deepEqual(listed.map((row) => row.player.name), ['Nuevo', 'Viejo']);
+  assert.equal(classifySelfSignup(null, { selfSignup: true, tentative: true }), 'alta');
+  assert.equal(classifySelfSignup(null, { selfSignup: true, waiting: true }), 'espera');
+  assert.equal(classifySelfSignup({ tentative: true, selfSignup: true }, null), '');
+  const copy = pushCopy('alta', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Colegiales' });
+  assert.match(copy.body, /Ana se anotó y espera confirmación\. 19\/10 · 21:00 · Colegiales/);
+  assert.match(copy.url, /#\/a-confirmar$/);
+  assert.match(pushCopy('espera', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
+  assert.match(pushCopy('baja', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
+  const confirmedCopy = pushCopy('confirmado', { name: 'Ana', rosterId: 'fichaAna' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Polideportivo Colegiales' });
+  assert.equal(confirmedCopy.body, '¡Te confirmaron para el Lunes 19/10 21:00 en Polideportivo Colegiales!');
+  assert.match(confirmedCopy.url, /#\/jugador\/fichaAna$/);
+  const { noticeActions, actionDecision, pushFields } = require('../functions/logic.js');
+  const alta = pushFields('alta', copy, { actionToken: 'a'.repeat(64), playerId: 'p1', tag: 't' });
+  assert.equal(alta.decideUrl.includes('decideSignup'), true);
+  assert.equal(noticeActions(alta).map((row) => row.action).join(','), 'aceptar,rechazar');
+  assert.deepEqual(noticeActions(pushFields('espera', copy, {})), []);
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: true }, 'aceptar', 1000, 2).op, 'confirm');
+  assert.equal(actionDecision({ playerId: 'p1', used: true, expiresAt: 5000 }, { id: 'p1', tentative: true }, 'aceptar', 1000, 2).status, 410);
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: true }, 'rechazar', 1000, 0).op, 'delete');
+  assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: false }, 'aceptar', 1000, 2).status, 409);
+  assert.deepEqual(organizerUids({ createdByUid: 'gus', adders: ['*'] }, ['otro']), ['gus']);
+  assert.deepEqual(organizerUids({ createdByUid: 'gus' }, ['otro'], 'solo'), ['solo']);
+  assert.deepEqual(organizerUids({}, ['titular']), ['titular']);
+});
+
+test('la ficha de confirmación junta solo los partidos de ese día', async () => {
   const mem = new Map();
   globalThis.localStorage = {
     getItem: (k) => (mem.has(k) ? mem.get(k) : null),
@@ -1929,12 +2080,14 @@ test('la ficha de varios partidos próximos no incluye la espera', async () => {
   const later = addDays(today, 3);
   const phone = '5491170001781';
   const first = await store.addMatch({ date: today, time: '20:00', capacity: 14 }, 'Gustavo');
+  const same = await store.addMatch({ date: today, time: '18:30', capacity: 14 }, 'Gustavo');
   const second = await store.addMatch({ date: tomorrow, time: '21:00', capacity: 14 }, 'Gustavo');
   const third = await store.addMatch({ date: later, time: '19:00', capacity: 1 }, 'Gustavo');
   await store.addPlayer({ id: third, date: later, capacity: 1 }, { name: 'Ocupa Lugar', phone: '5491170001782' }, 'Gustavo');
   const ids = [];
   for (const match of [
     { id: first, date: today },
+    { id: same, date: today },
     { id: second, date: tomorrow },
   ]) {
     ids.push(await store.addPlayer({ id: match.id, date: match.date, capacity: 14 }, { name: 'Ana López', phone }, 'Gustavo'));
@@ -1945,9 +2098,12 @@ test('la ficha de varios partidos próximos no incluye la espera', async () => {
   assert.equal(cards[0].also.length, 2);
   assert.equal(cards[1].also.length, 2);
   assert.equal(cards[2].also, undefined);
-  assert.deepEqual(cards[0].also.map((slot) => slot.time), ['20:00', '21:00']);
+  assert.equal(cards[3].also, undefined);
+  assert.deepEqual(cards[0].also.map((slot) => slot.time), ['18:30', '20:00']);
+  assert.ok(cards[0].also.every((slot) => slot.date === today));
   assert.equal(JSON.stringify(cards[0].also).includes('549'), false);
-  assert.equal(cards[0].also.some((slot) => slot.playerId === ids[2]), false);
+  assert.equal(cards[0].also.some((slot) => slot.playerId === ids[3]), false);
+  assert.equal(cards[0].also.some((slot) => slot.date === tomorrow), false);
 });
 
 test('la ficha de confirmación no lleva teléfono', () => {
@@ -2908,7 +3064,14 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   assert.ok(ranged.filters.some((filter) => filter.op === '>=' && filter.value === '2026-10-01'));
   assert.ok(ranged.filters.some((filter) => filter.op === '<=' && filter.value === '2026-10-10'));
   const upcoming = matchQueryPlan('upcoming', null, '2026-10-19');
-  assert.equal(upcoming.limit, null);
+  assert.equal(upcoming.limit, 40);
+  const guest = guestListenPlan({ rosterId: 'ficha', organizerUid: 'org', today: '2026-10-19' });
+  assert.equal(guest.matches.limit, GUEST_PAGE);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'viewers' && filter.value === '*'), true);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid'), false);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'playerVisible'), false);
+  assert.equal(guest.players.filters.some((filter) => filter.field === 'rosterId' && filter.value === 'ficha'), true);
+  assert.equal(guest.matches.collection, 'matches');
   assert.deepEqual(upcoming.orderBy, ['date', 'asc']);
   assert.ok(upcoming.filters.some((filter) => filter.op === '>=' && filter.value === '2026-10-19'));
   const byDate = playerStats({
@@ -3230,11 +3393,79 @@ test('compartir la app nombra el link de instalación', () => {
 
 test('el enlace del jugador abre esa ficha', () => {
   assert.equal(playerLink('abc/1'), `${APP_INSTALL_URL}#/jugador/abc%2F1`);
+  assert.equal(playerLink('abc', 'tok_en-1234567890abcd'), `${APP_INSTALL_URL}#/jugador/abc/tok_en-1234567890abcd`);
+  assert.notEqual(playerLink('abc', 'aaaa'), playerLink('abc', 'bbbb'));
   assert.equal(playerLink('  '), '');
   assert.equal(isPlayerDeepLink('#/jugador/abc'), true);
   assert.equal(isPlayerDeepLink('#/jugador/'), false);
   assert.equal(isPlayerDeepLink('#/jugadores'), false);
   assert.equal(isPlayerDeepLink('#/'), false);
+  assert.equal(isPlayerDeepLink('#/jugador/abc/tok_en-1234567890abcd'), true);
+  assert.equal(organizerMatchesTitle('Gustavo Pérez'), 'Próximos partidos de Gustavo');
+  assert.equal(organizerMatchesTitle('Martín'), 'Próximos partidos de Martín');
+  assert.equal(organizerMatchesTitle('  '), '');
+});
+
+test('el enlace de un organizador solo muestra sus partidos y la anotación es de él', async () => {
+  const now = Date.parse('2026-10-19T13:00:00-03:00');
+  const person = { id: 'r', name: 'Ana', holders: ['gus', 'martin'] };
+  const matches = [
+    { id: 'ga', date: '2026-10-19', time: '21:00', createdByUid: 'gus' },
+    { id: 'ma', date: '2026-10-19', time: '22:00', createdByUid: 'martin' },
+    { id: 'hide', date: '2026-10-19', time: '23:00', createdByUid: 'gus', playerVisible: false },
+  ];
+  assert.deepEqual(selfSignupRows({ person, matches, now, organizerUid: 'gus', scoped: true }).map((row) => row.match.id), ['ga']);
+  const named = selfSignupRows({
+    person,
+    matches: [...matches, { id: 'apodo', date: '2026-10-19', time: '20:00', createdBy: 'Gus', viewers: ['*'] }],
+    now,
+    organizerUid: 'otro',
+    organizerName: 'Gustavo',
+    scoped: true,
+  });
+  assert.deepEqual(named.map((row) => row.match.id), ['apodo']);
+  assert.deepEqual(selfSignupRows({ person, matches, now }).map((row) => row.match.id).sort(), ['ga', 'ma']);
+  const pending = pendingSelfSignups({
+    uid: 'gus',
+    matches: [{ id: 'ga', createdByUid: 'gus' }, { id: 'ma', createdByUid: 'martin' }],
+    players: [
+      { id: '1', matchId: 'ga', tentative: true, selfSignup: true, addedByUid: 'gus', createdAt: 2 },
+      { id: '2', matchId: 'ma', tentative: true, selfSignup: true, addedByUid: 'martin', createdAt: 3 },
+    ],
+  });
+  assert.deepEqual(pending.map((row) => row.player.id), ['1']);
+  assert.equal(pendingSelfSignups({
+    uid: 'z',
+    admin: true,
+    matches: [{ id: 'ma', createdByUid: 'martin' }],
+    players: [{ id: '2', matchId: 'ma', tentative: true, selfSignup: true, addedByUid: 'martin', createdAt: 1 }],
+  }).length, 1);
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const store = createDemoStore();
+  store.key = 'f7c-share-link';
+  store.actor = { uid: 'gus', name: 'Gustavo' };
+  await store.init();
+  const token = await store.ensureShareToken('gus', 'Gustavo');
+  assert.equal(await store.ensureShareToken('gus', 'Gustavo'), token);
+  assert.equal(store.shareOrganizer(token).name, 'Gustavo');
+  const rosterId = await store.addRoster({ name: 'Ana Link', phone: '5491170002060' }, 'Gustavo');
+  const matchId = await store.addMatch({ date: '2026-10-19', time: '21:00', capacity: 14 }, 'Gustavo');
+  const raw = JSON.parse(mem.get('f7c-share-link'));
+  raw.matches[matchId].createdByUid = 'gus';
+  mem.set('f7c-share-link', JSON.stringify(raw));
+  const playerId = await store.selfJoin({ id: matchId, date: '2026-10-19', time: '21:00', capacity: 14, createdByUid: 'gus' }, { id: rosterId, name: 'Ana Link' }, { organizer: { uid: 'gus', name: 'Gustavo', token } });
+  const saved = JSON.parse(mem.get('f7c-share-link'));
+  assert.equal(saved.players[playerId].addedByUid, 'gus');
+  assert.equal(saved.players[playerId].addedBy, 'Gustavo');
+  assert.equal(saved.players[playerId].signedUpWith, 'gus');
+  const log = Object.values(saved.log).find((row) => row.type === 'se anotó' && row.playerName === 'Ana Link');
+  assert.equal(log.actorName, 'Gustavo');
+  assert.equal(log.actorUid, 'gus');
 });
 
 test('cancelar no arma recordatorio y el mensaje no lleva link', () => {
@@ -3809,7 +4040,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v187');
+  assert.equal(version, 'f7c-v217');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -3819,6 +4050,69 @@ test('el error del backup nombra la colección y el documento', () => {
   assert.ok(app.indexOf('${noPlaySection(m, readOnly)}') < app.indexOf('${usualSection(m)}'), 'No jugó pero pagó queda arriba de Suelen anotarse');
   assert.equal(app.includes('Crear cuenta de administrador'), false);
   assert.match(readFileSync(new URL('../js/auth.js', import.meta.url), 'utf8'), /async registerAdmin\(/);
+});
+
+test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => {
+  assert.equal(trialConfig.projectId, 'mis-partidos-prueba');
+  assert.equal(trialVapid, '');
+  const prev = globalThis.location;
+  globalThis.location = { pathname: '/futbol-colegiales/prueba/', origin: 'https://gustavofarg-hash.github.io' };
+  try {
+    const push = await registerOrganizerPush({ savePushToken() { throw new Error('no hay token'); } });
+    assert.deepEqual(push, { ok: false, reason: 'no-vapid' });
+    assert.equal(playerPushAvailable(), false);
+    const playerPush = await registerPlayerPush({ savePlayerPushToken() { throw new Error('no hay token'); } }, 'ficha');
+    assert.deepEqual(playerPush, { ok: false, reason: 'no-vapid' });
+    assert.equal(iosPushHint(), '');
+  } finally {
+    if (prev === undefined) delete globalThis.location;
+    else globalThis.location = prev;
+  }
+  const store = new FirebaseStore();
+  store._unsubs = undefined;
+  const calls = [];
+  store.fs = {
+    doc(_db, col, id) { return { path: `${col}/${id}` }; },
+    collection(_db, col) { return { path: col }; },
+    query(ref, ...parts) { return { path: ref.path, parts }; },
+    where(field, op, value) { return { field, op, value }; },
+    orderBy(field, dir) { return { orderBy: field, dir }; },
+    limit(n) { return { limit: n }; },
+    onSnapshot(ref, next) {
+      calls.push(ref);
+      queueMicrotask(() => {
+        if (String(ref.path).startsWith('roster/')) next({ exists: () => true, id: 'NZpoLFKUUh044kfNGSmR', data: () => ({ name: 'Ángel', holders: ['org'] }) });
+        else next({ docs: [], metadata: { fromCache: false } });
+      });
+      return () => {};
+    },
+  };
+  assert.equal(store.fs.getMessaging, undefined);
+  store._listenGuest('NZpoLFKUUh044kfNGSmR');
+  assert.equal(store._unsubs.length, 4);
+  store.listenAsGuest('NZpoLFKUUh044kfNGSmR');
+  assert.equal(store._unsubs.length, 4);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(calls.map((ref) => ref.path), ['matches', 'roster/NZpoLFKUUh044kfNGSmR', 'confirmSeen', 'players']);
+  const matchQuery = calls.find((ref) => ref.path === 'matches');
+  assert.equal(matchQuery.parts.some((part) => part.field === 'createdByUid'), false);
+  assert.equal(matchQuery.parts.some((part) => part.field === 'playerVisible'), false);
+  assert.ok(matchQuery.parts.some((part) => part.field === 'viewers' && part.value === '*'));
+  assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '>='));
+  assert.ok(matchQuery.parts.some((part) => part.limit === 24));
+  const playerQuery = calls.find((ref) => ref.path === 'players');
+  assert.ok(playerQuery.parts.some((part) => part.field === 'rosterId' && part.value === 'NZpoLFKUUh044kfNGSmR'));
+  assert.equal(playerQuery.parts.some((part) => part.field === 'viewers' && part.op === 'array-contains-any'), false);
+  assert.equal(store.state.roster[0].name, 'Ángel');
+  assert.equal(store.serverOk, true);
+  const before = calls.length;
+  store.setActor(null);
+  assert.equal(calls.length, before);
+  assert.equal(store._guest, true);
+  const organizer = new FirebaseStore();
+  organizer._unsubs = undefined;
+  organizer._stop();
+  assert.deepEqual(organizer._unsubs, []);
 });
 
 test('el service worker revalida la app y no mezcla las cachés', () => {
@@ -4906,6 +5200,109 @@ test('un backup importado no le suma a Gustavo los lugares de Martín', () => {
   assert.equal(shares.get('2026-11'), ownDay + openDay);
 });
 
+test('el día cuenta los lugares que anotó y lo que pagaron, espera aparte', () => {
+  const who = { uid: 'gus', name: 'Gustavo' };
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const matches = [
+    { id: 'tarde', date: '2026-11-13', time: '18:00', price: 5000, cancelled: false },
+    { id: 'temprano', date: '2026-11-13', time: '17:00', price: 5000 },
+    { id: 'lluvia', date: '2026-11-13', time: '19:00', price: 5000, cancelled: true },
+  ];
+  const players = [
+    { id: 'a', matchId: 'temprano', name: 'Ana', phone: '5491190000401', signedUpWith: 'otro', signedUpWithName: 'Gustavo', paid: true, split: true, cash: 2000, pendingTransfer: 3000 },
+    { id: 'b', matchId: 'temprano', name: 'Beto', phone: '5491190000402', signedUpWith: 'mar', signedUpWithName: 'Martín', paid: true, split: true, cash: 8000 },
+    { id: 'c', matchId: 'temprano', name: 'Espera', phone: '5491190000403', signedUpWith: 'gus', waiting: true, paid: true, split: true, cash: 9000 },
+    { id: 'd', matchId: 'tarde', name: 'Ciro', phone: '5491190000404', signedUpWith: 'gus', addedByUid: 'gus', noPlay: true, paid: true, split: true, cash: 4000 },
+    { id: 'e', matchId: 'tarde', name: 'Dano', phone: '5491190000405', signedUpWith: 'gus', freePlay: true },
+    { id: 'f', matchId: 'lluvia', name: 'Eva', phone: '5491190000406', signedUpWith: 'gus', paid: true, split: true, cash: 7000 },
+  ];
+  const summary = daySignupSummary({ matches, players, prices, who });
+  assert.deepEqual(summary.matches.map((row) => row.time), ['17:00', '18:00']);
+  assert.equal(summary.matches[0].spots, 1);
+  assert.equal(summary.matches[0].paid, 5000);
+  assert.equal(summary.matches[1].spots, 2);
+  assert.equal(summary.matches[1].paid, 4000);
+  assert.equal(summary.spots, 3);
+  assert.equal(summary.paid, 9000);
+});
+
+test('el domingo 15/11 no pasa de 14 lugares por $5000', () => {
+  const who = { uid: 'gus', name: 'Gustavo' };
+  const staff = [
+    { uid: 'gus', name: 'Gustavo', active: true },
+    { uid: 'mar', name: 'Martín', active: true },
+  ];
+  const own = (id, time) => ({
+    id, date: '2026-11-15', time, capacity: 14, perTeam: 7, price: 5000,
+    adders: ['gus'], adderNames: [{ uid: 'gus', name: 'Gustavo' }], createdBy: 'Gustavo', createdByUid: 'gus',
+  });
+  const matches = [
+    own('m1', '17:00'),
+    own('m2', '18:00'),
+    { id: 'ajeno', date: '2026-11-15', time: '19:00', capacity: 14, perTeam: 7, price: 5000, adders: ['mar'], adderNames: [{ uid: 'mar', name: 'Martín' }], createdBy: 'Martín', createdByUid: 'mar' },
+  ];
+  const players = [];
+  for (const id of ['m1', 'm2']) {
+    for (let i = 0; i < 14; i++) {
+      players.push({ id: `${id}-l${i}`, matchId: id, name: `Lista ${i}`, signedUpWith: 'gus', signedUpWithName: 'Gustavo', createdAt: i, paid: true, split: true, cash: 5000 });
+    }
+    for (let i = 0; i < 6; i++) {
+      players.push({ id: `${id}-x${i}`, matchId: id, name: `Sobra ${i}`, signedUpWith: 'gus', signedUpWithName: 'Gustavo', createdAt: 100 + i, paid: true, split: true, cash: 5000 });
+    }
+    for (let i = 0; i < 4; i++) {
+      players.push({ id: `${id}-w${i}`, matchId: id, name: `Espera ${i}`, signedUpWith: 'gus', signedUpWithName: 'Gustavo', waiting: true, createdAt: 200 + i, paid: true, split: true, cash: 5000 });
+    }
+    for (let i = 0; i < 3; i++) {
+      players.push({ id: `${id}-n${i}`, matchId: id, name: `Nojugo ${i}`, signedUpWith: 'gus', signedUpWithName: 'Gustavo', noPlay: true, createdAt: 300 + i, paid: true, split: true, cash: 5000 });
+    }
+    players.push({ id: `${id}-lopez`, matchId: id, name: 'Lopez', signedUpWith: 'gus', signedUpWithName: 'Gustavo López', createdAt: 400, paid: true, split: true, cash: 5000 });
+  }
+  for (let i = 0; i < 14; i++) {
+    players.push({ id: `aj-${i}`, matchId: 'ajeno', name: `Ajeno ${i}`, signedUpWith: 'mar', signedUpWithName: 'Martín', createdAt: i, paid: true, split: true, cash: 5000 });
+  }
+  const mine = matches.filter((item) => item.id !== 'ajeno');
+  const summary = daySignupSummary({ matches: mine, players, who });
+  assert.equal(summary.matches.length, 2);
+  assert.equal(summary.matches[0].spots, 17);
+  assert.equal(summary.matches[0].paid, 85000);
+  assert.equal(summary.matches[1].spots, 17);
+  assert.equal(summary.matches[1].paid, 85000);
+  assert.equal(summary.spots, 34);
+  assert.equal(summary.paid, 170000);
+  const listed = mine.flatMap((item) => countedForMoney(players, item));
+  const share = organizerDayShare({
+    matches: mine,
+    players: listed,
+    staff,
+    uid: 'gus',
+    name: 'Gustavo',
+    now: new Date('2026-11-16T15:00:00-03:00'),
+  });
+  assert.equal(share, 170000);
+  const withWait = matchTake({
+    match: own('m1', '17:00'),
+    players,
+    matches,
+    prices: { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 },
+  });
+  assert.equal(withWait.collected, 120000);
+  assert.equal(withWait.pending, 0);
+  assert.equal(organizerReceipts([
+    { signedUpWith: 'gus', waiting: true, paid: true, split: true, cash: 9000, cashTo: 'Gustavo' },
+    { signedUpWith: 'gus', paid: true, split: true, cash: 5000, cashTo: 'Gustavo' },
+  ], who).cash, 5000);
+  const loose = daySignupSummary({
+    matches: [own('uno', '17:00')],
+    players: [
+      { id: 'g', matchId: 'uno', signedUpWith: 'otro', signedUpWithName: 'Gus', createdAt: 1, paid: true, split: true, cash: 5000 },
+      { id: 'gl', matchId: 'uno', signedUpWith: 'gus', signedUpWithName: 'Gustavo López', createdAt: 2, paid: true, split: true, cash: 5000 },
+    ],
+    who,
+  });
+  assert.equal(loose.spots, 1);
+  assert.equal(loose.paid, 5000);
+});
+
 test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
   const today = '2026-10-19';
   const match = { id: 'hoy', date: '2026-10-22', time: '21:00' };
@@ -4946,6 +5343,20 @@ test('suelen jugar cuenta el mismo día y hora de los últimos 3 meses', () => {
   const rows = usualPlayers({ match, matches, players, today, who: { uid: 'gus', name: 'Gustavo' } });
   assert.deepEqual(rows.map((row) => [row.name, row.count]), [['Beto', 3], ['Espera', 1], ['Luz', 1], ['Nube', 1], ['Primo Real', 1]]);
   assert.equal(rows.some((row) => row.name === 'Invitado 1' || row.name === 'Amigo 2'), false);
+  const roster = [{ id: 'r-ana', name: 'Ana', phone: '5491111111111' }];
+  const pending = players.filter((player) => player.id !== 'ana-hoy').concat({
+    id: 'ana-pend', matchId: 'hoy', name: 'Ana', rosterId: 'r-ana', tentative: true, selfSignup: true, ...mine,
+  });
+  const waiting = players.filter((player) => player.id !== 'beto-1' || player.matchId !== 'hoy').concat({
+    id: 'beto-hoy', matchId: 'hoy', name: 'Beto', phone: '5491122222222', waiting: true, ...mine,
+  });
+  assert.equal(usualPlayers({ match, matches, players: pending, roster, today, who: { uid: 'gus', name: 'Gustavo' } }).some((row) => row.name === 'Ana'), false);
+  assert.equal(usualPlayers({ match, matches, players: waiting, roster, today, who: { uid: 'gus', name: 'Gustavo' } }).some((row) => row.name === 'Beto'), false);
+  const gone = usualPlayers({
+    match, matches, roster, today, who: { uid: 'gus', name: 'Gustavo' },
+    players: pending.filter((player) => player.id !== 'ana-pend'),
+  });
+  assert.equal(gone.some((row) => row.name === 'Ana'), true);
 });
 
 test('Me debe cuenta solo partidos ya jugados y el efectivo del día junta a Gus', () => {
@@ -5093,16 +5504,101 @@ test('el medidor no escribe seguido ni con la app oculta', () => {
   const store = readFileSync(new URL('../js/store.js', import.meta.url), 'utf8');
   assert.equal(app.includes('backfillConfirmTokens'), false);
   assert.equal(app.includes('scheduleRetroactiveAutoCredit() {\n  // El pase de crédito'), true);
-  assert.match(store, /async _backfillMatches\(\) \{[\s\S]*?return;/);
+  assert.match(store, /_backfillMatches\(docs\) \{/);
+  assert.equal(store.includes('_appendLogs') && /_backfillMatches\(docs\) \{[\s\S]*?\n  \}/.exec(store)[0].includes('_appendLogs'), false);
+  assert.equal(store.includes("_widenFromMatches(this._buckets.matches.history);\n      this._backfillMatches"), false);
   assert.match(store, /async _migrateContacts\(\) \{[\s\S]*?return;/);
   assert.equal(store.includes('this._migrated.delete(tag)'), false);
+});
+
+test('un partido próximo sin playerVisible se marca visible una sola vez y no entra al registro', async () => {
+  const today = '2026-11-17';
+  const his = { id: 'hoy', date: today, createdByUid: 'gus', viewers: ['*'] };
+  assert.deepEqual(playerVisibleBackfill(his, { uid: 'gus', today }), { id: 'hoy', patch: { playerVisible: true } });
+  assert.equal(playerVisibleBackfill({ ...his, playerVisible: false }, { uid: 'gus', today }), null);
+  assert.equal(playerVisibleBackfill({ ...his, playerVisible: true }, { uid: 'gus', today }), null);
+  assert.equal(playerVisibleBackfill({ ...his, createdByUid: 'martin' }, { uid: 'gus', today }), null);
+  assert.equal(playerVisibleBackfill({ ...his, date: '2026-11-16' }, { uid: 'gus', today }), null);
+  assert.deepEqual(playerVisibleBackfill({ id: 'libre', date: today, createdByUid: 'gus' }, { uid: 'gus', today }).patch, { playerVisible: true, viewers: ['*'] });
+  assert.deepEqual(playerVisibleBackfill({ id: 'solo', date: today, createdByUid: 'gus', viewers: ['gus'] }, { uid: 'gus', today }).patch, { playerVisible: true });
+  const store = new FirebaseStore();
+  store.actor = { uid: 'gus', name: 'Gustavo', role: 'organizer' };
+  store.db = {};
+  store._queryDay = today;
+  store._backfilled = new Set();
+  store._appendLogs = async () => { throw new Error('registro'); };
+  const writes = [];
+  let commits = 0;
+  store.fs = {
+    doc(_db, ...parts) { return { path: parts.join('/') }; },
+    writeBatch() {
+      const batch = [];
+      return {
+        update(ref, patch) { batch.push({ path: ref.path, patch }); },
+        commit() { commits += 1; writes.push(...batch); return Promise.resolve(); },
+      };
+    },
+  };
+  const docs = [
+    { id: 'hoy', data: () => ({ date: today, createdByUid: 'gus', viewers: ['*'] }) },
+    { id: 'oculto', data: () => ({ date: today, createdByUid: 'gus', viewers: ['*'], playerVisible: false }) },
+    { id: 'ajeno', data: () => ({ date: today, createdByUid: 'martin', viewers: ['*'] }) },
+    { id: 'viejo', data: () => ({ date: '2026-11-01', createdByUid: 'gus', viewers: ['*'] }) },
+    { id: 'por-nombre', data: () => ({ date: today, createdBy: 'Gus', viewers: ['*'] }) },
+  ];
+  store._backfillMatches(docs);
+  store._backfillMatches(docs);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(commits, 1);
+  assert.deepEqual(writes, [
+    { path: 'matches/hoy', patch: { playerVisible: true } },
+    { path: 'matches/por-nombre', patch: { createdByUid: 'gus', playerVisible: true } },
+  ]);
+});
+
+test('si la consulta de la ficha falla, avisa en la página', () => {
+  const store = new FirebaseStore();
+  store.db = {};
+  store.fs = {
+    doc(_db, col, id) { return { path: `${col}/${id}` }; },
+    collection(_db, col) { return { path: col }; },
+    query(ref, ...parts) { return { path: ref.path, parts }; },
+    where(field, op, value) { return { field, op, value }; },
+    orderBy(field, dir) { return { orderBy: field, dir }; },
+    limit(n) { return { limit: n }; },
+    onSnapshot(ref, next, error) {
+      queueMicrotask(() => {
+        if (ref.path === 'matches') error({ code: 'failed-precondition', message: 'falta índice' });
+        else if (String(ref.path).startsWith('roster/')) next({ exists: () => true, id: 'ficha', data: () => ({ name: 'Cristian', holders: ['org'] }) });
+        else next({ docs: [], metadata: { fromCache: false } });
+      });
+      return () => {};
+    },
+  };
+  store._listenGuest('fichaCristian');
+  return new Promise((resolve) => setTimeout(resolve, 20)).then(() => {
+    assert.equal(store.state.guestMatchError, 'No se pudieron cargar los partidos.');
+    assert.deepEqual(store.state.matches, []);
+  });
 });
 
 test('al abrir no se reescriben los contadores y el límite diario se avisa', async () => {
   assert.deepEqual(playerCountSweep(), []);
   assert.equal(RECENT_LISTEN_DAYS, 120);
   assert.equal(recentCutoff('2026-11-10'), '2026-07-13');
+  assert.throws(() => refuseRealTarget('https://gustavofarg-hash.github.io/futbol-colegiales/prueba/'), /no abren el sitio publicado/);
+  assert.throws(() => refuseRealTarget('http://127.0.0.1:8080/?project=mis-partidos-prueba'), /no abren el sitio publicado/);
+  assert.doesNotThrow(() => refuseRealTarget('http://127.0.0.1:18431/'));
+  const previousEmulator = process.env.FIRESTORE_EMULATOR_HOST;
+  delete process.env.FIRESTORE_EMULATOR_HOST;
+  assert.throws(() => refuseUnlessEmulator(), /FIRESTORE_EMULATOR_HOST/);
+  if (previousEmulator) process.env.FIRESTORE_EMULATOR_HOST = previousEmulator;
+  assert.equal(PLAYER_LISTEN, 400);
+  assert.equal(CONFIRM_LISTEN, 200);
   assert.equal(writeFailureText({ code: 'resource-exhausted' }), 'No se pudo guardar: se alcanzó el límite diario de Firebase');
+  assert.equal(writeFailureText({ code: 'resource_exhausted' }), 'No se pudo guardar: se alcanzó el límite diario de Firebase');
+  assert.equal(writeFailureText({ code: 'permission-denied', message: 'resource-exhausted' }), 'No se pudo guardar: Firebase rechazó el permiso');
+  assert.equal(writeFailureText({ code: 'failed-precondition', message: 'falta índice' }), 'No se pudo guardar: failed-precondition: falta índice');
   assert.equal(writeFailureText({ code: 'permission-denied' }), 'No se pudo guardar: Firebase rechazó el permiso');
   assert.equal(writeFailureText({ code: 'deadline-exceeded' }), 'No se pudo guardar: la base no respondió.');
   assert.equal(nextPlayerCount(-1, 1), 0);

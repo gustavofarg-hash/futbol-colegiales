@@ -87,13 +87,16 @@
 import { ORGANIZERS, firebaseConfig } from '../config.js';
 import { blocksProductionFirebase, isTrialPage } from './trial.js';
 import { toEpoch, todayISO } from './dates.js';
-import { USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, usageFlushDecision, UsageMeter } from './usage.js';
-import { historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, rosterDeleteReasons, storedLevel } from './profile.js';
+import { COMP_LISTEN, CONFIRM_LISTEN, PLAYER_LISTEN, USAGE_FLUSH_MS, meterFirestore, quotaDay, recentCutoff, usageFlushDecision, UsageMeter } from './usage.js';
+import { guestListenPlan, historyBounds, historyCaption, historyWindow, matchAlreadyPlayed, matchQueryPlan, playerVisibleBackfill, rosterDeleteReasons, storedLevel } from './profile.js';
 import { paymentRecord, receivePendingTransfer } from './payments.js';
 import { creditDocId, nextCredit } from './credit.js';
 import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
+import { canSelfCancel, isSelfPending, occupiesSpot, signupRateDecision } from './self-signup.js';
+import { tokenDocId } from './push.js';
+import { newShareToken } from './share.js';
 import { bumpGoals, bumpScore, dropPlayer, nextInGoalAt, scoreRecord, teamsRecord } from './teams.js';
 import { confirmationIdentity, confirmationRecord, newConfirmToken, overlayConfirmations, upcomingConfirmSlots } from './reminders.js';
 import { isShortCode, newShortCode } from './short.js';
@@ -110,7 +113,7 @@ import {
   DEFAULT_VENUE_ID, DEFAULT_VENUE_NAME, VENUES_DENIED_READ, cleanCourt, cleanVenueName, isVenueDenied, matchSize, sameVenueName, venueSlug,
 } from './venues.js';
 import { BACKUP_COLLECTIONS, BACKUP_WRITE_BATCH, COLLECTION_LABELS, RESET_STALLED, TRIAL_WRITE_PARALLEL, backupReadError, backupWriteError, buildBackup, firestoreRestFields, hostsBeforeGuests, parseBackup, plainValue, remapTrialBackup, requireAdmin, reviveValue, trialLinkStages, trialMockToken, trialOpKey, trialPlayerPlan, trialShouldReplace, withDeadline } from './backup.js';
-import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
+import { canSeeLog, inLogRange, matchEditDetail, pagoEntry, partidoEntry, paymentLines, playerLogFields, selfMoveEntry, LOG_LIMIT, weekRange, rangeMillis } from './log.js';
 import { behaviorDeleteLog, behaviorLog, cleanBehaviorEntry } from './behavior.js';
 
 function reportBackupProgress(onProgress, done, total) {
@@ -142,9 +145,40 @@ function pagePath() {
 }
 
 /** Una sola app de Firebase. La sesión y el store la comparten. */
+const BACKFILL_KEY = 'f7c-backfill-ids';
+
+function loadBackfillIds() {
+  try {
+    if (typeof sessionStorage === 'undefined') return new Set();
+    const raw = JSON.parse(sessionStorage.getItem(BACKFILL_KEY) || '[]');
+    return new Set(Array.isArray(raw) ? raw.map((id) => String(id || '')).filter(Boolean) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveBackfillIds(ids) {
+  try {
+    if (typeof sessionStorage === 'undefined') return;
+    sessionStorage.setItem(BACKFILL_KEY, JSON.stringify([...ids].slice(-200)));
+  } catch { /* modo privado */ }
+}
+
 export async function initFirebase() {
   if (blocksProductionFirebase(pagePath(), firebaseConfig.projectId)) {
     throw new Error('La versión de prueba no puede usar el Firebase de producción');
+  }
+  // Las pruebas (unit, e2e, reglas) no leen mis-partidos-prueba ni producción.
+  // Solo el emulador. El navegador de /prueba/ no entra por acá.
+  const project = String(firebaseConfig.projectId || '');
+  const realProject = project === 'mis-partidos-prueba' || project === 'futbol-partidos';
+  const testRun = (typeof process !== 'undefined' && process.env && process.env.NODE_TEST_CONTEXT)
+    || (typeof globalThis !== 'undefined' && globalThis.__F7C_TEST);
+  const emulatorHost = (typeof globalThis !== 'undefined' && globalThis.__F7C_EMULATOR_HOST)
+    || (typeof process !== 'undefined' && process.env && process.env.FIRESTORE_EMULATOR_HOST)
+    || '';
+  if (testRun && realProject && !emulatorHost) {
+    throw new Error('Las pruebas no leen Firebase real. Usá el emulador.');
   }
   if (firebaseBundle) return firebaseBundle;
   const [{ initializeApp, getApps, getApp }, fs] = await Promise.all([
@@ -157,6 +191,10 @@ export async function initFirebase() {
     db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) });
   } catch {
     db = fs.getFirestore(app);
+  }
+  if (testRun && emulatorHost && typeof fs.connectFirestoreEmulator === 'function') {
+    const [host, portRaw] = String(emulatorHost).split(':');
+    fs.connectFirestoreEmulator(db, host || '127.0.0.1', Number(portRaw || 8181));
   }
   firebaseBundle = { app, db, fs };
   return firebaseBundle;
@@ -252,6 +290,13 @@ function guestFields(data) {
 }
 
 /** Con quién se anotó. Si el alta no lo manda, queda el organizador logueado. */
+function linkStamp(organizer, person) {
+  const uid = String(organizer?.uid || '').trim();
+  const name = String(organizer?.name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  if (!uid || !name) return null;
+  return { uid, name, token: String(organizer.token || '') };
+}
+
 function signupWith(data, actor) {
   const has = !!data && ('signedUpWith' in data || 'signedUpWithName' in data);
   const uid = String((has ? data.signedUpWith : actor?.uid) || '').trim().slice(0, 128);
@@ -388,6 +433,7 @@ function matchDoc(data, who) {
     ...(cleanCourt(data.court) ? { court: cleanCourt(data.court) } : {}),
     ...(storedMatchPrice(data) != null ? { price: storedMatchPrice(data) } : {}),
     splitMode: data.splitMode === 'signed' ? 'signed' : 'equal',
+    ...(data.playerVisible === false ? { playerVisible: false } : (data.playerVisible === true ? { playerVisible: true } : {})),
     source: data.source || 'manual',
     sourceRef: data.sourceRef || null,
     sourceText: data.sourceText || null,
@@ -404,6 +450,13 @@ function refusePlayedCancel(match, data) {
   if (matchAlreadyPlayed({ date })) {
     throw Object.assign(new Error('Este partido ya se jugó. No se puede cancelar.'), { code: 'already-played' });
   }
+}
+
+function selfSignupDetail(player, waiting) {
+  if (player?.selfSignup === true && player?.tentative === true) return 'Pendiente de confirmación';
+  if (waiting && player?.selfSignup === true) return 'Se anotó solo en la lista de espera';
+  if (waiting) return 'En la lista de espera';
+  return '';
 }
 
 function storedMatchPrice(data) {
@@ -425,6 +478,7 @@ function cleanMatchPatch(data) {
   }
   if ('cancelled' in rest) rest.cancelled = rest.cancelled === true;
   if ('splitMode' in rest) rest.splitMode = rest.splitMode === 'signed' ? 'signed' : 'equal';
+  if ('playerVisible' in rest) rest.playerVisible = rest.playerVisible !== false;
   if (rest.cancelled === false) {
     rest.cancelledAt = null;
     rest.cancelledBy = null;
@@ -664,7 +718,7 @@ class LocalStore {
     if (!entries?.length) return;
     db.log ||= {};
     for (const entry of entries) {
-      if (!entry?.type || !entry.actorUid) continue;
+      if (!entry?.type || (!entry.actorUid && !entry.actorName)) continue;
       db.log[rid()] = entry;
     }
   }
@@ -847,6 +901,7 @@ class LocalStore {
       matches, history, historyMeta, historyError: '',
       players, roster, rosterNotes, suspensions, suspensionHistory, payBatches, behavior, rosterError: null, organizers, organizersError: null, venues, venuesError: null, prices, pricesError: null,
       credits, creditsError: null, creditsReady: true, playersReady: true, compensations, log, logError: '',
+      confirmSeen: Object.entries(db.confirmSeen || {}).filter(([, row]) => row?.seen === true).map(([id]) => id),
     }));
   }
   async init() {
@@ -934,13 +989,15 @@ class LocalStore {
       data,
     );
     const cap = match.capacity || 14;
-    const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
-    const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
+    const mainCount = mates.filter((p) => occupiesSpot(p)).length;
+    const selfHold = opts.selfPending === true;
+    if (selfHold && mainCount >= cap) throw Object.assign(new Error('El partido se completó.'), { code: 'match-full' });
+    const waiting = selfHold || opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const rosterId = String(data.rosterId || '').trim();
-    const hold = opts.tentative === true && !waiting;
+    const hold = (opts.tentative === true || selfHold) && !waiting;
     const player = {
       matchId: match.id, matchDate: match.date, name: cleanPersonName(data.name),
-      addedBy: who, addedByUid: this.actor?.uid || '', createdAt: now, updatedAt: now,
+      addedBy: opts.addedBy || who, addedByUid: opts.addedByUid !== undefined ? opts.addedByUid : (this.actor?.uid || ''), createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: newConfirmToken(),
@@ -951,14 +1008,15 @@ class LocalStore {
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
       ...signupWith(data, this.actor),
       ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
+      ...(selfHold || opts.selfSignup === true ? { selfSignup: true } : {}),
     };
     db.players[id] = player;
     const person = playerLogFields({ id, ...player }, [...mates, { id, ...player }]);
     const savedMatch = db.matches[match.id] || match;
-    this._pushLogs(db, [partidoEntry(this._actor(), { id: match.id, ...savedMatch }, this._venuesOf(db), {
+    if (!(selfHold || opts.selfSignup === true)) this._pushLogs(db, [partidoEntry(this._actor(), { id: match.id, ...savedMatch }, this._venuesOf(db), {
       type: 'alta',
       ...person,
-      detail: waiting ? 'En la lista de espera' : '',
+      detail: selfSignupDetail(player, waiting),
     })]);
     if (data.phone) writeContact(db, 'players', id, data.phone, player, this.actor?.uid || '', data.phoneShared === true);
     else if (data.hasPhone && /^[0-9a-f]{64}$/.test(String(data.phoneKey || ''))) {
@@ -968,6 +1026,159 @@ class LocalStore {
       player.phoneShared = false;
     }
     this._save(db); return id;
+  }
+  _chargeSignupRate(db, rosterId, now = Date.now()) {
+    const id = String(rosterId || '').trim();
+    if (!id) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
+    db.signupRates ||= {};
+    const next = signupRateDecision(db.signupRates[id], now);
+    if (!next.ok) throw Object.assign(new Error(next.error), { code: 'rate-limit' });
+    db.signupRates[id] = { windowStart: next.windowStart, count: next.count };
+  }
+  async selfJoin(match, person, { waiting = false, organizer = null } = {}) {
+    const rosterId = String(person?.id || '').trim();
+    const db = this._load();
+    this._chargeSignupRate(db, rosterId);
+    this._save(db);
+    const org = linkStamp(organizer, person);
+    const id = await this.addPlayer(match, {
+      name: person?.name || '',
+      rosterId,
+      phone: person?.phone || '',
+      shortName: person?.shortName || '',
+      ...(org ? { signedUpWith: org.uid, signedUpWithName: org.name } : {}),
+    }, org?.name || person?.name || '', {
+      selfPending: waiting !== true,
+      waiting: waiting === true,
+      selfSignup: true,
+      ...(org ? { addedByUid: org.uid, addedBy: org.name } : {}),
+    });
+    const saved = this._load();
+    const player = { id, ...(saved.players[id] || {}) };
+    const savedMatch = { id: player.matchId || match.id, ...(saved.matches[player.matchId] || match) };
+    this._pushLogs(saved, [selfMoveEntry(savedMatch, this._venuesOf(saved), player, {
+      type: 'se anotó',
+      detail: waiting ? 'En la lista de espera' : 'Pendiente de confirmación',
+      actorName: org?.name || person?.name || player.name,
+      actorUid: org?.uid || '',
+      rosterId,
+      guest: true,
+      shareToken: org?.token || '',
+    })]);
+    this._queueSignupPing(saved, waiting ? 'espera' : 'alta', player, savedMatch);
+    this._save(saved);
+    return id;
+  }
+  _queueSignupPing(db, kind, player, match) {
+    db.signupPings ||= {};
+    const id = rid();
+    db.signupPings[id] = {
+      kind,
+      name: String(player?.name || '').slice(0, 60),
+      playerId: String(player?.id || ''),
+      rosterId: String(player?.rosterId || ''),
+      matchId: String(match?.id || player?.matchId || ''),
+      date: String(match?.date || ''),
+      time: String(match?.time || ''),
+      venueName: String(match?.venueName || 'Polideportivo Colegiales').slice(0, 80),
+      createdAt: Date.now(),
+    };
+    return id;
+  }
+  async savePushToken(token) {
+    const uid = this.actor?.uid || '';
+    const id = tokenDocId(uid, token);
+    if (!id) return '';
+    const db = this._load();
+    db.organizerTokens ||= {};
+    db.organizerTokens[id] = { uid, token: String(token), updatedAt: Date.now() };
+    this._save(db);
+    return id;
+  }
+  async savePlayerPushToken(rosterId, token) {
+    const owner = String(rosterId || '').trim();
+    const id = tokenDocId(owner, token);
+    if (!id) return '';
+    const db = this._load();
+    db.playerTokens ||= {};
+    db.playerTokens[id] = { rosterId: owner, token: String(token), updatedAt: Date.now() };
+    this._save(db);
+    return id;
+  }
+  async markConfirmSeen(playerId, rosterId) {
+    const id = String(playerId || '').trim();
+    const owner = String(rosterId || '').trim();
+    if (!id || !owner) return;
+    const db = this._load();
+    db.confirmSeen ||= {};
+    db.confirmSeen[id] = { rosterId: owner, seen: true };
+    this._save(db);
+  }
+  watchConfirmSeen() {}
+  shareOrganizer(token) {
+    const id = String(token || '').trim();
+    const row = this._load().shareTokens?.[id];
+    return row?.uid ? { uid: row.uid, name: row.name || '', token: id } : null;
+  }
+  async ensureShareToken(uid, name) {
+    const owner = String(uid || '').trim();
+    const label = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (!owner || !label) return '';
+    const db = this._load();
+    db.shareTokens ||= {};
+    const found = Object.entries(db.shareTokens).find(([, row]) => row.uid === owner);
+    if (found) return found[0];
+    const token = newShareToken();
+    db.shareTokens[token] = { uid: owner, name: label, createdAt: Date.now() };
+    this._save(db);
+    return token;
+  }
+  async selfCancel(playerId, now = Date.now()) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!player) return;
+    const match = db.matches[player.matchId] || {};
+    if (!canSelfCancel(player, match, now)) {
+      throw Object.assign(new Error('Avisale al organizador para bajarte.'), { code: 'too-late' });
+    }
+    this._chargeSignupRate(db, player.rosterId || playerId, now);
+    this._queueSignupPing(db, 'baja', { id: playerId, ...player }, match);
+    this._pushLogs(db, [selfMoveEntry({ id: player.matchId, ...match }, this._venuesOf(db), { id: playerId, ...player }, {
+      type: 'se bajó',
+      detail: 'Anuló su lugar',
+      actorName: player.name,
+      rosterId: player.rosterId || '',
+      guest: true,
+      shareToken: '',
+    })]);
+    this._save(db);
+    await this.deletePlayer(playerId, { skipLog: true });
+  }
+  async confirmSelf(playerId) {
+    const player = this._load().players[playerId];
+    if (!player?.tentative) return null;
+    const pending = isSelfPending(player);
+    await this.clearTentative(playerId);
+    if (!pending) return null;
+    const db = this._load();
+    const match = { id: player.matchId, ...(db.matches[player.matchId] || {}) };
+    this._queueSignupPing(db, 'confirmado', { id: playerId, ...player }, match);
+    this._save(db);
+    return { player: { id: playerId, ...player }, match };
+  }
+  async rejectSelf(playerId) {
+    const db = this._load();
+    const player = db.players[playerId];
+    if (!isSelfPending(player)) return;
+    const match = db.matches[player.matchId] || {};
+    this._pushLogs(db, [selfMoveEntry({ id: player.matchId, ...match }, this._venuesOf(db), { id: playerId, ...player }, {
+      type: 'rechazó',
+      detail: 'Rechazó la anotación',
+      actorName: this._actor().name,
+      actorUid: this._actor().uid,
+    })]);
+    this._save(db);
+    await this.deletePlayer(playerId, { skipLog: true });
   }
   _dropFromTeams(db, matchId, playerId) {
     const match = db.matches[matchId];
@@ -1266,7 +1477,18 @@ class LocalStore {
     this._save(db);
   }
   async clearTentative(id) {
+    const player = this._load().players[id];
     await this.updatePlayer(id, { tentative: null, tentativeAt: null });
+    if (!isSelfPending(player)) return;
+    const db = this._load();
+    const match = db.matches[player.matchId] || {};
+    this._pushLogs(db, [selfMoveEntry({ id: player.matchId, ...match }, this._venuesOf(db), { id, ...player }, {
+      type: 'aceptó',
+      detail: 'Aceptó la anotación',
+      actorName: this._actor().name,
+      actorUid: this._actor().uid,
+    })]);
+    this._save(db);
   }
   async ensureConfirmToken(id) {
     const p = this._load().players[id];
@@ -1279,17 +1501,19 @@ class LocalStore {
   async markReminderSent(id) {
     await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
-  async deletePlayer(id) {
+  async deletePlayer(id, opts = {}) {
     const db = this._load();
     const player = db.players[id];
     if (player) {
-      const mates = this._matesOf(db, player.matchId);
-      const match = db.matches[player.matchId];
-      this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: player.matchId, ...match } : { id: player.matchId }, this._venuesOf(db), {
-        type: 'baja',
-        ...playerLogFields({ id, ...player }, mates),
-        detail: player.noPlay === true ? 'Sin devolver el crédito' : (player.waiting === true ? 'En la lista de espera' : ''),
-      })]);
+      if (opts.skipLog !== true) {
+        const mates = this._matesOf(db, player.matchId);
+        const match = db.matches[player.matchId];
+        this._pushLogs(db, [partidoEntry(this._actor(), match ? { id: player.matchId, ...match } : { id: player.matchId }, this._venuesOf(db), {
+          type: 'baja',
+          ...playerLogFields({ id, ...player }, mates),
+          detail: player.noPlay === true ? 'Sin devolver el crédito' : (player.waiting === true ? 'En la lista de espera' : ''),
+        })]);
+      }
       this._dropFromTeams(db, player.matchId, id);
     }
     delete db.players[id];
@@ -1764,7 +1988,7 @@ export class FirebaseStore {
     this.actor = null;
     this._buckets = { matches: {}, players: {}, confirmations: {} };
     this._contactBuckets = { playerOwner: [], playerShared: [], rosterOwner: [], rosterShared: [], rosterReaders: [] };
-    this._backfilled = new Set();
+    this._backfilled = loadBackfillIds();
     this._migrated = new Set();
     this._migrating = false;
     this._contactsLive = false;
@@ -1776,7 +2000,8 @@ export class FirebaseStore {
     this._datedUnindexed = false;
     this._compUnscoped = false;
     this._named = {};
-    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '' };
+    this._unsubs = [];
+    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', log: [], logError: '', confirmSeen: [], guestMatchError: '' };
     this._noteMoves = new Set();
     this._rosterReady = false;
     this._logRange = weekRange();
@@ -1790,10 +2015,13 @@ export class FirebaseStore {
     const today = todayISO(new Date(now));
     if (today === this._queryDay) return;
     this._queryDay = today;
-    if (this.fs) {
-      this._listenUpcoming();
-      this._listenHistory();
+    if (!this.fs) return;
+    if (this._guest) {
+      this._listenGuest(this._guestRosterId);
+      return;
     }
+    this._listenUpcoming();
+    this._listenHistory();
   }
   async ensureMatch(id) {
     if (!id || !this.fs) return 'missing';
@@ -1820,7 +2048,10 @@ export class FirebaseStore {
     const next = actorRecord(user);
     if (this.actor?.uid === next.uid && this.actor?.name === next.name && this.actor?.role === next.role) return;
     this.actor = next;
-    if (this.fs) this._listen();
+    // La ficha sin sesión ya escuchó su jugador. Volver a escuchar todo
+    // pide las colecciones del organizador y Firebase las niega.
+    if (!this.fs || this._guest) return;
+    this._listen();
   }
   async exportDatabase(opts = {}) {
     requireAdmin(this.actor);
@@ -2197,7 +2428,7 @@ export class FirebaseStore {
       throw backupReadError(name, error);
     }
   }
-  async init(onError) {
+  async init(onError, opts = {}) {
     const ready = await initFirebase();
     this.usageMeter = new UsageMeter();
     this.fs = meterFirestore(ready.fs, this.usageMeter, () => this._armUsageFlush());
@@ -2211,6 +2442,16 @@ export class FirebaseStore {
     // suscripción a confirmations muere con permission-denied y la lista
     // nunca se entera del «Sí, juego».
     await this._refreshIdToken();
+    this._guestRosterId = String(opts.guestRosterId || '').trim();
+    this._shareToken = String(opts.shareToken || '').trim();
+    if (this._guestRosterId) {
+      this._guest = true;
+      // Un fallo al armar las escuchas no puede tirar Firebase abajo: si no,
+      // la ficha cae al demo y el id del enlace no existe.
+      try { this._listenGuest(this._guestRosterId); }
+      catch (error) { console.error(error); }
+      return;
+    }
     this._listen();
     this._seedVenues();
     // Si Firestore no existe o la API está deshabilitada, el SDK reintenta en silencio:
@@ -2238,6 +2479,10 @@ export class FirebaseStore {
     if (this._onError) this._onError(e);
   }
   _stop() {
+    if (this._deferTimer) {
+      clearTimeout(this._deferTimer);
+      this._deferTimer = 0;
+    }
     for (const un of this._unsubs || []) {
       try { un(); } catch { /* ya cerrado */ }
     }
@@ -2252,6 +2497,7 @@ export class FirebaseStore {
     }
     this._named = this._named || {};
     this._named[name] = un || null;
+    if (!Array.isArray(this._unsubs)) this._unsubs = [];
     if (un) this._unsubs.push(un);
   }
   _accessIds() {
@@ -2275,11 +2521,118 @@ export class FirebaseStore {
   _takeMatchSnap(snap) {
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   }
+  listenAsGuest(rosterId, shareToken = '') {
+    const id = String(rosterId || '').trim();
+    const token = String(shareToken || '').trim();
+    if (!id || !this.fs) return;
+    if (this._guest && this._guestRosterId === id && String(this._shareToken || '') === token && this._unsubs?.length) return;
+    this._guest = true;
+    this._shareToken = token;
+    this._listenGuest(id);
+  }
+  shareOrganizer(token) {
+    const id = String(token || '').trim();
+    const current = this.state.shareOrganizer;
+    if (!id || !current || current.token !== id) return null;
+    return current;
+  }
+  async ensureShareToken(uid, name) {
+    const owner = String(uid || '').trim();
+    const label = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (!owner || !label) return '';
+    const { collection, query, where, getDocs, doc, setDoc } = this.fs;
+    const found = await getDocs(query(collection(this.db, 'shareTokens'), where('uid', '==', owner)));
+    if (!found.empty) return found.docs[0].id;
+    const token = newShareToken();
+    await setDoc(doc(this.db, 'shareTokens', token), { uid: owner, name: label, createdAt: Date.now() });
+    return token;
+  }
+  _queryFromPlan(plan) {
+    const { collection, query, where, orderBy, limit } = this.fs;
+    const parts = [];
+    for (const filter of plan.filters || []) parts.push(where(filter.field, filter.op, filter.value));
+    if (plan.orderBy?.length) parts.push(orderBy(plan.orderBy[0], plan.orderBy[1] || 'asc'));
+    if (plan.limit) parts.push(limit(plan.limit));
+    return query(collection(this.db, plan.collection), ...parts);
+  }
+  _listenGuest(rosterId) {
+    const id = String(rosterId || '').trim();
+    if (!id || !this.fs) return;
+    this._guest = true;
+    this._guestRosterId = id;
+    this._queryDay = this._queryDay || todayISO();
+    const today = this._queryDay;
+    const { doc, onSnapshot } = this.fs;
+    const seen = { roster: false, matches: false, players: false, share: !this._shareToken };
+    const rows = (snap) => snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+    const publish = () => {
+      if (!seen.roster || !seen.matches || !seen.players || !seen.share) return;
+      this.serverOk = true;
+      this.state.playersReady = true;
+      this._emit();
+    };
+    const plan = guestListenPlan({ rosterId: id, today });
+    this.state.guestMatchError = '';
+    this._swap('guest-matches', onSnapshot(this._queryFromPlan(plan.matches), (snap) => {
+      this.state.matches = rows(snap).filter((match) => match.playerVisible !== false && match.cancelled !== true);
+      this.state.guestMatchError = '';
+      seen.matches = true;
+      publish();
+    }, (error) => {
+      console.error(error);
+      this.state.matches = [];
+      this.state.guestMatchError = 'No se pudieron cargar los partidos.';
+      seen.matches = true;
+      publish();
+    }));
+    if (this._shareToken) {
+      this._swap('guest-share', onSnapshot(doc(this.db, 'shareTokens', this._shareToken), (snap) => {
+        const data = snap.exists() ? snap.data() : null;
+        this.state.shareOrganizer = data?.uid ? { uid: String(data.uid), name: String(data.name || ''), token: this._shareToken } : null;
+        seen.share = true;
+        publish();
+      }, (error) => {
+        console.error(error);
+        this.state.shareOrganizer = null;
+        seen.share = true;
+        publish();
+      }));
+    } else this.state.shareOrganizer = null;
+    this._swap('guest-roster', onSnapshot(doc(this.db, 'roster', id), (snap) => {
+      const data = snap.exists() ? snap.data() : null;
+      this.state.roster = data ? [{ id: snap.id, ...data }] : [];
+      this.state.rosterError = null;
+      seen.roster = true;
+      publish();
+    }, () => {
+      this.state.roster = [];
+      this.state.rosterError = null;
+      seen.roster = true;
+      publish();
+    }));
+    this._seenRoster = id;
+    this._swap('guest-seen', onSnapshot(this._queryFromPlan(plan.seen), (snap) => {
+      this.state.confirmSeen = snap.docs.filter((item) => item.data()?.seen === true).map((item) => item.id);
+      if (seen.players) this._emit();
+    }, () => {
+      this.state.confirmSeen = [];
+      if (seen.players) this._emit();
+    }));
+    this._swap('guest-players', onSnapshot(this._queryFromPlan(plan.players), (snap) => {
+      this.state.players = rows(snap).filter((player) => player.rosterId === id);
+      seen.players = true;
+      publish();
+    }, () => {
+      this.state.players = [];
+      seen.players = true;
+      publish();
+    }));
+  }
   _listenUpcoming() {
     const today = this._queryDay || todayISO();
     const q = this._applyMatchPlan(matchQueryPlan('upcoming', null, today));
     const { onSnapshot } = this.fs;
-    const un = onSnapshot(q, { includeMetadataChanges: true }, (snap) => {
+    const un = onSnapshot(q, (snap) => {
       if (!snap.metadata.fromCache) this.serverOk = true;
       this._noteSnap(snap);
       this._buckets.matches.upcoming = this._takeMatchSnap(snap);
@@ -2306,7 +2659,6 @@ export class FirebaseStore {
       this._buckets.matches.history = this._takeMatchSnap(snap);
       this._rebuild('matches');
       this._widenFromMatches(this._buckets.matches.history);
-      this._backfillMatches(snap.docs);
     }, (e) => {
       if (e?.code === 'failed-precondition') {
         this.state.historyError = e.message || 'Falta un índice de Firestore para el historial.';
@@ -2381,13 +2733,14 @@ export class FirebaseStore {
     this._listenCompensations();
   }
   _listenDated(kind, field) {
-    const { collection, query, where, onSnapshot } = this.fs;
+    const { collection, query, where, orderBy, limit, onSnapshot } = this.fs;
     const accessIds = [EVERYONE];
     if (this.actor?.uid) accessIds.unshift(this.actor.uid);
     const cutoff = this._datedCutoff;
-    const unindexed = this._datedUnindexed === true;
+    const cap = kind === 'players' ? PLAYER_LISTEN : CONFIRM_LISTEN;
     const constraints = [where('viewers', 'array-contains-any', accessIds)];
-    if (!unindexed && cutoff) constraints.push(where(field, '>=', cutoff));
+    if (cutoff) constraints.push(where(field, '>=', cutoff));
+    constraints.push(orderBy(field, 'desc'), limit(cap));
     const q = query(collection(this.db, kind), ...constraints);
     const un = onSnapshot(q, (snap) => {
       this._noteSnap(snap);
@@ -2400,11 +2753,10 @@ export class FirebaseStore {
       this._buckets[kind].broad = [];
       this._rebuild(kind);
     }, (e) => {
-      if (!unindexed && e?.code === 'failed-precondition') {
-        if (this._datedUnindexed) return;
-        this._datedUnindexed = true;
-        this._listenDated('players', 'matchDate');
-        this._listenDated('confirmations', 'date');
+      // Sin índice no se suelta el filtro de fecha: eso leía la colección entera.
+      if (e?.code === 'failed-precondition') {
+        if (kind === 'players') this.state.playersReady = true;
+        this._emit();
         return;
       }
       this._onListenError(e);
@@ -2495,29 +2847,39 @@ export class FirebaseStore {
     }
   }
   _listenCompensations() {
-    const { collection, query, where, onSnapshot } = this.fs;
     const cutoff = this._compUnscoped ? '' : this._datedCutoff;
+    const { collection, query, where, orderBy, limit, onSnapshot } = this.fs;
     const ref = cutoff
-      ? query(collection(this.db, 'compensations'), where('date', '>=', cutoff))
-      : collection(this.db, 'compensations');
+      ? query(collection(this.db, 'compensations'), where('date', '>=', cutoff), orderBy('date', 'desc'), limit(COMP_LISTEN))
+      : query(collection(this.db, 'compensations'), orderBy('date', 'desc'), limit(COMP_LISTEN));
     const un = onSnapshot(ref, (snap) => {
       this.state.compensations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
-    }, (e) => {
-      if (cutoff && e?.code === 'failed-precondition' && !this._compUnscoped) {
-        this._compUnscoped = true;
-        this._listenCompensations();
-        return;
-      }
+    }, () => {
       this.state.compensations = [];
       this._emit();
     });
     this._swap('compensations', un);
   }
-  async _backfillMatches() {
-    // No reescribe viewers al recibir un snapshot. Eso era una escritura por
-    // partido viejo en cada apertura, y si fallaba se reintentaba en el siguiente.
-    return;
+  _backfillMatches(docs) {
+    // Una vez por partido y por pestaña. No pide otra lectura: usa el snapshot
+    // de próximos. El historial no entra. El Registro no anota nada.
+    if (this._guest || !this.actor?.uid || !this.fs?.writeBatch || !this.db) return;
+    const today = this._queryDay || todayISO();
+    const rows = [];
+    for (const item of docs || []) {
+      const match = typeof item?.data === 'function' ? { id: item.id, ...(item.data() || {}) } : item;
+      const row = playerVisibleBackfill(match, { uid: this.actor.uid, name: this.actor.name || '', today });
+      if (!row || this._backfilled.has(row.id)) continue;
+      this._backfilled.add(row.id);
+      rows.push(row);
+    }
+    saveBackfillIds(this._backfilled);
+    if (!rows.length) return;
+    const { doc, writeBatch } = this.fs;
+    const batch = writeBatch(this.db);
+    for (const row of rows) batch.update(doc(this.db, 'matches', row.id), row.patch);
+    Promise.resolve(batch.commit()).catch((error) => console.error(error?.code || 'sin-codigo', error));
   }
   _listen() {
     this._stop();
@@ -2529,12 +2891,12 @@ export class FirebaseStore {
     this._queryDay = todayISO();
     const { collection, doc, query, where, onSnapshot } = this.fs;
     const uid = this.actor?.uid || '';
-    const watch = (ref, opts, onNext, onErr) => {
+    const watch = (name, ref, opts, onNext, onErr) => {
       const next = (snap) => { onNext(snap); };
       const un = opts
         ? onSnapshot(ref, opts, next, (e) => this._onListenError(e, onErr))
         : onSnapshot(ref, next, (e) => this._onListenError(e, onErr));
-      this._unsubs.push(un);
+      this._swap(name, un);
     };
     const accessIds = [EVERYONE];
     if (uid) accessIds.unshift(uid);
@@ -2550,37 +2912,37 @@ export class FirebaseStore {
       this._listenCompensations();
       this._listenUsage();
     };
-    if (typeof setTimeout === 'function') setTimeout(deferListen, 0);
+    if (typeof setTimeout === 'function') this._deferTimer = setTimeout(deferListen, 0);
     else deferListen();
-    watch(collection(this.db, 'rosterSuspensions'), null, (snap) => {
+    watch('suspensions', collection(this.db, 'rosterSuspensions'), null, (snap) => {
       this.state.suspensions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
     }, () => {
       this.state.suspensions = [];
       this._emit();
     });
-    watch(collection(this.db, 'suspensionHistory'), null, (snap) => {
+    watch('suspension-history', collection(this.db, 'suspensionHistory'), null, (snap) => {
       this.state.suspensionHistory = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
     }, () => {
       this.state.suspensionHistory = [];
       this._emit();
     });
-    watch(collection(this.db, 'behavior'), null, (snap) => {
+    watch('behavior', collection(this.db, 'behavior'), null, (snap) => {
       this.state.behavior = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this._emit();
     }, () => {
       this.state.behavior = [];
       this._emit();
     });
-    watch(collection(this.db, 'payBatches'), null, (snap) => {
+    watch('pay-batches', collection(this.db, 'payBatches'), null, (snap) => {
       this.state.payBatches = snap.docs.map((d) => presentPayBatch(d.id, d.data()));
       this._emit();
     }, () => {
       this.state.payBatches = [];
       this._emit();
     });
-    watch(collection(this.db, 'roster'), null, (snap) => {
+    watch('roster', collection(this.db, 'roster'), null, (snap) => {
       this.state.roster = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.rosterError = null;
       this._rosterReady = true;
@@ -2593,7 +2955,7 @@ export class FirebaseStore {
       this._emit();
     });
     if (uid) {
-      watch(query(collection(this.db, 'rosterNotes'), where('ownerUid', '==', uid)), null, (snap) => {
+      watch('roster-notes', query(collection(this.db, 'rosterNotes'), where('ownerUid', '==', uid)), null, (snap) => {
         const map = {};
         snap.docs.forEach((item) => {
           const data = item.data() || {};
@@ -2607,7 +2969,7 @@ export class FirebaseStore {
         this._emit();
       });
     }
-    watch(collection(this.db, 'organizers'), null, (snap) => {
+    watch('organizers', collection(this.db, 'organizers'), null, (snap) => {
       this.state.organizers = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.organizersError = null;
       this._emit();
@@ -2615,7 +2977,7 @@ export class FirebaseStore {
       this.state.organizersError = isOrganizerDenied(e) ? ORGANIZERS_DENIED_READ : ('No se pudo leer organizadores: ' + (e?.message || e?.code || e));
       this._emit();
     });
-    watch(collection(this.db, 'venues'), null, (snap) => {
+    watch('venues', collection(this.db, 'venues'), null, (snap) => {
       this.state.venues = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.venuesError = null;
       this._emit();
@@ -2624,7 +2986,7 @@ export class FirebaseStore {
       this.state.venuesError = isVenueDenied(e) ? VENUES_DENIED_READ : ('No se pudieron leer las sedes: ' + (e?.message || e?.code || e));
       this._emit();
     });
-    watch(collection(this.db, 'credits'), null, (snap) => {
+    watch('credits', collection(this.db, 'credits'), null, (snap) => {
       this.state.credits = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       this.state.creditsError = null;
       const meta = snap.metadata;
@@ -2638,7 +3000,7 @@ export class FirebaseStore {
         : ('No se pudo leer el saldo a favor: ' + (e?.message || e?.code || e));
       this._emit();
     });
-    watch(doc(this.db, 'settings', 'prices'), null, (snap) => {
+    watch('prices', doc(this.db, 'settings', 'prices'), null, (snap) => {
       this.state.prices = snap.exists() ? snap.data() : null;
       this.state.pricesError = null;
       this._emit();
@@ -2674,7 +3036,8 @@ export class FirebaseStore {
         this._contactBuckets.rosterOwner = takeMap(snap);
         mergeContacts();
       }, contactErr);
-      this._unsubs.push(ownerPlayers, ownerRoster);
+      this._swap('contacts-owner-players', ownerPlayers);
+      this._swap('contacts-owner-roster', ownerRoster);
     }
     const sharedPlayers = onSnapshot(
       query(collection(this.db, 'playerContacts'), where('visibleToAll', '==', true), where('viewers', 'array-contains-any', accessIds)),
@@ -2693,8 +3056,9 @@ export class FirebaseStore {
         contactErr,
       )
       : null;
-    this._unsubs.push(sharedPlayers, sharedRoster);
-    if (readerRoster) this._unsubs.push(readerRoster);
+    this._swap('contacts-shared-players', sharedPlayers);
+    this._swap('contacts-shared-roster', sharedRoster);
+    if (readerRoster) this._swap('contacts-readers', readerRoster);
   }
   _onListenError(e, extra) {
     const plan = listenDeniedPlan({
@@ -2846,7 +3210,7 @@ export class FirebaseStore {
     if (!this.fs || !entries?.length) return;
     const { doc, setDoc } = this.fs;
     for (const entry of entries) {
-      if (!entry?.type || !entry.actorUid) continue;
+      if (!entry?.type || (!entry.actorUid && !entry.actorName)) continue;
       await setDoc(doc(this.db, 'log', rid()), entry);
     }
   }
@@ -3015,7 +3379,7 @@ export class FirebaseStore {
     return;
   }
   async addPlayer(match, data, who, opts = {}) {
-    const { collection, addDoc, doc, updateDoc, deleteField } = this.fs; const now = Date.now();
+    const { collection, addDoc, doc, setDoc, updateDoc, deleteField } = this.fs; const now = Date.now();
     const mates = this.state.players.filter((p) => p.matchId === match.id);
     refuseDuplicate(mates, data);
     refuseGuestHost(mates, data);
@@ -3026,16 +3390,18 @@ export class FirebaseStore {
       data,
     );
     const cap = match.capacity || 14;
-    const mainCount = mates.filter((p) => p.waiting !== true && p.noPlay !== true).length;
-    const waiting = opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
+    const mainCount = mates.filter((p) => occupiesSpot(p)).length;
+    const selfHold = opts.selfPending === true;
+    if (selfHold && mainCount >= cap) throw Object.assign(new Error('El partido se completó.'), { code: 'match-full' });
+    const waiting = selfHold || opts.forceMain === true ? false : (opts.waiting === true || mainCount >= cap);
     const token = newConfirmToken();
     const rosterId = String(data.rosterId || '').trim();
-    const hold = opts.tentative === true && !waiting;
+    const hold = (opts.tentative === true || selfHold) && !waiting;
     const canon = canonicalWa(data.phone || '');
     const uid = this.actor?.uid || '';
     const player = {
       matchId: match.id, matchDate: match.date, name: cleanPersonName(data.name), phone: '',
-      addedBy: who, addedByUid: uid, createdAt: now, updatedAt: now,
+      addedBy: opts.addedBy || who, addedByUid: opts.addedByUid !== undefined ? opts.addedByUid : uid, createdAt: now, updatedAt: now,
       waiting, waitOrder: waiting ? nextWaitOrder(mates.filter((p) => p.waiting === true)) : null,
       rosterAt: waiting ? null : now,
       confirmToken: token,
@@ -3048,8 +3414,12 @@ export class FirebaseStore {
       ...(hold ? { tentative: true, tentativeAt: now } : {}),
       ...signupWith(data, this.actor),
       ...(cleanShortName(data.shortName) ? { shortName: cleanShortName(data.shortName) } : {}),
+      ...(selfHold || opts.selfSignup === true ? { selfSignup: true } : {}),
     };
-    const ref = await addDoc(collection(this.db, 'players'), player);
+    const ref = opts.id
+      ? doc(this.db, 'players', opts.id)
+      : await addDoc(collection(this.db, 'players'), player);
+    if (opts.id) await setDoc(ref, player);
     const stored = this.state.matches.find((item) => item.id === match.id) || match;
     await updateDoc(doc(this.db, 'matches', match.id), { ...countPatch(this.fs, stored, 1, mates.length), updatedAt: now });
     if (canon) {
@@ -3065,12 +3435,241 @@ export class FirebaseStore {
     }
     await this._writeConfirmation(token, ref.id, player, match);
     await this.ensureShortLink(ref.id, { matchId: match.id, confirmToken: token });
-    await this._appendLogs([partidoEntry(this._actor(), stored, this.state.venues, {
+    if (!(selfHold || opts.selfSignup === true)) await this._appendLogs([partidoEntry(this._actor(), stored, this.state.venues, {
       type: 'alta',
       ...playerLogFields({ id: ref.id, ...player }, [...mates, { id: ref.id, ...player }]),
-      detail: waiting ? 'En la lista de espera' : '',
+      detail: selfSignupDetail(player, waiting),
     })]);
     return ref.id;
+  }
+  async _chargeSignupRate(rosterId, playerId) {
+    const { doc, runTransaction, serverTimestamp } = this.fs;
+    const ref = doc(this.db, 'signupRates', rosterId);
+    await runTransaction(this.db, async (tx) => {
+      const snap = await tx.get(ref);
+      const prev = snap.exists() ? snap.data() : null;
+      const startMs = prev?.windowStart?.toMillis?.() || Number(prev?.windowStart) || 0;
+      const next = signupRateDecision(prev ? { windowStart: startMs, count: prev.count } : null, Date.now());
+      if (!next.ok) throw Object.assign(new Error(next.error), { code: 'rate-limit' });
+      const fresh = !prev || Date.now() - startMs >= 30 * 60 * 1000;
+      tx.set(ref, {
+        windowStart: fresh ? serverTimestamp() : prev.windowStart,
+        count: next.count,
+        lastId: playerId,
+      });
+    });
+  }
+  async selfJoin(match, person, { waiting = false, organizer = null } = {}) {
+    if (!this.actor?.uid) return this._guestSelfJoin(match, person, { waiting, organizer });
+    const rosterId = String(person?.id || '').trim();
+    if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
+    const org = linkStamp(organizer, person);
+    const id = rid();
+    await this._chargeSignupRate(rosterId, id);
+    const playerId = await this.addPlayer(match, {
+      name: person?.name || '',
+      rosterId,
+      phone: person?.phone || '',
+      shortName: person?.shortName || '',
+      ...(org ? { signedUpWith: org.uid, signedUpWithName: org.name } : {}),
+    }, org?.name || person?.name || '', {
+      id,
+      selfPending: waiting !== true,
+      waiting: waiting === true,
+      selfSignup: true,
+      ...(org ? { addedByUid: org.uid, addedBy: org.name } : {}),
+    });
+    const player = this.state.players.find((row) => row.id === playerId) || { id: playerId, name: person?.name || '', rosterId };
+    const mine = !org || org.uid === this._actor().uid;
+    await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+      type: 'se anotó',
+      detail: waiting ? 'En la lista de espera' : 'Pendiente de confirmación',
+      actorName: org?.name || person?.name || player.name,
+      actorUid: org?.uid || this._actor().uid,
+      rosterId,
+      guest: !mine,
+      shareToken: org?.token || '',
+    })]);
+    await this._writeSignupPing(waiting ? 'espera' : 'alta', player, match, org);
+    return playerId;
+  }
+  async _writeSignupPing(kind, player, match, organizer) {
+    const { collection, addDoc } = this.fs;
+    await addDoc(collection(this.db, 'signupPings'), {
+      kind,
+      name: String(player?.name || '').slice(0, 60),
+      playerId: String(player?.id || ''),
+      rosterId: String(player?.rosterId || ''),
+      matchId: String(match?.id || player?.matchId || ''),
+      date: String(match?.date || ''),
+      time: String(match?.time || ''),
+      venueName: String(match?.venueName || 'Polideportivo Colegiales').slice(0, 80),
+      createdAt: Date.now(),
+      organizerUid: String(organizer?.uid || player?.addedByUid || ''),
+      shareToken: String(organizer?.token || player?.shareToken || ''),
+    });
+  }
+  async savePushToken(token) {
+    const uid = this.actor?.uid || '';
+    const id = tokenDocId(uid, token);
+    if (!id) return '';
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'organizerTokens', id), { uid, token: String(token), updatedAt: Date.now() });
+    return id;
+  }
+  async savePlayerPushToken(rosterId, token) {
+    const owner = String(rosterId || '').trim();
+    const id = tokenDocId(owner, token);
+    if (!id) return '';
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'playerTokens', id), { rosterId: owner, token: String(token), updatedAt: Date.now() });
+    return id;
+  }
+  async markConfirmSeen(playerId, rosterId) {
+    const id = String(playerId || '').trim();
+    const owner = String(rosterId || '').trim();
+    if (!id || !owner) return;
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'confirmSeen', id), { rosterId: owner, seen: true });
+    this.state.confirmSeen = [...new Set([...(this.state.confirmSeen || []), id])];
+    this._emit();
+  }
+  watchConfirmSeen(rosterId) {
+    const id = String(rosterId || '').trim();
+    // La ficha ya escucha confirmSeen con tope. Otra suscripción lo leería de nuevo.
+    if (!id || !this.fs || this._guest || this._seenRoster === id) return;
+    this._seenRoster = id;
+    const { collection, query, where, limit, onSnapshot } = this.fs;
+    this._swap('confirm-seen', onSnapshot(
+      query(collection(this.db, 'confirmSeen'), where('rosterId', '==', id), limit(24)),
+      (snap) => {
+        this.state.confirmSeen = snap.docs.filter((item) => item.data()?.seen === true).map((item) => item.id);
+        this._emit();
+      },
+      () => {},
+    ));
+  }
+  async _guestSelfJoin(match, person, { waiting = false, organizer = null } = {}) {
+    const rosterId = String(person?.id || '').trim();
+    if (!rosterId) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
+    const id = rid();
+    await this._chargeSignupRate(rosterId, id);
+    const now = Date.now();
+    const mates = this.state.players.filter((row) => row.matchId === match.id);
+    const access = playerAccess(match);
+    const onWait = waiting === true;
+    const org = linkStamp(organizer, person);
+    const player = {
+      matchId: match.id,
+      matchDate: match.date,
+      name: String(person?.name || ''),
+      rosterId,
+      selfSignup: true,
+      waiting: onWait,
+      waitOrder: onWait ? nextWaitOrder(mates.filter((row) => row.waiting === true)) : null,
+      tentative: !onWait,
+      tentativeAt: onWait ? null : now,
+      rosterAt: onWait ? null : now,
+      addedByUid: org?.uid || '',
+      addedBy: org?.name || String(person?.name || '').slice(0, 40),
+      ...(org ? { signedUpWith: org.uid, signedUpWithName: org.name, shareToken: org.token } : { shareToken: '' }),
+      createdAt: now,
+      updatedAt: now,
+      phone: '',
+      hasPhone: false,
+      phoneKey: '',
+      phoneOwnerUid: '',
+      phoneShared: false,
+      confirmToken: newConfirmToken(),
+      viewers: access.viewers,
+      adders: access.adders,
+    };
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'players', id), player);
+    this.state.players = [...this.state.players.filter((row) => row.id !== id), { id, ...player }];
+    this._emit();
+    try {
+      await this._appendLogs([selfMoveEntry(match, this.state.venues, { id, ...player }, {
+        type: 'se anotó',
+        detail: onWait ? 'En la lista de espera' : 'Pendiente de confirmación',
+        actorName: org?.name || player.name,
+        actorUid: org?.uid || '',
+        rosterId,
+        guest: true,
+        shareToken: org?.token || '',
+      })]);
+    } catch { /* sin la regla nueva la anotación igual queda */ }
+    try { await this._writeSignupPing(onWait ? 'espera' : 'alta', { id, ...player }, match, org); }
+    catch { /* sin funciones el aviso no sale, y la anotación queda */ }
+    return id;
+  }
+  async _guestSelfCancel(playerId, now = Date.now()) {
+    const player = this.state.players.find((row) => row.id === playerId);
+    if (!player) return;
+    const match = this.state.matches.find((row) => row.id === player.matchId) || {};
+    if (!canSelfCancel(player, match, now)) {
+      throw Object.assign(new Error('Avisale al organizador para bajarte.'), { code: 'too-late' });
+    }
+    await this._chargeSignupRate(player.rosterId || playerId, playerId);
+    const { doc, deleteDoc } = this.fs;
+    await deleteDoc(doc(this.db, 'players', playerId));
+    this.state.players = this.state.players.filter((row) => row.id !== playerId);
+    this._emit();
+    try {
+      await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+        type: 'se bajó',
+        detail: 'Anuló su lugar',
+        actorName: player.name,
+        rosterId: player.rosterId || '',
+        guest: true,
+        shareToken: '',
+      })]);
+    } catch { /* la baja ya quedó */ }
+    try { await this._writeSignupPing('baja', player, match, null); }
+    catch { /* el aviso no es parte de la baja */ }
+  }
+  async selfCancel(playerId, now = Date.now()) {
+    if (!this.actor?.uid) return this._guestSelfCancel(playerId, now);
+    const player = this.state.players.find((row) => row.id === playerId);
+    if (!player) return;
+    const match = this.state.matches.find((row) => row.id === player.matchId) || {};
+    if (!canSelfCancel(player, match, now)) {
+      throw Object.assign(new Error('Avisale al organizador para bajarte.'), { code: 'too-late' });
+    }
+    await this._chargeSignupRate(player.rosterId || playerId, playerId);
+    await this._writeSignupPing('baja', player, match);
+    try {
+      await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+        type: 'se bajó',
+        detail: 'Anuló su lugar',
+        actorName: player.name,
+        rosterId: player.rosterId || '',
+      })]);
+    } catch { /* la baja ya quedó */ }
+    await this.deletePlayer(playerId, { skipLog: true });
+  }
+  async confirmSelf(playerId) {
+    const player = this.state.players.find((row) => row.id === playerId);
+    if (!player?.tentative) return null;
+    const pending = isSelfPending(player);
+    const match = this.state.matches.find((row) => row.id === player.matchId) || { id: player.matchId };
+    await this.clearTentative(playerId);
+    if (!pending) return null;
+    try { await this._writeSignupPing('confirmado', { ...player, id: playerId }, match, null); }
+    catch { /* sin la función el teléfono no suena, y la confirmación queda */ }
+    return { player: { ...player, id: playerId }, match };
+  }
+  async rejectSelf(playerId) {
+    const player = this.state.players.find((row) => row.id === playerId);
+    if (!isSelfPending(player)) return;
+    const match = this.state.matches.find((row) => row.id === player.matchId) || { id: player.matchId };
+    await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+      type: 'rechazó',
+      detail: 'Rechazó la anotación',
+      actorName: this._actor().name,
+      actorUid: this._actor().uid,
+    })]);
+    await this.deletePlayer(playerId, { skipLog: true });
   }
   async setTeams(id, teams, who) {
     const rec = teamsRecord(teams);
@@ -3428,7 +4027,16 @@ export class FirebaseStore {
     })]);
   }
   async clearTentative(id) {
+    const player = this.state.players.find((row) => row.id === id);
     await this.updatePlayer(id, { tentative: null, tentativeAt: null });
+    if (!isSelfPending(player)) return;
+    const match = this.state.matches.find((row) => row.id === player.matchId) || { id: player.matchId };
+    await this._appendLogs([selfMoveEntry(match, this.state.venues, player, {
+      type: 'aceptó',
+      detail: 'Aceptó la anotación',
+      actorName: this._actor().name,
+      actorUid: this._actor().uid,
+    })]);
   }
   async ensureShortLink(id, hint) {
     const p = this.state.players.find((x) => x.id === id) || hint || null;
@@ -3510,11 +4118,11 @@ export class FirebaseStore {
   async markReminderSent(id) {
     await this.updatePlayer(id, { reminderSentAt: Date.now() });
   }
-  async deletePlayer(id) {
+  async deletePlayer(id, opts = {}) {
     const { doc, writeBatch } = this.fs;
     const player = this.state.players.find((item) => item.id === id);
     const match = this.state.matches.find((item) => item.id === player?.matchId);
-    if (player) {
+    if (player && opts.skipLog !== true) {
       const mates = this.state.players.filter((item) => item.matchId === player.matchId);
       await this._appendLogs([partidoEntry(this._actor(), match, this.state.venues, {
         type: 'baja',
@@ -4053,10 +4661,10 @@ export function createDemoStore() {
   return new LocalStore();
 }
 
-export async function createStore(onError) {
+export async function createStore(onError, opts) {
   if (isFirebaseConfigured()) {
     const s = new FirebaseStore();
-    try { await s.init(onError); return s; }
+    try { await s.init(onError, opts); return s; }
     catch (e) { console.error('No se pudo iniciar Firebase, usando modo demo', e); onError && onError(e); }
   }
   const s = new LocalStore(); await s.init(); return s;

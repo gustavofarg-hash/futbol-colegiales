@@ -286,7 +286,12 @@ export function formatSignedPoints(value) {
   return n < 0 ? `−${abs}` : `+${abs}`;
 }
 
-/** Lo que se resta al quitar o bajar a la espera, según el inicio del partido en Buenos Aires. */
+/** Sacar a alguien de la lista de espera no resta. Solo una baja de la lista del partido. */
+export function removalDeducts(player) {
+  return !!player && player.waiting !== true;
+}
+
+/** Lo que se resta al quitar de la lista o bajar a la espera, según el inicio en Buenos Aires. */
 export function bajaDeduction({ date, time, now = new Date() } = {}) {
   const today = todayISO(now);
   const day = String(date || '');

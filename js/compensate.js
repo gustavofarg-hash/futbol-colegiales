@@ -1,6 +1,5 @@
 // Cálculo de compensación del día entre organizadores. Puro.
 import { awaitingItems, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
-
 export function splitModeOf(match) {
   return match?.splitMode === 'signed' ? 'signed' : 'equal';
 }

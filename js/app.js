@@ -25,20 +25,23 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
-import { diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths } from './stats.js';
+import { countedForMoney, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, periodBuckets, playerOrganizerMonths } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
 import { openSession, staffUsers } from './auth.js';
 import { addedCount, buildAccess, canAdd, canDelete, canEditAccess, canEditMatch, compensationApplies, importAccess, limitFor, limitMessage, matchStaff, payeeNames, publicAccess, signupForMatch, signupOptions } from './access.js';
-import { BAJA_TIERS, bajaPreview, bajaReasonText, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, stepPointInput } from './behavior.js';
+import { BAJA_TIERS, bajaPreview, bajaReasonText, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, formatPointMagnitude, formatSignedPoints, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from './behavior.js';
 import { TEXT_SIZES, applyTextSize, readTextSize, saveTextSize, stepTextSize } from './text-size.js';
 import { applyTheme, readTheme, saveTheme, watchTheme } from './theme.js';
 import { PRICES_DENIED_WRITE, allocateGuestPromo, normalizePrices, parsePriceInput, priceOfMatch, priceRecord, promoForPlayer, promoRefundAfterFree, promoSettleJoining, promoSettleLeaving, sameDayTitulars, splitPaymentAcross } from './prices.js';
 import { planRows } from './settle.js';
 import { compensationFingerprint, dayCompensation, reconcileTransfers, splitModeOf } from './compensate.js';
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
-import { appInstallUrl, appShareMessage, isPlayerDeepLink, playerLink } from './share.js';
+import { appInstallUrl, appShareMessage, isPlayerDeepLink, organizerMatchesTitle, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
+import { isSelfPending, pendingSelfSignups, selfSignupRows } from './self-signup.js';
+import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from './confirm-notice.js';
+import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from './push.js';
 import { bindTap, tapChose } from './tap.js';
 import { BACKUP_COLLECTIONS, BACKUP_LOADED_OK, COLLECTION_LABELS, backupFilename, backupProgressText, backupSurfaceMessage, clearTrialResume, parseBackup, readTrialResume, resetProgressText, trialBackupResultText, trialResumeId, writeTrialResume } from './backup.js';
 import {
@@ -46,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v187';
+const APP_VERSION = 'f7c-v217';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -238,6 +241,9 @@ const app = {
   showLater: false,
   profileMatchId: null,
   profileViaMatchId: null,
+  selfSignupError: null,
+  confirmSeen: [],
+  noticeError: '',
 };
 window.__app = app; // útil para depurar / tests
 
@@ -298,7 +304,7 @@ function run(p, okMsg, deniedMsg) {
     if (okMsg) toast(okMsg);
     return value;
   }).catch((e) => {
-    console.error(e);
+    console.error(e?.code || 'sin-codigo', e);
     if (e?.code === 'already-in-match') toast(e.message || ALREADY_IN_MATCH);
     else if (e?.code === 'suspended') askNotice(e.message || SUSPENDED_TEXT);
     else if (e?.paymentWrite) toast(paymentFailureText(e, e.playerId), 4500);
@@ -981,12 +987,43 @@ function route() {
   }
   if (name === 'registro') return { name: 'registro', section: id === 'pagos' ? 'pagos' : 'partidos' };
   if (name === 'jugadores' || name === 'pagos') return { name: 'roster' };
+  if (name === 'a-confirmar') return { name: 'pending' };
   if (name === 'usuarios') return { name: 'users' };
-  if (name === 'jugador' && id) return { name: 'profile', id: decodeURIComponent(id) };
+  if (name === 'jugador' && id) {
+    let rosterId = id;
+    let share = extra || '';
+    try { rosterId = decodeURIComponent(id); } catch { /* el id queda como vino */ }
+    try { share = share ? decodeURIComponent(share) : ''; } catch { /* el token queda como vino */ }
+    return { name: 'profile', id: rosterId, share };
+  }
   return { name: 'home' };
 }
 let releaseAnonymousLock = null;
 let redrawLogin = null;
+let releaseLogin = null;
+let onStoreView = () => {};
+async function bootGuestPlayer() {
+  lockShell();
+  document.documentElement.classList.add('anon-lock');
+  app.guestPlayer = true;
+  const id = route().id;
+  const share = route().share || '';
+  if (!app.session) {
+    app.session = openSession();
+    await app.session.init();
+  }
+  if (app.session.user) return;
+  if (!app.store) {
+    app.store = await createStore(() => {}, { guestRosterId: id, shareToken: share });
+    const demo = document.getElementById('demo-banner');
+    if (demo) demo.hidden = app.store.mode === 'firebase';
+    app.store.setActor(null);
+    app.store.subscribe(onStoreView);
+    return;
+  }
+  if (typeof app.store.listenAsGuest === 'function') app.store.listenAsGuest(id, share);
+  else render();
+}
 function lockShell() {
   document.documentElement.classList.add('signed-out');
   const stack = document.getElementById('topstack');
@@ -1007,7 +1044,8 @@ window.addEventListener('hashchange', () => {
   if (!app.session?.user) {
     lockShell();
     if (isPlayerDeepLink(location.hash)) {
-      showAnonymousDenial();
+      if (releaseLogin) releaseLogin();
+      else void bootGuestPlayer();
       return;
     }
     if (releaseAnonymousLock) {
@@ -1090,7 +1128,7 @@ function tabFor(r) {
   if (r.name === 'roster') return 'roster';
   if (r.name === 'stats') return 'stats';
   if (r.name === 'registro') return 'registro';
-  if (r.name === 'home') return 'home';
+  if (r.name === 'pending' || r.name === 'home') return 'home';
   if (r.name === 'match' || r.name === 'teams') {
     const match = matchById(r.id);
     return match?.date && match.date < todayISO() ? 'history' : 'home';
@@ -1106,7 +1144,7 @@ function tabFor(r) {
 }
 function paintTabs(r) {
   const tab = tabFor(r);
-  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats' || r.name === 'registro') {
+  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'stats' || r.name === 'registro' || r.name === 'pending') {
     try { sessionStorage.setItem('f7c-tab', tab); } catch {}
   }
   document.querySelectorAll('#tabbar a').forEach((link) => {
@@ -1115,7 +1153,7 @@ function paintTabs(r) {
     else link.removeAttribute('aria-current');
   });
   document.querySelector('#tabbar a[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro' || (r.name === 'stats' && !r.id);
+  const root = r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro' || r.name === 'pending' || (r.name === 'stats' && !r.id);
   $('#btn-back').hidden = root || !app.loaded;
   requestAnimationFrame(placeBars);
 }
@@ -1149,13 +1187,26 @@ function render() {
   markOnce('f7c-first-render');
   if (app.loaded) markOnce('f7c-data-visible');
   rosterRevealJustScrolled = false;
-  if (!app.session?.user) { lockShell(); return; }
+  if (!app.session?.user) {
+    lockShell();
+    if (isPlayerDeepLink(location.hash)) {
+      document.documentElement.classList.add('anon-lock');
+      if (!app.loaded) return;
+      const id = route().id;
+      const person = (app.roster || []).find((row) => row.id === id);
+      if (person) renderPlayerSignup(person);
+      else showAnonymousDenial();
+    }
+    return;
+  }
   if (document.documentElement.classList.contains('signed-out')) unlockShell();
   const r = route();
   if (document.documentElement.classList.contains('anon-lock')) {
     if (releaseAnonymousLock) return;
     if (r.name === 'profile' && playerLinkDenied(r.id)) {
-      showAnonymousDenial();
+      const person = (app.roster || []).find((row) => row.id === r.id);
+      if (person) renderPlayerSignup(person);
+      else showAnonymousDenial();
       return;
     }
     document.documentElement.classList.remove('anon-lock');
@@ -1180,8 +1231,9 @@ function render() {
   else if (r.name === 'roster') renderRoster();
   else if (r.name === 'profile') renderProfile(r.id);
   else if (r.name === 'users') renderUsers();
-  else renderHome();
+  else renderHome(r.name === 'pending');
   paintActivity();
+  armOrganizerPush();
   requestAnimationFrame(placeBars);
   if (app.revealPlayerId && !app.revealShown) settleRevealedPlayer();
   const revealingHere = !!(app.revealPlayerId && !app.revealShown && addedPlayerRow(app.revealPlayerId));
@@ -1388,7 +1440,7 @@ function matchCard(m, opts = {}) {
   </a>${debt}</li>`;
 }
 
-function renderHome() {
+function renderHome(focusPending = false) {
   const upcoming = currentMatches(app.matches);
   const { next, later } = splitNear(upcoming);
   const open = app.showLater && later.length > 0;
@@ -1396,7 +1448,7 @@ function renderHome() {
     ? 'Los que vienen después están en el botón de abajo.'
     : 'Agregá uno a mano o pegá un mensaje del grupo de WhatsApp.';
   if (!replaceView(`
-    ${confirmBanner()}${reminderBanners(next)}
+    ${confirmBanner()}${pendingSignupBlock()}${reminderBanners(next)}
     <h2 class="section">Próximos 7 días</h2>
     ${next.length ? `<ul class="match-list" id="list-next">${next.map(matchCard).join('')}</ul>` : `
       <div class="empty" id="home-empty"><div class="big">⚽</div><p><b>No hay partidos en los próximos 7 días.</b></p>
@@ -1412,6 +1464,22 @@ function renderHome() {
   const laterBtn = $('#btn-later');
   if (laterBtn) laterBtn.onclick = () => { rememberLater(!app.showLater); renderHome(); };
   bindReminderBanners();
+  const pending = $('#pending-signups');
+  if (pending) pending.onclick = (event) => {
+    const accept = event.target.closest('[data-accept]');
+    if (accept) {
+      const player = app.players.find((item) => item.id === accept.dataset.accept);
+      return confirmPlayerPlace(player, 'Aceptado');
+    }
+    const reject = event.target.closest('[data-reject]');
+    if (reject) return run(app.store.rejectSelf(reject.dataset.reject), 'Rechazado');
+  };
+  if (focusPending) requestAnimationFrame(() => {
+    const box = document.getElementById('jugadores-a-confirmar');
+    if (!box) return;
+    box.scrollIntoView({ block: 'start' });
+    box.focus();
+  });
 }
 
 function renderTeams(id) {
@@ -1974,6 +2042,7 @@ function usualSection(m) {
     match: m,
     matches: knownMatches(),
     players: app.players,
+    roster: app.roster,
     today: todayISO(),
     who: actor(),
   });
@@ -2130,6 +2199,7 @@ function renderMatch(id) {
     ${readOnly || m.cancelled ? '' : '<button type="button" class="btn block remind-open" id="btn-remind">Enviar recordatorios</button>'}
     <h2 class="section">Jugadores</h2>
     <ul class="slots" id="slots">${slots.join('')}</ul>
+    ${selfWaitNotices(m)}
     ${waitingSection(m, everyone.length >= cap, readOnly)}
     ${noPlaySection(m, readOnly)}
     ${usualSection(m)}
@@ -2346,7 +2416,32 @@ function confirmSpotButton(p) {
 }
 function clearReservedSpot(player) {
   if (!player || player.tentative !== true) return;
-  run(app.store.clearTentative(player.id), 'Lugar confirmado');
+  confirmPlayerPlace(player, 'Lugar confirmado');
+}
+
+function confirmPlayerPlace(player, okMsg) {
+  if (!player) return;
+  const popup = isSelfPending(player) ? window.open('', '_blank') : null;
+  if (popup) popup.opener = null;
+  const job = app.store.confirmSelf(player.id).then((told) => {
+    if (!told?.match) {
+      popup?.close();
+      return;
+    }
+    const phone = withAgendaPhone(told.player).phone || '';
+    const text = confirmWhatsAppText(givenName(told.player, app.roster), {
+      date: told.match.date,
+      time: told.match.time,
+      place: placeOf(told.match),
+    });
+    const url = waSendUrl({ phone, text });
+    if (popup) popup.location = url;
+    else window.open(url, '_blank', 'noopener');
+  }).catch((error) => {
+    popup?.close();
+    throw error;
+  });
+  return run(job, okMsg);
 }
 
 const REMINDER_BANNER = 'Faltan 2 horas: mandá los recordatorios';
@@ -2645,7 +2740,9 @@ function resolvePlayerShort(longUrl) {
   return job;
 }
 async function copyPlayerLink(rosterId) {
-  const url = playerLink(rosterId);
+  let token = '';
+  try { token = await app.store?.ensureShareToken?.(actor().uid, actor().name) || ''; } catch { token = ''; }
+  const url = playerLink(rosterId, token);
   if (!url) {
     openSheet(`<h3>Enlace</h3><p>Este jugador todavía no está en Jugadores.</p><div class="sheet-actions"><button type="button" class="btn" data-close>Cerrar</button></div>`);
     return;
@@ -2907,7 +3004,7 @@ function openSettings() {
       <button type="button" class="btn danger" id="set-reset-db">Resetear base de datos</button>
     </div>` : ''}
     <label class="checkline" id="set-activity"><input type="checkbox" id="set-activity-on"${notifyEnabled() ? ' checked' : ''}><span>Notificaciones</span></label>
-    <p class="hint">Cuando otro organizador anota, da de baja o crea un partido que podés ver.</p>
+    <p class="hint">Cuando otro organizador anota, da de baja o crea un partido que podés ver. En la prueba, con el permiso del teléfono, también avisa si alguien se anota, se baja o entra en la espera aunque la app esté cerrada.</p>
     <div class="menu">
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -2952,6 +3049,12 @@ function openSettings() {
     localStorage.setItem(notifyOnKey(uid), on ? '1' : '0');
     if (on) localStorage.setItem(notifySeenKey(uid), String(Date.now()));
     paintActivity();
+    if (on) {
+      registerOrganizerPush(app.store).then((result) => {
+        if (result.reason === 'no-vapid') toast('Falta la clave de avisos. Con la app abierta igual te enterás.');
+        else if (result.reason === 'denied') toast('Sin permiso del teléfono no llega el aviso con la app cerrada.');
+      }).catch(() => toast('No se pudo guardar el aviso del teléfono.'));
+    }
   };
   $('#set-notify').onclick = async () => {
     if (typeof Notification === 'undefined') { toast('Este navegador no muestra avisos'); return; }
@@ -3404,6 +3507,7 @@ function openMatchForm(m) {
         <label class="checkline"><input type="radio" name="splitMode" id="match-split-signed" value="signed"${splitModeOf(m) === 'signed' ? ' checked' : ''}><span>Cada uno la cantidad que anotó</span></label>
       </fieldset>
       <label class="field"><span>Nota (opcional)</span><input type="text" name="note" maxlength="300" placeholder="Ej: cancha 2, traer pechera" value="${esc(m?.note || '')}"></label>
+      <label class="checkline"><input type="checkbox" name="playerVisible" id="match-player-visible"${!m || m.playerVisible !== false ? ' checked' : ''}><span>Visible para los jugadores</span></label>
       ${editingAccess ? accessEditor(m) : ''}
       <div class="field"><div class="err" id="mf-err"></div></div>
       <div class="sheet-actions"><button type="button" class="btn" data-close>Cancelar</button><button class="btn primary" type="submit">${m ? 'Guardar' : 'Crear'}</button></div>
@@ -3433,6 +3537,7 @@ function openMatchForm(m) {
     if (!price.ok) { $('#mf-err').textContent = price.error; return; }
     data.price = price.amount;
     data.splitMode = f.get('splitMode') === 'signed' ? 'signed' : 'equal';
+    data.playerVisible = e.target.playerVisible?.checked !== false;
     const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
     if (dup && !(await askConfirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?'))) return;
     if (editingAccess) data.access = readAccessForm();
@@ -4121,18 +4226,6 @@ function moneyList(rows, empty) {
   return `<ul class="ledger-list">${rows.map((row) => `<li>${esc(row.label || row.name)}: ${esc(formatARS(row.amount))}</li>`).join('')}</ul>`;
 }
 
-function takeSummary(take) {
-  const goals = take.goalsTracked ? `Goles: ${take.goals}` : 'Sin goles cargados';
-  const pending = take.pending > 0 ? `<p class="pay-pending">Transfiere después ${esc(formatARS(take.pending))}</p>` : '';
-  return `
-    <p class="hint" id="stats-attendance">En la lista: ${take.main} · En espera: ${take.waiting} · No juega: ${take.noShows}</p>
-    <p class="hint" id="stats-goals">${esc(goals)}</p>
-    <p class="stat-summary" id="stats-collected">Cobrado ${esc(formatARS(take.collected))} de ${esc(formatARS(take.expected))}</p>
-    ${pending}
-    <h2>Por medio</h2>
-    ${moneyList(take.byMethod, 'Sin cobros.')}`;
-}
-
 function renderStats(r) {
   const mode = STATS_MODES.some((item) => item.id === r.mode) ? r.mode : 'jugador';
   const prev = $('#stats-q');
@@ -4230,11 +4323,18 @@ function statsPlayerBody(id) {
     ${list}`;
 }
 
+function listedPlayers(dayMatches) {
+  const ids = new Set();
+  for (const match of dayMatches || []) {
+    for (const player of countedForMoney(app.players, match)) ids.add(player.id);
+  }
+  return (app.players || []).filter((player) => ids.has(player.id));
+}
 function dayShare(date, dayMatches) {
   const me = actor();
   return organizerDayShare({
     matches: dayMatches,
-    players: app.players,
+    players: listedPlayers(dayMatches),
     staff: staffUsers(app.users),
     uid: me.uid,
     name: me.name,
@@ -4268,7 +4368,7 @@ function statsDayBody(id) {
       const count = mine.length;
       const cancelled = mine.filter((match) => match.cancelled === true).length;
       const tag = cancelled ? `<span class="tag">${cancelled === count ? 'Cancelado' : `${cancelled} cancelado${cancelled === 1 ? '' : 's'}`}</span>` : '';
-      return `<li class="slot" data-date="${esc(date)}"><a class="who" href="${statsHash('dia', date)}"><div class="name">${esc(capitalize(labelDate(date)))}</div><div class="sub"><span>${count} ${count === 1 ? 'partido' : 'partidos'} · ${esc(times)}</span>${tag}</div><span class="stats-entitled">${esc(entitledLabel(dayShare(date, dayMatches)))}</span></a></li>`;
+      return `<li class="slot" data-date="${esc(date)}"><a class="who" href="${statsHash('dia', date)}"><div class="name">${esc(capitalize(labelDate(date)))}</div><div class="sub"><span>${count} ${count === 1 ? 'partido' : 'partidos'} · ${esc(times)}</span>${tag}</div><span class="stats-entitled">${esc(entitledLabel(dayShare(date, mine)))}</span></a></li>`;
     }).join('');
     return `<ul class="slots" id="stats-days">${rows || '<li class="empty-wait">No hay partidos.</li>'}</ul>`;
   }
@@ -4276,22 +4376,31 @@ function statsDayBody(id) {
   const allDay = byDay.get(wanted) || [];
   const dayMatches = mineOf(allDay);
   if (!dayMatches.length) return `<div class="empty"><p><b>No hay partidos ese día.</b></p><p><a class="btn" href="${statsHash('dia')}">Volver a la lista</a></p></div>`;
-  const blocks = dayMatches.map((match) => {
-    const take = organizerViewTake({
-      match,
-      players: app.players,
-      matches,
-      prices: livePrices(),
-      who: { uid: me.uid, name: me.name },
-    });
-    const when = `${match.time || '--:--'} hs`;
-    return `<section class="profile-block stats-day-match"><h2>${esc(when)}</h2>${match.cancelled === true ? '<p class="hint">Cancelado: no suma plata.</p>' : ''}${takeSummary(take)}</section>`;
-  }).join('');
+  const who = { uid: me.uid, name: me.name };
+  const summary = daySignupSummary({
+    matches: dayMatches,
+    players: app.players,
+    prices: livePrices(),
+    who,
+  });
+  const blocks = summary.matches.map((row) => `
+    <section class="profile-block stats-day-match" data-time="${esc(row.time)}">
+      <h2>${esc(row.time)}</h2>
+      <p class="stats-match-signed">Anotaste: ${esc(spotCountLabel(row.spots))}</p>
+      <p class="stats-match-paid">Pagaron: ${esc(formatARS(row.paid))}</p>
+    </section>`).join('');
   return `
     <p class="hint"><a href="${statsHash('dia')}">Todos los días</a></p>
     <h2 class="section" id="stats-day">${esc(capitalize(labelDate(wanted)))}</h2>
-    <p class="stats-entitled" id="stats-entitled">${esc(entitledLabel(dayShare(wanted, allDay)))}</p>
+    <p class="stats-entitled" id="stats-entitled">${esc(entitledLabel(dayShare(wanted, dayMatches)))}</p>
+    <p id="stats-day-signed">Anotaste en el día: ${esc(spotCountLabel(summary.spots))}</p>
+    <p id="stats-day-paid">Pagaron: ${esc(formatARS(summary.paid))}</p>
     ${blocks}`;
+}
+
+function spotCountLabel(n) {
+  const count = Math.max(0, Number(n) || 0);
+  return `${count} ${count === 1 ? 'jugador' : 'jugadores'}`;
 }
 
 function entitledLabel(amount) {
@@ -4561,7 +4670,8 @@ function renderProfile(id) {
   const fromMatch = app.profileViaMatchId === id;
   if (!fromMatch && (!person || !rosterHeldBy(person, actor()))) {
     app.signupDraft = null;
-    showAnonymousDenial();
+    if (person) renderPlayerSignup(person);
+    else showAnonymousDenial();
     return;
   }
   if (!person) {
@@ -4745,6 +4855,241 @@ function renderProfile(id) {
     saveProfile(person.id, { positions: POSITIONS.filter((item) => next.has(item)) });
   };
   bindPartidos(person);
+}
+
+function linkOrganizer() {
+  const token = route().share || '';
+  if (!token) return null;
+  return app.store?.shareOrganizer?.(token) || null;
+}
+
+function renderPlayerSignup(person) {
+  document.documentElement.classList.add('anon-lock');
+  app.store?.watchConfirmSeen?.(person.id);
+  const list = selfSignupSection(person);
+  const title = organizerMatchesTitle(linkOrganizer()?.name);
+  const painted = replaceView(`
+    <article id="player-signup">
+      <header class="player-top">
+        <img src="icons/icon-192.png?v=${esc(APP_VERSION)}" alt="" width="40" height="40">
+        <h1 id="player-signup-name">Hola, ${esc(givenName(person) || person.name)}</h1>
+      </header>
+      ${title ? `<h2 id="player-signup-of">${esc(title)}</h2>` : ''}
+      ${app.guestMatchError ? `<p class="self-error" role="alert">${esc(app.guestMatchError)}</p>` : ''}
+      ${confirmNoticesHtml(person)}
+      ${playerPushHtml()}
+      ${list || '<p class="empty-wait" id="self-empty">No hay partidos próximos.</p>'}
+    </article>`);
+  if (painted !== false) {
+    bindSelfSignup(person);
+    bindConfirmNotices(person);
+    bindPlayerPush(person);
+  }
+}
+
+function confirmNoticesHtml(person) {
+  const rows = unseenConfirmations({
+    players: app.players,
+    matches: app.matches,
+    rosterId: person.id,
+    seenIds: app.confirmSeen || [],
+  });
+  const fail = app.noticeError ? `<p class="self-error" role="alert">${esc(app.noticeError)}</p>` : '';
+  if (!rows.length) return fail;
+  const items = rows.map(({ player, match }) => `<p class="confirm-notice" role="status"><span>${esc(confirmBannerText({ date: match.date, time: match.time, place: placeOf(match) }))}</span><button type="button" data-notice-dismiss="${esc(player.id)}" aria-label="Cerrar aviso">×</button></p>`).join('');
+  return `<div class="confirm-notices" id="confirm-notices">${items}${fail}</div>`;
+}
+
+function bindConfirmNotices(person) {
+  const box = $('#confirm-notices');
+  if (!box) return;
+  box.onclick = (event) => {
+    const btn = event.target.closest('[data-notice-dismiss]');
+    if (!btn) return;
+    const id = btn.dataset.noticeDismiss;
+    app.noticeError = '';
+    app.confirmSeen = [...new Set([...(app.confirmSeen || []), id])];
+    renderPlayerSignup(person);
+    app.store.markConfirmSeen(id, person.id).catch((error) => {
+      app.confirmSeen = (app.confirmSeen || []).filter((item) => item !== id);
+      app.noticeError = writeFailureText(error);
+      renderPlayerSignup(person);
+    });
+  };
+}
+
+function playerPushHtml() {
+  if (!playerPushAvailable()) return '';
+  const hint = iosPushHint();
+  return `<div class="player-push"><button type="button" class="btn" id="player-push">Avisarme cuando me confirmen</button>${hint ? `<p class="player-push-hint" id="player-push-ios">${esc(hint)}</p>` : ''}<p class="player-push-hint" id="player-push-msg" hidden></p></div>`;
+}
+
+function bindPlayerPush(person) {
+  const btn = $('#player-push');
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const msg = $('#player-push-msg');
+    try {
+      const result = await registerPlayerPush(app.store, person.id);
+      if (result.ok) {
+        btn.textContent = 'Te vamos a avisar';
+        if (msg) msg.hidden = true;
+        return;
+      }
+      btn.disabled = false;
+      if (!msg) return;
+      msg.hidden = false;
+      msg.textContent = result.reason === 'denied' ? 'El navegador no dejó mostrar avisos.' : 'No se pudo activar el aviso.';
+    } catch (error) {
+      btn.disabled = false;
+      if (!msg) return;
+      msg.hidden = false;
+      msg.textContent = writeFailureText(error);
+    }
+  };
+}
+
+const SELF_CAL = '<svg class="self-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>';
+const SELF_CLOCK = '<svg class="self-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg>';
+const SELF_PIN = '<svg class="self-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-7.2 7-11a7 7 0 1 0-14 0c0 3.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.2"/></svg>';
+const SELF_CHECK = '<svg class="self-check" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5 11 15.5 16.5 9"/></svg>';
+
+function selfSignupSection(person) {
+  const token = route().share || '';
+  const organizer = token ? (app.store?.shareOrganizer?.(token) || null) : null;
+  const rows = selfSignupRows({
+    person,
+    matches: app.matches,
+    players: app.players,
+    now: Date.now(),
+    organizerUid: organizer?.uid || '',
+    organizerName: organizer?.name || (!token && app.session?.user?.name) || '',
+    scoped: !!token,
+  });
+  if (!rows.length) return '<ul class="slots" id="self-list"></ul>';
+  const items = rows.map(({ match, player, action, note, status, lock }) => {
+    const statusHtml = note ? `<p class="self-status ${esc(status || '')}">${esc(note)}</p>` : '';
+    const fail = app.selfSignupError?.matchId === match.id ? app.selfSignupError.text : '';
+    const failHtml = fail ? `<p class="self-error" role="alert">${esc(fail)}</p>` : '';
+    const lockHtml = lock ? `<p class="self-note">${esc(lock)}</p>` : '';
+    let control = '';
+    if (action === 'join') control = `<button type="button" class="btn primary self-btn" data-self="join" data-match="${esc(match.id)}">Anotarme</button>`;
+    else if (action === 'wait') control = `<button type="button" class="btn self-btn" data-self="wait" data-match="${esc(match.id)}">Anotarme en lista de espera</button>`;
+    else if (action === 'cancel') control = `<button type="button" class="btn self-btn" data-self="cancel" data-match="${esc(match.id)}" data-player="${esc(player?.id || '')}">Anular</button>`;
+    else if (action === 'locked') {
+      const phone = organizerDropPhone(match);
+      control = phone
+        ? `<a class="btn self-wa" href="${esc(waHref(phone))}" target="_blank" rel="noopener">WhatsApp</a>`
+        : '';
+    }
+    return `<li class="self-card self-row${status === 'confirmed' ? ' is-in' : ''}" data-match="${esc(match.id)}">
+      <div class="self-main">
+        <p class="self-when">${status === 'confirmed' ? SELF_CHECK : ''}<span class="self-bit">${SELF_CAL}<span>${esc(capitalize(labelDate(match.date)))}</span></span><span class="self-bit">${SELF_CLOCK}<span>${esc(match.time || '--:--')}</span></span></p>
+        <p class="self-place"><span class="self-bit">${SELF_PIN}<span>${esc(placeOf(match))}</span></span></p>
+        ${statusHtml}
+        ${failHtml}
+        ${lockHtml}
+      </div>
+      ${control ? `<div class="self-actions">${control}</div>` : ''}
+    </li>`;
+  }).join('');
+  return `<ul class="slots" id="self-list">${items}</ul>`;
+}
+
+function organizerDropPhone(match) {
+  const uid = String(match?.createdByUid || '').trim();
+  const name = foldText(match?.createdBy || '');
+  if (!uid && !name) return '';
+  const hit = app.roster.find((person) => {
+    const phone = String(person?.phone || '').trim();
+    if (!phone) return false;
+    const sameName = name && foldText(person.name) === name;
+    if (uid && person.createdByUid === uid && sameName) return true;
+    if (uid && Array.isArray(person.holders) && person.holders.includes(uid) && sameName) return true;
+    return !uid && sameName;
+  });
+  return hit?.phone || '';
+}
+
+function selfSignupFailureText(kind, error) {
+  const code = String(error?.code || '');
+  if (code === 'rate-limit' || code === 'too-late' || code === 'no-roster' || code === 'already-in-match' || code === 'suspended' || code === 'match-full' || code === 'guest-cannot-invite') {
+    return String(error?.message || 'No se pudo guardar');
+  }
+  const verb = kind === 'wait'
+    ? 'No se pudo anotar en la lista de espera'
+    : (kind === 'cancel' ? 'No se pudo anular' : 'No se pudo anotar');
+  return writeFailureText(error).replace('No se pudo guardar', verb);
+}
+
+let selfSignupBusy = false;
+function bindSelfSignup(person) {
+  const list = $('#self-list');
+  if (!list) return;
+  list.onclick = async (event) => {
+    const btn = event.target.closest('[data-self]');
+    if (!btn || !person || selfSignupBusy) return;
+    const match = matchById(btn.dataset.match);
+    if (!match) return;
+    const kind = btn.dataset.self;
+    selfSignupBusy = true;
+    app.selfSignupError = null;
+    const job = kind === 'cancel'
+      ? app.store.selfCancel(btn.dataset.player)
+      : app.store.selfJoin(match, person, { waiting: kind === 'wait', organizer: route().share ? (app.store?.shareOrganizer?.(route().share) || null) : null });
+    try {
+      await job;
+      app.selfSignupError = null;
+    } catch (e) {
+      console.error(e?.code || 'sin-codigo', e);
+      app.selfSignupError = { matchId: match.id, text: selfSignupFailureText(kind, e) };
+      renderPlayerSignup(person);
+    } finally {
+      selfSignupBusy = false;
+    }
+  };
+}
+
+function myPendingSignups() {
+  return pendingSelfSignups({ players: app.players, matches: knownMatches(), uid: actor().uid, admin: app.role === 'admin' });
+}
+
+function pendingSignupBlock() {
+  const rows = myPendingSignups();
+  if (!rows.length) return '';
+  const items = rows.map(({ player, match }) => {
+    const when = `${capitalize(labelDate(match.date))} ${match.time || '--:--'}`;
+    return `<li class="pending-row" data-player="${esc(player.id)}">
+      <div class="pending-main">
+        <p class="pending-name">${esc(shownName(player))}</p>
+        <p class="pending-when">${esc(when)}</p>
+        <p class="pending-place"><span class="self-bit">${SELF_PIN}<span>${esc(placeOf(match))}</span></span></p>
+      </div>
+      <div class="pending-actions">
+        <button type="button" class="pending-icon" data-accept="${esc(player.id)}" aria-label="Aceptar" title="Aceptar">✅</button>
+        <button type="button" class="pending-icon" data-reject="${esc(player.id)}" aria-label="Rechazar" title="Rechazar">❌</button>
+      </div>
+    </li>`;
+  }).join('');
+  return `<section id="jugadores-a-confirmar" class="pending-card" tabindex="-1">
+    <h2 class="section">Jugadores a confirmar</h2>
+    <ul id="pending-signups">${items}</ul>
+  </section>`;
+}
+
+let pushArmStarted = false;
+function armOrganizerPush() {
+  if (pushArmStarted || !notifyEnabled() || !isTrialPage()) return;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  pushArmStarted = true;
+  registerOrganizerPush(app.store).catch(() => { pushArmStarted = false; });
+}
+
+function selfWaitNotices(match) {
+  const rows = app.players.filter((player) => player.matchId === match.id && player.waiting === true && player.selfSignup === true);
+  if (!rows.length) return '';
+  return `<div id="self-wait-notice">${rows.map((player) => `<p>${esc(shownName(player))} se anotó en la lista de espera.</p>`).join('')}</div>`;
 }
 
 function signupDraft(person) {
@@ -7981,6 +8326,7 @@ function askBajaPoints(match, player, { note = '' } = {}) {
 }
 
 async function commitBajaPenalty(match, player, choice) {
+  if (!removalDeducts(player)) return true;
   if (!choice) return false;
   const rosterId = suspensionRosterId(player);
   if ((choice.points !== 0 || choice.suspend) && !rosterId) {
@@ -8080,10 +8426,12 @@ async function removeNoPlayPlayer(m, p) {
 }
 
 async function removeMatchPlayer(m, p) {
-  const fromMain = !isWaiting(p);
+  const fromMain = removalDeducts(p);
   const friends = guestsOf(m.id, p.id);
-  const choice = await askBajaPoints(m, p);
-  if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
+  if (fromMain) {
+    const choice = await askBajaPoints(m, p);
+    if (!choice || !(await commitBajaPenalty(m, p, choice))) return;
+  }
   const dropFriends = friends.length > 0 && await askYesNo(`¿Quitar también a sus invitados (${friends.map((item) => item.name).join(', ')})?`);
   const dropping = new Set([p.id, ...(dropFriends ? friends.map((item) => item.id) : [])]);
   const top = waitingOf(m.id).find((item) => !dropping.has(item.id));
@@ -8193,12 +8541,13 @@ function openFriendForm(m, host) {
 /* ───────── código de acceso (opcional) ───────── */
 function promptLogin(session) {
   return new Promise((resolve) => {
-    const done = () => { redrawLogin = null; resolve(); };
+    const done = () => { releaseLogin = null; redrawLogin = null; resolve(); };
+    releaseLogin = done;
     if (session.user) return done();
     const draw = (message = session.error || '') => {
       if (!replaceView(`
         <form class="gate" id="login-form">
-          <img class="logo-mark" src="icons/icon-192.png?v=f7c-v187" alt="" width="96" height="96">
+          <img class="logo-mark" src="icons/icon-192.png?v=${esc(APP_VERSION)}" alt="" width="96" height="96">
           <h2>Entrar</h2>
           <p class="muted">Solo entran el administrador y los organizadores que él crea.</p>
           <label class="field"><span>Mail</span><input id="login-email" name="email" type="email" autocomplete="username" required></label>
@@ -8235,7 +8584,7 @@ function gate() {
     if (!ACCESS_CODE || localStorage.getItem(CODE_KEY) === ACCESS_CODE) return resolve();
     if (!replaceView(`
       <form class="gate" id="gate">
-        <img class="logo-mark" src="icons/icon-192.png?v=f7c-v187" alt="" width="96" height="96"><h2>Código de acceso</h2>
+        <img class="logo-mark" src="icons/icon-192.png?v=${esc(APP_VERSION)}" alt="" width="96" height="96"><h2>Código de acceso</h2>
         <p class="muted">Pedile el código a Gustavo o Martín.</p>
         <label class="field"><input name="code" type="password" autocomplete="off" placeholder="Código" autofocus></label>
         <div class="err small" id="gate-err" style="color:var(--danger)"></div>
@@ -8343,12 +8692,10 @@ async function boot() {
   if (isPlayerDeepLink(location.hash)) {
     app.session = openSession();
     await app.session.init();
-    if (!app.session.user) {
-      showAnonymousDenial();
-      await new Promise((resolve) => { releaseAnonymousLock = resolve; });
+    if (app.session.user) {
+      document.documentElement.classList.remove('anon-lock');
+      unlockShell();
     }
-    document.documentElement.classList.remove('anon-lock');
-    if (app.session.user) unlockShell();
   }
 
   await gate();
@@ -8373,25 +8720,35 @@ async function boot() {
     if (sheet.open && app.refreshPaySheet) app.refreshPaySheet();
     if (!sameSession && app.loaded && (!sheet.open || !sheet.querySelector('input, textarea')) && location.hash !== '#/usuarios') render();
   });
-  if (!app.session.user) {
+  while (!app.session.user && !isPlayerDeepLink(location.hash)) {
     lockShell();
     await promptLogin(app.session);
   }
-  unlockShell();
-  app.who = app.session.user.name;
-  app.role = app.session.user.role;
-  app.uid = app.session.user.uid;
-  app.users = app.session.users || [];
-  app.store = await createStore((e) => {
-    showError(isPermissionDenied(e)
-      ? RULES_MSG
-      : e?.code === 'no-server'
-        ? 'No hay conexión con la base de datos de Firebase: los cambios quedan solo en este teléfono. ¿Está creada la base Firestore del proyecto? (ver README)'
-        : 'Problema de conexión con Firebase: ' + (e?.message || e));
-  });
-  $('#demo-banner').hidden = app.store.mode === 'firebase';
-  app.store.setActor(app.session.user);
-  app.store.subscribe((view) => {
+  const guestLink = !app.session.user && isPlayerDeepLink(location.hash);
+  if (!guestLink) {
+    unlockShell();
+    app.who = app.session.user.name;
+    app.role = app.session.user.role;
+    app.uid = app.session.user.uid;
+    app.users = app.session.users || [];
+    app.store = await createStore((e) => {
+      showError(isPermissionDenied(e)
+        ? RULES_MSG
+        : e?.code === 'no-server'
+          ? 'No hay conexión con la base de datos de Firebase: los cambios quedan solo en este teléfono. ¿Está creada la base Firestore del proyecto? (ver README)'
+          : 'Problema de conexión con Firebase: ' + (e?.message || e));
+    });
+    $('#demo-banner').hidden = app.store.mode === 'firebase';
+    app.store.setActor(app.session.user);
+  } else {
+    lockShell();
+    document.documentElement.classList.add('anon-lock');
+    app.guestPlayer = true;
+    app.store = await createStore(() => {}, { guestRosterId: route().id, shareToken: route().share || '' });
+    $('#demo-banner').hidden = app.store.mode === 'firebase';
+    app.store.setActor(null);
+  }
+  onStoreView = (view) => {
     const { matches, players, roster, rosterError, organizers, organizersError, venues, venuesError, prices, pricesError, credits, creditsError, history, historyMeta, historyError } = view;
     app.matches = applyScoreHold(matches || []); app.players = applyAttendanceHold(applyGoalHold(releaseAnsweredReservations(players || [])));
     app.pendingWrites = view.pending === true;
@@ -8415,6 +8772,9 @@ async function boot() {
     app.creditsError = creditsError || null;
     app.creditsReady = view.creditsReady === true;
     app.playersReady = view.playersReady === true;
+    if (app.guestPlayer) app.shareOrganizer = view.shareOrganizer || null;
+    app.guestMatchError = view.guestMatchError || '';
+    if (Array.isArray(view.confirmSeen)) app.confirmSeen = view.confirmSeen;
     app.compensations = mergeHeldCompensations(view.compensations || []);
     app.usage = view.usage || null;
     if (app.role === 'admin' && $('#usage-meter')) {
@@ -8423,16 +8783,16 @@ async function boot() {
     }
     app.log = view.log || [];
     app.logError = view.logError || '';
-    if (rosterError && rosterError !== app.rosterError) showError(rosterError);
+    if (!app.guestPlayer && rosterError && rosterError !== app.rosterError) showError(rosterError);
     app.rosterError = rosterError || null;
-    if (organizersError && organizersError !== app.organizersError) showError(organizersError);
+    if (!app.guestPlayer && organizersError && organizersError !== app.organizersError) showError(organizersError);
     app.organizersError = organizersError || null;
-    if (venuesError && venuesError !== app.venuesError) showError(venuesError);
+    if (!app.guestPlayer && venuesError && venuesError !== app.venuesError) showError(venuesError);
     app.venuesError = venuesError || null;
-    if (pricesError && pricesError !== app.pricesError) showError(pricesError);
+    if (!app.guestPlayer && pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen, app.guestMatchError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();
@@ -8442,7 +8802,8 @@ async function boot() {
     if (!sheet.open || !sheet.querySelector('input, textarea, select')) render(); else pendingRender = true;
     fixOverflow();
     armReminderTimer();
-  });
+  };
+  app.store.subscribe(onStoreView);
   render();
   armReminderTimer();
   // Al cambiar el día, Hoy/Mañana y el historial se actualizan. El mismo día no redibuja.
@@ -8457,6 +8818,7 @@ let reminderTimerAt = Infinity;
 const clearingReservation = new Set();
 
 function releaseAnsweredReservations(players) {
+  if (!app.session?.user) return players || [];
   return players.map((p) => {
     if (!reservationClearedByAnswer(p)) {
       clearingReservation.delete(p.id);
@@ -8541,9 +8903,11 @@ function pingActivity(items) {
     const body = activityNoticeText(item);
     const title = 'Mis Partidos';
     const tag = `f7c-act-${item.id || item.at}`;
-    const fallback = () => { try { new Notification(title, { body, tag }); } catch { /* el navegador no muestra avisos */ } };
+    const icon = 'icons/icon-192.png';
+    const badge = 'icons/badge-mono.png';
+    const fallback = () => { try { new Notification(title, { body, tag, icon }); } catch { /* el navegador no muestra avisos */ } };
     const ready = navigator.serviceWorker?.ready;
-    if (ready && typeof ready.then === 'function') ready.then((reg) => reg.showNotification(title, { body, tag })).catch(fallback);
+    if (ready && typeof ready.then === 'function') ready.then((reg) => reg.showNotification(title, { body, tag, icon, badge })).catch(fallback);
     else fallback();
   });
 }
@@ -8583,6 +8947,7 @@ let pendingRender = false;
 let fixingOverflow = false;
 const overflowTried = new Set();
 async function fixOverflow() {
+  if (!app.session?.user) return;
   if (fixingOverflow || !app.store) return;
   if (app.pendingWrites || app.fromCache) return;
   const patches = [];
@@ -8647,7 +9012,8 @@ sheet.addEventListener('close', () => {
 const MAIN_TABS = ['home', 'roster', 'history', 'stats', 'registro'];
 function swipeTab() {
   const r = route();
-  if (r.name === 'home' || r.name === 'roster' || r.name === 'history' || r.name === 'registro') return r.name;
+  if (r.name === 'pending' || r.name === 'home') return 'home';
+  if (r.name === 'roster' || r.name === 'history' || r.name === 'registro') return r.name;
   if (r.name === 'stats' && !r.id) return 'stats';
   return '';
 }
@@ -8685,6 +9051,14 @@ function goSwipeTab(delta) {
   }
   location.hash = hashForTab(MAIN_TABS[next]);
 }
+if (navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const url = String(event.data?.url || '');
+    const hash = url.includes('#') ? url.slice(url.indexOf('#')) : '';
+    if (hash.startsWith('#/')) location.hash = hash;
+  });
+}
+
 function bindTabSwipe() {
   if (document.body.dataset.swipe) return;
   document.body.dataset.swipe = '1';

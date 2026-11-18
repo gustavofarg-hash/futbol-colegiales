@@ -435,6 +435,72 @@ html.dark .points-step input.up { color: #4ade80; }
 .signup-check input { width: 1.375rem; height: 1.375rem; margin: 0; }
 .signup-block { position: absolute; inset: -6px; border: 0; background: transparent; }
 .signup-row .btn { flex: none; min-height: 40px; padding: 0 10px; }
+#self-list, #self-pending { gap: 8px; }
+#self-list .self-card {
+  display: flex; flex-direction: row; align-items: center; gap: 8px;
+  padding: 8px 10px; background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+  text-align: left;
+}
+#self-list .self-main {
+  flex: 1 1 0; min-width: 0; max-width: 100%; overflow: hidden;
+  display: flex; flex-direction: column; gap: 2px;
+}
+#self-list .self-when {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 0;
+  min-width: 0; max-width: 100%;
+  font-size: 0.8125rem; font-weight: 700; line-height: 1.2;
+}
+.self-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;
+  min-height: 36px; min-width: 0; padding: 4px 6px 4px 10px; max-width: 100%; overflow: hidden;
+}
+.self-when { flex: 1 1 auto; min-width: 0; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.self-bit { display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.self-bit span { white-space: normal; overflow-wrap: anywhere; }
+.self-ico, .self-check { width: 18px; height: 18px; flex: none; }
+.self-check { color: var(--green); margin-top: 2px; }
+.self-status { margin: 0; font-weight: 800; text-align: left; }
+.self-error { margin: 0; color: var(--danger); font-weight: 700; font-size: 0.8125rem; line-height: 1.25; text-align: left; }
+#self-list .self-ico, #self-list .self-check { width: 16px; height: 16px; }
+#self-list .self-bit { gap: 4px; }
+#self-list .self-when .self-bit { flex: 0 1 auto; align-items: center; min-width: 0; max-width: 100%; }
+#self-list .self-when .self-bit span { white-space: nowrap; }
+#self-list .self-status.confirmed,
+#self-list .self-check { color: #15803d; margin-top: 0; }
+html.dark #self-list .self-status.confirmed,
+html.dark #self-list .self-check { color: #4ade80; }
+.self-status.wait { color: var(--muted); }
+.self-status.pending {
+  color: #FF7A00;
+  font-weight: 800;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  overflow-wrap: anywhere;
+}
+#self-list .self-place { margin: 0; min-width: 0; font-size: 0.8125rem; line-height: 1.25; }
+#self-list .self-status { font-size: 0.8125rem; line-height: 1.25; }
+#self-list .self-place .self-bit { align-items: flex-start; }
+#self-list .self-place .self-bit span {
+  white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: anywhere;
+}
+#self-list .self-note { white-space: normal; overflow: visible; text-overflow: unset; text-align: left; }
+#self-list .self-actions {
+  display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end;
+  margin-left: auto; max-width: 40%; min-width: 0;
+}
+#self-list .self-btn, #self-list .self-wa {
+  min-height: 36px; height: auto; max-width: 100%; min-width: 0;
+  padding: 6px 8px; font-size: 0.8125rem; line-height: 1.15;
+  white-space: normal; text-align: center;
+}
+.self-side { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 72%; }
+.self-side:has(.self-btn) { flex: none; max-width: none; }
+.self-note { font-size: 0.75rem; line-height: 1.1; color: var(--muted, #667); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.self-btn { min-height: 32px; padding: 0 10px; font-size: 0.8125rem; flex: none; white-space: nowrap; }
+.self-wa { font-size: 0.8125rem; font-weight: 700; white-space: nowrap; }
+#self-wait-notice { margin: 8px 0; font-size: 0.875rem; }
 .pay-btn {
   width: 46px; height: 46px; border: 0; border-radius: 12px; padding: 0;
   background: var(--promo-bg); color: var(--pay-ink);
@@ -499,13 +565,44 @@ dialog.sheet[open] > .tabbar {
 }
 .tab-ico { display: none; }
 .tabbar a {
-  display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 48px;
+  display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 48px; overflow: hidden;
   padding: 4px 2px; border-radius: 10px; border: 1px solid transparent;
   text-align: center; text-decoration: none; color: var(--muted);
   font-weight: 800; font-size: 0.62rem; line-height: 1.05; overflow-wrap: anywhere;
 }
 .tabbar a[aria-current="page"] {
   border-color: var(--green); background: var(--green-soft); color: var(--green);
+}
+#jugadores-a-confirmar {
+  scroll-margin-top: calc(var(--header-h, 72px) + var(--tabbar-h, 56px) + 8px);
+  background: var(--warn-bg);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--warn-text) 35%, transparent);
+  border-radius: var(--radius);
+  padding: 12px 12px 6px;
+  margin: 0 0 14px;
+  box-shadow: var(--shadow);
+}
+#jugadores-a-confirmar .section { margin: 0 0 8px; }
+#pending-signups { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; min-width: 0; }
+.pending-row {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--warn-text) 22%, transparent);
+}
+.pending-row:first-child { border-top: 0; }
+.pending-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pending-name, .pending-when, .pending-place {
+  margin: 0; min-width: 0; white-space: normal; overflow: visible; text-overflow: unset; overflow-wrap: anywhere;
+}
+.pending-name { font-weight: 800; }
+.pending-when { font-weight: 700; }
+.pending-place .self-bit { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
+.pending-place .self-bit span { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.pending-actions { display: flex; flex: none; align-items: center; gap: 6px; }
+.pending-icon {
+  width: 40px; height: 40px; padding: 0; border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn-text) 30%, var(--line));
+  background: var(--card); font-size: 1.15rem; line-height: 1;
 }
 .team-board { display: grid; gap: 8px; min-width: 0; }
 .scoreboard {
@@ -924,6 +1021,48 @@ html.anon-lock #toast,
 html.anon-lock #sheet,
 html.anon-lock #ask { display: none !important; }
 html.anon-lock #view { max-width: none; min-height: 100dvh; margin: 0; padding: 24px; display: grid; place-items: center; }
+html.anon-lock #view:has(#player-signup) { display: block; overflow-x: hidden; padding: 16px 12px; }
+#player-signup { text-align: left; }
+.confirm-notices { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }
+.confirm-notice {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px;
+  background: var(--lime, #c6f432); color: var(--lime-ink, #14200a);
+  border-radius: 16px; font-weight: 800; text-align: left; line-height: 1.3;
+}
+.confirm-notice span { flex: 1 1 auto; min-width: 0; }
+.confirm-notice button {
+  flex: none; border: 0; background: transparent; color: inherit;
+  font: inherit; font-size: 1.25rem; line-height: 1; min-width: 32px; min-height: 32px; padding: 0;
+}
+html.dark .confirm-notice { background: #243312; color: var(--lime, #c6f432); }
+.player-push { margin: 0 0 12px; }
+.player-push .btn { width: 100%; }
+.player-push-hint { margin: 6px 0 0; color: var(--muted); font-size: 0.8125rem; text-align: left; }
+html:has(#player-signup),
+html:has(#player-signup) body { overflow-x: hidden; max-width: 100%; }
+html:has(#player-signup) .topstack,
+html:has(#player-signup) #tabbar,
+html:has(#player-signup) #tab-slot,
+html:has(#player-signup) #btn-settings,
+html:has(#player-signup) #btn-back,
+html:has(#player-signup) .text-size,
+html:has(#player-signup) #trial-banner,
+html:has(#player-signup) #activity-banner,
+html:has(#player-signup) #demo-banner { display: none !important; }
+html:has(#player-signup) { --actionbar-h: 0px; }
+#player-signup { width: 100%; max-width: min(28rem, 100%); min-width: 0; margin: 0 auto; }
+#self-list { min-width: 0; max-width: 100%; }
+.player-top { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; }
+.player-top img { width: 40px; height: 40px; border-radius: 10px; }
+.player-app { font-size: 0.8rem; font-weight: 800; letter-spacing: .02em; }
+#player-signup h1 { margin: 0; font-size: 1.35rem; }
+#player-signup-of {
+  margin: 18px 0 14px;
+  font-size: 1.2rem;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  line-height: 1.25;
+}
 html.anon-lock #view .loading { display: none; }
 .anon-lock { text-align: center; color: var(--text); }
 .anon-warn { font-size: 2.5rem; line-height: 1; margin: 0 0 8px; }

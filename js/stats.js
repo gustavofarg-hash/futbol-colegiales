@@ -1,12 +1,15 @@
 // Totales para la pestaña Estadísticas. Puro: no lee Firebase.
 // Un partido cancelado no suma plata ni cupo. La espera no debe.
 import { dayCompensation, matchAdders, matchCompensation } from './compensate.js';
+import { groupByInviter } from './guests.js';
 import { monthKeyOf, monthLabel } from './ledger.js';
-import { sameOrganizerIdentity, UNSPECIFIED } from './organizers.js';
+import { sameOrganizer, sameOrganizerIdentity, UNSPECIFIED } from './organizers.js';
 import { isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { priceOfMatch, promoForPlayer } from './prices.js';
 import { matchAlreadyPlayed } from './profile.js';
-import { personKey, playerMatchesPerson } from './roster.js';
+import { foldText, personKey, playerMatchesPerson } from './roster.js';
+import { matchCapacity } from './venues.js';
+import { rosterSplit } from './waiting.js';
 
 const METHOD_LABEL = {
   cash: 'Efectivo',
@@ -82,7 +85,7 @@ export function matchTake({ match, players, matches, prices } = {}) {
     if (player.waiting === true) waiting += 1;
     else if (player.noPlay !== true) main += 1;
     if (player.confirmed === 'no') noShows += 1;
-    if (match?.cancelled === true) continue;
+    if (match?.cancelled === true || player.waiting === true) continue;
     expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
     const parts = paymentParts(player);
     collected = roundARS(collected + parts.received);
@@ -128,6 +131,7 @@ export function organizerViewTake({ match, players, matches, prices, who } = {})
   const byMethod = new Map();
   if (match?.cancelled !== true) {
     for (const player of rows) {
+      if (player.waiting === true) continue;
       if (signupIsMine(player, who)) expected = roundARS(expected + priceDue(player, { players, matches: all, prices }));
       for (const share of paymentShares(player)) {
         if (!(share.amount > 0) || !sameOrganizerIdentity(share.name, who)) continue;
@@ -204,6 +208,88 @@ function emptyPeriod(key, grain) {
     byMethod: new Map(),
     byOrganizer: new Map(),
   };
+}
+
+/** Nombre igual, o el apodo corto (Gus / Gustavo). «Gustavo López» no es Gustavo. */
+function sameSignupName(a, b) {
+  if (sameOrganizer(a, b)) return true;
+  const ln = foldText(a);
+  const rn = foldText(b);
+  if (ln.length < 3 || rn.length < 3) return false;
+  const [short, long] = ln.length <= rn.length ? [ln, rn] : [rn, ln];
+  if (long.includes(' ')) return false;
+  return long.startsWith(short);
+}
+
+/**
+ * Se anotó con esta persona en el detalle del día.
+ * Si hay nombre, tiene que ser él (no alcanza un apellido que empiece igual).
+ * Si no hay nombre, manda el uid.
+ */
+function signedUpBy(player, who) {
+  const named = String(player?.signedUpWithName || '').trim();
+  const whoName = String(who?.name || '').trim();
+  if (named && whoName) return sameSignupName(named, whoName);
+  const uid = String(who?.uid || '').trim();
+  const signed = signupOrganizerUid(player);
+  if (uid && signed) return signed === uid;
+  const added = String(player?.addedBy || '').trim();
+  return !!(added && whoName && sameSignupName(added, whoName));
+}
+
+/** La lista que se ve en el partido: sin espera, sin «No jugó», y solo hasta el cupo. */
+export function playingList(players, match) {
+  if (!match?.id) return [];
+  const mine = (players || []).filter((player) => player && player.matchId === match.id && player.noPlay !== true && player.waiting !== true);
+  const ordered = groupByInviter(rosterSplit(mine).main, mine);
+  const cap = matchCapacity(match);
+  return cap > 0 ? ordered.slice(0, cap) : ordered;
+}
+
+function hasPaid(player) {
+  const parts = paymentParts(player);
+  return (parts.received || 0) + (parts.pending || 0) > 0;
+}
+
+/**
+ * Quien entra en la plata del partido: los del cupo, más «No jugó pero pagó»
+ * si dejó plata (también Transfiere después). La espera no entra.
+ */
+export function countedForMoney(players, match) {
+  const list = playingList(players, match);
+  const extra = (players || []).filter((player) => player && player.matchId === match?.id && player.noPlay === true && player.waiting !== true && hasPaid(player));
+  return [...list, ...extra];
+}
+
+/**
+ * Lo que anotó y lo que pagaron en un día, partido por partido.
+ * Entran los del cupo que se anotaron con él, y también «No jugó pero pagó»
+ * si dejó plata. El tope del partido es el cupo más esos lugares.
+ * Pagaron es lo que pusieron, lo cobre quien lo cobre, incluido Transfiere después.
+ * La espera no entra. Un cancelado no entra.
+ */
+export function daySignupSummary({ matches, players, prices, who } = {}) {
+  const person = who && typeof who === 'object' ? who : null;
+  const ordered = (matches || [])
+    .filter((match) => match?.id && match.cancelled !== true)
+    .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')) || String(a.id).localeCompare(String(b.id)));
+  const rows = [];
+  let spots = 0;
+  let paid = 0;
+  for (const match of ordered) {
+    let matchSpots = 0;
+    let matchPaid = 0;
+    for (const player of countedForMoney(players, match)) {
+      if (!person || !signedUpBy(player, person)) continue;
+      matchSpots += 1;
+      const parts = paymentParts(player);
+      matchPaid = roundARS(matchPaid + (parts.received || 0) + (parts.pending || 0));
+    }
+    spots += matchSpots;
+    paid = roundARS(paid + matchPaid);
+    rows.push({ id: match.id, time: match.time || '--:--', spots: matchSpots, paid: matchPaid });
+  }
+  return { spots, paid, matches: rows };
 }
 
 function signedMoney(groups) {
@@ -479,7 +565,7 @@ export function signupOrganizerUid(player) {
 
 /** Lo cobrado de verdad: efectivo, transferencia y crédito. Transfiere después no entra. */
 function paidReceived(player) {
-  if (!player || isFreePlay(player)) return 0;
+  if (!player || player.waiting === true || isFreePlay(player)) return 0;
   return roundARS(paymentParts(player).received || 0);
 }
 

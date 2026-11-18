@@ -7,6 +7,7 @@ import { sameOrganizerIdentity } from './organizers.js';
 import { foldText, personKey, phoneIdentity, playerMatchesPerson } from './roster.js';
 import { playerDebt } from './ledger.js';
 import { alreadyInMatch } from './guests.js';
+import { occupiesSpot } from './self-signup.js';
 
 export const POSITIONS = ['Arquero', 'Defensa', 'Mediocampo', 'Ataque'];
 export const MAX_NOTES = 20;
@@ -246,6 +247,7 @@ export function playerStats({ phone, phoneKey, rosterId, name, players, matches,
 }
 
 function paidShare(player, organizer) {
+  if (player?.waiting === true) return 0;
   if (!organizer) return player?.paid === true ? (Number(player.amount) || 0) : 0;
   const name = String(organizer.name || '').trim();
   if (!name) return 0;
@@ -392,13 +394,82 @@ export function historyWindow(matches, filter, now = Date.now()) {
  * Consulta de partidos. Siempre filtra por viewers (el permiso del partido).
  * Próximos: date >= hoy, sin tope. Historial: date < hoy, límite 30, o el rango.
  */
+/** Tope de próximos en la pantalla del organizador. Sin tope, cada apertura lee todo el futuro. */
+export const UPCOMING_PAGE = 40;
+/** Tope de la página del jugador: sus partidos y sus altas, no la colección. */
+export const GUEST_PAGE = 24;
+
+/**
+ * Un partido viejo sin playerVisible se ve (el casillero arranca marcado).
+ * Firestore no consulta un campo que no está, así que hay que escribirlo.
+ * Solo el organizador dueño, solo de hoy en adelante, y solo si el campo falta.
+ * viewers * se agrega si la lista no está: sin viewers el partido es de todos
+ * y la página del jugador lo pide. Una lista privada no se abre.
+ */
+export function playerVisibleBackfill(match, { uid, today, name } = {}) {
+  const owner = String(uid || '').trim();
+  const day = String(today || '');
+  const id = String(match?.id || '').trim();
+  if (!id || !owner || !day) return null;
+  if (String(match.date || '') < day) return null;
+  const created = String(match.createdByUid || '').trim();
+  const adders = Array.isArray(match.adders) ? match.adders.map((item) => String(item || '')) : [];
+  const byName = !!name && sameOrganizerIdentity({ name: match.createdBy || '' }, { name });
+  const his = created === owner || (!created && (byName || adders.includes(owner)));
+  if (!his) return null;
+  const patch = {};
+  if (!created) patch.createdByUid = owner;
+  if (match.playerVisible !== true && match.playerVisible !== false) patch.playerVisible = true;
+  if (!Array.isArray(match.viewers) || !match.viewers.length) patch.viewers = ['*'];
+  if (!Object.keys(patch).length) return null;
+  return { id, patch };
+}
+
+/**
+ * Consultas de la página del jugador, sin sesión.
+ * Partidos: los abiertos de hoy en adelante, con tope. El dueño se filtra
+ * en la app: createdByUid y playerVisible a veces no están y Firestore
+ * no encuentra un campo que falta. Jugadores: solo las altas de esa ficha.
+ */
+export function guestListenPlan({ rosterId, today, limit = GUEST_PAGE } = {}) {
+  const id = String(rosterId || '').trim();
+  const day = String(today || '');
+  return {
+    rosterId: id,
+    matches: {
+      collection: 'matches',
+      filters: [
+        { field: 'viewers', op: 'array-contains', value: '*' },
+        { field: 'date', op: '>=', value: day },
+      ],
+      orderBy: ['date', 'asc'],
+      limit,
+    },
+    players: id ? {
+      collection: 'players',
+      filters: [
+        { field: 'rosterId', op: '==', value: id },
+        { field: 'viewers', op: 'array-contains', value: '*' },
+        { field: 'matchDate', op: '>=', value: day },
+      ],
+      orderBy: ['matchDate', 'asc'],
+      limit,
+    } : null,
+    seen: id ? {
+      collection: 'confirmSeen',
+      filters: [{ field: 'rosterId', op: '==', value: id }],
+      limit,
+    } : null,
+  };
+}
+
 export function matchQueryPlan(which, bounds, today) {
   const viewers = { field: 'viewers', op: 'array-contains-any' };
   if (which === 'upcoming') {
     return {
       filters: [viewers, { field: 'date', op: '>=', value: today }],
       orderBy: ['date', 'asc'],
-      limit: null,
+      limit: UPCOMING_PAGE,
     };
   }
   if (!bounds || bounds.empty) return { empty: true, filters: [viewers], orderBy: [], limit: null };
@@ -441,11 +512,11 @@ export function matchSignupState({ phone, phoneKey, rosterId, name, match, playe
   const mates = (players || []).filter((player) => player.matchId === match?.id);
   const person = asPerson({ phone, phoneKey, rosterId, name });
   const same = mates.filter((player) => playerMatchesPerson(player, person) || alreadyInMatch([player], { ...person, rosterId: person.id }));
-  const mainCount = mates.filter((player) => player.waiting !== true).length;
+  const mainCount = mates.filter((player) => occupiesSpot(player)).length;
   const spots = Math.max(0, cap - mainCount);
   if (same.length) {
-    const onMain = same.some((player) => player.waiting !== true);
-    const found = onMain ? same.find((player) => player.waiting !== true) : same[0];
+    const onMain = same.some((player) => occupiesSpot(player));
+    const found = onMain ? same.find((player) => occupiesSpot(player)) : same[0];
     return {
       state: onMain ? 'anotado' : 'espera',
       label: onMain ? 'Anotado' : 'En espera',

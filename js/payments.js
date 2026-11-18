@@ -24,7 +24,6 @@
 // para el efectivo y para la transferencia.
 
 import { canonicalOrganizerName, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
-
 export const MAX_AMOUNT = 1_000_000_000;
 export const MAX_TRANSFER_PARTS = 6;
 export const PAYMENT_METHODS = ['efectivo', 'transferencia'];
@@ -604,7 +603,7 @@ export function paymentHeadline(player) {
 /** "Recaudado: $45.000 · 9/14 pagaron", o "" si nadie tiene un pago cargado.
  * Quien juega gratis no debe: no suma plata ni entra en el "faltan pagar". */
 export function collectedLine(players) {
-  const list = players || [];
+  const list = (players || []).filter((player) => player && player.waiting !== true);
   const free = list.filter((p) => isFreePlay(p)).length;
   const paying = list.filter((p) => !isFreePlay(p));
   const pending = sumParts(paying).pending;
@@ -636,7 +635,7 @@ export function organizerReceipts(players, who) {
   let transfer = 0;
   let transferPlayers = 0;
   for (const player of players || []) {
-    if (!player) continue;
+    if (!player || player.waiting === true) continue;
     const signed = String(player.signedUpWith || '').trim() || String(player.addedByUid || '').trim();
     if ((uid && signed === uid) || (!signed && sameOrganizerIdentity(player.addedBy, who))) added += 1;
     let cashHere = 0;

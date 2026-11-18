@@ -309,6 +309,22 @@ export function logText(entry) {
   return [entry?.matchLabel, player, entry?.detail].filter(Boolean).join(' · ');
 }
 
+/** Movimiento de anotarse solo. El actor es el jugador o el organizador que aceptó o rechazó. */
+export function selfMoveEntry(match, venues, player, move = {}) {
+  return partidoEntry(
+    { uid: move.actorUid || '', name: move.actorName || player?.name || '' },
+    match?.id ? match : { ...(match || {}), id: match?.id || player?.matchId || '' },
+    venues,
+    {
+      type: move.type || '',
+      detail: move.detail || '',
+      playerName: player?.name || '',
+      ...(move.rosterId ? { rosterId: String(move.rosterId) } : {}),
+      ...(move.guest ? { shareToken: String(move.shareToken || '') } : {}),
+    },
+  );
+}
+
 export function partidoEntry(actor, match, venues, extra = {}) {
   const fields = matchLogFields(match, venues);
   fields.editors = editorsOf(match, actor?.uid);

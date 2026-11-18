@@ -14,6 +14,12 @@ export const USAGE_MAX_STEP = 100000;
  * ensancha esta ventana una sola vez.
  */
 export const RECENT_LISTEN_DAYS = 120;
+/** Tope de la escucha de jugadores del organizador. Sin tope, 120 días son miles de lecturas. */
+export const PLAYER_LISTEN = 400;
+/** Tope de confirmaciones de asistencia en la misma ventana. */
+export const CONFIRM_LISTEN = 200;
+/** Tope de compensaciones: una por día alcanza. */
+export const COMP_LISTEN = 90;
 
 export function recentCutoff(today, days = RECENT_LISTEN_DAYS) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(today || '')) return '';
@@ -196,14 +202,16 @@ export function meterFirestore(fs, meter, onCount = () => {}) {
 }
 
 export function writeFailureText(error) {
-  const code = String(error?.code || '');
+  const code = String(error?.code || '').replace(/_/g, '-');
   const message = String(error?.message || '');
-  if (code === 'resource-exhausted' || code === 'resource_exhausted' || /resource.exhausted/i.test(message)) {
+  // Solo el código. Un texto que diga «exhausted» no es la cuota.
+  if (code === 'resource-exhausted') {
     return 'No se pudo guardar: se alcanzó el límite diario de Firebase';
   }
   if (code === 'deadline-exceeded') return 'No se pudo guardar: la base no respondió.';
-  if (code === 'permission-denied' || code === 'permission_denied') {
+  if (code === 'permission-denied') {
     return 'No se pudo guardar: Firebase rechazó el permiso';
   }
-  return 'No se pudo guardar: ' + (code || message || error);
+  const detail = [code, message].filter(Boolean).join(': ') || String(error || '');
+  return 'No se pudo guardar: ' + detail;
 }
