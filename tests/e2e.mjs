@@ -149,7 +149,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v219');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v220');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8149,9 +8149,34 @@ await fresh.close();
   await locked.goto(`${BASE}#/jugador/${guestId}/GustavoToken2026v206xxxx`);
   await locked.waitForSelector('#player-signup-of');
   check('El enlace del organizador titula sus próximos partidos', (await locked.locator('#player-signup-of').innerText()) === 'Próximos partidos de Gustavo' && (await locked.locator('#self-list .self-btn').first().innerText()).trim() === 'Anotarme');
-  await locked.locator('#self-list button', { hasText: 'Anotarme' }).click();
+  await locked.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    db.matches.solo220 = {
+      date: '2026-10-24', time: '18:00', capacity: 14, playerCount: 0,
+      venueName: 'Cancha Solo', createdBy: 'Gus', createdByUid: 'org-gustavo',
+      viewers: ['org-gustavo'], adders: ['org-gustavo'], solo: true, playerVisible: true, cancelled: false,
+    };
+    db.matches.hide220 = {
+      date: '2026-10-24', time: '20:00', capacity: 14, playerCount: 0,
+      venueName: 'Cancha Oculta', createdBy: 'Gus', createdByUid: 'org-gustavo',
+      viewers: ['org-gustavo'], adders: ['org-gustavo'], solo: true, playerVisible: false, cancelled: false,
+    };
+    db.matches.ajeno220 = {
+      date: '2026-10-24', time: '21:00', capacity: 14, playerCount: 0,
+      venueName: 'Cancha Ajena', createdBy: 'Gus', createdByUid: 'org-martin',
+      viewers: ['org-martin'], adders: ['org-martin'], solo: true, playerVisible: true, cancelled: false,
+    };
+    localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+  });
+  await locked.reload();
+  await locked.waitForSelector('#player-signup-of');
+  const soloList = (await locked.locator('#self-list').innerText()).replace(/\s+/g, ' ');
+  check('El partido solo del organizador se ve en el enlace', soloList.includes('18:00') && soloList.includes('Cancha Solo'), soloList);
+  check('Oculto para los jugadores no aparece en el enlace', !soloList.includes('Cancha Oculta'), soloList);
+  check('El solo de otro uid no entra aunque se llame Gus', !soloList.includes('Cancha Ajena'), soloList);
+  await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('button', { hasText: 'Anotarme' }).click();
   await locked.waitForFunction(() => {
-    const row = document.querySelector('#self-list .self-row');
+    const row = [...document.querySelectorAll('#self-list .self-row')].find((el) => el.innerText.includes('21:00'));
     return row && row.innerText.includes('Esperando la confirmación de Gustavo...') && row.innerText.includes('Anular');
   });
   const linkPending = await locked.evaluate(() => {
@@ -8160,9 +8185,12 @@ await fresh.close();
     return player ? { tentative: player.tentative === true, waiting: player.waiting === true, addedByUid: player.addedByUid || '', share: player.signedUpWith || '' } : null;
   });
   check('Desde el enlace, Anotarme queda pendiente a nombre del organizador', linkPending?.tentative === true && linkPending.waiting === false && linkPending.addedByUid === 'org-gustavo' && linkPending.share === 'org-gustavo', JSON.stringify(linkPending));
-  await locked.locator('#self-list button', { hasText: 'Anular' }).click();
-  await locked.waitForFunction(() => (document.querySelector('#self-list .self-btn')?.innerText || '').trim() === 'Anotarme');
-  check('Desde el enlace, Anular vuelve a Anotarme', (await locked.locator('#self-list .self-btn').innerText()).trim() === 'Anotarme');
+  await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('button', { hasText: 'Anular' }).click();
+  await locked.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#self-list .self-row')].find((el) => el.innerText.includes('21:00'));
+    return row && (row.querySelector('.self-btn')?.innerText || '').trim() === 'Anotarme';
+  });
+  check('Desde el enlace, Anular vuelve a Anotarme', ((await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('.self-btn').innerText()).trim() === 'Anotarme'));
   const fullId = await locked.evaluate(() => {
     const app = window.__app;
     const db = app.store._load();

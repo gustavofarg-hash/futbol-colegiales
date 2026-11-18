@@ -2573,24 +2573,64 @@ export class FirebaseStore {
     };
     const plan = guestListenPlan({ rosterId: id, today });
     this.state.guestMatchError = '';
+    this._guestBuckets = { open: [], link: [], openPlayers: [], linkPlayers: [] };
     let armedFor = null;
+    const showMatches = () => {
+      const byId = new Map();
+      for (const row of this._guestBuckets.open) byId.set(row.id, row);
+      for (const row of this._guestBuckets.link) byId.set(row.id, row);
+      this.state.matches = [...byId.values()].filter((match) => match.playerVisible !== false && match.cancelled !== true);
+    };
+    const showPlayers = () => {
+      const byId = new Map();
+      for (const row of this._guestBuckets.openPlayers) if (row.rosterId === id) byId.set(row.id, row);
+      for (const row of this._guestBuckets.linkPlayers) if (row.rosterId === id) byId.set(row.id, row);
+      this.state.players = [...byId.values()];
+    };
     const armMatches = (organizerUid) => {
-      const key = String(organizerUid || '');
+      const token = String(this._shareToken || '');
+      const key = `${organizerUid}|${token}`;
       if (armedFor === key && this._named?.['guest-matches']) return;
       armedFor = key;
-      const matches = guestListenPlan({ rosterId: id, today, organizerUid: key }).matches;
-      this._swap('guest-matches', onSnapshot(this._queryFromPlan(matches), (snap) => {
-        this.state.matches = rows(snap).filter((match) => match.playerVisible !== false && match.cancelled !== true);
+      const plan = guestListenPlan({ rosterId: id, today, organizerUid, shareToken: token });
+      const visible = (snap) => rows(snap);
+      this._swap('guest-matches', onSnapshot(this._queryFromPlan(plan.matches), (snap) => {
+        this._guestBuckets.open = visible(snap);
+        showMatches();
         this.state.guestMatchError = '';
         seen.matches = true;
         publish();
       }, (error) => {
-        console.error(error);
-        this.state.matches = [];
-        this.state.guestMatchError = 'No se pudieron cargar los partidos.';
+        console.error(error?.code || 'sin-codigo', error);
+        this._guestBuckets.open = [];
+        showMatches();
+        if (!this._guestBuckets.link.length) this.state.guestMatchError = 'No se pudieron cargar los partidos.';
         seen.matches = true;
         publish();
       }));
+      if (plan.linkMatches) {
+        this._swap('guest-link-matches', onSnapshot(this._queryFromPlan(plan.linkMatches), (snap) => {
+          this._guestBuckets.link = visible(snap);
+          showMatches();
+          this.state.guestMatchError = '';
+          publish();
+        }, (error) => {
+          console.error(error?.code || 'sin-codigo', error);
+          this._guestBuckets.link = [];
+          showMatches();
+        }));
+      } else this._swap('guest-link-matches', null);
+      if (plan.linkPlayers) {
+        this._swap('guest-link-players', onSnapshot(this._queryFromPlan(plan.linkPlayers), (snap) => {
+          this._guestBuckets.linkPlayers = rows(snap);
+          showPlayers();
+          if (seen.players) this._emit();
+        }, (error) => {
+          console.error(error?.code || 'sin-codigo', error);
+          this._guestBuckets.linkPlayers = [];
+          showPlayers();
+        }));
+      } else this._swap('guest-link-players', null);
     };
     if (this._shareToken) {
       this._swap('guest-share', onSnapshot(doc(this.db, 'shareTokens', this._shareToken), (snap) => {
@@ -2600,7 +2640,7 @@ export class FirebaseStore {
         seen.share = true;
         publish();
       }, (error) => {
-        console.error(error);
+        console.error(error?.code || 'sin-codigo', error);
         this.state.shareOrganizer = null;
         armMatches('');
         seen.share = true;
@@ -2631,11 +2671,13 @@ export class FirebaseStore {
       if (seen.players) this._emit();
     }));
     this._swap('guest-players', onSnapshot(this._queryFromPlan(plan.players), (snap) => {
-      this.state.players = rows(snap).filter((player) => player.rosterId === id);
+      this._guestBuckets.openPlayers = rows(snap);
+      showPlayers();
       seen.players = true;
       publish();
     }, () => {
-      this.state.players = [];
+      this._guestBuckets.openPlayers = [];
+      showPlayers();
       seen.players = true;
       publish();
     }));
@@ -2876,22 +2918,53 @@ export class FirebaseStore {
   _backfillMatches(docs) {
     // Una vez por partido y por pestaña. No pide otra lectura: usa el snapshot
     // de próximos. El historial no entra. El Registro no anota nada.
+    // playerKey es el token del enlace, para que «solo yo» igual se vea en la ficha.
     if (this._guest || !this.actor?.uid || !this.fs?.writeBatch || !this.db) return;
-    const today = this._queryDay || todayISO();
-    const rows = [];
-    for (const item of docs || []) {
-      const match = typeof item?.data === 'function' ? { id: item.id, ...(item.data() || {}) } : item;
-      const row = playerVisibleBackfill(match, { uid: this.actor.uid, name: this.actor.name || '', today });
-      if (!row || this._backfilled.has(row.id)) continue;
-      this._backfilled.add(row.id);
-      rows.push(row);
+    const apply = (token) => {
+      const today = this._queryDay || todayISO();
+      const rows = [];
+      for (const item of docs || []) {
+        const match = typeof item?.data === 'function' ? { id: item.id, ...(item.data() || {}) } : item;
+        const row = playerVisibleBackfill(match, { uid: this.actor.uid, name: this.actor.name || '', today, shareToken: token });
+        if (!row) continue;
+        const linkOnly = Object.keys(row.patch).every((key) => key === 'playerKey');
+        if (this._backfilled.has(row.id) && (linkOnly || !('playerKey' in row.patch) || this._linked?.has(row.id))) continue;
+        if (!this._backfilled.has(row.id)) this._backfilled.add(row.id);
+        if ('playerKey' in row.patch) {
+          this._linked = this._linked || new Set();
+          this._linked.add(row.id);
+        }
+        if (this._backfilled.has(row.id) && linkOnly && this._linked?.has(row.id) && rows.some((item) => item.id === row.id)) continue;
+        rows.push(row);
+      }
+      saveBackfillIds(this._backfilled);
+      if (!rows.length) return;
+      const { doc, writeBatch } = this.fs;
+      const batch = writeBatch(this.db);
+      for (const row of rows) batch.update(doc(this.db, 'matches', row.id), row.patch);
+      Promise.resolve(batch.commit()).catch((error) => console.error(error?.code || 'sin-codigo', error));
+    };
+    if (!this._ownShareToken && this.fs.getDocs) {
+      Promise.resolve(this.ensureShareToken(this.actor.uid, this.actor.name || '')).then((token) => {
+        this._ownShareToken = token || '';
+        apply(this._ownShareToken);
+      }).catch((error) => console.error(error?.code || 'sin-codigo', error));
+      return;
     }
-    saveBackfillIds(this._backfilled);
-    if (!rows.length) return;
-    const { doc, writeBatch } = this.fs;
-    const batch = writeBatch(this.db);
-    for (const row of rows) batch.update(doc(this.db, 'matches', row.id), row.patch);
-    Promise.resolve(batch.commit()).catch((error) => console.error(error?.code || 'sin-codigo', error));
+    apply(this._ownShareToken || '');
+  }
+  async _playerKeyPatch(body) {
+    if (!body || this._guest || !this.actor?.uid || !this.fs?.getDocs) return body;
+    if (body.playerVisible === false) {
+      body.playerKey = '';
+      return body;
+    }
+    if (!this._ownShareToken) {
+      try { this._ownShareToken = await this.ensureShareToken(this.actor.uid, this.actor.name || ''); }
+      catch { this._ownShareToken = ''; }
+    }
+    if (this._ownShareToken) body.playerKey = this._ownShareToken;
+    return body;
   }
   _listen() {
     this._stop();
@@ -3229,7 +3302,7 @@ export class FirebaseStore {
   async addMatch(data, who) {
     const { doc, setDoc } = this.fs;
     const id = matchIdFor(data.date, data.time, this._ids());
-    const body = matchDoc(data, who);
+    const body = await this._playerKeyPatch(matchDoc(data, who));
     await setDoc(doc(this.db, 'matches', id), body);
     await this._appendLogs([partidoEntry(this._actor(), { id, ...body }, this.state.venues, { type: 'nuevo partido' })]);
     return id;
@@ -3247,7 +3320,7 @@ export class FirebaseStore {
     const batch = writeBatch(this.db); const ids = this._ids(); const out = []; const rows = [];
     for (const data of list) {
       const id = matchIdFor(data.date, data.time, ids); ids.add(id); out.push(id);
-      const body = matchDoc(data, who);
+      const body = await this._playerKeyPatch(matchDoc(data, who));
       rows.push({ id, ...body });
       batch.set(doc(this.db, 'matches', id), body);
     }
@@ -3261,6 +3334,8 @@ export class FirebaseStore {
     refusePlayedCancel(cur, data);
     const { rest, access } = cleanMatchPatch(data);
     const patch = { ...rest, ...(access || {}), startsAt: toEpoch(data.date ?? cur.date, data.time ?? cur.time), updatedBy: who, updatedAt: Date.now() };
+    const stamped = await this._playerKeyPatch({ ...cur, ...patch });
+    if (stamped && stamped.playerKey !== cur.playerKey && (stamped.playerKey || cur.playerKey)) patch.playerKey = stamped.playerKey || '';
     const batch = writeBatch(this.db);
     batch.update(doc(this.db, 'matches', id), patch);
     const next = { ...cur, ...patch, id };
