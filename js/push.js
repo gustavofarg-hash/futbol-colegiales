@@ -1,8 +1,7 @@
-// Aviso en el teléfono del organizador, también con la app cerrada.
-// Solo en /prueba/. Sin la clave VAPID no pide el token: el interruptor
-// de Ajustes sigue prendiendo los avisos de la app.
+// Aviso en el teléfono, también con la app cerrada.
+// Sin la clave VAPID no pide el token: el interruptor de Ajustes sigue
+// prendiendo los avisos de la app. En /prueba/ esa clave queda vacía.
 import { FCM_VAPID_KEY, firebaseConfig } from '../config.js';
-import { isTrialPage } from './trial.js';
 
 const FB = 'https://www.gstatic.com/firebasejs/13.0.0';
 
@@ -30,7 +29,6 @@ export function iosPushHint() {
 }
 
 export async function registerOrganizerPush(store) {
-  if (!isTrialPage()) return { ok: false, reason: 'not-trial' };
   const vapidKey = String(FCM_VAPID_KEY || '').trim();
   if (!vapidKey) return { ok: false, reason: 'no-vapid' };
   if (typeof Notification === 'undefined') return { ok: false, reason: 'no-notification' };

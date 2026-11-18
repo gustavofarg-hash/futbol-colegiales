@@ -82,7 +82,7 @@ await ctx.route('**/config.js', async (route) => {
   messagingSenderId: "TU_SENDER_ID",
   appId: "TU_APP_ID",
 };`,
-  );
+  ).replace(/export const FCM_VAPID_KEY = ".*";/, 'export const FCM_VAPID_KEY = "";');
   if (/projectId:\s*["'](?:mis-partidos-prueba|futbol-partidos)["']/.test(body)) throw new Error('config.js sigue apuntando a un proyecto real');
   await route.fulfill({ status: 200, contentType: 'text/javascript', body });
 });
@@ -149,7 +149,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v217');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v219');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8090,7 +8090,7 @@ await fresh.close();
     const body = (await res.text()).replace(
       /export const firebaseConfig = \{[\s\S]*?\n\};/,
       'export const firebaseConfig = { apiKey: "TU_API_KEY", authDomain: "x", projectId: "TU_PROYECTO", storageBucket: "x", messagingSenderId: "x", appId: "x" };',
-    );
+    ).replace(/export const FCM_VAPID_KEY = ".*";/, 'export const FCM_VAPID_KEY = "";');
     await route.fulfill({ status: 200, contentType: 'text/javascript', body });
   });
   await anon.route(/firestore\.googleapis\.com|firebaseio\.com|identitytoolkit\.googleapis\.com/, (route) => route.abort());
@@ -8618,6 +8618,7 @@ await fresh.close();
     const res = await route.fetch();
     const body = (await res.text())
       .replace(/export const firebaseConfig = \{[\s\S]*?\n\};/, 'export const firebaseConfig = { apiKey: "TU_API_KEY", authDomain: "x", projectId: "TU_PROYECTO", storageBucket: "x", messagingSenderId: "x", appId: "x" };')
+      .replace(/export const FCM_VAPID_KEY = ".*";/, 'export const FCM_VAPID_KEY = "";')
       .replace(/export const GOOGLE_DRIVE_CLIENT_ID = ".*";/, 'export const GOOGLE_DRIVE_CLIENT_ID = "123-abc.apps.googleusercontent.com";');
     await route.fulfill({ status: 200, contentType: 'text/javascript', body });
   });

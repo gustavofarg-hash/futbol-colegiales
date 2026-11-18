@@ -1,6 +1,6 @@
-// Avisos del proyecto mis-partidos-prueba. No desplegar en futbol-partidos.
-// Se dispara al crear signupPings/{id}. Manda un push a los organizadores
-// del partido y borra el aviso. Si no hay tokens, igual lo borra.
+// Avisos al crear signupPings/{id}. Manda el push y borra el aviso.
+// Si no hay tokens, igual lo borra. En futbol-partidos los links van a la
+// app publicada. En mis-partidos-prueba, a /prueba/. Región southamerica-east1.
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { onRequest } = require('firebase-functions/v2/https');
 const { initializeApp } = require('firebase-admin/app');
@@ -10,6 +10,10 @@ const crypto = require('crypto');
 const { pushCopy, organizerUids, pushFields, actionDecision, ACTION_TTL_MS } = require('./logic');
 
 initializeApp();
+
+function cloudProject() {
+  return String(process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCP_PROJECT || '');
+}
 
 exports.notifySelfSignup = onDocumentCreated(
   { document: 'signupPings/{pingId}', region: 'southamerica-east1' },
@@ -38,7 +42,7 @@ exports.notifySelfSignup = onDocumentCreated(
         time: ping.time || '',
         venueName: ping.venueName || '',
       };
-      const copy = pushCopy('confirmado', { name: ping.name, rosterId }, match);
+      const copy = pushCopy('confirmado', { name: ping.name, rosterId }, match, cloudProject());
       if (tokens.length) {
         const res = await getMessaging().sendEachForMulticast({
           tokens: tokens.map((row) => row.token),
@@ -79,7 +83,8 @@ exports.notifySelfSignup = onDocumentCreated(
         if (token) tokens.push({ token, ref: doc.ref });
       });
     }
-    const copy = pushCopy(ping.kind, { name: ping.name }, match);
+    const project = cloudProject();
+    const copy = pushCopy(ping.kind, { name: ping.name }, match, project);
     let actionToken = '';
     const playerId = String(ping.playerId || '');
     if (ping.kind === 'alta' && playerId) {
@@ -95,7 +100,7 @@ exports.notifySelfSignup = onDocumentCreated(
     if (tokens.length) {
       const res = await getMessaging().sendEachForMulticast({
         tokens: tokens.map((row) => row.token),
-        data: pushFields(ping.kind, copy, { actionToken, playerId, tag: `signup-${event.params.pingId}` }),
+        data: pushFields(ping.kind, copy, { actionToken, playerId, tag: `signup-${event.params.pingId}`, project }),
       });
       const dead = [];
       res.responses.forEach((row, index) => {
@@ -110,7 +115,7 @@ exports.notifySelfSignup = onDocumentCreated(
   },
 );
 
-exports.decideSignup = onRequest({ region: 'southamerica-east1', cors: true }, async (req, res) => {
+exports.decideSignup = onRequest({ region: 'southamerica-east1', cors: true, invoker: 'public' }, async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).json({ ok: false, error: 'POST' });
     return;

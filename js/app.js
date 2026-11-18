@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v217';
+const APP_VERSION = 'f7c-v219';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -3004,7 +3004,7 @@ function openSettings() {
       <button type="button" class="btn danger" id="set-reset-db">Resetear base de datos</button>
     </div>` : ''}
     <label class="checkline" id="set-activity"><input type="checkbox" id="set-activity-on"${notifyEnabled() ? ' checked' : ''}><span>Notificaciones</span></label>
-    <p class="hint">Cuando otro organizador anota, da de baja o crea un partido que podés ver. En la prueba, con el permiso del teléfono, también avisa si alguien se anota, se baja o entra en la espera aunque la app esté cerrada.</p>
+    <p class="hint">Cuando otro organizador anota, da de baja o crea un partido que podés ver. Con el permiso del teléfono, también avisa si alguien se anota, se baja o entra en la espera aunque la app esté cerrada.</p>
     <div class="menu">
       <button class="btn" id="set-notify">Aviso 2 horas antes</button>
       ${demo ? '<button class="btn danger" id="set-clear">Borrar datos de demo</button>' : ''}
@@ -5080,7 +5080,7 @@ function pendingSignupBlock() {
 
 let pushArmStarted = false;
 function armOrganizerPush() {
-  if (pushArmStarted || !notifyEnabled() || !isTrialPage()) return;
+  if (pushArmStarted || !notifyEnabled()) return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   pushArmStarted = true;
   registerOrganizerPush(app.store).catch(() => { pushArmStarted = false; });
