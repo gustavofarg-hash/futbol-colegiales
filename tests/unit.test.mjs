@@ -23,7 +23,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate,
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, guestListenPlan, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, playerVisibleBackfill, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { chunkList, dayMoneyReady, rosterDatesOf } from '../js/roster-load.js';
+import { chunkList, dayMoneyReady, dayPaymentsReady, rosterDatesOf } from '../js/roster-load.js';
 import { compensationDoneDates, countedForMoney, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
@@ -4082,7 +4082,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v223');
+  assert.equal(version, 'f7c-v224');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -5763,6 +5763,12 @@ test('la promo 2x9000 no es deuda si el otro partido del día todavía no está'
   }), 0);
   assert.equal(amountOwed(paid, { players: [paid], matches: [day[0]], prices }), 500);
   const both = new Set(['a', 'b']);
+  assert.equal(dayPaymentsReady('2026-09-30', day, { covered: both, confirmCovered: both, settledDates: settled, payBatchesReady: false }), false);
+  assert.equal(amountOwed(paid, {
+    players: [paid, pair], matches: day, prices, onlyReady: true,
+    watch, covered: both, confirmCovered: both, settledDates: settled, payBatchesReady: false,
+  }), 0);
+  assert.equal(dayPaymentsReady('2026-09-30', day, { covered: both, confirmCovered: both, settledDates: settled, payBatchesReady: true }), true);
   assert.equal(dayMoneyReady('2026-09-30', day, both, settled), true);
   assert.equal(amountOwed(paid, {
     players: [paid, pair], matches: day, prices,
