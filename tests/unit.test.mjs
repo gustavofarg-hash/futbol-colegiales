@@ -3102,9 +3102,10 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid' && filter.op === '==' && filter.value === 'org'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'date' && filter.op === '<=' && filter.value === '2026-11-01'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'playerVisible'), false);
-  assert.equal(guest.linkMatches, null);
+  assert.equal(guest.linkMatches.filters.some((filter) => filter.field === 'viewers' && filter.value === '*'), true);
+  assert.equal(guest.linkMatches.filters.some((filter) => filter.field === 'createdByUid'), false);
   const linked = guestListenPlan({ rosterId: 'ficha', organizerUid: 'org', today: '2026-10-19', shareToken: 'tokendegustavolargo1234' });
-  assert.equal(linked.linkMatches, null);
+  assert.equal(linked.linkMatches.filters.some((filter) => filter.field === 'viewers' && filter.value === '*'), true);
   assert.equal(linked.matches.filters.some((filter) => filter.field === 'viewers'), false);
   assert.equal(linked.linkPlayers.filters.some((filter) => filter.field === 'shareToken' && filter.value === 'tokendegustavolargo1234'), true);
   const open = guestListenPlan({ rosterId: 'ficha', today: '2026-10-19' });
@@ -4082,7 +4083,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v225');
+  assert.equal(version, 'f7c-v226');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4119,7 +4120,8 @@ test('el enlace pide los partidos de ese organizador, sábado incluido', async (
   store._listenGuest('ficha');
   await new Promise((resolve) => setTimeout(resolve, 20));
   const matchQueries = calls.filter((ref) => ref.path === 'matches');
-  assert.equal(matchQueries.length, 1);
+  assert.equal(matchQueries.length, 2);
+  assert.ok(matchQueries[1].parts.some((part) => part.field === 'viewers' && part.value === '*'));
   const openQuery = matchQueries[0];
   assert.ok(openQuery.parts.some((part) => part.field === 'createdByUid' && part.op === '==' && part.value === 'gus'));
   assert.equal(openQuery.parts.some((part) => part.field === 'viewers'), false);

@@ -498,8 +498,13 @@ export function guestListenPlan({ rosterId, today, organizerUid, shareToken } = 
       orderBy: ['date', 'asc'],
       limit: null,
     },
-    // Con uid no hace falta playerKey: esa consulta repetía los mismos partidos.
-    linkMatches: owner ? null : (linked ? {
+    // Con uid, además de los que creó, los compartidos viewers * de cualquier organizador.
+    linkMatches: owner ? {
+      collection: 'matches',
+      filters: [{ field: 'viewers', op: 'array-contains', value: '*' }, ...dateFilters],
+      orderBy: ['date', 'asc'],
+      limit: null,
+    } : (linked ? {
       collection: 'matches',
       filters: [{ field: 'playerKey', op: '==', value: token }, ...dateFilters],
       orderBy: ['date', 'asc'],
