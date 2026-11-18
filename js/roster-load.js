@@ -41,3 +41,18 @@ export function dayMoneyReady(date, matches, covered, settledDates) {
   }
   return true;
 }
+
+/**
+ * La deuda espera a los jugadores, las confirmaciones y los pagos guardados.
+ * Sin eso, un pago que todavía no llegó parece una deuda.
+ */
+export function dayPaymentsReady(date, matches, { covered, confirmCovered, settledDates, payBatchesReady } = {}) {
+  if (!dayMoneyReady(date, matches, covered instanceof Set ? covered : null, settledDates instanceof Set ? settledDates : null)) return false;
+  if (payBatchesReady !== true) return false;
+  if (!(confirmCovered instanceof Set)) return false;
+  for (const match of matches || []) {
+    if (match?.date !== date || !match?.id) continue;
+    if (!confirmCovered.has(match.id)) return false;
+  }
+  return true;
+}
