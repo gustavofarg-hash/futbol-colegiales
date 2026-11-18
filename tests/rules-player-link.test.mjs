@@ -44,6 +44,10 @@ test('la ficha lee un solo yo con el token y otro organizador no', async (t) => 
       date: '2026-11-21', time: '18:00', createdByUid: ORG, createdBy: 'Gus',
       viewers: [ORG], adders: [ORG], solo: true, playerVisible: true, playerKey: TOKEN, playerCount: 0,
     }));
+    await assertSucceeds(setDoc(doc(adb, 'matches', 'propia'), {
+      date: '2026-11-21', time: '19:00', createdByUid: ORG, createdBy: 'Gustavo',
+      viewers: [ORG], adders: [ORG], solo: false, playerVisible: true, playerKey: TOKEN, playerCount: 0,
+    }));
     await assertSucceeds(setDoc(doc(adb, 'matches', 'oculto'), {
       date: '2026-11-21', time: '20:00', createdByUid: ORG, createdBy: 'Gus',
       viewers: [ORG], adders: [ORG], solo: true, playerVisible: false, playerCount: 0,
@@ -57,7 +61,7 @@ test('la ficha lee un solo yo con el token y otro organizador no', async (t) => 
       where('date', '<=', '2026-12-01'),
       orderBy('date'),
     )));
-    assert.deepEqual(link.docs.map((item) => item.id), ['solo']);
+    assert.deepEqual(link.docs.map((item) => item.id).sort(), ['propia', 'solo']);
     await assertFails(getDocs(query(collection(anon, 'matches'), where('createdByUid', '==', ORG))));
 
     const martin = testEnv.authenticatedContext(OTHER, { email: 'martin@demo.local' }).firestore();

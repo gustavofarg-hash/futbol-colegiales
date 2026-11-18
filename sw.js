@@ -2,6 +2,7 @@
 // Subí el número de versión cuando publiques cambios.
 const VERSION = 'f7c-v220';
 // Las pruebas marcan __F7C_TEST y no deben dejar este worker contra el proyecto real.
+// Un partido con un solo viewer (el creador) también entra en la ficha.
 const TRIAL = self.location.pathname.includes('/prueba/');
 const CACHE = (TRIAL ? 'prueba-' : '') + VERSION;
 const SHELL = [

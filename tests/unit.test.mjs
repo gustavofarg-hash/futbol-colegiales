@@ -3430,7 +3430,8 @@ test('el enlace de un organizador solo muestra sus partidos y la anotación es d
     { id: 'hide', date: '2026-10-19', time: '23:00', createdByUid: 'gus', playerVisible: false },
   ];
   const solo = { id: 'solo', date: '2026-10-24', time: '18:00', createdByUid: 'gus', createdBy: 'Gus', viewers: ['gus'], adders: ['gus'], solo: true };
-  assert.deepEqual(selfSignupRows({ person, matches: [...matches, solo], now, organizerUid: 'gus', organizerName: 'Gustavo', scoped: true }).map((row) => row.match.id), ['ga', 'solo']);
+  const propia = { id: 'propia', date: '2026-10-19', time: '19:00', createdByUid: 'gus', createdBy: 'Gustavo', viewers: ['gus'], adders: ['gus'], solo: false };
+  assert.deepEqual(selfSignupRows({ person, matches: [...matches, solo, propia], now, organizerUid: 'gus', organizerName: 'Gustavo', scoped: true }).map((row) => row.match.id), ['propia', 'ga', 'solo']);
   const named = selfSignupRows({
     person,
     matches: [...matches, { id: 'apodo', date: '2026-10-19', time: '20:00', createdBy: 'Gus', viewers: ['*'] }],
@@ -5585,6 +5586,8 @@ test('un partido próximo sin playerVisible se marca visible una sola vez y no e
   assert.equal(playerVisibleBackfill({ ...his, date: '2026-11-16' }, { uid: 'gus', today }), null);
   assert.deepEqual(playerVisibleBackfill({ id: 'libre', date: today, createdByUid: 'gus' }, { uid: 'gus', today }).patch, { playerVisible: true, viewers: ['*'] });
   assert.deepEqual(playerVisibleBackfill({ id: 'solo', date: today, createdByUid: 'gus', viewers: ['gus'] }, { uid: 'gus', today }).patch, { playerVisible: true });
+  const token = 'tokendegustavolargo1234';
+  assert.deepEqual(playerVisibleBackfill({ id: 'propia', date: today, createdByUid: 'gus', viewers: ['gus'], adders: ['gus'], solo: false, playerVisible: true }, { uid: 'gus', today, shareToken: token }).patch, { playerKey: token });
   const store = new FirebaseStore();
   store.actor = { uid: 'gus', name: 'Gustavo', role: 'organizer' };
   store.db = {};
