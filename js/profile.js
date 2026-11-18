@@ -443,7 +443,8 @@ export function playerLinkKey(match, token) {
 /**
  * Consultas de la página del jugador, sin sesión.
  * Abiertos: createdByUid + viewers *. El enlace además pide playerKey
- * (el token): ahí entran los «solo yo», que no tienen viewers *.
+ * (el token): ahí entra un partido cuyo único viewer es el creador,
+ * esté o no tildado «Solo yo». No hace falta que viewers sea *.
  * Los 14 días evitan que un tope por cantidad se coma el fin de semana.
  * playerVisible no entra en la consulta: si falta, el partido se muestra.
  */

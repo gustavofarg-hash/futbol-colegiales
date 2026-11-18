@@ -8156,6 +8156,11 @@ await fresh.close();
       venueName: 'Cancha Solo', createdBy: 'Gus', createdByUid: 'org-gustavo',
       viewers: ['org-gustavo'], adders: ['org-gustavo'], solo: true, playerVisible: true, cancelled: false,
     };
+    db.matches.propia220 = {
+      date: '2026-10-24', time: '19:00', capacity: 14, playerCount: 0,
+      venueName: 'Cancha Propia', createdBy: 'Gustavo', createdByUid: 'org-gustavo',
+      viewers: ['org-gustavo'], adders: ['org-gustavo'], solo: false, playerVisible: true, cancelled: false,
+    };
     db.matches.hide220 = {
       date: '2026-10-24', time: '20:00', capacity: 14, playerCount: 0,
       venueName: 'Cancha Oculta', createdBy: 'Gus', createdByUid: 'org-gustavo',
@@ -8172,6 +8177,7 @@ await fresh.close();
   await locked.waitForSelector('#player-signup-of');
   const soloList = (await locked.locator('#self-list').innerText()).replace(/\s+/g, ' ');
   check('El partido solo del organizador se ve en el enlace', soloList.includes('18:00') && soloList.includes('Cancha Solo'), soloList);
+  check('Si el único viewer es el creador, igual se ve aunque Solo yo esté destildado', soloList.includes('19:00') && soloList.includes('Cancha Propia'), soloList);
   check('Oculto para los jugadores no aparece en el enlace', !soloList.includes('Cancha Oculta'), soloList);
   check('El solo de otro uid no entra aunque se llame Gus', !soloList.includes('Cancha Ajena'), soloList);
   await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('button', { hasText: 'Anotarme' }).click();
