@@ -99,6 +99,9 @@ export function guestMatchForOrganizer(match, { uid = '' } = {}) {
   if (!owner) return false;
   const created = String(match.createdByUid || '').trim();
   if (created === owner) return true;
+  // Los compartidos con todos (viewers *) entran en el enlace de cualquier organizador.
+  const viewers = Array.isArray(match.viewers) ? match.viewers.map((id) => String(id || '')) : [];
+  if (viewers.includes('*')) return true;
   const adders = Array.isArray(match.adders) ? match.adders.map((id) => String(id || '')) : [];
   return adders.includes(owner);
 }
