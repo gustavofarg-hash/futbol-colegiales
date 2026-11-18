@@ -39,7 +39,7 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, organizerMatchesTitle, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { isSelfPending, pendingSelfSignups, selfSignupRows } from './self-signup.js';
+import { isSelfPending, pendingSelfSignups, selfSignupRows, signupLimitFrom, signupLimitRecord } from './self-signup.js';
 import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from './confirm-notice.js';
 import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from './push.js';
 import { bindTap, tapChose } from './tap.js';
@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v220';
+const APP_VERSION = 'f7c-v223';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -459,7 +459,7 @@ async function chargeAutoCredit(playerId, cap) {
   if (!player || player.waiting === true || isFreePlay(player)) return 0;
   const match = knownMatches().find((item) => item.id === player.matchId);
   if (!match || match.cancelled === true || matchAlreadyPlayed(match)) return 0;
-  let owed = amountOwed(player, { players: app.players, matches: knownMatches(), prices: livePrices() });
+  let owed = amountOwed(player, { players: app.players, matches: knownMatches(), prices: livePrices(), ...rosterGate() });
   if (cap != null) owed = Math.min(owed, roundMoney(cap));
   const org = creditOrganizerOf(player);
   const key = personKey(player, app.players);
@@ -907,7 +907,7 @@ function olderDebts(player, skipIds) {
   const rows = [];
   for (const other of app.players) {
     if (!other || skip.has(other.id) || personKey(other, app.players) !== key) continue;
-    const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices() });
+    const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices(), ...rosterGate() });
     if (!(owed > 0)) continue;
     const match = knownMatches().find((item) => item.id === other.matchId);
     if (!match) continue;
@@ -1380,6 +1380,39 @@ function knownMatches() {
   return [...byId.values()];
 }
 
+function rosterGate() {
+  if (app.store?.mode !== 'firebase') return {};
+  const watch = new Set(app.rosterWatch || []);
+  if (!watch.size) return {};
+  return {
+    watch,
+    covered: new Set(app.rosterCovered || []),
+    settledDates: new Set(app.rosterDates || []),
+  };
+}
+
+function historyShown(matches) {
+  if (app.store?.mode !== 'firebase') return matches || [];
+  const watch = new Set(app.rosterWatch || []);
+  if (!watch.size) return [];
+  const covered = new Set(app.rosterCovered || []);
+  return (matches || []).filter((match) => covered.has(match.id));
+}
+
+function historyNearEnd() {
+  if (route().name !== 'history' || !app.historyHasMore || app.historyLoading) return;
+  if (app.store?.mode === 'firebase' && (app.history || []).some((match) => (app.rosterWatch || []).includes(match.date) && !(app.rosterCovered || []).includes(match.id))) return;
+  const scroller = document.scrollingElement || document.documentElement;
+  const remain = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  if (remain < 800) app.store.loadMoreHistory?.();
+}
+function pastRosterPending(match) {
+  if (app.store?.mode !== 'firebase' || !match?.date) return false;
+  const watch = app.rosterWatch || [];
+  if (!watch.includes(match.date)) return false;
+  return !(app.rosterCovered || []).includes(match.id);
+}
+
 function oweBox(m) {
   const debt = organizerMatchDebt({
     match: m,
@@ -1387,6 +1420,7 @@ function oweBox(m) {
     matches: knownMatches(),
     prices: livePrices(),
     organizer: { uid: actor().uid, name: actor().name },
+    ...rosterGate(),
   });
   if (!(debt.total > 0)) return '';
   const open = app.oweOpen?.has(m.id) === true;
@@ -1919,11 +1953,13 @@ function renderHistory() {
   const venues = historyVenueState();
   const debtOn = app.historyDebtors === true;
   let past = filterHistoryByVenues(app.history || [], venues.all ? null : venues.selected);
+  const rosterWait = app.store?.mode === 'firebase' && past.length > 0 && historyShown(past).length < past.length;
+  past = historyShown(past);
   if (debtOn) {
     const matches = knownMatches();
     const organizer = { uid: actor().uid, name: actor().name };
     const prices = livePrices();
-    past = past.filter((match) => organizerMatchDebt({ match, players: app.players, matches, prices, organizer }).total > 0);
+    past = past.filter((match) => organizerMatchDebt({ match, players: app.players, matches, prices, organizer, ...rosterGate() }).total > 0);
   }
   const venueNarrow = !venues.all;
   const filtering = active || venueNarrow || debtOn;
@@ -1957,9 +1993,12 @@ function renderHistory() {
     <p class="hint" id="hist-caption">${esc(caption)}</p>
     <button type="button" class="btn block" id="btn-hist-import">Importar partidos desde texto</button>
     ${app.historyError ? `<div class="banner error" id="hist-error">${esc(app.historyError)}</div>` : ''}
-    ${past.length ? `<ul class="match-list" id="list-history">${historyWithCompensation(past)}</ul>` : `
+    ${app.rosterError ? `<div class="banner error" id="roster-error">${esc(app.rosterError)}</div>` : ''}
+    ${rosterWait ? '<p class="hint" id="hist-loading">Cargando jugadores…</p>' : ''}
+    ${past.length ? `<ul class="match-list" id="list-history">${historyWithCompensation(past)}</ul>` : (rosterWait ? '' : `
       <div class="empty" id="list-history"><div class="big">📅</div><p><b>${esc(emptyLead)}</b></p>
-      <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`}`)) return;
+      <p class="small">${active ? 'Limpiar vuelve a los últimos 30.' : 'Cuando pase el día, el partido sale de Próximos partidos y queda acá.'}</p></div>`)}
+    ${app.historyHasMore ? `<button type="button" class="btn block" id="hist-more"${app.historyLoading ? ' disabled' : ''}>${app.historyLoading ? 'Cargando…' : 'Cargar más'}</button>` : ''}`)) return;
   $('#history-filter').onsubmit = (e) => {
     e.preventDefault();
     const day = $('#hist-day').value;
@@ -1972,6 +2011,13 @@ function renderHistory() {
   const histImport = $('#btn-hist-import');
   if (histImport) histImport.onclick = () => openHistoryImport();
   bindCompensation($('#list-history'));
+  const more = $('#hist-more');
+  if (more) more.onclick = () => app.store.loadMoreHistory?.();
+  if (!app.historyScrollBound) {
+    app.historyScrollBound = true;
+    window.addEventListener('scroll', () => historyNearEnd(), { passive: true });
+  }
+  requestAnimationFrame(() => historyNearEnd());
   const clear = $('#hist-clear');
   if (clear) clear.onclick = () => {
     app.historyFilter = null;
@@ -2120,6 +2166,10 @@ function renderMatch(id) {
       return;
     }
     replaceView(`<div class="empty"><div class="big">🤷</div><p><b>No encontramos este partido.</b></p><p class="small">Puede que lo hayan borrado.</p><p><a class="btn" href="#/">Volver al inicio</a></p></div>`);
+    return;
+  }
+  if (pastRosterPending(m)) {
+    replaceView(`<div class="empty" id="match-roster-loading"><div class="big">⚽</div><p><b>Cargando jugadores…</b></p></div>`);
     return;
   }
   const everyone = playersOf(id);
@@ -2980,6 +3030,13 @@ function openSettings() {
       <div class="err" id="price-err"></div>
       <button class="btn" type="submit">Guardar precios</button>
     </form>
+    ${app.role === 'admin' ? `<form id="signup-limit-form" novalidate>
+      <p class="hint">Límite para anotarse solo. Lo usa la ficha del jugador.</p>
+      <label class="field"><span>Movimientos máximos</span><input name="maxMoves" id="signup-max" inputmode="numeric" autocomplete="off" value="${signupLimitFrom(app.signupLimit).maxMoves}"></label>
+      <label class="field"><span>Tiempo para restablecer (minutos)</span><input name="windowMinutes" id="signup-minutes" inputmode="numeric" autocomplete="off" value="${signupLimitFrom(app.signupLimit).windowMinutes}"></label>
+      <div class="err" id="signup-limit-err"></div>
+      <button class="btn" type="submit">Guardar límite</button>
+    </form>` : ''}
     <label class="field" id="text-size-field"><span>Tamaño del texto</span>
       <select id="set-text-size" aria-label="Tamaño del texto">
         ${TEXT_SIZES.map((step, i) => `<option value="${i}"${i === readTextSize() ? ' selected' : ''}>${esc(step.label)}</option>`).join('')}
@@ -3025,6 +3082,31 @@ function openSettings() {
       else $('#price-err').textContent = error?.message || 'No se pudieron guardar los precios.';
     });
   };
+  const limitForm = $('#signup-limit-form');
+  if (limitForm) {
+    if (!app.signupLimit) {
+      Promise.resolve(app.store.loadSignupLimit?.()).then((limit) => {
+        if (!limit || !sheet.open || !$('#signup-limit-form')) return;
+        app.signupLimit = limit;
+        $('#signup-max').value = String(limit.maxMoves);
+        $('#signup-minutes').value = String(limit.windowMinutes);
+      }).catch(() => {});
+    }
+    limitForm.onsubmit = (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const rec = signupLimitRecord({ maxMoves: form.maxMoves.value, windowMinutes: form.windowMinutes.value });
+      if (!rec.ok) { $('#signup-limit-err').textContent = rec.error; return; }
+      $('#signup-limit-err').textContent = '';
+      Promise.resolve(app.store.setSignupLimit(rec.patch)).then((saved) => {
+        app.signupLimit = saved;
+        toast('Límite guardado');
+      }).catch((error) => {
+        if (isPermissionDenied(error)) $('#signup-limit-err').textContent = 'Solo el administrador puede guardar este límite.';
+        else $('#signup-limit-err').textContent = error?.message || 'No se pudo guardar el límite.';
+      });
+    };
+  }
   const sizePick = $('#set-text-size');
   if (sizePick) sizePick.onchange = () => { saveTextSize(Number(sizePick.value)); syncTextSize(); };
   const themePick = $('#set-theme');
@@ -3741,6 +3823,7 @@ function rosterPersonDebt(person) {
     prices: livePrices(),
     organizer: actor(),
     playedOnly: true,
+    ...rosterGate(),
   });
 }
 
@@ -4488,7 +4571,7 @@ async function resolveAwaiting(playerId, ids, accept) {
   }
   const [plan] = planRows({
     rows: [{
-      due: amountOwed(player, { players: app.players, matches: knownMatches(), prices: livePrices() }),
+      due: amountOwed(player, { players: app.players, matches: knownMatches(), prices: livePrices(), ...rosterGate() }),
       signupName: player.signedUpWithName || player.addedBy || '',
       parts: mine.map((item) => ({ kind: item.kind, amount: item.amount, name: item.to, uid: item.toUid, confirmed: true })),
     }],
@@ -5046,7 +5129,10 @@ function bindSelfSignup(person) {
       await job;
       app.selfSignupError = null;
     } catch (e) {
-      console.error(e?.code || 'sin-codigo', e);
+      const code = String(e?.code || '');
+      if (!['rate-limit', 'too-late', 'no-roster', 'already-in-match', 'suspended', 'match-full', 'guest-cannot-invite'].includes(code)) {
+        console.error(code || 'sin-codigo', e);
+      }
       app.selfSignupError = { matchId: match.id, text: selfSignupFailureText(kind, e) };
       renderPlayerSignup(person);
     } finally {
@@ -6282,7 +6368,7 @@ function pendingTransferReminderRow(m, p, pending) {
   const phone = String(view?.phone || '').trim();
   const hidden = phoneHidden(view);
   const why = hidden ? PRIVATE_WA_TEXT : 'Sin número';
-  const owed = playerDebt({ person: p, players: app.players, matches: knownMatches(), prices: livePrices(), organizer: actor(), playedOnly: true });
+  const owed = playerDebt({ person: p, players: app.players, matches: knownMatches(), prices: livePrices(), organizer: actor(), playedOnly: true, ...rosterGate() });
   const debtDates = (owed.rows || []).map((row) => row.date);
   const text = transferReminderText(
     givenName(p, app.roster),
@@ -6670,7 +6756,7 @@ function openPaymentForm(m, p, opts = {}) {
     const rows = [];
     for (const other of app.players) {
       if (!key || personKey(other, app.players) !== key || !owesOrganizer(other, me)) continue;
-      const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices() });
+      const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices(), ...rosterGate() });
       if (!(owed > 0)) continue;
       const match = knownMatches().find((item) => item.id === other.matchId);
       if (!match || match.cancelled === true) continue;
@@ -7234,6 +7320,7 @@ function playerPanelPieces(player, person, ids, debtKey) {
       prices: livePrices(),
       key: debtKey || '',
       organizer: me.uid ? me : null,
+      ...rosterGate(),
     });
   } catch (error) { console.error(error); }
   const nick = panelNickState(player, person);
@@ -7342,7 +7429,7 @@ function creditDebtsFor(player, person) {
   for (const other of app.players) {
     const key = personKey(other, app.players);
     if (!key || !keys.has(key) || !owesOrganizer(other, me)) continue;
-    const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices() });
+    const owed = amountOwed(other, { players: app.players, matches: knownMatches(), prices: livePrices(), ...rosterGate() });
     if (!(owed > 0)) continue;
     const match = knownMatches().find((item) => item.id === other.matchId);
     if (!match || match.cancelled === true) continue;
@@ -8760,6 +8847,12 @@ async function boot() {
     app.history = history || [];
     app.historyMeta = historyMeta || null;
     app.historyError = historyError || '';
+    app.historyHasMore = view.historyHasMore === true;
+    app.historyLoading = view.historyLoading === true;
+    app.rosterWatch = view.rosterWatch || [];
+    app.rosterCovered = view.rosterCovered || [];
+    app.rosterDates = view.rosterDates || [];
+    app.rosterError = view.rosterError || '';
     app.roster = roster || [];
     const pendingRoster = withPendingRoster(app.roster, app.rosterPending, Date.now());
     app.roster = pendingRoster.roster;
@@ -8796,7 +8889,7 @@ async function boot() {
     if (!app.guestPlayer && pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen, app.guestMatchError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.historyHasMore, app.historyLoading, app.rosterWatch, app.rosterCovered, app.rosterDates, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen, app.guestMatchError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

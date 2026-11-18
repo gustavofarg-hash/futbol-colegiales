@@ -16,13 +16,14 @@ import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, 
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
 import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from '../js/behavior.js';
-import { isSelfPending, matchOpenToRoster, occupiesSpot, pendingSelfSignups, selfRowAction, selfSignupRows, signupRateDecision } from '../js/self-signup.js';
+import { isSelfPending, matchOpenToRoster, occupiesSpot, pendingSelfSignups, selfRowAction, selfSignupRows, signupLimitFrom, signupLimitRecord, signupRateDecision } from '../js/self-signup.js';
 import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from '../js/confirm-notice.js';
 import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from '../js/push.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, guestListenPlan, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, playerVisibleBackfill, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
+import { chunkList, dayMoneyReady, rosterDatesOf } from '../js/roster-load.js';
 import { compensationDoneDates, countedForMoney, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
@@ -1952,6 +1953,14 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.equal(signupRateDecision(null, 1000).count, 1);
   assert.equal(signupRateDecision({ windowStart: 1000, count: 5 }, 1000 + 10 * 60 * 1000).ok, false);
   assert.equal(signupRateDecision({ windowStart: 1000, count: 5 }, 1000 + 31 * 60 * 1000).ok, true);
+  assert.equal(signupRateDecision({ windowStart: 1000, count: 2 }, 2000, 2, 30 * 60 * 1000).ok, false);
+  assert.equal(signupRateDecision({ windowStart: 1000, count: 2 }, 2000, 2, 30 * 60 * 1000).error, 'Esperá un rato para volver a anotarte.');
+  assert.equal(signupLimitFrom(null).maxMoves, 5);
+  assert.equal(signupLimitFrom(null).windowMinutes, 30);
+  assert.deepEqual(signupLimitFrom({ maxMoves: 2, windowMinutes: 10 }), { maxMoves: 2, windowMinutes: 10 });
+  assert.equal(signupLimitFrom({ maxMoves: 0, windowMinutes: 2000 }).maxMoves, 5);
+  assert.equal(signupLimitRecord({ maxMoves: '2', windowMinutes: '15' }).patch.windowMinutes, 15);
+  assert.equal(signupLimitRecord({ maxMoves: '101', windowMinutes: '30' }).ok, false);
   assert.equal(matchOpenToRoster({ createdByUid: 'gus', cancelled: false }, { holders: ['gus'] }), true);
   assert.equal(matchOpenToRoster({ createdByUid: 'martin' }, { holders: ['gus'] }), false);
   const rows = selfSignupRows({
@@ -3043,8 +3052,24 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   many.push({ id: 'despues', date: '2026-10-22', time: '21:00', startsAt: toEpoch('2026-10-22', '21:00') });
   const recent = historyWindow(many, null, now);
   assert.equal(recent.matches.length, HISTORY_PAGE);
+  assert.equal(recent.hasMore, true);
   assert.equal(recent.matches[0].id, '2026-10-18');
   assert.equal(recent.matches.at(-1).id, addDays('2026-10-18', -(HISTORY_PAGE - 1)));
+  const nextPage = historyWindow(many, null, now, 2);
+  assert.equal(nextPage.matches.length, 40);
+  assert.equal(nextPage.hasMore, false);
+  assert.equal(nextPage.matches.at(-1).id, addDays('2026-10-18', -39));
+  const boundary = addDays('2026-10-18', -(HISTORY_PAGE - 1));
+  const paired = many.filter((match) => match.date !== boundary).concat([
+    { id: 'par-temprano', date: boundary, time: '19:00', startsAt: toEpoch(boundary, '19:00') },
+    { id: 'par-noche', date: boundary, time: '21:00', startsAt: toEpoch(boundary, '21:00') },
+    { id: 'mas-viejo', date: addDays(boundary, -1), time: '21:00', startsAt: toEpoch(addDays(boundary, -1), '21:00') },
+  ]);
+  const packed = historyWindow(paired, null, now);
+  assert.equal(packed.matches.some((match) => match.id === 'par-temprano'), true);
+  assert.equal(packed.matches.some((match) => match.id === 'par-noche'), true);
+  assert.equal(packed.matches.some((match) => match.id === 'mas-viejo'), false);
+  assert.equal(packed.hasMore, true);
   assert.equal(recent.matches.some((match) => match.date >= '2026-10-19'), false);
   const outside = historyWindow(many, { day: '2026-09-09' }, now);
   assert.equal(outside.matches.length, 1);
@@ -4057,7 +4082,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v220');
+  assert.equal(version, 'f7c-v223');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -5711,4 +5736,120 @@ test('al abrir no se reescriben los contadores y el límite diario se avisa', as
   assert.match(rules, /match \/usage\/\{day\}/);
   assert.match(rules, /allow read: if isAdmin\(\);/);
   assert.match(rules, /allow create, update: if signedIn\(\)/);
+});
+
+test('la promo 2x9000 no es deuda si el otro partido del día todavía no está', () => {
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const day = [
+    { id: 'a', date: '2026-09-30', time: '19:00' },
+    { id: 'b', date: '2026-09-30', time: '21:00' },
+  ];
+  const paid = {
+    id: 'pa', matchId: 'a', name: 'Promo Par', paid: true, split: true, cash: 4500, transfer: 0, fromCredit: 0,
+  };
+  const pair = { ...paid, id: 'pb', matchId: 'b' };
+  assert.equal(chunkList(['a', 'a', 'b'], 30).length, 1);
+  assert.equal(chunkList(Array.from({ length: 31 }, (_, i) => `m${i}`), 30).length, 2);
+  assert.deepEqual(rosterDatesOf(day), ['2026-09-30']);
+  const covered = new Set(['a']);
+  const settled = new Set(['2026-09-30']);
+  const watch = new Set(['2026-09-30']);
+  assert.equal(dayMoneyReady('2026-09-30', day, covered, settled), false);
+  assert.equal(amountOwed(paid, {
+    players: [paid], matches: day, prices, watch, covered, settledDates: settled,
+  }), 0);
+  assert.equal(amountOwed(paid, {
+    players: [paid], matches: day, prices, watch, covered, settledDates: new Set(),
+  }), 0);
+  assert.equal(amountOwed(paid, { players: [paid], matches: [day[0]], prices }), 500);
+  const both = new Set(['a', 'b']);
+  assert.equal(dayMoneyReady('2026-09-30', day, both, settled), true);
+  assert.equal(amountOwed(paid, {
+    players: [paid, pair], matches: day, prices,
+    watch: new Set(['2026-09-30']), covered: both, settledDates: settled,
+  }), 0);
+  assert.equal(amountOwed(pair, {
+    players: [paid, pair], matches: day, prices,
+    watch: new Set(['2026-09-30']), covered: both, settledDates: settled,
+  }), 0);
+});
+
+test('el historial pide los jugadores de los partidos en pantalla, no los 400 más nuevos', () => {
+  const store = new FirebaseStore();
+  store.actor = { uid: 'gus', name: 'Gustavo', role: 'admin' };
+  store.db = {};
+  store._queryDay = '2026-11-18';
+  store._buckets = { matches: { history: [], opened: [] }, players: { narrow: [] }, confirmations: {} };
+  store.state = {
+    matches: [], players: [], confirmations: [], compensations: [],
+    rosterWatch: [], rosterCovered: [], rosterDates: [], rosterError: '',
+  };
+  store.listeners = new Set();
+  const queries = [];
+  const pair = [
+    { id: 'early', date: '2026-09-30', time: '19:00' },
+    { id: 'late', date: '2026-09-30', time: '21:00' },
+  ];
+  const players = [];
+  for (const match of pair) {
+    for (let n = 0; n < 14; n += 1) {
+      const promo = n === 0;
+      players.push({
+        id: `${match.id}-${n}`,
+        matchId: match.id,
+        name: promo ? 'Promo Par' : `Jugador ${n}`,
+        viewers: ['*'],
+        paid: true,
+        split: true,
+        cash: promo ? 4500 : 5000,
+        transfer: 0,
+        fromCredit: 0,
+      });
+    }
+  }
+  store._buckets.players.narrow = players.filter((player) => player.id === 'early-0');
+  store.fs = {
+    collection(_db, name) { return { path: name }; },
+    query(ref, ...parts) { return { path: ref.path, parts }; },
+    where(field, op, value) { return { field, op, value }; },
+    onSnapshot(ref, next) {
+      queries.push({ ref, next });
+      const inn = (ref.parts || []).find((part) => part.op === 'in');
+      if (ref.path === 'matches') {
+        next({ docs: pair.map((match) => ({ id: match.id, data: () => match })) });
+      } else if (ref.path === 'players' && inn) {
+        const ids = new Set(inn.value);
+        next({ docs: players.filter((player) => ids.has(player.matchId)).map((player) => ({ id: player.id, data: () => player })) });
+      } else next({ docs: [] });
+      return () => {};
+    },
+  };
+  store._buckets.matches.history = pair;
+  store._armRoster();
+  const partsOf = (query) => query.ref.parts || [];
+  assert.equal(queries.some((query) => partsOf(query).some((part) => part.limit)), false);
+  const playerQuery = queries.find((query) => query.ref.path === 'players' && partsOf(query).some((part) => part.field === 'matchId' && part.op === 'in'));
+  assert.ok(playerQuery);
+  assert.deepEqual(partsOf(playerQuery).find((part) => part.field === 'matchId').value, ['early', 'late']);
+  assert.equal(store.state.rosterCovered.includes('early') && store.state.rosterCovered.includes('late'), true);
+  const early = store.state.players.filter((player) => player.matchId === 'early');
+  const late = store.state.players.filter((player) => player.matchId === 'late');
+  assert.equal(early.length, 14);
+  assert.equal(late.length, 14);
+  const prices = { matchPrice: 5000, promo2Price: 9000, promo3Price: 12000 };
+  const promo = store.state.players.find((player) => player.id === 'early-0');
+  assert.equal(amountOwed(promo, {
+    players: store.state.players,
+    matches: store.state.matches,
+    prices,
+    watch: new Set(store.state.rosterWatch),
+    covered: new Set(store.state.rosterCovered),
+    settledDates: new Set(store.state.rosterDates),
+  }), 0);
+  const playerQueries = () => queries.filter((query) => query.ref.path === 'players' && partsOf(query).some((part) => part.field === 'matchId')).length;
+  const before = playerQueries();
+  for (const query of queries.filter((item) => item.ref.path === 'matches')) {
+    query.next({ docs: pair.map((match) => ({ id: match.id, data: () => match })) });
+  }
+  assert.equal(playerQueries(), before);
 });
