@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v227';
+const APP_VERSION = 'f7c-v228';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -5063,7 +5063,7 @@ function selfSignupSection(person) {
     let control = '';
     if (action === 'join') control = `<button type="button" class="btn primary self-btn" data-self="join" data-match="${esc(match.id)}">Anotarme</button>`;
     else if (action === 'wait') control = `<button type="button" class="btn self-btn" data-self="wait" data-match="${esc(match.id)}">Anotarme en lista de espera</button>`;
-    else if (action === 'cancel') control = `<button type="button" class="btn self-btn" data-self="cancel" data-match="${esc(match.id)}" data-player="${esc(player?.id || '')}">Anular</button>`;
+    else if (action === 'cancel') control = `<button type="button" class="btn self-btn" data-self="cancel" data-match="${esc(match.id)}" data-player="${esc(player?.id || '')}">${status === 'confirmed' ? 'Bajarme' : 'Cancelar'}</button>`;
     else if (action === 'locked') {
       const phone = organizerDropPhone(match);
       control = phone

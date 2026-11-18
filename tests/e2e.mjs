@@ -8201,7 +8201,7 @@ await fresh.close();
   await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('button', { hasText: 'Anotarme' }).click();
   await locked.waitForFunction(() => {
     const row = [...document.querySelectorAll('#self-list .self-row')].find((el) => el.innerText.includes('21:00'));
-    return row && row.innerText.includes('Esperando la confirmación de Gustavo...') && row.innerText.includes('Anular');
+    return row && row.innerText.includes('Esperando la confirmación de Gustavo...') && row.innerText.includes('Cancelar');
   });
   const linkPending = await locked.evaluate(() => {
     const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
@@ -8209,7 +8209,7 @@ await fresh.close();
     return player ? { tentative: player.tentative === true, waiting: player.waiting === true, addedByUid: player.addedByUid || '', share: player.signedUpWith || '' } : null;
   });
   check('Desde el enlace, Anotarme queda pendiente a nombre del organizador', linkPending?.tentative === true && linkPending.waiting === false && linkPending.addedByUid === 'org-gustavo' && linkPending.share === 'org-gustavo', JSON.stringify(linkPending));
-  await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('button', { hasText: 'Anular' }).click();
+  await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('button', { hasText: 'Cancelar' }).click();
   await locked.waitForFunction(() => {
     const row = [...document.querySelectorAll('#self-list .self-row')].find((el) => el.innerText.includes('21:00'));
     return row && (row.querySelector('.self-btn')?.innerText || '').trim() === 'Anotarme';
@@ -8234,10 +8234,10 @@ await fresh.close();
   await waitRow.locator('button', { hasText: 'Lista de espera' }).click();
   await locked.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
-    return row && row.innerText.includes('En lista de espera') && row.innerText.includes('Anular');
+    return row && row.innerText.includes('En lista de espera') && row.innerText.includes('Cancelar');
   }, fullId);
   check('Desde el enlace, Lista de espera anota y se puede anular', (await waitRow.innerText()).includes('En lista de espera'));
-  await waitRow.locator('button', { hasText: 'Anular' }).click();
+  await waitRow.locator('button', { hasText: 'Cancelar' }).click();
   await locked.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
     return row && row.innerText.includes('Anotarme en lista de espera') && !row.querySelector('[data-self="cancel"]');
@@ -8542,7 +8542,7 @@ await fresh.close();
   await page.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
     const text = row?.innerText || '';
-    return text.includes('Esperando la confirmación de Martín...') && text.includes('Anular') && text.includes('21:00') && text.includes('Polideportivo');
+    return text.includes('Esperando la confirmación de Martín...') && text.includes('Cancelar') && text.includes('21:00') && text.includes('Polideportivo');
   }, self.open);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.open);
   await page.waitForSelector('#slots .slot:has-text("Auto López") .confirm-spot');
@@ -8597,13 +8597,13 @@ await fresh.close();
   await fullRow.locator('button', { hasText: 'Lista de espera' }).click();
   await page.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
-    return row && row.innerText.includes('Anular') && row.innerText.includes('En lista de espera') && row.innerText.includes('18:30');
+    return row && row.innerText.includes('Cancelar') && row.innerText.includes('En lista de espera') && row.innerText.includes('18:30');
   }, self.full);
   await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, self.full);
   await page.waitForSelector('#self-wait-notice');
   check('La espera avisa el nombre y no el puesto', (await page.textContent('#self-wait-notice')).includes('Auto López') && !(await page.textContent('#self-wait-notice')).match(/puesto|\/\d+/));
   await page.evaluate((id) => { location.hash = `#/jugador/${encodeURIComponent(id)}`; }, self.rosterId);
-  await page.locator(`#self-list .self-row[data-match="${self.full}"]`).locator('button', { hasText: 'Anular' }).click();
+  await page.locator(`#self-list .self-row[data-match="${self.full}"]`).locator('button', { hasText: 'Cancelar' }).click();
   await page.waitForFunction((id) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${id}"]`);
     return row && row.innerText.includes('Anotarme en lista de espera');
@@ -8611,7 +8611,7 @@ await fresh.close();
   const selfBajas = await page.evaluate((rid) => Object.values(JSON.parse(localStorage.getItem('f7c-demo-db')).behavior || {}).filter((row) => row.rosterId === rid && row.type === 'baja'), self.rosterId);
   check('Anular la espera no anota puntos', selfBajas.length === 0, JSON.stringify(selfBajas));
   const soonText = (await page.locator(`#self-list .self-row[data-match="${self.soon}"]`).innerText()).replace(/\s+/g, ' ');
-  check('A menos de 4 h no puede anular solo', soonText.includes('Avisale al organizador para bajarte') && !soonText.includes('Anular'), soonText);
+  check('A menos de 4 h no puede anular solo', soonText.includes('Avisale al organizador para bajarte') && !soonText.includes('Bajarme'), soonText);
   const pendingId = await page.evaluate(async () => {
     const app = window.__app;
     const person = app.roster.find((row) => row.name === 'Auto López');
@@ -8723,7 +8723,7 @@ await fresh.close();
     await page.locator('#self-list .self-row', { hasText: label }).locator('button', { hasText: 'Anotarme' }).click();
     await page.waitForFunction((text) => {
       const row = [...document.querySelectorAll('#self-list .self-row')].find((el) => el.innerText.includes(text));
-      return row && row.innerText.includes('Anular');
+      return row && row.innerText.includes('Cancelar');
     }, label);
   }
   await page.locator('#self-list .self-row', { hasText: '10/01' }).locator('button', { hasText: 'Anotarme' }).click();
