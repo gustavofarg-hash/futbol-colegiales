@@ -3484,6 +3484,9 @@ function openVenueEdit(venue) {
 
 /* Agregar / editar partido */
 function openMatchForm(m) {
+  // El detalle no cambia al destildar «Visible para los jugadores», así que
+  // el botón de editar puede seguir con el partido viejo. Se lee el actual.
+  if (m?.id) m = matchById(m.id) || m;
   const today = todayISO();
   const editingAccess = !m || canEditAccess(m, actor().uid);
   const venues = venueOptions(m);
@@ -3537,7 +3540,8 @@ function openMatchForm(m) {
     if (!price.ok) { $('#mf-err').textContent = price.error; return; }
     data.price = price.amount;
     data.splitMode = f.get('splitMode') === 'signed' ? 'signed' : 'equal';
-    data.playerVisible = e.target.playerVisible?.checked !== false;
+    const visibleBox = e.target.querySelector('#match-player-visible');
+    data.playerVisible = visibleBox ? visibleBox.checked === true : false;
     const dup = app.matches.find((x) => x.date === data.date && x.time === data.time && x.id !== m?.id);
     if (dup && !(await askConfirm('Ya hay un partido ese día a esa hora. ¿Agregarlo igual?'))) return;
     if (editingAccess) data.access = readAccessForm();

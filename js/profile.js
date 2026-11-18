@@ -423,7 +423,8 @@ export function playerVisibleBackfill(match, { uid, today, name, shareToken } = 
   if (!his) return null;
   const patch = {};
   if (!created) patch.createdByUid = owner;
-  if (match.playerVisible !== true && match.playerVisible !== false) patch.playerVisible = true;
+  // Solo si el campo no está. Un false explícito no se vuelve a marcar.
+  if (!Object.prototype.hasOwnProperty.call(match, 'playerVisible') || match.playerVisible == null) patch.playerVisible = true;
   if (match.playerVisible !== false && (!Array.isArray(match.viewers) || !match.viewers.length)) patch.viewers = ['*'];
   const key = playerLinkKey(match, shareToken);
   if (key && match.playerKey !== key) patch.playerKey = key;
