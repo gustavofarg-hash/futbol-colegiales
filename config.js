@@ -46,8 +46,7 @@ export const VENUE = "Polideportivo Colegiales";
 //  4) Pegá acá el ID de cliente (termina en .apps.googleusercontent.com).
 export const GOOGLE_DRIVE_CLIENT_ID = "";
 
-// Clave pública web push de futbol-partidos. Vacía: no se pide el token.
-// Se genera en la consola de ese proyecto, Cloud Messaging → Certificados
-// de clave web. Pegala acá antes de publicar. En /prueba/ queda vacía a
-// propósito (config.prueba.js) y esa copia no manda avisos al teléfono.
-export const FCM_VAPID_KEY = "";
+// Clave pública web push de futbol-partidos (Cloud Messaging → Certificados
+// de clave web). En /prueba/ queda vacía a propósito (config.prueba.js) y
+// esa copia no manda avisos al teléfono.
+export const FCM_VAPID_KEY = "BKNoip09mUq7FatPuHdXl6zDiguKnlYQEgwPAorMNeb7Sjugo1tYH0dbGtybo4GZuiXyz4AvB4o6kUasUOqTqL8";

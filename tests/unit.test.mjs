@@ -4059,22 +4059,22 @@ test('el error del backup nombra la colección y el documento', () => {
 test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => {
   assert.equal(trialConfig.projectId, 'mis-partidos-prueba');
   assert.equal(trialVapid, '');
-  assert.match(readFileSync(new URL('../config.js', import.meta.url), 'utf8'), /export const FCM_VAPID_KEY = "";/);
+  assert.match(readFileSync(new URL('../config.js', import.meta.url), 'utf8'), /export const FCM_VAPID_KEY = "BKNoip09mUq7FatPuHdXl6zDiguKnlYQEgwPAorMNeb7Sjugo1tYH0dbGtybo4GZuiXyz4AvB4o6kUasUOqTqL8";/);
   assert.equal(productionConfig.projectId, 'futbol-partidos');
   const prev = globalThis.location;
   globalThis.location = { pathname: '/futbol-colegiales/prueba/', origin: 'https://gustavofarg-hash.github.io' };
   try {
     const push = await registerOrganizerPush({ savePushToken() { throw new Error('no hay token'); } });
-    assert.deepEqual(push, { ok: false, reason: 'no-vapid' });
-    assert.equal(playerPushAvailable(), false);
+    assert.deepEqual(push, { ok: false, reason: 'no-notification' });
+    assert.equal(playerPushAvailable(), true);
     const playerPush = await registerPlayerPush({ savePlayerPushToken() { throw new Error('no hay token'); } }, 'ficha');
-    assert.deepEqual(playerPush, { ok: false, reason: 'no-vapid' });
+    assert.deepEqual(playerPush, { ok: false, reason: 'no-notification' });
     assert.equal(iosPushHint(), '');
     globalThis.location = { pathname: '/futbol-colegiales/', origin: 'https://gustavofarg-hash.github.io' };
     const production = await registerOrganizerPush({ savePushToken() { throw new Error('no hay token'); } });
-    assert.deepEqual(production, { ok: false, reason: 'no-vapid' });
+    assert.deepEqual(production, { ok: false, reason: 'no-notification' });
     const productionPlayer = await registerPlayerPush({ savePlayerPushToken() { throw new Error('no hay token'); } }, 'ficha');
-    assert.deepEqual(productionPlayer, { ok: false, reason: 'no-vapid' });
+    assert.deepEqual(productionPlayer, { ok: false, reason: 'no-notification' });
   } finally {
     if (prev === undefined) delete globalThis.location;
     else globalThis.location = prev;
