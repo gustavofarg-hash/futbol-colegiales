@@ -470,10 +470,10 @@ export function playerLinkKey(match, token) {
 
 /**
  * Consultas de la página del jugador, sin sesión.
- * Abiertos: createdByUid + viewers *. El enlace además pide playerKey
- * (el token): ahí entra un partido cuyo único viewer es el creador,
- * esté o no tildado «Solo yo». No hace falta que viewers sea *.
- * Los 14 días evitan que un tope por cantidad se coma el fin de semana.
+ * Con el uid del enlace: createdByUid + fecha, sin mirar viewers ni playerKey.
+ * Así entra un «solo yo» aunque el backfill no haya escrito playerKey, o el
+ * token del enlace no sea el que quedó en el partido. Sin uid, solo los
+ * abiertos (viewers *). Los 14 días evitan que un tope se coma el fin de semana.
  * playerVisible no entra en la consulta: si falta, el partido se muestra.
  */
 export function guestListenPlan({ rosterId, today, organizerUid, shareToken } = {}) {
@@ -486,9 +486,9 @@ export function guestListenPlan({ rosterId, today, organizerUid, shareToken } = 
   const dateFilters = [];
   if (day) dateFilters.push({ field: 'date', op: '>=', value: day });
   if (end) dateFilters.push({ field: 'date', op: '<=', value: end });
-  const openFilters = [];
-  if (owner) openFilters.push({ field: 'createdByUid', op: '==', value: owner });
-  openFilters.push({ field: 'viewers', op: 'array-contains', value: '*' }, ...dateFilters);
+  const openFilters = owner
+    ? [{ field: 'createdByUid', op: '==', value: owner }, ...dateFilters]
+    : [{ field: 'viewers', op: 'array-contains', value: '*' }, ...dateFilters];
   return {
     rosterId: id,
     until: end,
@@ -498,12 +498,13 @@ export function guestListenPlan({ rosterId, today, organizerUid, shareToken } = 
       orderBy: ['date', 'asc'],
       limit: null,
     },
-    linkMatches: linked ? {
+    // Con uid no hace falta playerKey: esa consulta repetía los mismos partidos.
+    linkMatches: owner ? null : (linked ? {
       collection: 'matches',
       filters: [{ field: 'playerKey', op: '==', value: token }, ...dateFilters],
       orderBy: ['date', 'asc'],
       limit: null,
-    } : null,
+    } : null),
     linkPlayers: linked && id ? {
       collection: 'players',
       filters: [

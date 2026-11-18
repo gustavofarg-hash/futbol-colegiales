@@ -13,7 +13,7 @@ test('la ficha lee un solo yo con el token y otro organizador no', async (t) => 
     t.skip('sin emulador de Firestore');
     return;
   }
-  const { initializeTestEnvironment, assertSucceeds, assertFails } = await import('@firebase/rules-unit-testing');
+  const { initializeTestEnvironment, assertSucceeds } = await import('@firebase/rules-unit-testing');
   const { collection, doc, getDoc, getDocs, orderBy, query, setDoc, updateDoc, where } = await import('firebase/firestore');
   const host = process.env.FIRESTORE_EMULATOR_HOST;
   const [hostname, portRaw] = host.split(':');
@@ -52,6 +52,10 @@ test('la ficha lee un solo yo con el token y otro organizador no', async (t) => 
       date: '2026-11-21', time: '20:00', createdByUid: ORG, createdBy: 'Gus',
       viewers: [ORG], adders: [ORG], solo: true, playerVisible: false, playerCount: 0,
     }));
+    await assertSucceeds(setDoc(doc(adb, 'matches', 'martin'), {
+      date: '2026-11-22', time: '21:00', createdByUid: OTHER, createdBy: 'Martín',
+      viewers: [OTHER], adders: [OTHER], solo: true, playerVisible: true, playerCount: 0,
+    }));
 
     const anon = testEnv.unauthenticatedContext().firestore();
     const link = await assertSucceeds(getDocs(query(
@@ -73,14 +77,22 @@ test('la ficha lee un solo yo con el token y otro organizador no', async (t) => 
       orderBy('date'),
     )));
     assert.deepEqual(afterHide.docs.map((item) => item.id), ['solo']);
-    await assertFails(getDocs(query(collection(anon, 'matches'), where('createdByUid', '==', ORG))));
+    const byOwner = await assertSucceeds(getDocs(query(
+      collection(anon, 'matches'),
+      where('createdByUid', '==', OTHER),
+      where('date', '>=', '2026-11-18'),
+      where('date', '<=', '2026-12-01'),
+      orderBy('date'),
+    )));
+    assert.deepEqual(byOwner.docs.map((item) => item.id), ['martin']);
+    assert.equal(byOwner.docs[0].data().playerKey, undefined);
 
     const martin = testEnv.authenticatedContext(OTHER, { email: 'martin@demo.local' }).firestore();
     const staff = await assertSucceeds(getDocs(query(
       collection(martin, 'matches'),
       where('viewers', 'array-contains-any', [OTHER, '*']),
     )));
-    assert.deepEqual(staff.docs.map((item) => item.id), []);
+    assert.deepEqual(staff.docs.map((item) => item.id), ['martin']);
   } finally {
     await testEnv.cleanup();
   }

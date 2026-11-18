@@ -2021,7 +2021,7 @@ export class FirebaseStore {
     this._compUnscoped = false;
     this._named = {};
     this._unsubs = [];
-    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', historyHasMore: false, historyLoading: false, log: [], logError: '', confirmSeen: [], guestMatchError: '', rosterWatch: [], rosterCovered: [], rosterConfirmCovered: [], rosterDates: [], payBatchesReady: false };
+    this.state = { matches: [], players: [], roster: [], rosterNotes: {}, suspensions: [], suspensionHistory: [], payBatches: [], behavior: [], rosterError: null, organizers: [], organizersError: null, venues: [], venuesError: null, confirmations: [], prices: null, pricesError: null, credits: [], creditsError: null, creditsReady: false, playersReady: false, compensations: [], playerContacts: {}, rosterContacts: {}, historyError: '', historyHasMore: false, historyLoading: false, log: [], logError: '', confirmSeen: [], guestMatchError: '', rosterWatch: [], rosterCovered: [], rosterDates: [] };
     this._noteMoves = new Set();
     this._rosterReady = false;
     this._logRange = weekRange();
@@ -2648,20 +2648,36 @@ export class FirebaseStore {
       armedFor = key;
       const plan = guestListenPlan({ rosterId: id, today, organizerUid, shareToken: token });
       const visible = (snap) => rows(snap);
-      this._swap('guest-matches', onSnapshot(this._queryFromPlan(plan.matches), (snap) => {
+      const onMatches = (snap) => {
         this._guestBuckets.open = visible(snap);
         showMatches();
         this.state.guestMatchError = '';
         seen.matches = true;
         publish();
-      }, (error) => {
+      };
+      const onMatchesError = (error) => {
+        if (error?.code === 'failed-precondition' && organizerUid) {
+          const fallback = guestListenPlan({ rosterId: id, today, organizerUid: '', shareToken: token });
+          this._swap('guest-matches', onSnapshot(this._queryFromPlan({
+            ...fallback.matches,
+            filters: [{ field: 'createdByUid', op: '==', value: organizerUid }, ...fallback.matches.filters],
+          }), onMatches, () => {
+            this._guestBuckets.open = [];
+            showMatches();
+            this.state.guestMatchError = 'No se pudieron cargar los partidos.';
+            seen.matches = true;
+            publish();
+          }));
+          return;
+        }
         console.error(error?.code || 'sin-codigo', error);
         this._guestBuckets.open = [];
         showMatches();
         if (!this._guestBuckets.link.length) this.state.guestMatchError = 'No se pudieron cargar los partidos.';
         seen.matches = true;
         publish();
-      }));
+      };
+      this._swap('guest-matches', onSnapshot(this._queryFromPlan(plan.matches), onMatches, onMatchesError));
       if (plan.linkMatches) {
         this._swap('guest-link-matches', onSnapshot(this._queryFromPlan(plan.linkMatches), (snap) => {
           this._guestBuckets.link = visible(snap);
@@ -2745,7 +2761,6 @@ export class FirebaseStore {
       this._noteSnap(snap);
       this._buckets.matches.upcoming = this._takeMatchSnap(snap);
       this._rebuild('matches');
-      this._armRoster();
       this._backfillMatches(snap.docs);
     }, (e) => this._onListenError(e));
     this._swap('upcoming', un);
@@ -2948,11 +2963,7 @@ export class FirebaseStore {
     if (!this.fs || this._guest || !this.actor?.uid || !this._buckets?.matches) return;
     const today = this._queryDay || todayISO();
     const opened = (this._buckets.matches.opened || []).filter((match) => match?.date && match.date < today);
-    const dates = rosterDatesOf([
-      ...(this._buckets.matches.history || []),
-      ...(this._buckets.matches.upcoming || []),
-      ...opened,
-    ]);
+    const dates = rosterDatesOf([...(this._buckets.matches.history || []), ...opened]);
     const key = dates.join('|');
     if (key === this._rosterKey) return;
     const prev = String(this._rosterKey || '').split('|').filter(Boolean);
@@ -2968,7 +2979,6 @@ export class FirebaseStore {
     this._dropRoster();
     this.state.rosterWatch = dates;
     this.state.rosterCovered = [];
-    this.state.rosterConfirmCovered = [];
     this.state.rosterDates = [];
     this.state.rosterError = '';
     if (!dates.length) return;
@@ -3075,7 +3085,6 @@ export class FirebaseStore {
         for (const item of Object.values(bucket)) for (const id of item.ids || []) wanted.add(id);
         if ([...wanted].every((id) => this.state.rosterCovered.includes(id))) this.state.rosterError = '';
       }
-      if (kind === 'confirmations') this.state.rosterConfirmCovered = [...new Set(covered)];
       this._rebuild(kind);
     };
     const base = collection(this.db, kind);
@@ -3402,11 +3411,9 @@ export class FirebaseStore {
     });
     watch('pay-batches', collection(this.db, 'payBatches'), null, (snap) => {
       this.state.payBatches = snap.docs.map((d) => presentPayBatch(d.id, d.data()));
-      this.state.payBatchesReady = true;
       this._emit();
     }, () => {
       this.state.payBatches = [];
-      this.state.payBatchesReady = false;
       this._emit();
     });
     watch('roster', collection(this.db, 'roster'), null, (snap) => {

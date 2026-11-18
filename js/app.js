@@ -25,7 +25,6 @@ import { MAX_NOTES, MAX_NOTE_TEXT, POSITIONS, currentMatches, filterLevelTyping,
 import { organizerChoices, organizerTagClass, sameOrganizer, sameOrganizerIdentity } from './organizers.js';
 import { EDIT_LOCK_TEXT, canEditPlayer, canEditRoster, canEditRosterNick, canWritePlayer } from './edit-lock.js';
 import { amountOwed, organizerMatchDebt, owesOrganizer, playerDebt } from './ledger.js';
-import { dayPaymentsReady } from './roster-load.js';
 import { countedForMoney, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, organizerDayShare, organizerShareByPeriod, periodBuckets, playerOrganizerMonths } from './stats.js';
 import { logText, logWhen, weekRange } from './log.js';
 import { autoCreditPassKey, canOfferCredit, creditAgainstDebts, creditAvailableLine, creditBalance, creditBalances, creditLoadSummary, creditPanelRows, creditReturnPlan, retroactiveCreditIds } from './credit.js';
@@ -50,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v224';
+const APP_VERSION = 'f7c-v225';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -1383,21 +1382,13 @@ function knownMatches() {
 
 function rosterGate() {
   if (app.store?.mode !== 'firebase') return {};
+  const watch = new Set(app.rosterWatch || []);
+  if (!watch.size) return {};
   return {
-    onlyReady: true,
-    watch: new Set(app.rosterWatch || []),
+    watch,
     covered: new Set(app.rosterCovered || []),
-    confirmCovered: new Set(app.rosterConfirmCovered || []),
     settledDates: new Set(app.rosterDates || []),
-    payBatchesReady: app.payBatchesReady === true,
   };
-}
-
-function paymentsPending(match) {
-  if (app.store?.mode !== 'firebase' || !match?.date) return false;
-  const watch = app.rosterWatch || [];
-  if (!watch.includes(match.date)) return false;
-  return !dayPaymentsReady(match.date, knownMatches(), rosterGate());
 }
 
 function historyShown(matches) {
@@ -1423,7 +1414,6 @@ function pastRosterPending(match) {
 }
 
 function oweBox(m) {
-  if (paymentsPending(m)) return '<p class="hint" id="owe-loading">Cargando pagos…</p>';
   const debt = organizerMatchDebt({
     match: m,
     players: app.players,
@@ -3879,8 +3869,6 @@ function bindComposedSearch(input, apply) {
 }
 
 function rosterDebtBox(person) {
-  const pending = (app.players || []).some((player) => playerMatchesPerson(player, person) && paymentsPending(knownMatches().find((match) => match.id === player.matchId)));
-  if (pending) return '<p class="hint" id="roster-debt-loading">Cargando pagos…</p>';
   const debt = rosterPersonDebt(person);
   if (!(debt.total > 0)) return '';
   const open = app.rosterDebtOpen?.has(person.id) === true;
@@ -7337,10 +7325,7 @@ function playerPanelPieces(player, person, ids, debtKey) {
   } catch (error) { console.error(error); }
   const nick = panelNickState(player, person);
   const nickHtml = `<label class="field nick-field"><span>Nombre corto (o apodo)</span><input id="${ids.nick}" maxlength="40" autocomplete="off" autocapitalize="words" data-cap-words="1" placeholder="Ej: Vini" value="${esc(nick.value)}"${nick.editable ? '' : ' disabled'}><div class="small muted">${NICK_HINT}</div></label>`;
-  const debtPending = player && paymentsPending(knownMatches().find((match) => match.id === player.matchId));
-  const debtHtml = debtPending
-    ? `<p class="hint" id="${ids.debt}">Cargando pagos…</p>`
-    : (debt.total > 0 ? `<p class="debt-total" id="${ids.debt}">${esc(debt.text)}</p>` : '');
+  const debtHtml = debt.total > 0 ? `<p class="debt-total" id="${ids.debt}">${esc(debt.text)}</p>` : '';
   const err = app.creditsError ? `<p class="hint" id="${ids.err}">${esc(app.creditsError)}</p>` : '';
   const mine = credits.find((row) => row.organizerUid === me.uid);
   const shownAmount = mine ? mine.amount : 0;
@@ -8866,10 +8851,8 @@ async function boot() {
     app.historyLoading = view.historyLoading === true;
     app.rosterWatch = view.rosterWatch || [];
     app.rosterCovered = view.rosterCovered || [];
-    app.rosterConfirmCovered = view.rosterConfirmCovered || [];
     app.rosterDates = view.rosterDates || [];
     app.rosterError = view.rosterError || '';
-    app.payBatchesReady = view.payBatchesReady === true;
     app.roster = roster || [];
     const pendingRoster = withPendingRoster(app.roster, app.rosterPending, Date.now());
     app.roster = pendingRoster.roster;
@@ -8906,7 +8889,7 @@ async function boot() {
     if (!app.guestPlayer && pricesError && pricesError !== app.pricesError) showError(pricesError);
     app.pricesError = pricesError || null;
     app.loaded = true;
-    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.historyHasMore, app.historyLoading, app.rosterWatch, app.rosterCovered, app.rosterConfirmCovered, app.rosterDates, app.payBatchesReady, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen, app.guestMatchError]);
+    const stamp = JSON.stringify([app.matches, app.players, app.history, app.historyMeta, app.historyError, app.historyHasMore, app.historyLoading, app.rosterWatch, app.rosterCovered, app.rosterDates, app.roster, app.suspensions, app.suspensionHistory, app.payBatches, app.behavior, app.organizers, app.venues, app.prices, app.credits, app.compensations, app.log, app.logError, app.rosterError, app.organizersError, app.venuesError, app.pricesError, app.creditsError, app.confirmSeen, app.guestMatchError]);
     const changed = stamp !== app.viewStamp;
     app.viewStamp = stamp;
     scheduleRetroactiveAutoCredit();

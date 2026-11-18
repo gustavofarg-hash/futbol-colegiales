@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v224';
+const VERSION = 'f7c-v225';
 // Las pruebas marcan __F7C_TEST y no deben dejar este worker contra el proyecto real.
 // Un partido con un solo viewer (el creador) también entra en la ficha.
 // Destildar «Visible para los jugadores» tiene que quedar guardado.

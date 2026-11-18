@@ -23,7 +23,7 @@ import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate,
 import { phoneKey, sha256Hex } from '../js/privacy.js';
 import { HISTORY_PAGE, currentMatches, filterLevelTyping, formatLevel, guestListenPlan, historyBounds, historyWindow, keptSignupIds, levelCaretAfterStep, levelStepSide, matchAlreadyPlayed, matchQueryPlan, matchSignupState, parseLevel, pastMatches, playerRecord, playerStats, playerVisibleBackfill, rosterDeleteReasons, sortedNotes, splitNear, stepLevel, storedLevel, upcomingMatches } from '../js/profile.js';
 import { addedByOrganizer, amountOwed, matchDebtCounts, mineSummary, monthLabel, organizerMatchDebt, organizerTotals, owesOrganizer, paymentLedger, paymentsSummary, pendingTransfers, playerDebt, signupLedger } from '../js/ledger.js';
-import { chunkList, dayMoneyReady, dayPaymentsReady, rosterDatesOf } from '../js/roster-load.js';
+import { chunkList, dayMoneyReady, rosterDatesOf } from '../js/roster-load.js';
 import { compensationDoneDates, countedForMoney, countedGoals, daySignupSummary, diaDatesForOrganizer, matchOrganizedBy, matchTake, organizerDayShare, organizerShareByPeriod, organizerViewTake, periodBuckets, playerOrganizerMonths, signupOrganizerUid } from '../js/stats.js';
 import { usualPlayers } from '../js/regulars.js';
 import { canSeeLog, editorsOf, inLogRange, logText, matchEditDetail, pagoEntry, pagoMatchText, paymentLines, playerLogFields, weekRange } from '../js/log.js';
@@ -3098,14 +3098,14 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   const guest = guestListenPlan({ rosterId: 'ficha', organizerUid: 'org', today: '2026-10-19' });
   assert.equal(guest.matches.limit, null);
   assert.equal(guest.until, '2026-11-01');
-  assert.equal(guest.matches.filters.some((filter) => filter.field === 'viewers' && filter.value === '*'), true);
+  assert.equal(guest.matches.filters.some((filter) => filter.field === 'viewers'), false);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid' && filter.op === '==' && filter.value === 'org'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'date' && filter.op === '<=' && filter.value === '2026-11-01'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'playerVisible'), false);
   assert.equal(guest.linkMatches, null);
   const linked = guestListenPlan({ rosterId: 'ficha', organizerUid: 'org', today: '2026-10-19', shareToken: 'tokendegustavolargo1234' });
-  assert.equal(linked.linkMatches.filters.some((filter) => filter.field === 'playerKey' && filter.value === 'tokendegustavolargo1234'), true);
-  assert.equal(linked.linkMatches.filters.some((filter) => filter.field === 'viewers'), false);
+  assert.equal(linked.linkMatches, null);
+  assert.equal(linked.matches.filters.some((filter) => filter.field === 'viewers'), false);
   assert.equal(linked.linkPlayers.filters.some((filter) => filter.field === 'shareToken' && filter.value === 'tokendegustavolargo1234'), true);
   const open = guestListenPlan({ rosterId: 'ficha', today: '2026-10-19' });
   assert.equal(open.matches.filters.some((filter) => filter.field === 'createdByUid'), false);
@@ -4082,7 +4082,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v224');
+  assert.equal(version, 'f7c-v225');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4119,16 +4119,14 @@ test('el enlace pide los partidos de ese organizador, sábado incluido', async (
   store._listenGuest('ficha');
   await new Promise((resolve) => setTimeout(resolve, 20));
   const matchQueries = calls.filter((ref) => ref.path === 'matches');
-  assert.equal(matchQueries.length, 2);
-  const openQuery = matchQueries.find((ref) => ref.parts.some((part) => part.field === 'viewers'));
-  const linkQuery = matchQueries.find((ref) => ref.parts.some((part) => part.field === 'playerKey'));
+  assert.equal(matchQueries.length, 1);
+  const openQuery = matchQueries[0];
   assert.ok(openQuery.parts.some((part) => part.field === 'createdByUid' && part.op === '==' && part.value === 'gus'));
-  assert.ok(openQuery.parts.some((part) => part.field === 'viewers' && part.value === '*'));
-  assert.ok(linkQuery.parts.some((part) => part.field === 'playerKey' && part.op === '==' && part.value === 'tokendegustavolargo1234'));
-  assert.equal(linkQuery.parts.some((part) => part.field === 'viewers'), false);
-  assert.ok(linkQuery.parts.some((part) => part.field === 'date' && part.op === '>=' && part.value === '2026-11-18'));
-  assert.ok(linkQuery.parts.some((part) => part.field === 'date' && part.op === '<=' && part.value === '2026-12-01'));
-  assert.equal(linkQuery.parts.some((part) => part.limit), false);
+  assert.equal(openQuery.parts.some((part) => part.field === 'viewers'), false);
+  assert.equal(openQuery.parts.some((part) => part.field === 'playerKey'), false);
+  assert.ok(openQuery.parts.some((part) => part.field === 'date' && part.op === '>=' && part.value === '2026-11-18'));
+  assert.ok(openQuery.parts.some((part) => part.field === 'date' && part.op === '<=' && part.value === '2026-12-01'));
+  assert.equal(openQuery.parts.some((part) => part.limit), false);
 });
 
 test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => {
@@ -5763,12 +5761,6 @@ test('la promo 2x9000 no es deuda si el otro partido del día todavía no está'
   }), 0);
   assert.equal(amountOwed(paid, { players: [paid], matches: [day[0]], prices }), 500);
   const both = new Set(['a', 'b']);
-  assert.equal(dayPaymentsReady('2026-09-30', day, { covered: both, confirmCovered: both, settledDates: settled, payBatchesReady: false }), false);
-  assert.equal(amountOwed(paid, {
-    players: [paid, pair], matches: day, prices, onlyReady: true,
-    watch, covered: both, confirmCovered: both, settledDates: settled, payBatchesReady: false,
-  }), 0);
-  assert.equal(dayPaymentsReady('2026-09-30', day, { covered: both, confirmCovered: both, settledDates: settled, payBatchesReady: true }), true);
   assert.equal(dayMoneyReady('2026-09-30', day, both, settled), true);
   assert.equal(amountOwed(paid, {
     players: [paid, pair], matches: day, prices,
