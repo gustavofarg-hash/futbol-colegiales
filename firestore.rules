@@ -323,6 +323,22 @@ service cloud.firestore {
       return d.keys().hasOnly(['matchPrice', 'promo2Price', 'promo3Price'])
           && priceOk(d.matchPrice) && priceOk(d.promo2Price) && priceOk(d.promo3Price);
     }
+    function signupSettingsPath() {
+      return /databases/$(database)/documents/settings/signup;
+    }
+    function signupMaxMoves() {
+      let raw = exists(signupSettingsPath()) ? get(signupSettingsPath()).data.get('maxMoves', 5) : 5;
+      return raw is int && raw >= 1 && raw <= 100 ? raw : 5;
+    }
+    function signupWindowMinutes() {
+      let raw = exists(signupSettingsPath()) ? get(signupSettingsPath()).data.get('windowMinutes', 30) : 30;
+      return raw is int && raw >= 1 && raw <= 1440 ? raw : 30;
+    }
+    function validSignupLimit(d) {
+      return d.keys().hasOnly(['maxMoves', 'windowMinutes'])
+          && d.maxMoves is int && d.maxMoves >= 1 && d.maxMoves <= 100
+          && d.windowMinutes is int && d.windowMinutes >= 1 && d.windowMinutes <= 1440;
+    }
 
     // El nombre del organizador, en minúsculas. Sin uid de creador, el
     // jugador viejo se edita solo si ese nombre coincide. No pliega tildes:
@@ -662,9 +678,9 @@ service cloud.firestore {
           && get(ratePath(rosterId)).data.lastId == pid
           && get(ratePath(rosterId)).data.count is int
           && get(ratePath(rosterId)).data.count >= 1
-          && get(ratePath(rosterId)).data.count <= 5
+          && get(ratePath(rosterId)).data.count <= signupMaxMoves()
           && get(ratePath(rosterId)).data.windowStart is timestamp
-          && request.time < get(ratePath(rosterId)).data.windowStart + duration.value(30, 'm');
+          && request.time < get(ratePath(rosterId)).data.windowStart + duration.value(signupWindowMinutes(), 'm');
     }
     // El id del enlace #/jugador/{id}. No se puede listar el plantel.
     function guestRoster(rosterId) {
@@ -770,16 +786,17 @@ service cloud.firestore {
     }
     function signupRateOk() {
       let next = request.resource.data;
-      let fresh = resource == null || request.time > resource.data.windowStart + duration.value(30, 'm');
+      let maxMoves = signupMaxMoves();
+      let fresh = resource == null || request.time > resource.data.windowStart + duration.value(signupWindowMinutes(), 'm');
       return next.keys().hasOnly(['windowStart', 'count', 'lastId'])
           && next.lastId is string && next.lastId.size() > 0 && next.lastId.size() <= 80
-          && next.count is int && next.count >= 1 && next.count <= 5
+          && next.count is int && next.count >= 1 && next.count <= maxMoves
           && next.windowStart is timestamp
           && (fresh
               ? next.count == 1 && next.windowStart == request.time
               : next.count == resource.data.count + 1
                   && next.windowStart == resource.data.windowStart
-                  && resource.data.count < 5);
+                  && resource.data.count < maxMoves);
     }
 
     // Alta del organizador desde un lugar libre, la espera o Agregar jugador.
@@ -1090,6 +1107,10 @@ service cloud.firestore {
       allow read: if isActiveStaff() && docId == 'prices';
       allow create, update: if isActiveStaff() && docId == 'prices' && validPrices(request.resource.data);
       allow delete: if isActiveStaff() && docId == 'prices';
+      // La ficha lo lee una vez, sin sesión. Solo el admin lo escribe.
+      allow get: if docId == 'signup';
+      allow create, update: if isAdmin() && docId == 'signup' && validSignupLimit(request.resource.data);
+      allow delete: if isAdmin() && docId == 'signup';
     }
 
     // El id es el token del link. Se puede leer UN documento si se conoce el

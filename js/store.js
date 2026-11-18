@@ -94,7 +94,7 @@ import { creditDocId, nextCredit } from './credit.js';
 import { MAX_PRICE } from './prices.js';
 import { PRICES_DENIED_READ, priceRecord } from './prices.js';
 import { nextWaitOrder } from './waiting.js';
-import { canSelfCancel, isSelfPending, occupiesSpot, signupRateDecision } from './self-signup.js';
+import { canSelfCancel, isSelfPending, occupiesSpot, signupLimitFrom, signupLimitRecord, signupRateDecision } from './self-signup.js';
 import { tokenDocId } from './push.js';
 import { newShareToken } from './share.js';
 import { bumpGoals, bumpScore, dropPlayer, nextInGoalAt, scoreRecord, teamsRecord } from './teams.js';
@@ -1031,9 +1031,22 @@ class LocalStore {
     const id = String(rosterId || '').trim();
     if (!id) throw Object.assign(new Error('No tiene ficha.'), { code: 'no-roster' });
     db.signupRates ||= {};
-    const next = signupRateDecision(db.signupRates[id], now);
+    const limit = signupLimitFrom(db.settings?.signup);
+    const next = signupRateDecision(db.signupRates[id], now, limit.maxMoves, limit.windowMinutes * 60 * 1000);
     if (!next.ok) throw Object.assign(new Error(next.error), { code: 'rate-limit' });
     db.signupRates[id] = { windowStart: next.windowStart, count: next.count };
+  }
+  async loadSignupLimit() {
+    return signupLimitFrom(this._load().settings?.signup);
+  }
+  async setSignupLimit(input) {
+    const rec = signupLimitRecord(input);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-signup-limit' });
+    const db = this._load();
+    db.settings ||= {};
+    db.settings.signup = rec.patch;
+    this._save(db);
+    return rec.patch;
   }
   async selfJoin(match, person, { waiting = false, organizer = null } = {}) {
     const rosterId = String(person?.id || '').trim();
@@ -2561,6 +2574,7 @@ export class FirebaseStore {
     this._guest = true;
     this._guestRosterId = id;
     this._queryDay = this._queryDay || todayISO();
+    this.loadSignupLimit();
     const today = this._queryDay;
     const { doc, onSnapshot } = this.fs;
     const seen = { roster: false, matches: false, players: false, share: !this._shareToken };
@@ -3546,16 +3560,43 @@ export class FirebaseStore {
     })]);
     return ref.id;
   }
+  async loadSignupLimit() {
+    if (this._signupLimit) return this._signupLimit;
+    if (!this._signupLimitPromise) {
+      this._signupLimitPromise = (async () => {
+        try {
+          const { doc, getDoc } = this.fs;
+          const snap = await getDoc(doc(this.db, 'settings', 'signup'));
+          return signupLimitFrom(snap.exists() ? snap.data() : null);
+        } catch {
+          return signupLimitFrom(null);
+        }
+      })();
+    }
+    this._signupLimit = await this._signupLimitPromise;
+    return this._signupLimit;
+  }
+  async setSignupLimit(input) {
+    const rec = signupLimitRecord(input);
+    if (!rec.ok) throw Object.assign(new Error(rec.error), { code: 'invalid-signup-limit' });
+    const { doc, setDoc } = this.fs;
+    await setDoc(doc(this.db, 'settings', 'signup'), rec.patch);
+    this._signupLimit = rec.patch;
+    this._signupLimitPromise = Promise.resolve(rec.patch);
+    return rec.patch;
+  }
   async _chargeSignupRate(rosterId, playerId) {
     const { doc, runTransaction, serverTimestamp } = this.fs;
+    const limit = await this.loadSignupLimit();
+    const windowMs = limit.windowMinutes * 60 * 1000;
     const ref = doc(this.db, 'signupRates', rosterId);
     await runTransaction(this.db, async (tx) => {
       const snap = await tx.get(ref);
       const prev = snap.exists() ? snap.data() : null;
       const startMs = prev?.windowStart?.toMillis?.() || Number(prev?.windowStart) || 0;
-      const next = signupRateDecision(prev ? { windowStart: startMs, count: prev.count } : null, Date.now());
+      const next = signupRateDecision(prev ? { windowStart: startMs, count: prev.count } : null, Date.now(), limit.maxMoves, windowMs);
       if (!next.ok) throw Object.assign(new Error(next.error), { code: 'rate-limit' });
-      const fresh = !prev || Date.now() - startMs >= 30 * 60 * 1000;
+      const fresh = !prev || Date.now() - startMs >= windowMs;
       tx.set(ref, {
         windowStart: fresh ? serverTimestamp() : prev.windowStart,
         count: next.count,

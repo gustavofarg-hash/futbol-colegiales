@@ -8,6 +8,9 @@ import { pendingConfirmLabel } from './share.js';
 export const DROP_LOCK_MS = 4 * 60 * 60 * 1000;
 export const RATE_WINDOW_MS = 30 * 60 * 1000;
 export const RATE_MAX = 5;
+export const RATE_WINDOW_MIN = 30;
+export const RATE_MAX_LIMIT = 100;
+export const RATE_WINDOW_MIN_LIMIT = 1440;
 
 /** El mismo pendiente de confirmación que usa el organizador: tentative, y lo anotó él. */
 export function isSelfPending(player) {
@@ -32,6 +35,28 @@ export function matchOpenToRoster(match, person) {
   if (adders && adders.some((id) => id && id !== '*' && holders.includes(id))) return true;
   const open = !adders || adders.length === 0 || adders.includes('*');
   return open && !created;
+}
+
+/** 5 y 30 si el documento no está o los números no entran en el rango. */
+export function signupLimitFrom(raw) {
+  const max = Number(raw?.maxMoves);
+  const minutes = Number(raw?.windowMinutes);
+  return {
+    maxMoves: Number.isInteger(max) && max >= 1 && max <= RATE_MAX_LIMIT ? max : RATE_MAX,
+    windowMinutes: Number.isInteger(minutes) && minutes >= 1 && minutes <= RATE_WINDOW_MIN_LIMIT ? minutes : RATE_WINDOW_MIN,
+  };
+}
+
+export function signupLimitRecord(input) {
+  const max = Number(String(input?.maxMoves ?? '').trim());
+  const minutes = Number(String(input?.windowMinutes ?? '').trim());
+  if (!Number.isInteger(max) || max < 1 || max > RATE_MAX_LIMIT) {
+    return { ok: false, error: 'Los movimientos tienen que ser entre 1 y 100.' };
+  }
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > RATE_WINDOW_MIN_LIMIT) {
+    return { ok: false, error: 'Los minutos tienen que ser entre 1 y 1440.' };
+  }
+  return { ok: true, patch: { maxMoves: max, windowMinutes: minutes } };
 }
 
 export function signupRateDecision(prev, now = Date.now(), max = RATE_MAX, windowMs = RATE_WINDOW_MS) {

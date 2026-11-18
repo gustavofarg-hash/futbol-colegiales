@@ -39,7 +39,7 @@ import { compensationFingerprint, dayCompensation, reconcileTransfers, splitMode
 import { balanceTeams, bumpGoals, bumpScore, dropPlayerOn, emptyTeams, goaliesLeft, movePlayer, normalizeScore, normalizeTeams, orderTeamsByGoal, teamsBalance, teamsMessage } from './teams.js';
 import { appInstallUrl, appShareMessage, isPlayerDeepLink, organizerMatchesTitle, playerLink } from './share.js';
 import { isTrialPage } from './trial.js';
-import { isSelfPending, pendingSelfSignups, selfSignupRows } from './self-signup.js';
+import { isSelfPending, pendingSelfSignups, selfSignupRows, signupLimitFrom, signupLimitRecord } from './self-signup.js';
 import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from './confirm-notice.js';
 import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from './push.js';
 import { bindTap, tapChose } from './tap.js';
@@ -49,7 +49,7 @@ import {
 } from './venues.js';
 
 /* ───────── utilidades ───────── */
-const APP_VERSION = 'f7c-v220';
+const APP_VERSION = 'f7c-v221';
 performance.mark('f7c-boot');
 if (typeof window !== 'undefined') window.__f7cMarks = { boot: Math.round(performance.now()) };
 function markOnce(name) {
@@ -2980,6 +2980,13 @@ function openSettings() {
       <div class="err" id="price-err"></div>
       <button class="btn" type="submit">Guardar precios</button>
     </form>
+    ${app.role === 'admin' ? `<form id="signup-limit-form" novalidate>
+      <p class="hint">Límite para anotarse solo. Lo usa la ficha del jugador.</p>
+      <label class="field"><span>Movimientos máximos</span><input name="maxMoves" id="signup-max" inputmode="numeric" autocomplete="off" value="${signupLimitFrom(app.signupLimit).maxMoves}"></label>
+      <label class="field"><span>Tiempo para restablecer (minutos)</span><input name="windowMinutes" id="signup-minutes" inputmode="numeric" autocomplete="off" value="${signupLimitFrom(app.signupLimit).windowMinutes}"></label>
+      <div class="err" id="signup-limit-err"></div>
+      <button class="btn" type="submit">Guardar límite</button>
+    </form>` : ''}
     <label class="field" id="text-size-field"><span>Tamaño del texto</span>
       <select id="set-text-size" aria-label="Tamaño del texto">
         ${TEXT_SIZES.map((step, i) => `<option value="${i}"${i === readTextSize() ? ' selected' : ''}>${esc(step.label)}</option>`).join('')}
@@ -3025,6 +3032,31 @@ function openSettings() {
       else $('#price-err').textContent = error?.message || 'No se pudieron guardar los precios.';
     });
   };
+  const limitForm = $('#signup-limit-form');
+  if (limitForm) {
+    if (!app.signupLimit) {
+      Promise.resolve(app.store.loadSignupLimit?.()).then((limit) => {
+        if (!limit || !sheet.open || !$('#signup-limit-form')) return;
+        app.signupLimit = limit;
+        $('#signup-max').value = String(limit.maxMoves);
+        $('#signup-minutes').value = String(limit.windowMinutes);
+      }).catch(() => {});
+    }
+    limitForm.onsubmit = (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const rec = signupLimitRecord({ maxMoves: form.maxMoves.value, windowMinutes: form.windowMinutes.value });
+      if (!rec.ok) { $('#signup-limit-err').textContent = rec.error; return; }
+      $('#signup-limit-err').textContent = '';
+      Promise.resolve(app.store.setSignupLimit(rec.patch)).then((saved) => {
+        app.signupLimit = saved;
+        toast('Límite guardado');
+      }).catch((error) => {
+        if (isPermissionDenied(error)) $('#signup-limit-err').textContent = 'Solo el administrador puede guardar este límite.';
+        else $('#signup-limit-err').textContent = error?.message || 'No se pudo guardar el límite.';
+      });
+    };
+  }
   const sizePick = $('#set-text-size');
   if (sizePick) sizePick.onchange = () => { saveTextSize(Number(sizePick.value)); syncTextSize(); };
   const themePick = $('#set-theme');
@@ -5046,7 +5078,10 @@ function bindSelfSignup(person) {
       await job;
       app.selfSignupError = null;
     } catch (e) {
-      console.error(e?.code || 'sin-codigo', e);
+      const code = String(e?.code || '');
+      if (!['rate-limit', 'too-late', 'no-roster', 'already-in-match', 'suspended', 'match-full', 'guest-cannot-invite'].includes(code)) {
+        console.error(code || 'sin-codigo', e);
+      }
       app.selfSignupError = { matchId: match.id, text: selfSignupFailureText(kind, e) };
       renderPlayerSignup(person);
     } finally {

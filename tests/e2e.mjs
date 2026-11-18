@@ -149,7 +149,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v220');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v221');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8658,6 +8658,60 @@ await fresh.close();
     top: document.getElementById('jugadores-a-confirmar')?.getBoundingClientRect().top ?? 999,
   }));
   check('El aviso de un alta abre el inicio y muestra la lista', focused.hash === '#/a-confirmar' && focused.tab === 'home' && focused.top < 360, JSON.stringify(focused));
+}
+
+{
+  if (await page.locator('#btn-settings').count()) {
+    await page.click('#btn-settings');
+    if (await page.locator('#set-logout').count()) await page.click('#set-logout');
+    await page.waitForSelector('#login-form');
+  }
+  await page.fill('#login-email', 'gustavo@demo.local');
+  await page.fill('#login-password', 'demo-gustavo');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Gustavo');
+  const tope = await page.evaluate(async () => {
+    const app = window.__app;
+    const rosterId = await app.store.addRoster({ name: 'Tope Ana', phone: '11 7000-2210' }, app.who);
+    const days = ['2027-01-08', '2027-01-09', '2027-01-10'];
+    const ids = [];
+    for (const date of days) ids.push(await app.store.addMatch({ date, time: '21:00', capacity: 14, note: `Tope ${date}` }, app.who));
+    return { rosterId, ids };
+  });
+  await page.click('#btn-settings');
+  await page.waitForSelector('#signup-limit-form');
+  const limitText = (await page.locator('#signup-limit-form').innerText()).replace(/\s+/g, ' ');
+  check('El admin ve el límite para anotarse', limitText.includes('Movimientos máximos') && limitText.includes('Tiempo para restablecer (minutos)') && (await page.locator('#signup-max').inputValue()) === '5' && (await page.locator('#signup-minutes').inputValue()) === '30', limitText);
+  await page.fill('#signup-max', '2');
+  await page.fill('#signup-minutes', '30');
+  await page.click('#signup-limit-form button[type=submit]');
+  await page.waitForSelector('.toast:has-text("Límite guardado")');
+  const savedLimit = await page.evaluate(() => JSON.parse(localStorage.getItem('f7c-demo-db')).settings.signup);
+  check('El límite queda en 2 movimientos y 30 minutos', savedLimit.maxMoves === 2 && savedLimit.windowMinutes === 30, JSON.stringify(savedLimit));
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.fill('#login-email', 'martin@demo.local');
+  await page.fill('#login-password', 'demo-martin');
+  await page.click('#login-form button[type=submit]');
+  await page.waitForFunction(() => window.__app?.who === 'Martín');
+  await page.click('#btn-settings');
+  await page.waitForSelector('#set-who');
+  check('El organizador no ve el límite para anotarse', await page.locator('#signup-limit-form').count() === 0);
+  await page.click('#set-logout');
+  await page.waitForSelector('#login-form');
+  await page.goto(`${BASE}#/jugador/${encodeURIComponent(tope.rosterId)}`);
+  await page.waitForSelector('#self-list .self-row');
+  for (const label of ['08/01', '09/01']) {
+    await page.locator('#self-list .self-row', { hasText: label }).locator('button', { hasText: 'Anotarme' }).click();
+    await page.waitForFunction((text) => {
+      const row = [...document.querySelectorAll('#self-list .self-row')].find((el) => el.innerText.includes(text));
+      return row && row.innerText.includes('Anular');
+    }, label);
+  }
+  await page.locator('#self-list .self-row', { hasText: '10/01' }).locator('button', { hasText: 'Anotarme' }).click();
+  await page.waitForSelector('#self-list .self-error');
+  const rateMsg = (await page.locator('#self-list .self-error').innerText()).replace(/\s+/g, ' ');
+  check('El límite nuevo corta el tercer movimiento', rateMsg.includes('Esperá un rato para volver a anotarte.'), rateMsg);
 }
 
 {
