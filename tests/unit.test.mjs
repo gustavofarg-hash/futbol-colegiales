@@ -3077,6 +3077,11 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid' && filter.op === '==' && filter.value === 'org'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'date' && filter.op === '<=' && filter.value === '2026-11-01'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'playerVisible'), false);
+  assert.equal(guest.linkMatches, null);
+  const linked = guestListenPlan({ rosterId: 'ficha', organizerUid: 'org', today: '2026-10-19', shareToken: 'tokendegustavolargo1234' });
+  assert.equal(linked.linkMatches.filters.some((filter) => filter.field === 'playerKey' && filter.value === 'tokendegustavolargo1234'), true);
+  assert.equal(linked.linkMatches.filters.some((filter) => filter.field === 'viewers'), false);
+  assert.equal(linked.linkPlayers.filters.some((filter) => filter.field === 'shareToken' && filter.value === 'tokendegustavolargo1234'), true);
   const open = guestListenPlan({ rosterId: 'ficha', today: '2026-10-19' });
   assert.equal(open.matches.filters.some((filter) => filter.field === 'createdByUid'), false);
   assert.equal(open.matches.limit, null);
@@ -3424,7 +3429,8 @@ test('el enlace de un organizador solo muestra sus partidos y la anotación es d
     { id: 'ma', date: '2026-10-19', time: '22:00', createdByUid: 'martin' },
     { id: 'hide', date: '2026-10-19', time: '23:00', createdByUid: 'gus', playerVisible: false },
   ];
-  assert.deepEqual(selfSignupRows({ person, matches, now, organizerUid: 'gus', scoped: true }).map((row) => row.match.id), ['ga']);
+  const solo = { id: 'solo', date: '2026-10-24', time: '18:00', createdByUid: 'gus', createdBy: 'Gus', viewers: ['gus'], adders: ['gus'], solo: true };
+  assert.deepEqual(selfSignupRows({ person, matches: [...matches, solo], now, organizerUid: 'gus', organizerName: 'Gustavo', scoped: true }).map((row) => row.match.id), ['ga', 'solo']);
   const named = selfSignupRows({
     person,
     matches: [...matches, { id: 'apodo', date: '2026-10-19', time: '20:00', createdBy: 'Gus', viewers: ['*'] }],
@@ -3433,7 +3439,7 @@ test('el enlace de un organizador solo muestra sus partidos y la anotación es d
     organizerName: 'Gustavo',
     scoped: true,
   });
-  assert.deepEqual(named.map((row) => row.match.id), ['apodo']);
+  assert.deepEqual(named.map((row) => row.match.id), []);
   assert.deepEqual(selfSignupRows({ person, matches, now }).map((row) => row.match.id).sort(), ['ga', 'ma']);
   const pending = pendingSelfSignups({
     uid: 'gus',
@@ -4050,7 +4056,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v219');
+  assert.equal(version, 'f7c-v220');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4086,12 +4092,17 @@ test('el enlace pide los partidos de ese organizador, sábado incluido', async (
   };
   store._listenGuest('ficha');
   await new Promise((resolve) => setTimeout(resolve, 20));
-  const matchQuery = calls.find((ref) => ref.path === 'matches');
-  assert.ok(matchQuery.parts.some((part) => part.field === 'createdByUid' && part.op === '==' && part.value === 'gus'));
-  assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '>=' && part.value === '2026-11-18'));
-  assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '<=' && part.value === '2026-12-01'));
-  assert.equal(matchQuery.parts.some((part) => part.limit), false);
-  assert.equal(calls.filter((ref) => ref.path === 'matches').length, 1);
+  const matchQueries = calls.filter((ref) => ref.path === 'matches');
+  assert.equal(matchQueries.length, 2);
+  const openQuery = matchQueries.find((ref) => ref.parts.some((part) => part.field === 'viewers'));
+  const linkQuery = matchQueries.find((ref) => ref.parts.some((part) => part.field === 'playerKey'));
+  assert.ok(openQuery.parts.some((part) => part.field === 'createdByUid' && part.op === '==' && part.value === 'gus'));
+  assert.ok(openQuery.parts.some((part) => part.field === 'viewers' && part.value === '*'));
+  assert.ok(linkQuery.parts.some((part) => part.field === 'playerKey' && part.op === '==' && part.value === 'tokendegustavolargo1234'));
+  assert.equal(linkQuery.parts.some((part) => part.field === 'viewers'), false);
+  assert.ok(linkQuery.parts.some((part) => part.field === 'date' && part.op === '>=' && part.value === '2026-11-18'));
+  assert.ok(linkQuery.parts.some((part) => part.field === 'date' && part.op === '<=' && part.value === '2026-12-01'));
+  assert.equal(linkQuery.parts.some((part) => part.limit), false);
 });
 
 test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => {

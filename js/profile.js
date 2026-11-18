@@ -406,10 +406,11 @@ export const GUEST_PAGE = 24;
  * Un partido viejo sin playerVisible se ve (el casillero arranca marcado).
  * Firestore no consulta un campo que no está, así que hay que escribirlo.
  * Solo el organizador dueño, solo de hoy en adelante, y solo si el campo falta.
- * viewers * se agrega si la lista no está: sin viewers el partido es de todos
- * y la página del jugador lo pide. Una lista privada no se abre.
+ * viewers * se agrega si la lista no está: sin viewers el partido es de todos.
+ * Una lista privada (solo yo) no se abre. playerKey es el token del enlace:
+ * con eso la ficha ve el partido aunque otros organizadores no.
  */
-export function playerVisibleBackfill(match, { uid, today, name } = {}) {
+export function playerVisibleBackfill(match, { uid, today, name, shareToken } = {}) {
   const owner = String(uid || '').trim();
   const day = String(today || '');
   const id = String(match?.id || '').trim();
@@ -423,37 +424,66 @@ export function playerVisibleBackfill(match, { uid, today, name } = {}) {
   const patch = {};
   if (!created) patch.createdByUid = owner;
   if (match.playerVisible !== true && match.playerVisible !== false) patch.playerVisible = true;
-  if (!Array.isArray(match.viewers) || !match.viewers.length) patch.viewers = ['*'];
+  if (match.playerVisible !== false && (!Array.isArray(match.viewers) || !match.viewers.length)) patch.viewers = ['*'];
+  const key = playerLinkKey(match, shareToken);
+  if (key && match.playerKey !== key) patch.playerKey = key;
+  if (match.playerVisible === false && match.playerKey) patch.playerKey = '';
   if (!Object.keys(patch).length) return null;
   return { id, patch };
 }
 
+/** Token del enlace que habilita la ficha. Vacío si el partido no es para jugadores. */
+export function playerLinkKey(match, token) {
+  const key = String(token || '').trim();
+  if (match?.playerVisible === false) return '';
+  if (key.length < 20 || key.length > 80) return '';
+  return key;
+}
+
 /**
  * Consultas de la página del jugador, sin sesión.
- * Con el uid del enlace, solo los partidos de ese organizador en los
- * próximos 14 días. Sin uid, el mismo rango de los abiertos: un tope de
- * 24 partidos de todos se comía el fin de semana. playerVisible no entra
- * en la consulta porque a veces el campo no está.
+ * Abiertos: createdByUid + viewers *. El enlace además pide playerKey
+ * (el token): ahí entran los «solo yo», que no tienen viewers *.
+ * Los 14 días evitan que un tope por cantidad se coma el fin de semana.
+ * playerVisible no entra en la consulta: si falta, el partido se muestra.
  */
-export function guestListenPlan({ rosterId, today, organizerUid } = {}) {
+export function guestListenPlan({ rosterId, today, organizerUid, shareToken } = {}) {
   const id = String(rosterId || '').trim();
   const day = String(today || '');
   const end = day ? addDays(day, GUEST_HORIZON_DAYS) : '';
   const owner = String(organizerUid || '').trim();
-  const matchFilters = [];
-  if (owner) matchFilters.push({ field: 'createdByUid', op: '==', value: owner });
-  matchFilters.push({ field: 'viewers', op: 'array-contains', value: '*' });
-  if (day) matchFilters.push({ field: 'date', op: '>=', value: day });
-  if (end) matchFilters.push({ field: 'date', op: '<=', value: end });
+  const token = String(shareToken || '').trim();
+  const linked = token.length >= 20 && token.length <= 80;
+  const dateFilters = [];
+  if (day) dateFilters.push({ field: 'date', op: '>=', value: day });
+  if (end) dateFilters.push({ field: 'date', op: '<=', value: end });
+  const openFilters = [];
+  if (owner) openFilters.push({ field: 'createdByUid', op: '==', value: owner });
+  openFilters.push({ field: 'viewers', op: 'array-contains', value: '*' }, ...dateFilters);
   return {
     rosterId: id,
     until: end,
     matches: {
       collection: 'matches',
-      filters: matchFilters,
+      filters: openFilters,
       orderBy: ['date', 'asc'],
       limit: null,
     },
+    linkMatches: linked ? {
+      collection: 'matches',
+      filters: [{ field: 'playerKey', op: '==', value: token }, ...dateFilters],
+      orderBy: ['date', 'asc'],
+      limit: null,
+    } : null,
+    linkPlayers: linked && id ? {
+      collection: 'players',
+      filters: [
+        { field: 'shareToken', op: '==', value: token },
+        { field: 'rosterId', op: '==', value: id },
+      ],
+      orderBy: [],
+      limit: null,
+    } : null,
     players: id ? {
       collection: 'players',
       filters: [
