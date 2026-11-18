@@ -1,5 +1,5 @@
 {
-  "name": "mis-partidos-prueba-functions",
+  "name": "mis-partidos-functions",
   "private": true,
   "engines": { "node": "20" },
   "main": "index.js",

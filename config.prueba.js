@@ -25,6 +25,6 @@ export const VENUE = "Polideportivo Colegiales";
 // descarga el archivo o abre el menú de compartir.
 export const GOOGLE_DRIVE_CLIENT_ID = "";
 
-// Clave pública web push de mis-partidos-prueba. Vacía hasta pegarla desde
-// Firebase → Cloud Messaging → Certificados de clave web.
+// Vacía a propósito: /prueba/ no pide token ni manda avisos al teléfono.
+// La clave de producción va en config.js, no acá.
 export const FCM_VAPID_KEY = "";
