@@ -14,7 +14,7 @@ test('la ficha lee un solo yo con el token y otro organizador no', async (t) => 
     return;
   }
   const { initializeTestEnvironment, assertSucceeds, assertFails } = await import('@firebase/rules-unit-testing');
-  const { collection, doc, getDocs, orderBy, query, setDoc, where } = await import('firebase/firestore');
+  const { collection, doc, getDoc, getDocs, orderBy, query, setDoc, updateDoc, where } = await import('firebase/firestore');
   const host = process.env.FIRESTORE_EMULATOR_HOST;
   const [hostname, portRaw] = host.split(':');
   const testEnv = await initializeTestEnvironment({
@@ -62,6 +62,17 @@ test('la ficha lee un solo yo con el token y otro organizador no', async (t) => 
       orderBy('date'),
     )));
     assert.deepEqual(link.docs.map((item) => item.id).sort(), ['propia', 'solo']);
+    await assertSucceeds(updateDoc(doc(org.firestore(), 'matches', 'propia'), { playerVisible: false, playerKey: '' }));
+    const hidden = await getDoc(doc(org.firestore(), 'matches', 'propia'));
+    assert.equal(hidden.data().playerVisible, false);
+    const afterHide = await assertSucceeds(getDocs(query(
+      collection(anon, 'matches'),
+      where('playerKey', '==', TOKEN),
+      where('date', '>=', '2026-11-18'),
+      where('date', '<=', '2026-12-01'),
+      orderBy('date'),
+    )));
+    assert.deepEqual(afterHide.docs.map((item) => item.id), ['solo']);
     await assertFails(getDocs(query(collection(anon, 'matches'), where('createdByUid', '==', ORG))));
 
     const martin = testEnv.authenticatedContext(OTHER, { email: 'martin@demo.local' }).firestore();

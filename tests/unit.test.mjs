@@ -5581,6 +5581,9 @@ test('un partido próximo sin playerVisible se marca visible una sola vez y no e
   const his = { id: 'hoy', date: today, createdByUid: 'gus', viewers: ['*'] };
   assert.deepEqual(playerVisibleBackfill(his, { uid: 'gus', today }), { id: 'hoy', patch: { playerVisible: true } });
   assert.equal(playerVisibleBackfill({ ...his, playerVisible: false }, { uid: 'gus', today }), null);
+  const off = playerVisibleBackfill({ id: 'off', date: today, createdByUid: 'gus', viewers: ['*'], playerVisible: false, playerKey: 'tokendegustavolargo1234' }, { uid: 'gus', today, shareToken: 'tokendegustavolargo1234' });
+  assert.equal(off.patch.playerVisible, undefined);
+  assert.equal(off.patch.playerKey, '');
   assert.equal(playerVisibleBackfill({ ...his, playerVisible: true }, { uid: 'gus', today }), null);
   assert.equal(playerVisibleBackfill({ ...his, createdByUid: 'martin' }, { uid: 'gus', today }), null);
   assert.equal(playerVisibleBackfill({ ...his, date: '2026-11-16' }, { uid: 'gus', today }), null);

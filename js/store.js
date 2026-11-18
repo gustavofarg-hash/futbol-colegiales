@@ -2939,10 +2939,27 @@ export class FirebaseStore {
       }
       saveBackfillIds(this._backfilled);
       if (!rows.length) return;
-      const { doc, writeBatch } = this.fs;
-      const batch = writeBatch(this.db);
-      for (const row of rows) batch.update(doc(this.db, 'matches', row.id), row.patch);
-      Promise.resolve(batch.commit()).catch((error) => console.error(error?.code || 'sin-codigo', error));
+      const { doc, writeBatch, runTransaction } = this.fs;
+      if (typeof runTransaction !== 'function') {
+        const batch = writeBatch(this.db);
+        for (const row of rows) batch.update(doc(this.db, 'matches', row.id), row.patch);
+        Promise.resolve(batch.commit()).catch((error) => console.error(error?.code || 'sin-codigo', error));
+        return;
+      }
+      // El snapshot puede ser anterior a un Guardar que puso false. No pisarlo.
+      Promise.resolve((async () => {
+        for (const row of rows) {
+          const ref = doc(this.db, 'matches', row.id);
+          await runTransaction(this.db, async (tx) => {
+            const snap = await tx.get(ref);
+            const data = snap.exists() ? (snap.data() || {}) : {};
+            const patch = { ...row.patch };
+            if ('playerVisible' in patch && (data.playerVisible === true || data.playerVisible === false)) delete patch.playerVisible;
+            if (!Object.keys(patch).length) return;
+            tx.update(ref, patch);
+          });
+        }
+      })()).catch((error) => console.error(error?.code || 'sin-codigo', error));
     };
     if (!this._ownShareToken && this.fs.getDocs) {
       Promise.resolve(this.ensureShareToken(this.actor.uid, this.actor.name || '')).then((token) => {
