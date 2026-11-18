@@ -16,7 +16,7 @@ import { PRODUCTION_PROJECT_ID, TRIAL_STORAGE_PREFIX, blocksProductionFirebase, 
 import { moveWaiting, nextWaitOrder, overflowPatches, rosterSplit, sortWaiting } from '../js/waiting.js';
 import { SUSPENDED_TEXT, capitalizeWords, cleanShortName, displayName, fullNameBehind, givenName, nickOf, personKey, phoneIdentity, playerMatchesPerson, rosterForOrganizer, rosterHit, rosterInMatchMessage, rosterMatchCount, searchRoster, visibleRosterHits, visibleRosterPhone, withPendingRoster } from '../js/roster.js';
 import { bajaDeduction, bajaPreview, bajaReasonText, behaviorLine, behaviorScore, behaviorTimeline, faltaReasonText, formatBehaviorPoints, formatBehaviorScore, parseBajaPoints, parseBehaviorPoints, removalDeducts, stepPointInput } from '../js/behavior.js';
-import { isSelfPending, matchOpenToRoster, occupiesSpot, pendingSelfSignups, selfRowAction, selfSignupRows, signupRateDecision } from '../js/self-signup.js';
+import { isSelfPending, matchOpenToRoster, occupiesSpot, pendingSelfSignups, selfRowAction, selfSignupRows, signupLimitFrom, signupLimitRecord, signupRateDecision } from '../js/self-signup.js';
 import { confirmBannerText, confirmWhatsAppText, unseenConfirmations } from '../js/confirm-notice.js';
 import { iosPushHint, playerPushAvailable, registerOrganizerPush, registerPlayerPush } from '../js/push.js';
 import { GUEST_CANNOT_INVITE, alreadyInMatch, attachRosterGuest, firstDuplicate, groupByInviter, inviteBlock, isAutoGuestName, placeGroup, resolveFriendNames, rootInviterId, sameDayPromoGuestNickPatches, sameDayPromoGuestRenames, sameDayPromoGuestTwins, waitWarning } from '../js/guests.js';
@@ -1952,6 +1952,14 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.equal(signupRateDecision(null, 1000).count, 1);
   assert.equal(signupRateDecision({ windowStart: 1000, count: 5 }, 1000 + 10 * 60 * 1000).ok, false);
   assert.equal(signupRateDecision({ windowStart: 1000, count: 5 }, 1000 + 31 * 60 * 1000).ok, true);
+  assert.equal(signupRateDecision({ windowStart: 1000, count: 2 }, 2000, 2, 30 * 60 * 1000).ok, false);
+  assert.equal(signupRateDecision({ windowStart: 1000, count: 2 }, 2000, 2, 30 * 60 * 1000).error, 'Esperá un rato para volver a anotarte.');
+  assert.equal(signupLimitFrom(null).maxMoves, 5);
+  assert.equal(signupLimitFrom(null).windowMinutes, 30);
+  assert.deepEqual(signupLimitFrom({ maxMoves: 2, windowMinutes: 10 }), { maxMoves: 2, windowMinutes: 10 });
+  assert.equal(signupLimitFrom({ maxMoves: 0, windowMinutes: 2000 }).maxMoves, 5);
+  assert.equal(signupLimitRecord({ maxMoves: '2', windowMinutes: '15' }).patch.windowMinutes, 15);
+  assert.equal(signupLimitRecord({ maxMoves: '101', windowMinutes: '30' }).ok, false);
   assert.equal(matchOpenToRoster({ createdByUid: 'gus', cancelled: false }, { holders: ['gus'] }), true);
   assert.equal(matchOpenToRoster({ createdByUid: 'martin' }, { holders: ['gus'] }), false);
   const rows = selfSignupRows({
@@ -4057,7 +4065,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v220');
+  assert.equal(version, 'f7c-v221');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
