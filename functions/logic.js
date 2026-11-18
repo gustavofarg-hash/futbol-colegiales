@@ -23,10 +23,24 @@ function weekdayName(iso) {
   return name ? name.charAt(0).toUpperCase() + name.slice(1) : '';
 }
 
-function pushCopy(kind, player, match) {
+const PRODUCTION_PROJECT = 'futbol-partidos';
+const TRIAL_PROJECT = 'mis-partidos-prueba';
+const PRODUCTION_BASE = 'https://gustavofarg-hash.github.io/futbol-colegiales/';
+const TRIAL_BASE = 'https://gustavofarg-hash.github.io/futbol-colegiales/prueba/';
+
+function appBase(project) {
+  return String(project || '') === TRIAL_PROJECT ? TRIAL_BASE : PRODUCTION_BASE;
+}
+
+function decideUrlFor(project) {
+  const id = String(project || '') === TRIAL_PROJECT ? TRIAL_PROJECT : PRODUCTION_PROJECT;
+  return `https://southamerica-east1-${id}.cloudfunctions.net/decideSignup`;
+}
+
+function pushCopy(kind, player, match, project) {
   const name = String(player?.name || '').trim() || 'Un jugador';
   const place = String(match?.venueName || 'Polideportivo Colegiales').trim() || 'Polideportivo Colegiales';
-  const base = 'https://gustavofarg-hash.github.io/futbol-colegiales/prueba/';
+  const base = appBase(project);
   if (kind === 'confirmado') {
     const day = [weekdayName(match?.date), dayLabel(match?.date)].filter(Boolean).join(' ');
     const when = [day, match?.time || ''].filter(Boolean).join(' ');
@@ -71,7 +85,7 @@ function organizerUids(match, holders, onlyUid) {
   return [...new Set(ids)];
 }
 
-const DECIDE_URL = 'https://southamerica-east1-mis-partidos-prueba.cloudfunctions.net/decideSignup';
+const DECIDE_URL = decideUrlFor(PRODUCTION_PROJECT);
 const ACTION_TTL_MS = 12 * 60 * 60 * 1000;
 
 /** Datos del push. El alta lleva el token para Aceptar o Rechazar sin abrir la app. */
@@ -88,7 +102,7 @@ function pushFields(kind, copy, extra = {}) {
   if (kind === 'alta' && extra.actionToken && extra.playerId) {
     data.actionToken = String(extra.actionToken);
     data.playerId = String(extra.playerId);
-    data.decideUrl = DECIDE_URL;
+    data.decideUrl = decideUrlFor(extra.project);
   }
   return data;
 }
@@ -121,4 +135,5 @@ function actionDecision(doc, player, decision, now, spotsLeft) {
 module.exports = {
   classifySelfSignup, pushCopy, organizerUids, dayLabel,
   pushFields, noticeActions, actionDecision, DECIDE_URL, ACTION_TTL_MS,
+  appBase, decideUrlFor, PRODUCTION_PROJECT, TRIAL_PROJECT,
 };

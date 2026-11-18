@@ -2043,17 +2043,21 @@ test('anotarse solo: pendiente no ocupa cupo, la espera no resta y hay tope', as
   assert.equal(classifySelfSignup(null, { selfSignup: true, tentative: true }), 'alta');
   assert.equal(classifySelfSignup(null, { selfSignup: true, waiting: true }), 'espera');
   assert.equal(classifySelfSignup({ tentative: true, selfSignup: true }, null), '');
-  const copy = pushCopy('alta', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Colegiales' });
+  const copy = pushCopy('alta', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Colegiales' }, 'futbol-partidos');
   assert.match(copy.body, /Ana se anotó y espera confirmación\. 19\/10 · 21:00 · Colegiales/);
-  assert.match(copy.url, /#\/a-confirmar$/);
-  assert.match(pushCopy('espera', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
-  assert.match(pushCopy('baja', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, /#\/partido\/m1$/);
-  const confirmedCopy = pushCopy('confirmado', { name: 'Ana', rosterId: 'fichaAna' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Polideportivo Colegiales' });
+  assert.equal(copy.url, 'https://gustavofarg-hash.github.io/futbol-colegiales/#/a-confirmar');
+  assert.equal(pushCopy('espera', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }, 'futbol-partidos').url, 'https://gustavofarg-hash.github.io/futbol-colegiales/#/partido/m1');
+  assert.equal(pushCopy('baja', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }).url, 'https://gustavofarg-hash.github.io/futbol-colegiales/#/partido/m1');
+  assert.equal(pushCopy('alta', { name: 'Ana' }, { id: 'm1', date: '2026-10-19', time: '21:00' }, 'mis-partidos-prueba').url, 'https://gustavofarg-hash.github.io/futbol-colegiales/prueba/#/a-confirmar');
+  const confirmedCopy = pushCopy('confirmado', { name: 'Ana', rosterId: 'fichaAna' }, { id: 'm1', date: '2026-10-19', time: '21:00', venueName: 'Polideportivo Colegiales' }, 'futbol-partidos');
   assert.equal(confirmedCopy.body, '¡Te confirmaron para el Lunes 19/10 21:00 en Polideportivo Colegiales!');
-  assert.match(confirmedCopy.url, /#\/jugador\/fichaAna$/);
+  assert.equal(confirmedCopy.url, 'https://gustavofarg-hash.github.io/futbol-colegiales/#/jugador/fichaAna');
+  assert.equal(pushCopy('confirmado', { name: 'Ana', rosterId: 'fichaAna' }, { id: 'm1', date: '2026-10-19', time: '21:00' }, 'mis-partidos-prueba').url, 'https://gustavofarg-hash.github.io/futbol-colegiales/prueba/#/jugador/fichaAna');
   const { noticeActions, actionDecision, pushFields } = require('../functions/logic.js');
-  const alta = pushFields('alta', copy, { actionToken: 'a'.repeat(64), playerId: 'p1', tag: 't' });
-  assert.equal(alta.decideUrl.includes('decideSignup'), true);
+  const alta = pushFields('alta', copy, { actionToken: 'a'.repeat(64), playerId: 'p1', tag: 't', project: 'futbol-partidos' });
+  assert.equal(alta.decideUrl, 'https://southamerica-east1-futbol-partidos.cloudfunctions.net/decideSignup');
+  const altaPrueba = pushFields('alta', copy, { actionToken: 'b'.repeat(64), playerId: 'p1', project: 'mis-partidos-prueba' });
+  assert.equal(altaPrueba.decideUrl, 'https://southamerica-east1-mis-partidos-prueba.cloudfunctions.net/decideSignup');
   assert.equal(noticeActions(alta).map((row) => row.action).join(','), 'aceptar,rechazar');
   assert.deepEqual(noticeActions(pushFields('espera', copy, {})), []);
   assert.equal(actionDecision({ playerId: 'p1', used: false, expiresAt: 5000 }, { id: 'p1', tentative: true }, 'aceptar', 1000, 2).op, 'confirm');
@@ -4040,7 +4044,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v217');
+  assert.equal(version, 'f7c-v218');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4055,15 +4059,22 @@ test('el error del backup nombra la colección y el documento', () => {
 test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => {
   assert.equal(trialConfig.projectId, 'mis-partidos-prueba');
   assert.equal(trialVapid, '');
+  assert.match(readFileSync(new URL('../config.js', import.meta.url), 'utf8'), /export const FCM_VAPID_KEY = "BKNoip09mUq7FatPuHdXl6zDiguKnlYQEgwPAorMNeb7Sjugo1tYH0dbGtybo4GZuiXyz4AvB4o6kUasUOqTqL8";/);
+  assert.equal(productionConfig.projectId, 'futbol-partidos');
   const prev = globalThis.location;
   globalThis.location = { pathname: '/futbol-colegiales/prueba/', origin: 'https://gustavofarg-hash.github.io' };
   try {
     const push = await registerOrganizerPush({ savePushToken() { throw new Error('no hay token'); } });
-    assert.deepEqual(push, { ok: false, reason: 'no-vapid' });
-    assert.equal(playerPushAvailable(), false);
+    assert.deepEqual(push, { ok: false, reason: 'no-notification' });
+    assert.equal(playerPushAvailable(), true);
     const playerPush = await registerPlayerPush({ savePlayerPushToken() { throw new Error('no hay token'); } }, 'ficha');
-    assert.deepEqual(playerPush, { ok: false, reason: 'no-vapid' });
+    assert.deepEqual(playerPush, { ok: false, reason: 'no-notification' });
     assert.equal(iosPushHint(), '');
+    globalThis.location = { pathname: '/futbol-colegiales/', origin: 'https://gustavofarg-hash.github.io' };
+    const production = await registerOrganizerPush({ savePushToken() { throw new Error('no hay token'); } });
+    assert.deepEqual(production, { ok: false, reason: 'no-notification' });
+    const productionPlayer = await registerPlayerPush({ savePlayerPushToken() { throw new Error('no hay token'); } }, 'ficha');
+    assert.deepEqual(productionPlayer, { ok: false, reason: 'no-notification' });
   } finally {
     if (prev === undefined) delete globalThis.location;
     else globalThis.location = prev;
@@ -4122,6 +4133,9 @@ test('el service worker revalida la app y no mezcla las cachés', () => {
   assert.match(sw, /new Request\(url, \{ cache: 'reload' \}\)/);
   assert.match(sw, /cache: 'no-cache'/);
   assert.match(sw, /if \(!TRIAL && url\.origin === self\.location\.origin && url\.pathname\.includes\('\/prueba\/'\)\) return;/);
+  assert.match(sw, /projectId: 'futbol-partidos'/);
+  assert.match(sw, /projectId: 'mis-partidos-prueba'/);
+  assert.equal(readFileSync(new URL('../js/push.js', import.meta.url), 'utf8').includes('not-trial'), false);
   assert.match(sw, /TRIAL \? key\.startsWith\('prueba-'\) : !key\.startsWith\('prueba-'\)/);
   const firebase = sw.split('if (firebaseSdk)')[1].split('// App propia')[0];
   assert.equal(firebase.includes("cache: 'no-cache'"), false);

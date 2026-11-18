@@ -1,6 +1,6 @@
 // Service worker: cachea la app para que abra rápido y funcione sin conexión.
 // Subí el número de versión cuando publiques cambios.
-const VERSION = 'f7c-v217';
+const VERSION = 'f7c-v218';
 // Las pruebas marcan __F7C_TEST y no deben dejar este worker contra el proyecto real.
 const TRIAL = self.location.pathname.includes('/prueba/');
 const CACHE = (TRIAL ? 'prueba-' : '') + VERSION;
@@ -79,19 +79,28 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(openNotification(data.url || './'));
 });
 
-if (TRIAL) {
-  try {
-    importScripts('https://www.gstatic.com/firebasejs/13.0.0/firebase-app-compat.js');
-    importScripts('https://www.gstatic.com/firebasejs/13.0.0/firebase-messaging-compat.js');
-    firebase.initializeApp({
-      apiKey: 'AIzaSyCRdic552hOtfmVnR2LIQVNZOi2dub_2DU',
-      authDomain: 'mis-partidos-prueba.firebaseapp.com',
-      projectId: 'mis-partidos-prueba',
-      storageBucket: 'mis-partidos-prueba.firebasestorage.app',
-      messagingSenderId: '131662006103',
-      appId: '1:131662006103:web:37bdf25201ab3465742012',
-    });
-    firebase.messaging().onBackgroundMessage((payload) => {
+// El worker no puede importar config.js. Copia los mismos campos.
+// /prueba/ sigue en mis-partidos-prueba. La app publicada, en futbol-partidos.
+const MESSAGING_CONFIG = TRIAL ? {
+  apiKey: 'AIzaSyCRdic552hOtfmVnR2LIQVNZOi2dub_2DU',
+  authDomain: 'mis-partidos-prueba.firebaseapp.com',
+  projectId: 'mis-partidos-prueba',
+  storageBucket: 'mis-partidos-prueba.firebasestorage.app',
+  messagingSenderId: '131662006103',
+  appId: '1:131662006103:web:37bdf25201ab3465742012',
+} : {
+  apiKey: 'AIzaSyBNtUZP4wxNmzCKtJPYUZPKoP9vV4CM_UY',
+  authDomain: 'futbol-partidos.firebaseapp.com',
+  projectId: 'futbol-partidos',
+  storageBucket: 'futbol-partidos.firebasestorage.app',
+  messagingSenderId: '187855618137',
+  appId: '1:187855618137:web:71bb2d7b77e6ca886b3148',
+};
+try {
+  importScripts('https://www.gstatic.com/firebasejs/13.0.0/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/13.0.0/firebase-messaging-compat.js');
+  firebase.initializeApp(MESSAGING_CONFIG);
+  firebase.messaging().onBackgroundMessage((payload) => {
       const data = payload.data || {};
       const title = data.title || payload.notification?.title || 'Mis Partidos';
       const body = data.body || payload.notification?.body || '';
@@ -117,9 +126,8 @@ if (TRIAL) {
       }
       return self.registration.showNotification(title, note);
     });
-  } catch (error) {
-    // Sin el script de mensajería la app sigue. El aviso con la app cerrada no llega.
-  }
+} catch (error) {
+  // Sin el script de mensajería la app sigue. El aviso con la app cerrada no llega.
 }
 
 self.addEventListener('fetch', (e) => {
