@@ -367,8 +367,30 @@ export function historyCaption(bounds, count) {
     const span = from && to ? `Del ${from} al ${to}` : (from ? `Desde el ${from}` : `Hasta el ${to}`);
     return count ? `${span}.` : `${span}: no hay partidos.`;
   }
+  if (count > (bounds?.limit || HISTORY_PAGE)) return 'Partidos pasados, los más recientes primero.';
   if (count >= (bounds?.limit || HISTORY_PAGE)) return `Últimos ${bounds?.limit || HISTORY_PAGE}, los más recientes primero.`;
   return 'Partidos pasados, los más recientes primero.';
+}
+
+/**
+ * Una página del historial, sin cortar el día.
+ * Si el tope cae en el medio de una fecha, entran todos los partidos de esa fecha.
+ * hasMore: el tope se llenó, así que puede haber días más viejos.
+ * before: la fecha más vieja ya incluida; la página siguiente pide fecha menor.
+ */
+export function historyPageMerge(limited, sameDay, limit = HISTORY_PAGE) {
+  const rows = (limited || []).filter((match) => match?.id && match?.date);
+  const cap = Number(limit) || 0;
+  const hit = cap > 0 && rows.length >= cap;
+  let oldest = '';
+  for (const match of rows) if (!oldest || match.date < oldest) oldest = match.date;
+  const byId = new Map(rows.map((match) => [match.id, match]));
+  if (hit && oldest) {
+    for (const match of sameDay || []) {
+      if (match?.id && match.date === oldest) byId.set(match.id, match);
+    }
+  }
+  return { matches: historySort([...byId.values()]), hasMore: hit, before: oldest };
 }
 
 function historySort(rows) {
@@ -376,18 +398,23 @@ function historySort(rows) {
 }
 
 /** Recorte local (modo demo) con la misma regla que la consulta de Firestore. */
-export function historyWindow(matches, filter, now = Date.now()) {
+export function historyWindow(matches, filter, now = Date.now(), pageCount = 1) {
   const bounds = historyBounds(filter, now);
   const past = (matches || []).filter((match) => match?.date && match.date < bounds.before);
-  if (bounds.empty) return { matches: [], ...bounds, caption: historyCaption(bounds, 0) };
+  if (bounds.empty) return { matches: [], ...bounds, hasMore: false, caption: historyCaption(bounds, 0) };
   let rows = past;
   if (bounds.mode === 'day') rows = past.filter((match) => match.date === bounds.day);
   else if (bounds.mode === 'range') {
     rows = past.filter((match) => (!bounds.from || match.date >= bounds.from) && (!bounds.to || match.date <= bounds.to));
   }
   rows = historySort(rows);
-  if (bounds.limit) rows = rows.slice(0, bounds.limit);
-  return { matches: rows, ...bounds, caption: historyCaption(bounds, rows.length) };
+  if (bounds.limit && bounds.mode === 'recent') {
+    const cap = bounds.limit * Math.max(1, Number(pageCount) || 1);
+    const packed = historyPageMerge(rows.slice(0, cap), rows, cap);
+    const hasMore = !!(packed.before && rows.some((match) => match.date < packed.before));
+    return { matches: packed.matches, ...bounds, hasMore, caption: historyCaption(bounds, packed.matches.length) };
+  }
+  return { matches: rows, ...bounds, hasMore: false, caption: historyCaption(bounds, rows.length) };
 }
 
 /**
