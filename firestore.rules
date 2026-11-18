@@ -91,8 +91,14 @@ service cloud.firestore {
     function isPublic(d) {
       return !('viewers' in d) || d.viewers == null || (d.viewers is list && d.viewers.hasAny(['*']));
     }
-    // El enlace del jugador. playerKey es el token, no el uid: otro organizador
-    // no puede listar un «solo yo» aunque conozca el uid. No abre viewers.
+    // El enlace del jugador. Con el uid del organizador (el del token) se listan
+    // sus partidos de la ventana, aunque viewers no sea * y no haya playerKey.
+    // playerKey sigue sirviendo para un partido que ya lo tiene.
+    function createdByListed() {
+      return resource.data.createdByUid is string
+          && resource.data.createdByUid.size() > 0
+          && resource.data.createdByUid.size() <= 128;
+    }
     function playerLinkListed() {
       return resource.data.playerKey is string
           && resource.data.playerKey.size() >= 20
@@ -623,6 +629,7 @@ service cloud.firestore {
       allow get: if playerLinkListed();
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
       allow list: if resource.data.viewers.hasAny(['*']);
+      allow list: if createdByListed();
       allow list: if playerLinkListed();
       allow create: if isActiveStaff() && validMatch(request.resource.data);
       allow update: if isActiveStaff() && fillOwnMatch();

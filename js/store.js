@@ -2648,20 +2648,36 @@ export class FirebaseStore {
       armedFor = key;
       const plan = guestListenPlan({ rosterId: id, today, organizerUid, shareToken: token });
       const visible = (snap) => rows(snap);
-      this._swap('guest-matches', onSnapshot(this._queryFromPlan(plan.matches), (snap) => {
+      const onMatches = (snap) => {
         this._guestBuckets.open = visible(snap);
         showMatches();
         this.state.guestMatchError = '';
         seen.matches = true;
         publish();
-      }, (error) => {
+      };
+      const onMatchesError = (error) => {
+        if (error?.code === 'failed-precondition' && organizerUid) {
+          const fallback = guestListenPlan({ rosterId: id, today, organizerUid: '', shareToken: token });
+          this._swap('guest-matches', onSnapshot(this._queryFromPlan({
+            ...fallback.matches,
+            filters: [{ field: 'createdByUid', op: '==', value: organizerUid }, ...fallback.matches.filters],
+          }), onMatches, () => {
+            this._guestBuckets.open = [];
+            showMatches();
+            this.state.guestMatchError = 'No se pudieron cargar los partidos.';
+            seen.matches = true;
+            publish();
+          }));
+          return;
+        }
         console.error(error?.code || 'sin-codigo', error);
         this._guestBuckets.open = [];
         showMatches();
         if (!this._guestBuckets.link.length) this.state.guestMatchError = 'No se pudieron cargar los partidos.';
         seen.matches = true;
         publish();
-      }));
+      };
+      this._swap('guest-matches', onSnapshot(this._queryFromPlan(plan.matches), onMatches, onMatchesError));
       if (plan.linkMatches) {
         this._swap('guest-link-matches', onSnapshot(this._queryFromPlan(plan.linkMatches), (snap) => {
           this._guestBuckets.link = visible(snap);
