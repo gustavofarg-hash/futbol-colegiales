@@ -3,7 +3,7 @@
 import { MESES_CORTOS, numericDate, shortHour, todayISO, toEpoch } from './dates.js';
 import { formatARS, isFreePlay, paymentParts, paymentShares, roundARS } from './payments.js';
 import { priceOfMatch, promoForPlayer } from './prices.js';
-import { dayMoneyReady } from './roster-load.js';
+import { dayMoneyReady, dayPaymentsReady } from './roster-load.js';
 import { UNSPECIFIED, sameOrganizerIdentity } from './organizers.js';
 import { foldText, isNamedGuest, personKey, phoneIdentity, playerMatchesPerson } from './roster.js';
 export function receiverLabel(player) {
@@ -339,13 +339,16 @@ export function owesOrganizer(player, organizer) {
  * (promoForPlayer), no el precio suelto. Transfiere después no está cobrado.
  * Juega gratis, la lista de espera y un partido cancelado no deben.
  */
-export function amountOwed(player, { players, matches, prices, watch, covered, settledDates } = {}) {
+export function amountOwed(player, { players, matches, prices, watch, covered, settledDates, confirmCovered, payBatchesReady, onlyReady } = {}) {
   if (!player || player.waiting === true || isFreePlay(player)) return 0;
   const list = Array.isArray(matches) ? matches : [];
   const match = list.find((item) => item.id === player.matchId);
   if (!match || match.cancelled === true) return 0;
-  if (watch instanceof Set && watch.has(match.date)) {
-    if (!dayMoneyReady(match.date, list, covered instanceof Set ? covered : new Set(), settledDates instanceof Set ? settledDates : new Set())) return 0;
+  if (onlyReady === true || (watch instanceof Set && watch.has(match.date))) {
+    const ready = confirmCovered instanceof Set || payBatchesReady === false || onlyReady === true
+      ? dayPaymentsReady(match.date, list, { covered, confirmCovered, settledDates, payBatchesReady })
+      : dayMoneyReady(match.date, list, covered instanceof Set ? covered : new Set(), settledDates instanceof Set ? settledDates : new Set());
+    if (!ready) return 0;
   }
   const promo = promoForPlayer({ player, players, matches: list, prices });
   const due = promo ? Number(promo.share) : priceOfMatch(match, prices);
@@ -354,12 +357,12 @@ export function amountOwed(player, { players, matches, prices, watch, covered, s
 }
 
 /** Lo que falta cobrar en un partido, solo de quien anotó el organizador. */
-export function organizerMatchDebt({ match, players, matches, prices, organizer, watch, covered, settledDates }) {
+export function organizerMatchDebt({ match, players, matches, prices, organizer, watch, covered, settledDates, confirmCovered, payBatchesReady, onlyReady }) {
   if (!match || match.cancelled === true) return { total: 0, rows: [] };
   const rows = [];
   for (const player of players || []) {
     if (player.matchId !== match.id || !owesOrganizer(player, organizer)) continue;
-    const owed = amountOwed(player, { players, matches, prices, watch, covered, settledDates });
+    const owed = amountOwed(player, { players, matches, prices, watch, covered, settledDates, confirmCovered, payBatchesReady, onlyReady });
     if (!(owed > 0)) continue;
     rows.push({ id: player.id || '', name: String(player.name || 'Sin nombre'), owed });
   }
@@ -388,7 +391,7 @@ export function matchDebtCounts(match, now = Date.now()) {
  * Juega gratis, la lista de espera y un partido cancelado no suman.
  * playedOnly: solo partidos ya jugados (para recordar el cobro).
  */
-export function playerDebt({ person, players, matches, prices, organizer = null, key = '', playedOnly = false, now = Date.now(), watch, covered, settledDates }) {
+export function playerDebt({ person, players, matches, prices, organizer = null, key = '', playedOnly = false, now = Date.now(), watch, covered, settledDates, confirmCovered, payBatchesReady, onlyReady }) {
   const wanted = String(key || '').trim();
   const byId = new Map((matches || []).map((match) => [match.id, match]));
   const rows = [];
@@ -396,7 +399,7 @@ export function playerDebt({ person, players, matches, prices, organizer = null,
     const same = wanted ? personKey(player, players) === wanted : playerMatchesPerson(player, person);
     if (!same) continue;
     if (organizer && !owesOrganizer(player, organizer)) continue;
-    const owed = amountOwed(player, { players, matches, prices, watch, covered, settledDates });
+    const owed = amountOwed(player, { players, matches, prices, watch, covered, settledDates, confirmCovered, payBatchesReady, onlyReady });
     if (!(owed > 0)) continue;
     const match = byId.get(player.matchId);
     if (!match) continue;
