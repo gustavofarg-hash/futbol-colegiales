@@ -3077,6 +3077,11 @@ test('hoy sigue en la lista todo el día y lo anterior va al historial', () => {
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'createdByUid' && filter.op === '==' && filter.value === 'org'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'date' && filter.op === '<=' && filter.value === '2026-11-01'), true);
   assert.equal(guest.matches.filters.some((filter) => filter.field === 'playerVisible'), false);
+  assert.equal(guest.linkMatches, null);
+  const linked = guestListenPlan({ rosterId: 'ficha', organizerUid: 'org', today: '2026-10-19', shareToken: 'tokendegustavolargo1234' });
+  assert.equal(linked.linkMatches.filters.some((filter) => filter.field === 'playerKey' && filter.value === 'tokendegustavolargo1234'), true);
+  assert.equal(linked.linkMatches.filters.some((filter) => filter.field === 'viewers'), false);
+  assert.equal(linked.linkPlayers.filters.some((filter) => filter.field === 'shareToken' && filter.value === 'tokendegustavolargo1234'), true);
   const open = guestListenPlan({ rosterId: 'ficha', today: '2026-10-19' });
   assert.equal(open.matches.filters.some((filter) => filter.field === 'createdByUid'), false);
   assert.equal(open.matches.limit, null);
@@ -3424,7 +3429,9 @@ test('el enlace de un organizador solo muestra sus partidos y la anotación es d
     { id: 'ma', date: '2026-10-19', time: '22:00', createdByUid: 'martin' },
     { id: 'hide', date: '2026-10-19', time: '23:00', createdByUid: 'gus', playerVisible: false },
   ];
-  assert.deepEqual(selfSignupRows({ person, matches, now, organizerUid: 'gus', scoped: true }).map((row) => row.match.id), ['ga']);
+  const solo = { id: 'solo', date: '2026-10-24', time: '18:00', createdByUid: 'gus', createdBy: 'Gus', viewers: ['gus'], adders: ['gus'], solo: true };
+  const propia = { id: 'propia', date: '2026-10-19', time: '19:00', createdByUid: 'gus', createdBy: 'Gustavo', viewers: ['gus'], adders: ['gus'], solo: false };
+  assert.deepEqual(selfSignupRows({ person, matches: [...matches, solo, propia], now, organizerUid: 'gus', organizerName: 'Gustavo', scoped: true }).map((row) => row.match.id), ['propia', 'ga', 'solo']);
   const named = selfSignupRows({
     person,
     matches: [...matches, { id: 'apodo', date: '2026-10-19', time: '20:00', createdBy: 'Gus', viewers: ['*'] }],
@@ -3433,7 +3440,7 @@ test('el enlace de un organizador solo muestra sus partidos y la anotación es d
     organizerName: 'Gustavo',
     scoped: true,
   });
-  assert.deepEqual(named.map((row) => row.match.id), ['apodo']);
+  assert.deepEqual(named.map((row) => row.match.id), []);
   assert.deepEqual(selfSignupRows({ person, matches, now }).map((row) => row.match.id).sort(), ['ga', 'ma']);
   const pending = pendingSelfSignups({
     uid: 'gus',
@@ -4050,7 +4057,7 @@ test('el error del backup nombra la colección y el documento', () => {
   const app = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
   const version = sw.match(/const VERSION = '([^']+)'/)[1];
-  assert.equal(version, 'f7c-v219');
+  assert.equal(version, 'f7c-v220');
   assert.equal(/\b(?:confirm|alert|prompt)\s*\(/.test(app), false);
   assert.match(app, /class="slot-actions">\$\{wa\}\$\{pay\}/);
   assert.match(css, /#slots \.slot-actions \{ display: flex; flex-direction: column/);
@@ -4086,12 +4093,17 @@ test('el enlace pide los partidos de ese organizador, sábado incluido', async (
   };
   store._listenGuest('ficha');
   await new Promise((resolve) => setTimeout(resolve, 20));
-  const matchQuery = calls.find((ref) => ref.path === 'matches');
-  assert.ok(matchQuery.parts.some((part) => part.field === 'createdByUid' && part.op === '==' && part.value === 'gus'));
-  assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '>=' && part.value === '2026-11-18'));
-  assert.ok(matchQuery.parts.some((part) => part.field === 'date' && part.op === '<=' && part.value === '2026-12-01'));
-  assert.equal(matchQuery.parts.some((part) => part.limit), false);
-  assert.equal(calls.filter((ref) => ref.path === 'matches').length, 1);
+  const matchQueries = calls.filter((ref) => ref.path === 'matches');
+  assert.equal(matchQueries.length, 2);
+  const openQuery = matchQueries.find((ref) => ref.parts.some((part) => part.field === 'viewers'));
+  const linkQuery = matchQueries.find((ref) => ref.parts.some((part) => part.field === 'playerKey'));
+  assert.ok(openQuery.parts.some((part) => part.field === 'createdByUid' && part.op === '==' && part.value === 'gus'));
+  assert.ok(openQuery.parts.some((part) => part.field === 'viewers' && part.value === '*'));
+  assert.ok(linkQuery.parts.some((part) => part.field === 'playerKey' && part.op === '==' && part.value === 'tokendegustavolargo1234'));
+  assert.equal(linkQuery.parts.some((part) => part.field === 'viewers'), false);
+  assert.ok(linkQuery.parts.some((part) => part.field === 'date' && part.op === '>=' && part.value === '2026-11-18'));
+  assert.ok(linkQuery.parts.some((part) => part.field === 'date' && part.op === '<=' && part.value === '2026-12-01'));
+  assert.equal(linkQuery.parts.some((part) => part.limit), false);
 });
 
 test('la ficha sin sesión arranca Firebase aunque no haya avisos', async () => {
@@ -5569,11 +5581,16 @@ test('un partido próximo sin playerVisible se marca visible una sola vez y no e
   const his = { id: 'hoy', date: today, createdByUid: 'gus', viewers: ['*'] };
   assert.deepEqual(playerVisibleBackfill(his, { uid: 'gus', today }), { id: 'hoy', patch: { playerVisible: true } });
   assert.equal(playerVisibleBackfill({ ...his, playerVisible: false }, { uid: 'gus', today }), null);
+  const off = playerVisibleBackfill({ id: 'off', date: today, createdByUid: 'gus', viewers: ['*'], playerVisible: false, playerKey: 'tokendegustavolargo1234' }, { uid: 'gus', today, shareToken: 'tokendegustavolargo1234' });
+  assert.equal(off.patch.playerVisible, undefined);
+  assert.equal(off.patch.playerKey, '');
   assert.equal(playerVisibleBackfill({ ...his, playerVisible: true }, { uid: 'gus', today }), null);
   assert.equal(playerVisibleBackfill({ ...his, createdByUid: 'martin' }, { uid: 'gus', today }), null);
   assert.equal(playerVisibleBackfill({ ...his, date: '2026-11-16' }, { uid: 'gus', today }), null);
   assert.deepEqual(playerVisibleBackfill({ id: 'libre', date: today, createdByUid: 'gus' }, { uid: 'gus', today }).patch, { playerVisible: true, viewers: ['*'] });
   assert.deepEqual(playerVisibleBackfill({ id: 'solo', date: today, createdByUid: 'gus', viewers: ['gus'] }, { uid: 'gus', today }).patch, { playerVisible: true });
+  const token = 'tokendegustavolargo1234';
+  assert.deepEqual(playerVisibleBackfill({ id: 'propia', date: today, createdByUid: 'gus', viewers: ['gus'], adders: ['gus'], solo: false, playerVisible: true }, { uid: 'gus', today, shareToken: token }).patch, { playerKey: token });
   const store = new FirebaseStore();
   store.actor = { uid: 'gus', name: 'Gustavo', role: 'organizer' };
   store.db = {};

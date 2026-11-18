@@ -149,7 +149,7 @@ const settingsText = await page.locator('#sheet').innerText();
 check('Ajustes no ofrece Business ni Dual Messenger', !/Desde qué WhatsApp|Dual Messenger|WhatsApp Business|Que el celular pregunte/.test(settingsText), settingsText.replace(/\s+/g, ' ').slice(0, 180));
 check('El admin ve hacer backup', await page.isVisible('#set-backup') && await page.isVisible('#set-restore') && await page.isVisible('#set-reset-db'));
 check('El admin ve el medidor de Firebase', (await page.locator('#usage-line').innerText()).includes('Hoy (se renueva a las 05:00)') && (await page.locator('#usage-line').innerText()).includes('lecturas de 50.000') && (await page.locator('#usage-meter').innerText()).includes('Estimación'));
-check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v219');
+check('Ajustes muestra la versión que corre', (await page.locator('#app-version').innerText()) === 'Versión f7c-v220');
 check('En la raíz no aparece el cartel de prueba', (await page.locator('html').getAttribute('class') || '').includes('trial') === false && await page.locator('#trial-banner').isHidden());
 check('Ajustes no repite el nombre de la app al pie', !(await page.locator('#sheet').innerText()).includes('Mis Partidos ·'));
 check('Borra la elección vieja de WhatsApp', await page.evaluate(() => localStorage.getItem('f7c-wa-from') == null));
@@ -8149,9 +8149,40 @@ await fresh.close();
   await locked.goto(`${BASE}#/jugador/${guestId}/GustavoToken2026v206xxxx`);
   await locked.waitForSelector('#player-signup-of');
   check('El enlace del organizador titula sus próximos partidos', (await locked.locator('#player-signup-of').innerText()) === 'Próximos partidos de Gustavo' && (await locked.locator('#self-list .self-btn').first().innerText()).trim() === 'Anotarme');
-  await locked.locator('#self-list button', { hasText: 'Anotarme' }).click();
+  await locked.evaluate(() => {
+    const db = JSON.parse(localStorage.getItem('f7c-demo-db'));
+    db.matches.solo220 = {
+      date: '2026-10-24', time: '18:00', capacity: 14, playerCount: 0,
+      venueName: 'Cancha Solo', createdBy: 'Gus', createdByUid: 'org-gustavo',
+      viewers: ['org-gustavo'], adders: ['org-gustavo'], solo: true, playerVisible: true, cancelled: false,
+    };
+    db.matches.propia220 = {
+      date: '2026-10-24', time: '19:00', capacity: 14, playerCount: 0,
+      venueName: 'Cancha Propia', createdBy: 'Gustavo', createdByUid: 'org-gustavo',
+      viewers: ['org-gustavo'], adders: ['org-gustavo'], solo: false, playerVisible: true, cancelled: false,
+    };
+    db.matches.hide220 = {
+      date: '2026-10-24', time: '20:00', capacity: 14, playerCount: 0,
+      venueName: 'Cancha Oculta', createdBy: 'Gus', createdByUid: 'org-gustavo',
+      viewers: ['org-gustavo'], adders: ['org-gustavo'], solo: true, playerVisible: false, cancelled: false,
+    };
+    db.matches.ajeno220 = {
+      date: '2026-10-24', time: '21:00', capacity: 14, playerCount: 0,
+      venueName: 'Cancha Ajena', createdBy: 'Gus', createdByUid: 'org-martin',
+      viewers: ['org-martin'], adders: ['org-martin'], solo: true, playerVisible: true, cancelled: false,
+    };
+    localStorage.setItem('f7c-demo-db', JSON.stringify(db));
+  });
+  await locked.reload();
+  await locked.waitForSelector('#player-signup-of');
+  const soloList = (await locked.locator('#self-list').innerText()).replace(/\s+/g, ' ');
+  check('El partido solo del organizador se ve en el enlace', soloList.includes('18:00') && soloList.includes('Cancha Solo'), soloList);
+  check('Si el único viewer es el creador, igual se ve aunque Solo yo esté destildado', soloList.includes('19:00') && soloList.includes('Cancha Propia'), soloList);
+  check('Oculto para los jugadores no aparece en el enlace', !soloList.includes('Cancha Oculta'), soloList);
+  check('El solo de otro uid no entra aunque se llame Gus', !soloList.includes('Cancha Ajena'), soloList);
+  await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('button', { hasText: 'Anotarme' }).click();
   await locked.waitForFunction(() => {
-    const row = document.querySelector('#self-list .self-row');
+    const row = [...document.querySelectorAll('#self-list .self-row')].find((el) => el.innerText.includes('21:00'));
     return row && row.innerText.includes('Esperando la confirmación de Gustavo...') && row.innerText.includes('Anular');
   });
   const linkPending = await locked.evaluate(() => {
@@ -8160,9 +8191,12 @@ await fresh.close();
     return player ? { tentative: player.tentative === true, waiting: player.waiting === true, addedByUid: player.addedByUid || '', share: player.signedUpWith || '' } : null;
   });
   check('Desde el enlace, Anotarme queda pendiente a nombre del organizador', linkPending?.tentative === true && linkPending.waiting === false && linkPending.addedByUid === 'org-gustavo' && linkPending.share === 'org-gustavo', JSON.stringify(linkPending));
-  await locked.locator('#self-list button', { hasText: 'Anular' }).click();
-  await locked.waitForFunction(() => (document.querySelector('#self-list .self-btn')?.innerText || '').trim() === 'Anotarme');
-  check('Desde el enlace, Anular vuelve a Anotarme', (await locked.locator('#self-list .self-btn').innerText()).trim() === 'Anotarme');
+  await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('button', { hasText: 'Anular' }).click();
+  await locked.waitForFunction(() => {
+    const row = [...document.querySelectorAll('#self-list .self-row')].find((el) => el.innerText.includes('21:00'));
+    return row && (row.querySelector('.self-btn')?.innerText || '').trim() === 'Anotarme';
+  });
+  check('Desde el enlace, Anular vuelve a Anotarme', ((await locked.locator('#self-list .self-row', { hasText: '21:00' }).locator('.self-btn').innerText()).trim() === 'Anotarme'));
   const fullId = await locked.evaluate(() => {
     const app = window.__app;
     const db = app.store._load();
@@ -8423,6 +8457,21 @@ await fresh.close();
   check('El partido nuevo arranca visible para los jugadores', await page.isChecked('#match-player-visible'));
   await page.click('[data-close]');
   await page.waitForFunction(() => !document.querySelector('#match-form'));
+  const hideId = await page.evaluate(async () => window.__app.store.addMatch({ date: '2026-10-19', time: '23:10', capacity: 14, note: 'Se oculta' }, window.__app.who));
+  await page.evaluate((id) => { location.hash = `#/partido/${encodeURIComponent(id)}`; }, hideId);
+  await page.waitForSelector('#btn-edit-match');
+  await page.click('#btn-edit-match');
+  await page.waitForSelector('#match-player-visible');
+  await page.uncheck('#match-player-visible');
+  await page.click('#match-form button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('#match-form'));
+  const hiddenStored = await page.evaluate((id) => JSON.parse(localStorage.getItem('f7c-demo-db')).matches[id].playerVisible, hideId);
+  check('Guardar escribe playerVisible false', hiddenStored === false, String(hiddenStored));
+  await page.click('#btn-edit-match');
+  await page.waitForSelector('#match-player-visible');
+  check('Al reabrir sigue destildado', (await page.isChecked('#match-player-visible')) === false);
+  await page.click('[data-close]');
+  await page.waitForFunction(() => !document.querySelector('#match-form'));
   await page.click('#btn-settings');
   await page.click('#set-logout');
   await page.waitForSelector('#login-form');
@@ -8435,7 +8484,8 @@ await fresh.close();
   const openRow = page.locator(`#self-list .self-row[data-match="${self.open}"]`);
   await openRow.waitFor();
   const openText = (await openRow.innerText()).replace(/\s+/g, ' ');
-  check('La fila del jugador no muestra cupo ni puesto', openText.includes('Anotarme') && openText.includes('Polideportivo') && !openText.includes('23:40') && !/\d+\/14/.test(openText) && !/Quedan|posición/i.test(openText), openText);
+  check('La fila del jugador no muestra cupo ni puesto', openText.includes('Anotarme') && openText.includes('Polideportivo') && !openText.includes('23:40') && !openText.includes('23:10') && !/\d+\/14/.test(openText) && !/Quedan|posición/i.test(openText), openText);
+  check('El partido oculto al guardar no aparece en la ficha', !(await page.locator('#self-list').innerText()).includes('23:10'));
   const selfCardBox = (id) => page.evaluate((matchId) => {
     const row = document.querySelector(`#self-list .self-row[data-match="${matchId}"]`);
     const main = row.querySelector('.self-main');

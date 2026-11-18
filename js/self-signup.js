@@ -2,7 +2,6 @@
 // Un pendiente no ocupa cupo ni suma plata hasta que el organizador confirma.
 // La espera entra directo. Sacarse de un pendiente o de la espera no resta puntos.
 import { toEpoch } from './dates.js';
-import { sameOrganizerIdentity } from './organizers.js';
 import { personKey, rosterHolderIds } from './roster.js';
 import { pendingConfirmLabel } from './share.js';
 
@@ -65,21 +64,18 @@ export function visibleToPlayers(match) {
 }
 
 /**
- * Partido de este organizador en su enlace.
- * Sirve el uid, el nombre (Gus y Gustavo) o estar en quienes anotan.
- * Un partido abierto sin dueño también: así no desaparece si falta createdByUid.
+ * Partido de este organizador en su enlace. Manda el uid, no el nombre:
+ * en producción se muestra Gus y en la prueba Gustavo, y es la misma cuenta.
+ * «Solo yo» no lo esconde: eso solo saca a los otros organizadores.
  */
-export function guestMatchForOrganizer(match, { uid = '', name = '' } = {}) {
+export function guestMatchForOrganizer(match, { uid = '' } = {}) {
   if (!match || match.cancelled === true || !visibleToPlayers(match)) return false;
   const owner = String(uid || '').trim();
-  const label = String(name || '').trim();
+  if (!owner) return false;
   const created = String(match.createdByUid || '').trim();
-  if (owner && created === owner) return true;
+  if (created === owner) return true;
   const adders = Array.isArray(match.adders) ? match.adders.map((id) => String(id || '')) : [];
-  if (owner && adders.includes(owner)) return true;
-  if (label && sameOrganizerIdentity({ name: match.createdBy || '' }, { name: label })) return true;
-  const open = !adders.length || adders.includes('*');
-  return open && !created && !String(match.createdBy || '').trim() && !!owner;
+  return adders.includes(owner);
 }
 
 /** Partido de este organizador: lo creó él, o está en quienes anotan (no el comodín *). */

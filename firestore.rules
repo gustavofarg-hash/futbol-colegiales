@@ -91,6 +91,23 @@ service cloud.firestore {
     function isPublic(d) {
       return !('viewers' in d) || d.viewers == null || (d.viewers is list && d.viewers.hasAny(['*']));
     }
+    // El enlace del jugador. playerKey es el token, no el uid: otro organizador
+    // no puede listar un «solo yo» aunque conozca el uid. No abre viewers.
+    function playerLinkListed() {
+      return resource.data.playerKey is string
+          && resource.data.playerKey.size() >= 20
+          && resource.data.playerKey.size() <= 80
+          && resource.data.playerKey.matches('^[A-Za-z0-9_-]+$');
+    }
+    function guestSignupListed() {
+      return resource.data.shareToken is string
+          && resource.data.shareToken.size() >= 20
+          && resource.data.shareToken.size() <= 80
+          && resource.data.shareToken.matches('^[A-Za-z0-9_-]+$')
+          && resource.data.rosterId is string
+          && resource.data.rosterId.size() >= 16
+          && resource.data.rosterId.size() <= 80;
+    }
     function isViewer(d) {
       return isPublic(d) || (d.viewers is list && (d.viewers.hasAny([request.auth.uid]) || d.get('createdByUid', '') == request.auth.uid));
     }
@@ -584,10 +601,13 @@ service cloud.firestore {
       // get acepta partidos viejos sin viewers. list solo la consulta
       // array-contains-any [uid, '*']: si no, Firestore rechaza la lista.
       allow get: if isActiveStaff() && canReadListed(resource.data);
-      // El enlace del jugador, sin sesión, lee los partidos abiertos (viewers *).
+      // El enlace del jugador, sin sesión. Abiertos: viewers *.
+      // «Solo yo»: playerKey es el token del enlace, no viewers.
       allow get: if resource.data.viewers.hasAny(['*']);
+      allow get: if playerLinkListed();
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
       allow list: if resource.data.viewers.hasAny(['*']);
+      allow list: if playerLinkListed();
       allow create: if isActiveStaff() && validMatch(request.resource.data);
       allow update: if isActiveStaff() && fillOwnMatch();
       allow update: if isActiveStaff() && validMatch(request.resource.data) && isViewer(resource.data)
@@ -802,6 +822,7 @@ service cloud.firestore {
       allow get: if resource.data.viewers.hasAny(['*']);
       allow list: if isActiveStaff() && resource.data.viewers.hasAny([request.auth.uid, '*']);
       allow list: if resource.data.viewers.hasAny(['*']);
+      allow list: if guestSignupListed();
       allow create: if isActiveStaff()
           && organizerSlotShape(request.resource.data)
           && invitedByOk()
