@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <title>Mis Partidos se mudó</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 32rem; line-height: 1.45; padding: 0 1rem; }
+    a { color: inherit; }
+  </style>
+</head>
+<body>
+  <p>Mis Partidos se mudó. Si no te lleva solo, abrí este link:</p>
+  <p><a id="go" href="https://gustavofarg-hash.github.io/partidos/">Ir a Mis Partidos</a></p>
+  <script>
+    (function () {
+      var OLD_PREFIX = '/futbol-colegiales';
+      var NEW_PREFIX = '/partidos';
+      function redirectPath(pathname, search, hash) {
+        var raw = String(pathname || '') || '/';
+        var path;
+        if (raw === OLD_PREFIX || raw.indexOf(OLD_PREFIX + '/') === 0) {
+          path = NEW_PREFIX + raw.slice(OLD_PREFIX.length);
+        } else if (raw === NEW_PREFIX || raw.indexOf(NEW_PREFIX + '/') === 0) {
+          path = raw;
+        } else if (raw === '/' || raw === '') {
+          path = NEW_PREFIX + '/';
+        } else {
+          path = NEW_PREFIX + (raw.charAt(0) === '/' ? raw : '/' + raw);
+        }
+        if (path === NEW_PREFIX) path = NEW_PREFIX + '/';
+        return path + String(search || '') + String(hash || '');
+      }
+      var next = location.origin.replace(/\/$/, '') + redirectPath(location.pathname, location.search, location.hash);
+      var link = document.getElementById('go');
+      if (link) link.setAttribute('href', next);
+      location.replace(next);
+    })();
+  </script>
+</body>
+</html>
